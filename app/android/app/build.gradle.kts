@@ -6,6 +6,7 @@ plugins {
 android {
     namespace = "jp.espresso3389.kugutz"
     compileSdk = 34
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "jp.espresso3389.kugutz"
@@ -27,6 +28,17 @@ android {
 
     buildFeatures {
         viewBinding = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    androidResources {
+        ignoreAssetsPattern = ""
     }
 
     compileOptions {

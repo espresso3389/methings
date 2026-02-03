@@ -20,6 +20,17 @@ class AgentService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_RESTART_PYTHON -> {
+                android.util.Log.i("AgentService", "Restart action received")
+                runtimeManager.restartSoft()
+            }
+            ACTION_STOP_PYTHON -> {
+                android.util.Log.i("AgentService", "Stop action received")
+                runtimeManager.requestShutdown()
+            }
+            else -> {}
+        }
         return START_STICKY
     }
 
@@ -53,5 +64,7 @@ class AgentService : Service() {
 
     companion object {
         private const val NOTIFICATION_ID = 1001
+        const val ACTION_RESTART_PYTHON = "jp.espresso3389.kugutz.action.RESTART_PYTHON"
+        const val ACTION_STOP_PYTHON = "jp.espresso3389.kugutz.action.STOP_PYTHON"
     }
 }

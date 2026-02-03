@@ -3,3 +3,5 @@
 *.zip
 *.pyc
 pyenv/
+.cxx/
+app/android/app/build/

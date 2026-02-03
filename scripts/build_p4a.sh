@@ -8,7 +8,7 @@ NDK_DIR=${NDK_DIR:-""}
 ARCH=${ARCH:-"arm64-v8a"}
 WORK_DIR=${WORK_DIR:-"/tmp/p4a_build_out"}
 DIST_NAME=${DIST_NAME:-"kugutz"}
-REQUIREMENTS=${REQUIREMENTS:-"python3,fastapi,uvicorn,requests,sqlcipher,pysqlcipher3"}
+REQUIREMENTS=${REQUIREMENTS:-"python3,fastapi==0.99.1,starlette==0.27.0,pydantic==1.10.13,typing-extensions,anyio==3.7.1,sniffio,uvicorn==0.23.2,click,h11,requests,charset-normalizer,idna,urllib3,certifi,sqlcipher,pysqlcipher3"}
 TCLSH_CMD=${TCLSH_CMD:-""}
 
 if [[ -z "$SDK_DIR" || -z "$NDK_DIR" ]]; then
@@ -88,6 +88,9 @@ fi
 rm -rf "$ASSETS_PATH"
 mkdir -p "$ASSETS_PATH"
 cp -a "$PY_RUNTIME_DIR"/* "$ASSETS_PATH"/
+
+STAMP="${P4A_RUNTIME_STAMP:-$(date -u +%Y%m%d%H%M%S)}"
+echo "$STAMP" > "$ASSETS_PATH/.runtime_stamp"
 
 if [[ ! -f "$ASSETS_PATH/stdlib.zip" ]]; then
   echo "Copy failed: stdlib.zip not found in $ASSETS_PATH" >&2

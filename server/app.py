@@ -1,6 +1,7 @@
-"""Local HTTP service scaffold for Android Vive Python."""
+"""Local HTTP service scaffold for Kugutz."""
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import asyncio
 import json
@@ -18,6 +19,13 @@ from providers.webhooks import WebhookSender
 from tools.router import ToolRouter
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
 
 LOG_QUEUE: asyncio.Queue = asyncio.Queue()
 data_dir = Path(__file__).parent / "data"
@@ -38,6 +46,22 @@ async def _log(event: str, data: Dict):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/shutdown")
+async def shutdown():
+    server = globals().get("_UVICORN_SERVER")
+    if server is None:
+        return {"status": "no_server"}
+    server.should_exit = True
+    server.force_exit = True
+    try:
+        loop = asyncio.get_running_loop()
+        loop.call_soon(lambda: setattr(server, "should_exit", True))
+        loop.call_later(0.2, lambda: setattr(server, "force_exit", True))
+    except RuntimeError:
+        pass
+    return {"status": "stopping"}
 
 
 @app.post("/sessions")
@@ -180,7 +204,7 @@ async def set_webhook(payload: Dict):
 @app.post("/webhooks/test")
 async def test_webhook(payload: Dict):
     provider = payload.get("provider")
-    message = payload.get("message", "Test from Android Vive Python")
+    message = payload.get("message", "Test from Kugutz")
     result = webhooks.send(provider, message)
     if not result:
         raise HTTPException(status_code=400, detail="webhook_failed")
@@ -327,4 +351,13 @@ async def delete_api_key(provider: str):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8765)
+    config = uvicorn.Config(
+        app,
+        host="127.0.0.1",
+        port=8765,
+        log_level="info",
+        lifespan="off",
+    )
+    server = uvicorn.Server(config)
+    globals()["_UVICORN_SERVER"] = server
+    server.run()

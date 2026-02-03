@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Android Vive Python</title>
+  <title>Kugutz</title>
   <style>
     :root {
       color-scheme: light;
@@ -67,6 +67,9 @@
     .btn.secondary {
       background: #8a867d;
     }
+    .btn.danger {
+      background: #d84b4b;
+    }
     textarea {
       width: 100%;
       min-height: 90px;
@@ -97,11 +100,60 @@
       color: var(--muted);
       margin-left: 8px;
     }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: #999;
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.05);
+      cursor: pointer;
+    }
+    .status-dot.ok { background: #2e7d32; }
+    .status-dot.offline { background: #c62828; }
+    .status-dot.starting { background: #616161; }
+    .status-dot.stopping { background: #8d6e63; }
+    .inline-status {
+      display: inline-block;
+      margin-left: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #efe6d3;
+    }
+    .inline-status.ok { background: #e1f1e2; color: #2e7d32; }
+    .inline-status.warn { background: #fff2cc; color: #8d6e63; }
+    .inline-status.bad { background: #f8d7da; color: #c62828; }
+    .inline-status.neutral { background: #efe6d3; color: var(--muted); }
     .row-actions {
       display: flex;
       gap: 8px;
       margin-top: 8px;
       flex-wrap: wrap;
+    }
+    .toast {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      background: #2c2b28;
+      color: #fffaf0;
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.18);
+      z-index: 999;
+    }
+    .toast.show {
+      opacity: 0.95;
     }
     @media (max-width: 820px) {
       .row, .row-3 { grid-template-columns: 1fr; }
@@ -110,20 +162,28 @@
 </head>
 <body>
   <header>
-    <h1>Android Vive Python</h1>
+    <h1>Kugutz</h1>
     <div class="muted">Local agent UI shell (WebView)</div>
   </header>
   <div class="wrap">
     <div class="panel">
       <strong>Status</strong>
-      <div class="muted" id="status">Booting local service...</div>
+      <div class="status-row">
+        <span id="statusDot" class="status-dot starting"></span>
+        <div class="muted" id="status">Booting local service...</div>
+      </div>
+      <div class="muted" id="statusDetail">Last action: (none)</div>
       <div class="muted" id="session">Session: (none)</div>
+      <div class="row-actions">
+        <button class="btn secondary" id="restartPython">Restart Python</button>
+        <button class="btn danger" id="stopPython">Stop Python</button>
+      </div>
     </div>
 
     <div class="row">
-      <div class="panel">
-        <strong>Chat</strong>
-        <ul id="chatHistory"></ul>
+    <div class="panel">
+      <strong>Chat</strong><span class="inline-status" id="chatStatus"></span>
+      <ul id="chatHistory"></ul>
         <textarea id="chatInput" placeholder="Ask the agent..."></textarea>
         <div class="row-actions">
           <button class="btn" id="sendBtn">Send</button>
@@ -148,14 +208,14 @@
     </div>
 
     <div class="row-3">
-      <div class="panel">
-        <strong>Permissions</strong>
-        <div class="muted">Pending requests</div>
+    <div class="panel">
+      <strong>Permissions</strong><span class="inline-status" id="permStatus"></span>
+      <div class="muted">Pending requests</div>
         <ul id="permList"></ul>
       </div>
-      <div class="panel">
-        <strong>Shell</strong>
-        <div class="muted">Allowlisted commands: ls, pwd, whoami</div>
+    <div class="panel">
+      <strong>Shell</strong><span class="inline-status" id="shellStatus"></span>
+      <div class="muted">Allowlisted commands: ls, pwd, whoami</div>
         <div class="row-actions">
           <select id="shellCmd">
             <option value="ls">ls</option>
@@ -166,18 +226,18 @@
         </div>
         <pre id="shellOut">(no output yet)</pre>
       </div>
-      <div class="panel">
-        <strong>Audit</strong>
-        <div class="muted">Recent events</div>
+    <div class="panel">
+      <strong>Audit</strong><span class="inline-status" id="auditStatus"></span>
+      <div class="muted">Recent events</div>
         <ul id="auditList"></ul>
       </div>
       <div class="panel">
         <strong>Notifications</strong>
         <div class="muted">Native notification channel placeholder</div>
       </div>
-      <div class="panel">
-        <strong>Webhooks</strong>
-        <div class="muted">Slack/Discord</div>
+    <div class="panel">
+      <strong>Webhooks</strong><span class="inline-status" id="hookStatus"></span>
+      <div class="muted">Slack/Discord</div>
         <div class="row-actions">
           <select id="hookProvider">
             <option value="slack">Slack</option>
@@ -190,9 +250,9 @@
           <button class="btn secondary" id="hookTest">Test</button>
         </div>
       </div>
-      <div class="panel">
-        <strong>OAuth</strong>
-        <div class="muted">In-App Browser (Custom Tabs)</div>
+    <div class="panel">
+      <strong>OAuth</strong><span class="inline-status" id="oauthInlineStatus"></span>
+      <div class="muted">In-App Browser (Custom Tabs)</div>
         <div class="row-actions">
           <select id="oauthProvider">
             <option value="openai">OpenAI</option>
@@ -219,9 +279,9 @@
         </div>
         <div class="muted" id="oauthStatusText">Status: unknown</div>
       </div>
-      <div class="panel">
-        <strong>API Keys</strong>
-        <div class="muted">Stored locally (SQLCipher if available)</div>
+    <div class="panel">
+      <strong>API Keys</strong><span class="inline-status" id="keyInlineStatus"></span>
+      <div class="muted">Stored locally (SQLCipher if available)</div>
         <div class="row-actions">
           <select id="keyProvider">
             <option value="openai">OpenAI</option>
@@ -239,9 +299,22 @@
       </div>
     </div>
   </div>
+  <div id="toast" class="toast">Notice</div>
 
   <script>
     const statusEl = document.getElementById("status");
+    const statusDot = document.getElementById("statusDot");
+    const statusDetail = document.getElementById("statusDetail");
+    const toast = document.getElementById("toast");
+    const restartPython = document.getElementById("restartPython");
+    const stopPython = document.getElementById("stopPython");
+    const chatStatus = document.getElementById("chatStatus");
+    const permStatus = document.getElementById("permStatus");
+    const shellStatus = document.getElementById("shellStatus");
+    const auditStatus = document.getElementById("auditStatus");
+    const hookStatus = document.getElementById("hookStatus");
+    const oauthInlineStatus = document.getElementById("oauthInlineStatus");
+    const keyInlineStatus = document.getElementById("keyInlineStatus");
     const sessionEl = document.getElementById("session");
     const logStream = document.getElementById("logStream");
     const chatHistory = document.getElementById("chatHistory");
@@ -278,6 +351,9 @@
     const keyStatus = document.getElementById("keyStatus");
     const keyDelete = document.getElementById("keyDelete");
     const keyStatusText = document.getElementById("keyStatusText");
+
+    let restartPending = false;
+    let restartPendingTimer = null;
     const oauthPresets = {
       openai: { auth_url: "", token_url: "", scope: "" },
       claude: { auth_url: "", token_url: "", scope: "" },
@@ -291,6 +367,11 @@
       logStream.textContent += line + "\n";
     }
 
+    function setStatusDetail(text) {
+      const ts = new Date().toLocaleTimeString();
+      statusDetail.textContent = `${text} @ ${ts}`;
+    }
+
     function appendChat(role, content) {
       const li = document.createElement("li");
       li.textContent = `${role}: ${content}`;
@@ -300,11 +381,113 @@
     async function ping() {
       try {
         const res = await fetch("http://127.0.0.1:8765/health");
-        statusEl.textContent = res.ok ? "Local service online" : "Local service error";
+        if (res.ok) {
+          statusEl.textContent = "Local service online";
+          if (!sessionId) {
+            await ensureSession();
+          }
+        } else {
+          statusEl.textContent = "Local service error";
+        }
       } catch (err) {
         statusEl.textContent = "Waiting for local service...";
       }
     }
+
+    function setStatusDot(state) {
+      statusDot.classList.remove("ok", "offline", "starting", "stopping");
+      statusDot.classList.add(state);
+    }
+
+    function persistPythonStatus(status, dotState) {
+      try {
+        localStorage.setItem("pythonStatus", JSON.stringify({
+          status: status || "",
+          dot: dotState || "starting"
+        }));
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    function restorePythonStatus() {
+      try {
+        const raw = localStorage.getItem("pythonStatus");
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        if (!data) return;
+        const normalized = (data.status || "").toLowerCase();
+        if (normalized === "ok") {
+          statusEl.textContent = "Python: OK (native)";
+        } else if (normalized === "offline") {
+          statusEl.textContent = "Python: offline (native)";
+        } else {
+          statusEl.textContent = "Python: starting (native)";
+        }
+        setStatusDot(data.dot || "starting");
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    window.onPythonStatus = function(status) {
+      const normalized = (status || "").toLowerCase();
+      if (normalized === "ok") {
+        statusEl.textContent = "Python: OK (native)";
+        setStatusDot("ok");
+        persistPythonStatus(status, "ok");
+        setStatusDetail("Python reported OK");
+        if (restartPending) {
+          restartPending = false;
+          if (restartPendingTimer) {
+            clearTimeout(restartPendingTimer);
+            restartPendingTimer = null;
+          }
+          showToast("Python restarted");
+          appendLog("[status] restart complete");
+        }
+      } else if (normalized === "stopping") {
+        statusEl.textContent = "Python: stopping (native)";
+        setStatusDot("stopping");
+        persistPythonStatus(status, "stopping");
+        setStatusDetail("Python stopping");
+      } else if (normalized === "offline") {
+        statusEl.textContent = "Python: offline (native)";
+        setStatusDot("offline");
+        persistPythonStatus(status, "offline");
+        setStatusDetail("Python offline");
+      } else {
+        statusEl.textContent = "Python: starting (native)";
+        setStatusDot("starting");
+        persistPythonStatus(status, "starting");
+        setStatusDetail("Python starting");
+      }
+    };
+
+    window.onPythonRestartRequested = function() {
+      restartPending = true;
+      if (restartPendingTimer) {
+        clearTimeout(restartPendingTimer);
+      }
+      restartPendingTimer = setTimeout(() => {
+        restartPending = false;
+        setStatusDetail("Restart timed out");
+      }, 30000);
+    };
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add("show");
+      setTimeout(() => toast.classList.remove("show"), 2000);
+    }
+
+    statusDot.addEventListener("click", () => {
+      if (typeof AndroidBridge !== "undefined" && AndroidBridge.showPythonServiceDialog) {
+        AndroidBridge.showPythonServiceDialog();
+      } else {
+        showToast("Open the native app to restart the Python service.");
+      }
+    });
 
     async function ensureSession() {
       if (sessionId) return;
@@ -318,6 +501,34 @@
       }
     }
 
+    setInterval(() => {
+      if (!sessionId) ensureSession();
+    }, 5000);
+
+    function setInlineStatus(el, text, tone = "neutral") {
+      if (!el) return;
+      el.textContent = text || "";
+      el.classList.remove("ok", "warn", "bad", "neutral");
+      el.classList.add(tone);
+      try {
+        localStorage.setItem(`status:${el.id}`, JSON.stringify({ text, tone }));
+      } catch (_) {
+        // ignore
+      }
+    }
+
+    function restoreInlineStatus(el) {
+      if (!el) return;
+      try {
+        const raw = localStorage.getItem(`status:${el.id}`);
+        if (!raw) return;
+        const data = JSON.parse(raw);
+        setInlineStatus(el, data.text, data.tone);
+      } catch (_) {
+        // ignore
+      }
+    }
+
     async function sendMessage() {
       const content = chatInput.value.trim();
       if (!content || !sessionId) return;
@@ -328,6 +539,8 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ role: "user", content })
       });
+      setInlineStatus(chatStatus, "sent", "ok");
+      showToast("Message sent");
     }
 
     async function invokeTool(args = {}, requestId = null, toolName = "filesystem", detail = "List files") {
@@ -339,11 +552,17 @@
       if (res.status === 403) {
         const data = await res.json();
         appendLog(`[permission] required: ${data.request.id}`);
+        setInlineStatus(permStatus, "blocked", "warn");
+        showToast("Permission required");
         await refreshPermissions();
         return;
       }
       const data = await res.json();
       appendLog(`[${toolName}] ${JSON.stringify(data)}`);
+      if (toolName === "shell") {
+        setInlineStatus(shellStatus, "ran", "ok");
+      }
+      showToast(`${toolName} complete`);
       return data;
     }
 
@@ -352,8 +571,14 @@
     }
 
     async function refreshPermissions() {
-      const res = await fetch("http://127.0.0.1:8765/permissions/pending");
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch("http://127.0.0.1:8765/permissions/pending");
+        data = await res.json();
+      } catch (err) {
+        setInlineStatus(permStatus, "offline", "neutral");
+        return;
+      }
       permList.innerHTML = "";
       if (!data.pending.length) {
         const li = document.createElement("li");
@@ -372,6 +597,8 @@
         approve.onclick = async () => {
           await fetch(`http://127.0.0.1:8765/permissions/${p.id}/approve`, { method: "POST" });
           appendLog(`[permission] approved: ${p.id}`);
+          setInlineStatus(permStatus, "approved", "ok");
+          showToast("Permission approved");
           await refreshPermissions();
           if (p.tool === "filesystem") {
             await invokeTool({ action: "list", path: fsPath.value.trim() || "." }, p.id, "filesystem");
@@ -388,6 +615,8 @@
         deny.onclick = async () => {
           await fetch(`http://127.0.0.1:8765/permissions/${p.id}/deny`, { method: "POST" });
           appendLog(`[permission] denied: ${p.id}`);
+          setInlineStatus(permStatus, "denied", "bad");
+          showToast("Permission denied");
           await refreshPermissions();
         };
         actions.appendChild(approve);
@@ -399,6 +628,8 @@
           nativeBtn.textContent = "Native Consent";
           nativeBtn.onclick = () => {
             AndroidBridge.requestNativeConsent(p.id, p.tool, p.detail || "");
+            setInlineStatus(permStatus, "native", "ok");
+            showToast("Opened native consent");
           };
           actions.appendChild(nativeBtn);
         }
@@ -409,13 +640,20 @@
     }
 
     async function refreshAudit() {
-      const res = await fetch("http://127.0.0.1:8765/audit/recent?limit=20");
-      const data = await res.json();
+      let data;
+      try {
+        const res = await fetch("http://127.0.0.1:8765/audit/recent?limit=20");
+        data = await res.json();
+      } catch (err) {
+        setInlineStatus(auditStatus, "offline", "neutral");
+        return;
+      }
       auditList.innerHTML = "";
       if (!data.events.length) {
         const li = document.createElement("li");
         li.textContent = "(none)";
         auditList.appendChild(li);
+        setInlineStatus(auditStatus, "idle", "neutral");
         return;
       }
       data.events.forEach(ev => {
@@ -423,6 +661,7 @@
         li.textContent = `${ev.event} @ ${new Date(ev.created_at).toLocaleTimeString()}`;
         auditList.appendChild(li);
       });
+      setInlineStatus(auditStatus, "updated", "ok");
     }
 
     function startLogStream() {
@@ -483,15 +722,19 @@
         body: JSON.stringify({ provider, url, enabled: true })
       });
       appendLog(`[webhook] saved: ${provider}`);
+      setInlineStatus(hookStatus, "saved", "ok");
+      showToast("Webhook saved");
     });
     hookTest.addEventListener("click", async () => {
       const provider = hookProvider.value;
       await fetch("http://127.0.0.1:8765/webhooks/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider, message: "Test from Android Vive Python" })
+        body: JSON.stringify({ provider, message: "Test from Kugutz" })
       });
       appendLog(`[webhook] test sent: ${provider}`);
+      setInlineStatus(hookStatus, "tested", "ok");
+      showToast("Webhook test sent");
     });
     oauthProvider.addEventListener("change", () => {
       const preset = oauthPresets[oauthProvider.value];
@@ -515,13 +758,19 @@
         })
       });
       appendLog(`[oauth] config saved: ${provider}`);
+      setInlineStatus(oauthInlineStatus, "saved", "ok");
+      showToast("OAuth config saved");
     });
     oauthConnect.addEventListener("click", () => {
       const provider = oauthProvider.value;
       if (typeof AndroidBridge !== "undefined" && AndroidBridge.startOAuth) {
         AndroidBridge.startOAuth(provider);
+        setInlineStatus(oauthInlineStatus, "connecting", "warn");
+        showToast("Opening OAuth in browser");
       } else {
         appendLog("[oauth] native bridge unavailable");
+        setInlineStatus(oauthInlineStatus, "unavailable", "bad");
+        showToast("OAuth unavailable");
       }
     });
     oauthStatus.addEventListener("click", async () => {
@@ -529,6 +778,8 @@
       const res = await fetch(`http://127.0.0.1:8765/auth/${provider}/status`);
       const data = await res.json();
       oauthStatusText.textContent = `Status: ${data.connected ? "connected" : "not connected"}`;
+      setInlineStatus(oauthInlineStatus, data.connected ? "connected" : "not connected", data.connected ? "ok" : "warn");
+      showToast("OAuth status updated");
     });
     keySave.addEventListener("click", async () => {
       const provider = keyProvider.value;
@@ -538,18 +789,56 @@
         body: JSON.stringify({ api_key: keyValue.value.trim() })
       });
       appendLog(`[keys] saved: ${provider}`);
+      setInlineStatus(keyInlineStatus, "saved", "ok");
+      showToast("API key saved");
     });
     keyStatus.addEventListener("click", async () => {
       const provider = keyProvider.value;
       const res = await fetch(`http://127.0.0.1:8765/keys/${provider}/status`);
       const data = await res.json();
       keyStatusText.textContent = `Status: ${data.configured ? "configured" : "not configured"}`;
+      setInlineStatus(keyInlineStatus, data.configured ? "configured" : "not configured", data.configured ? "ok" : "warn");
+      showToast("API key status updated");
     });
     keyDelete.addEventListener("click", async () => {
       const provider = keyProvider.value;
       await fetch(`http://127.0.0.1:8765/keys/${provider}`, { method: "DELETE" });
       keyStatusText.textContent = "Status: not configured";
       appendLog(`[keys] deleted: ${provider}`);
+      setInlineStatus(keyInlineStatus, "deleted", "bad");
+      showToast("API key deleted");
+    });
+
+    restartPython.addEventListener("click", () => {
+      if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonService) {
+        AndroidBridge.restartPythonService();
+        window.onPythonRestartRequested && window.onPythonRestartRequested();
+        showToast("Restart requested");
+        appendLog("[action] restart requested");
+        statusEl.textContent = "Python: starting (native)";
+        setStatusDot("starting");
+        persistPythonStatus("starting", "starting");
+        setStatusDetail("Restart requested");
+      } else if (typeof AndroidBridge !== "undefined" && AndroidBridge.showPythonServiceDialog) {
+        AndroidBridge.showPythonServiceDialog();
+      } else {
+        showToast("Open the native app to restart the Python service.");
+      }
+    });
+
+    stopPython.addEventListener("click", () => {
+      if (typeof AndroidBridge !== "undefined" && AndroidBridge.stopPythonService) {
+        if (!confirm("Stop the local Python service?")) return;
+        AndroidBridge.stopPythonService();
+        showToast("Stop requested");
+        appendLog("[action] stop requested");
+        statusEl.textContent = "Python: stopping (native)";
+        setStatusDot("stopping");
+        persistPythonStatus("stopping", "stopping");
+        setStatusDetail("Stop requested");
+      } else {
+        showToast("Open the native app to stop the Python service.");
+      }
     });
 
     setInterval(ping, 2000);
@@ -560,6 +849,17 @@
     refreshPermissions();
     refreshAudit();
     startLogStream();
+
+    [
+      chatStatus,
+      permStatus,
+      shellStatus,
+      auditStatus,
+      hookStatus,
+      oauthInlineStatus,
+      keyInlineStatus
+    ].forEach(restoreInlineStatus);
+    restorePythonStatus();
   </script>
 </body>
 </html>

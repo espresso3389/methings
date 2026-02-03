@@ -2,14 +2,17 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
 
     <application
         android:label="kugutz"
+        android:theme="@style/Theme.Kugutz"
         android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config">
 
         <activity
             android:name=".ui.MainActivity"
+            android:theme="@style/Theme.Kugutz"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

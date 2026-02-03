@@ -33,25 +33,25 @@ class AssetExtractor(private val context: Context) {
         val assetManager = context.assets
         val entries = assetManager.list(assetPath) ?: return
         if (entries.isEmpty()) {
-            copyAssetFile(assetPath, outDir)
+            val outFile = File(outDir, assetPath.substringAfterLast("/"))
+            copyAssetFile(assetPath, outFile)
             return
         }
         for (entry in entries) {
             val childAssetPath = "$assetPath/$entry"
-            val childOut = File(outDir, entry)
             val childEntries = assetManager.list(childAssetPath)
             if (childEntries == null || childEntries.isEmpty()) {
-                copyAssetFile(childAssetPath, outDir)
+                copyAssetFile(childAssetPath, File(outDir, entry))
             } else {
+                val childOut = File(outDir, entry)
                 childOut.mkdirs()
                 copyAssetDir(childAssetPath, childOut)
             }
         }
     }
 
-    private fun copyAssetFile(assetPath: String, outDir: File) {
-        val name = assetPath.substringAfterLast("/")
-        val outFile = File(outDir, name)
+    private fun copyAssetFile(assetPath: String, outFile: File) {
+        outFile.parentFile?.mkdirs()
         context.assets.open(assetPath).use { input ->
             outFile.outputStream().use { output ->
                 input.copyTo(output)

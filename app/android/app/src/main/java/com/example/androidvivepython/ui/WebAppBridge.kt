@@ -1,6 +1,7 @@
 package jp.espresso3389.kugutz.ui
 
 import android.app.Activity
+import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -74,5 +75,32 @@ class WebAppBridge(private val activity: Activity) {
                 Log.e("WebAppBridge", "OAuth start failed", ex)
             }
         }.start()
+    }
+
+    @JavascriptInterface
+    fun showPythonServiceDialog() {
+        handler.post {
+            if (activity is MainActivity) {
+                activity.showStatusDialog()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun restartPythonService() {
+        handler.post {
+            val intent = Intent(activity, jp.espresso3389.kugutz.service.AgentService::class.java)
+            intent.action = jp.espresso3389.kugutz.service.AgentService.ACTION_RESTART_PYTHON
+            activity.startForegroundService(intent)
+        }
+    }
+
+    @JavascriptInterface
+    fun stopPythonService() {
+        handler.post {
+            val intent = Intent(activity, jp.espresso3389.kugutz.service.AgentService::class.java)
+            intent.action = jp.espresso3389.kugutz.service.AgentService.ACTION_STOP_PYTHON
+            activity.startForegroundService(intent)
+        }
     }
 }
