@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Android Vive Python</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f1ea;
+      --panel: #fffaf0;
+      --ink: #2c2b28;
+      --accent: #d24b2a;
+      --muted: #7a7369;
+      --border: #e4dccb;
+      font-family: "Georgia", "Times New Roman", serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+    }
+    header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(90deg, #f7efe1, #f2e6d1);
+    }
+    .wrap {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+      padding: 16px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 12px;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.05);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 12px;
+    }
+    .row-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: 0.2px;
+    }
+    .muted { color: var(--muted); }
+    .btn {
+      background: var(--accent);
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn.secondary {
+      background: #8a867d;
+    }
+    textarea {
+      width: 100%;
+      min-height: 90px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      font-family: inherit;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+    }
+    ul {
+      margin: 8px 0 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    li {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      background: #efe6d3;
+      color: var(--muted);
+      margin-left: 8px;
+    }
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    @media (max-width: 820px) {
+      .row, .row-3 { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Android Vive Python</h1>
+    <div class="muted">Local agent UI shell (WebView)</div>
+  </header>
+  <div class="wrap">
+    <div class="panel">
+      <strong>Status</strong>
+      <div class="muted" id="status">Booting local service...</div>
+      <div class="muted" id="session">Session: (none)</div>
+    </div>
+
+    <div class="row">
+      <div class="panel">
+        <strong>Chat</strong>
+        <ul id="chatHistory"></ul>
+        <textarea id="chatInput" placeholder="Ask the agent..."></textarea>
+        <div class="row-actions">
+          <button class="btn" id="sendBtn">Send</button>
+          <button class="btn secondary" id="toolBtn">Invoke Tool (filesystem)</button>
+        </div>
+        <div class="row-actions">
+          <input id="fsPath" type="text" placeholder="Path (relative)" style="flex:1; min-width: 140px;" />
+          <button class="btn secondary" id="fsList">List Path</button>
+        </div>
+        <div class="row-actions">
+          <select id="permScope">
+            <option value="once">One-time</option>
+            <option value="session">Session (minutes)</option>
+          </select>
+          <input id="permDuration" type="number" min="1" placeholder="30" style="width: 80px;" />
+        </div>
+      </div>
+      <div class="panel">
+        <strong>Logs</strong>
+        <pre id="logStream">(no logs yet)</pre>
+      </div>
+    </div>
+
+    <div class="row-3">
+      <div class="panel">
+        <strong>Permissions</strong>
+        <div class="muted">Pending requests</div>
+        <ul id="permList"></ul>
+      </div>
+      <div class="panel">
+        <strong>Shell</strong>
+        <div class="muted">Allowlisted commands: ls, pwd, whoami</div>
+        <div class="row-actions">
+          <select id="shellCmd">
+            <option value="ls">ls</option>
+            <option value="pwd">pwd</option>
+            <option value="whoami">whoami</option>
+          </select>
+          <button class="btn secondary" id="shellRun">Run</button>
+        </div>
+        <pre id="shellOut">(no output yet)</pre>
+      </div>
+      <div class="panel">
+        <strong>Audit</strong>
+        <div class="muted">Recent events</div>
+        <ul id="auditList"></ul>
+      </div>
+      <div class="panel">
+        <strong>Notifications</strong>
+        <div class="muted">Native notification channel placeholder</div>
+      </div>
+      <div class="panel">
+        <strong>Webhooks</strong>
+        <div class="muted">Slack/Discord</div>
+        <div class="row-actions">
+          <select id="hookProvider">
+            <option value="slack">Slack</option>
+            <option value="discord">Discord</option>
+          </select>
+          <input id="hookUrl" type="text" placeholder="Webhook URL" style="flex:1; min-width: 140px;" />
+        </div>
+        <div class="row-actions">
+          <button class="btn" id="hookSave">Save</button>
+          <button class="btn secondary" id="hookTest">Test</button>
+        </div>
+      </div>
+      <div class="panel">
+        <strong>OAuth</strong>
+        <div class="muted">In-App Browser (Custom Tabs)</div>
+        <div class="row-actions">
+          <select id="oauthProvider">
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="kimi">Kimi</option>
+          </select>
+          <button class="btn" id="oauthConnect">Connect</button>
+          <button class="btn secondary" id="oauthStatus">Status</button>
+        </div>
+        <div class="row-actions">
+          <input id="oauthClientId" type="text" placeholder="Client ID" style="flex:1; min-width: 140px;" />
+          <input id="oauthClientSecret" type="password" placeholder="Client Secret (optional)" style="flex:1; min-width: 140px;" />
+        </div>
+        <div class="row-actions">
+          <input id="oauthAuthUrl" type="text" placeholder="Auth URL" style="flex:1; min-width: 140px;" />
+          <input id="oauthTokenUrl" type="text" placeholder="Token URL" style="flex:1; min-width: 140px;" />
+        </div>
+        <div class="row-actions">
+          <input id="oauthRedirect" type="text" placeholder="Redirect URI" value="androidvivepython://oauth" style="flex:1; min-width: 140px;" />
+          <input id="oauthScope" type="text" placeholder="Scope" style="flex:1; min-width: 140px;" />
+        </div>
+        <div class="row-actions">
+          <button class="btn" id="oauthSave">Save Config</button>
+        </div>
+        <div class="muted" id="oauthStatusText">Status: unknown</div>
+      </div>
+      <div class="panel">
+        <strong>API Keys</strong>
+        <div class="muted">Stored locally (SQLCipher if available)</div>
+        <div class="row-actions">
+          <select id="keyProvider">
+            <option value="openai">OpenAI</option>
+            <option value="claude">Claude</option>
+            <option value="kimi">Kimi</option>
+          </select>
+          <input id="keyValue" type="password" placeholder="API Key" style="flex:1; min-width: 140px;" />
+        </div>
+        <div class="row-actions">
+          <button class="btn" id="keySave">Save</button>
+          <button class="btn secondary" id="keyStatus">Status</button>
+          <button class="btn secondary" id="keyDelete">Delete</button>
+        </div>
+        <div class="muted" id="keyStatusText">Status: unknown</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const sessionEl = document.getElementById("session");
+    const logStream = document.getElementById("logStream");
+    const chatHistory = document.getElementById("chatHistory");
+    const chatInput = document.getElementById("chatInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const toolBtn = document.getElementById("toolBtn");
+    const permList = document.getElementById("permList");
+    const auditList = document.getElementById("auditList");
+    const fsPath = document.getElementById("fsPath");
+    const fsList = document.getElementById("fsList");
+    const permScope = document.getElementById("permScope");
+    const permDuration = document.getElementById("permDuration");
+    const shellCmd = document.getElementById("shellCmd");
+    const shellRun = document.getElementById("shellRun");
+    const shellOut = document.getElementById("shellOut");
+    const hookProvider = document.getElementById("hookProvider");
+    const hookUrl = document.getElementById("hookUrl");
+    const hookSave = document.getElementById("hookSave");
+    const hookTest = document.getElementById("hookTest");
+    const oauthProvider = document.getElementById("oauthProvider");
+    const oauthConnect = document.getElementById("oauthConnect");
+    const oauthStatus = document.getElementById("oauthStatus");
+    const oauthSave = document.getElementById("oauthSave");
+    const oauthClientId = document.getElementById("oauthClientId");
+    const oauthClientSecret = document.getElementById("oauthClientSecret");
+    const oauthAuthUrl = document.getElementById("oauthAuthUrl");
+    const oauthTokenUrl = document.getElementById("oauthTokenUrl");
+    const oauthRedirect = document.getElementById("oauthRedirect");
+    const oauthScope = document.getElementById("oauthScope");
+    const oauthStatusText = document.getElementById("oauthStatusText");
+    const keyProvider = document.getElementById("keyProvider");
+    const keyValue = document.getElementById("keyValue");
+    const keySave = document.getElementById("keySave");
+    const keyStatus = document.getElementById("keyStatus");
+    const keyDelete = document.getElementById("keyDelete");
+    const keyStatusText = document.getElementById("keyStatusText");
+    const oauthPresets = {
+      openai: { auth_url: "", token_url: "", scope: "" },
+      claude: { auth_url: "", token_url: "", scope: "" },
+      kimi: { auth_url: "", token_url: "", scope: "" }
+    };
+
+    let sessionId = null;
+
+    function appendLog(line) {
+      if (logStream.textContent === "(no logs yet)") logStream.textContent = "";
+      logStream.textContent += line + "\n";
+    }
+
+    function appendChat(role, content) {
+      const li = document.createElement("li");
+      li.textContent = `${role}: ${content}`;
+      chatHistory.appendChild(li);
+    }
+
+    async function ping() {
+      try {
+        const res = await fetch("http://127.0.0.1:8765/health");
+        statusEl.textContent = res.ok ? "Local service online" : "Local service error";
+      } catch (err) {
+        statusEl.textContent = "Waiting for local service...";
+      }
+    }
+
+    async function ensureSession() {
+      if (sessionId) return;
+      try {
+        const res = await fetch("http://127.0.0.1:8765/sessions", { method: "POST" });
+        const data = await res.json();
+        sessionId = data.id;
+        sessionEl.textContent = `Session: ${sessionId}`;
+      } catch (err) {
+        sessionEl.textContent = "Session: (failed)";
+      }
+    }
+
+    async function sendMessage() {
+      const content = chatInput.value.trim();
+      if (!content || !sessionId) return;
+      appendChat("user", content);
+      chatInput.value = "";
+      await fetch(`http://127.0.0.1:8765/sessions/${sessionId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role: "user", content })
+      });
+    }
+
+    async function invokeTool(args = {}, requestId = null, toolName = "filesystem", detail = "List files") {
+      const res = await fetch(`http://127.0.0.1:8765/tools/${toolName}/invoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ detail, args, request_id: requestId })
+      });
+      if (res.status === 403) {
+        const data = await res.json();
+        appendLog(`[permission] required: ${data.request.id}`);
+        await refreshPermissions();
+        return;
+      }
+      const data = await res.json();
+      appendLog(`[${toolName}] ${JSON.stringify(data)}`);
+      return data;
+    }
+
+    function nativeConsentAvailable() {
+      return typeof AndroidBridge !== "undefined" && AndroidBridge.requestNativeConsent;
+    }
+
+    async function refreshPermissions() {
+      const res = await fetch("http://127.0.0.1:8765/permissions/pending");
+      const data = await res.json();
+      permList.innerHTML = "";
+      if (!data.pending.length) {
+        const li = document.createElement("li");
+        li.textContent = "(none)";
+        permList.appendChild(li);
+        return;
+      }
+      data.pending.forEach(p => {
+        const li = document.createElement("li");
+        li.innerHTML = `${p.tool} <span class="pill">${p.id}</span>`;
+        const actions = document.createElement("div");
+        actions.className = "row-actions";
+        const approve = document.createElement("button");
+        approve.className = "btn";
+        approve.textContent = "Approve";
+        approve.onclick = async () => {
+          await fetch(`http://127.0.0.1:8765/permissions/${p.id}/approve`, { method: "POST" });
+          appendLog(`[permission] approved: ${p.id}`);
+          await refreshPermissions();
+          if (p.tool === "filesystem") {
+            await invokeTool({ action: "list", path: fsPath.value.trim() || "." }, p.id, "filesystem");
+          } else if (p.tool === "shell") {
+            const result = await invokeTool({ cmd: [shellCmd.value] }, p.id, "shell", "Run shell command");
+            if (result && result.stdout !== undefined) {
+              shellOut.textContent = result.stdout || result.stderr || "(no output)";
+            }
+          }
+        };
+        const deny = document.createElement("button");
+        deny.className = "btn secondary";
+        deny.textContent = "Deny";
+        deny.onclick = async () => {
+          await fetch(`http://127.0.0.1:8765/permissions/${p.id}/deny`, { method: "POST" });
+          appendLog(`[permission] denied: ${p.id}`);
+          await refreshPermissions();
+        };
+        actions.appendChild(approve);
+        actions.appendChild(deny);
+
+        if (nativeConsentAvailable()) {
+          const nativeBtn = document.createElement("button");
+          nativeBtn.className = "btn";
+          nativeBtn.textContent = "Native Consent";
+          nativeBtn.onclick = () => {
+            AndroidBridge.requestNativeConsent(p.id, p.tool, p.detail || "");
+          };
+          actions.appendChild(nativeBtn);
+        }
+
+        li.appendChild(actions);
+        permList.appendChild(li);
+      });
+    }
+
+    async function refreshAudit() {
+      const res = await fetch("http://127.0.0.1:8765/audit/recent?limit=20");
+      const data = await res.json();
+      auditList.innerHTML = "";
+      if (!data.events.length) {
+        const li = document.createElement("li");
+        li.textContent = "(none)";
+        auditList.appendChild(li);
+        return;
+      }
+      data.events.forEach(ev => {
+        const li = document.createElement("li");
+        li.textContent = `${ev.event} @ ${new Date(ev.created_at).toLocaleTimeString()}`;
+        auditList.appendChild(li);
+      });
+    }
+
+    function startLogStream() {
+      try {
+        const es = new EventSource("http://127.0.0.1:8765/logs/stream");
+        es.onmessage = (event) => {
+          const payload = JSON.parse(event.data);
+          appendLog(`[log] ${payload.event}`);
+        };
+      } catch (err) {
+        appendLog("[log] stream unavailable");
+      }
+    }
+
+    sendBtn.addEventListener("click", sendMessage);
+    toolBtn.addEventListener("click", async () => {
+      const scope = permScope.value;
+      const durationMin = permScope.value === "session" ? parseInt(permDuration.value || "30", 10) : 0;
+      const res = await fetch("http://127.0.0.1:8765/permissions/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool: "filesystem", detail: "List files", scope, duration_min: durationMin })
+      });
+      const req = await res.json();
+      appendLog(`[permission] requested: ${req.id}`);
+      await refreshPermissions();
+    });
+    fsList.addEventListener("click", async () => {
+      const scope = permScope.value;
+      const durationMin = permScope.value === "session" ? parseInt(permDuration.value || "30", 10) : 0;
+      const res = await fetch("http://127.0.0.1:8765/permissions/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool: "filesystem", detail: "List path", scope, duration_min: durationMin })
+      });
+      const req = await res.json();
+      appendLog(`[permission] requested: ${req.id}`);
+      await refreshPermissions();
+    });
+    shellRun.addEventListener("click", async () => {
+      const scope = permScope.value;
+      const durationMin = permScope.value === "session" ? parseInt(permDuration.value || "30", 10) : 0;
+      const res = await fetch("http://127.0.0.1:8765/permissions/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tool: "shell", detail: `Run ${shellCmd.value}`, scope, duration_min: durationMin })
+      });
+      const req = await res.json();
+      appendLog(`[permission] requested: ${req.id}`);
+      await refreshPermissions();
+    });
+    hookSave.addEventListener("click", async () => {
+      const provider = hookProvider.value;
+      const url = hookUrl.value.trim();
+      await fetch("http://127.0.0.1:8765/webhooks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, url, enabled: true })
+      });
+      appendLog(`[webhook] saved: ${provider}`);
+    });
+    hookTest.addEventListener("click", async () => {
+      const provider = hookProvider.value;
+      await fetch("http://127.0.0.1:8765/webhooks/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider, message: "Test from Android Vive Python" })
+      });
+      appendLog(`[webhook] test sent: ${provider}`);
+    });
+    oauthProvider.addEventListener("change", () => {
+      const preset = oauthPresets[oauthProvider.value];
+      oauthAuthUrl.value = preset.auth_url;
+      oauthTokenUrl.value = preset.token_url;
+      oauthScope.value = preset.scope;
+      oauthRedirect.value = "androidvivepython://oauth";
+    });
+    oauthSave.addEventListener("click", async () => {
+      const provider = oauthProvider.value;
+      await fetch(`http://127.0.0.1:8765/auth/${provider}/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: oauthClientId.value.trim(),
+          client_secret: oauthClientSecret.value.trim(),
+          auth_url: oauthAuthUrl.value.trim(),
+          token_url: oauthTokenUrl.value.trim(),
+          redirect_uri: oauthRedirect.value.trim(),
+          scope: oauthScope.value.trim()
+        })
+      });
+      appendLog(`[oauth] config saved: ${provider}`);
+    });
+    oauthConnect.addEventListener("click", () => {
+      const provider = oauthProvider.value;
+      if (typeof AndroidBridge !== "undefined" && AndroidBridge.startOAuth) {
+        AndroidBridge.startOAuth(provider);
+      } else {
+        appendLog("[oauth] native bridge unavailable");
+      }
+    });
+    oauthStatus.addEventListener("click", async () => {
+      const provider = oauthProvider.value;
+      const res = await fetch(`http://127.0.0.1:8765/auth/${provider}/status`);
+      const data = await res.json();
+      oauthStatusText.textContent = `Status: ${data.connected ? "connected" : "not connected"}`;
+    });
+    keySave.addEventListener("click", async () => {
+      const provider = keyProvider.value;
+      await fetch(`http://127.0.0.1:8765/keys/${provider}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ api_key: keyValue.value.trim() })
+      });
+      appendLog(`[keys] saved: ${provider}`);
+    });
+    keyStatus.addEventListener("click", async () => {
+      const provider = keyProvider.value;
+      const res = await fetch(`http://127.0.0.1:8765/keys/${provider}/status`);
+      const data = await res.json();
+      keyStatusText.textContent = `Status: ${data.configured ? "configured" : "not configured"}`;
+    });
+    keyDelete.addEventListener("click", async () => {
+      const provider = keyProvider.value;
+      await fetch(`http://127.0.0.1:8765/keys/${provider}`, { method: "DELETE" });
+      keyStatusText.textContent = "Status: not configured";
+      appendLog(`[keys] deleted: ${provider}`);
+    });
+
+    setInterval(ping, 2000);
+    setInterval(refreshPermissions, 3000);
+    setInterval(refreshAudit, 4000);
+    ping();
+    ensureSession();
+    refreshPermissions();
+    refreshAudit();
+    startLogStream();
+  </script>
+</body>
+</html>
