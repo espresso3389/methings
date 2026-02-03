@@ -1,4 +1,4 @@
-package com.example.androidvivepython.perm
+package jp.espresso3389.kugutz.perm
 
 import android.app.AlertDialog
 import android.content.Context

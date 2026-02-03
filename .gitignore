@@ -1,1 +1,5 @@
 .gradle/
+*.so
+*.zip
+*.pyc
+pyenv/

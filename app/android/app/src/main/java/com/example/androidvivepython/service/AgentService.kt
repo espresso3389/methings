@@ -1,4 +1,4 @@
-package com.example.androidvivepython.service
+package jp.espresso3389.kugutz.service
 
 import android.app.Notification
 import android.app.NotificationChannel

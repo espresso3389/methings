@@ -223,7 +223,7 @@ async def auth_start(provider: str, payload: Dict = None):
     state = secrets.token_urlsafe(16)
     storage.save_oauth_state(state, provider, pkce["verifier"])
 
-    redirect_uri = config.get("redirect_uri") or "androidvivepython://oauth"
+    redirect_uri = config.get("redirect_uri") or "kugutz://oauth"
     scope = config.get("scope") or ""
     params = {
         "response_type": "code",
@@ -248,7 +248,7 @@ async def _auth_exchange(provider: str, code: str, state: str):
     if not config or not config.get("token_url"):
         raise HTTPException(status_code=400, detail="oauth_not_configured")
 
-    redirect_uri = config.get("redirect_uri") or "androidvivepython://oauth"
+    redirect_uri = config.get("redirect_uri") or "kugutz://oauth"
     data = {
         "grant_type": "authorization_code",
         "client_id": config.get("client_id", ""),

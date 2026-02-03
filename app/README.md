@@ -3,7 +3,7 @@
 This is a minimal native wrapper that hosts a WebView UI and a foreground service.
 
 ## Notes
-- Package name: com.example.androidvivepython (change as needed)
+- Package name: jp.espresso3389.kugutz (change as needed)
 - WebView loads `file:///android_asset/www/index.html`
 - Foreground service bootstraps Python-for-Android and starts local HTTP service
 - Server assets are bundled under `app/src/main/assets/server`

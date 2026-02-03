@@ -25,6 +25,17 @@ export ASSETS_PATH=/path/to/repo/app/android/app/src/main/assets/pyenv
 ./scripts/build_p4a.sh
 ```
 
+## Tooling Note
+- The build script uses uv/venv for Python tooling (no system pip).
+## SQLCipher Note
+- The script attempts to include `pysqlcipher3` by default.
+- If SQLCipher headers are unavailable, it retries without `pysqlcipher3` and the app will fall back to standard sqlite.
+- SQLCipher builds use custom p4a recipes in `scripts/recipes/`.
+
+## Output Note
+- The build copies the Python **bundle** (stdlib.zip + modules) to `assets/pyenv`.
+- This is not a standalone `bin/python`. The Android runtime integration will need to load the bundle via a Python service, not spawn a system process.
+
 ## Windows Note
 Python-for-Android is typically used on Linux. For Windows, use WSL or a Linux CI runner.
 

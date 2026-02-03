@@ -1,4 +1,4 @@
-package com.example.androidvivepython.ui
+package jp.espresso3389.kugutz.ui
 
 import android.content.Intent
 import android.os.Bundle
@@ -6,8 +6,8 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
-import com.example.androidvivepython.service.AgentService
-import com.example.androidvivepython.ui.WebAppBridge
+import jp.espresso3389.kugutz.service.AgentService
+import jp.espresso3389.kugutz.ui.WebAppBridge
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView

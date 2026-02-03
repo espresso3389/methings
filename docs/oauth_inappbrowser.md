@@ -7,7 +7,7 @@ Enable provider OAuth flows (OpenAI/Claude/Kimi if needed) using Android In-App 
 1) Web UI or Python service requests auth:
    - POST /auth/{provider}/start
 2) Android layer opens Custom Tab with provider OAuth URL.
-3) Provider redirects to a custom scheme (e.g., androidvivepython://oauth) or app link.
+3) Provider redirects to a custom scheme (e.g., kugutz://oauth) or app link.
 4) Android captures the callback, extracts code/state.
 5) Android posts result to local Python service:
    - POST /auth/{provider}/callback { code, state } or POST /auth/callback { code, state }

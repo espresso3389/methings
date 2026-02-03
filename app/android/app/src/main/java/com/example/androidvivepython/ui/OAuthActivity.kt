@@ -1,4 +1,4 @@
-package com.example.androidvivepython.ui
+package jp.espresso3389.kugutz.ui
 
 import android.app.Activity
 import android.os.Bundle

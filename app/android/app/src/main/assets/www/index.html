@@ -211,7 +211,7 @@
           <input id="oauthTokenUrl" type="text" placeholder="Token URL" style="flex:1; min-width: 140px;" />
         </div>
         <div class="row-actions">
-          <input id="oauthRedirect" type="text" placeholder="Redirect URI" value="androidvivepython://oauth" style="flex:1; min-width: 140px;" />
+          <input id="oauthRedirect" type="text" placeholder="Redirect URI" value="kugutz://oauth" style="flex:1; min-width: 140px;" />
           <input id="oauthScope" type="text" placeholder="Scope" style="flex:1; min-width: 140px;" />
         </div>
         <div class="row-actions">
@@ -498,7 +498,7 @@
       oauthAuthUrl.value = preset.auth_url;
       oauthTokenUrl.value = preset.token_url;
       oauthScope.value = preset.scope;
-      oauthRedirect.value = "androidvivepython://oauth";
+      oauthRedirect.value = "kugutz://oauth";
     });
     oauthSave.addEventListener("click", async () => {
       const provider = oauthProvider.value;

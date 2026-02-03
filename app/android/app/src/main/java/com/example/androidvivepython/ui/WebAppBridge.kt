@@ -1,4 +1,4 @@
-package com.example.androidvivepython.ui
+package jp.espresso3389.kugutz.ui
 
 import android.app.Activity
 import android.net.Uri
@@ -7,7 +7,7 @@ import android.os.Looper
 import android.util.Log
 import android.webkit.JavascriptInterface
 import androidx.browser.customtabs.CustomTabsIntent
-import com.example.androidvivepython.perm.PermissionBroker
+import jp.espresso3389.kugutz.perm.PermissionBroker
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection

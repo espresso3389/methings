@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.example.androidvivepython"
+    namespace = "jp.espresso3389.kugutz"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.androidvivepython"
+        applicationId = "jp.espresso3389.kugutz"
         minSdk = 26
         targetSdk = 34
         versionCode = 1
