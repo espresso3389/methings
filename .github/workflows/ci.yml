@@ -51,6 +51,7 @@ jobs:
           NDK_DIR: ${{ env.ANDROID_SDK_ROOT }}/ndk/29.0.14206865
           ARCH: arm64-v8a
           DIST_NAME: androidvivepython_ci
+          ANDROID_API: 34
         run: |
           ./scripts/build_p4a.sh
       - name: Upload Python bundle

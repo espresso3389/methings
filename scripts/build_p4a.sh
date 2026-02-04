@@ -10,6 +10,7 @@ WORK_DIR=${WORK_DIR:-"/tmp/p4a_build_out"}
 DIST_NAME=${DIST_NAME:-"kugutz"}
 REQUIREMENTS=${REQUIREMENTS:-"python3,fastapi==0.99.1,starlette==0.27.0,pydantic==1.10.13,typing-extensions,anyio==3.7.1,sniffio,uvicorn==0.23.2,click,h11,requests,charset-normalizer,idna,urllib3,certifi,sqlcipher,pysqlcipher3"}
 TCLSH_CMD=${TCLSH_CMD:-""}
+ANDROID_API=${ANDROID_API:-"34"}
 
 if [[ -z "$SDK_DIR" || -z "$NDK_DIR" ]]; then
   echo "SDK_DIR and NDK_DIR must be set." >&2
@@ -52,6 +53,7 @@ run_p4a() {
   p4a create \
   --requirements="$1" \
   --arch="$ARCH" \
+  --android-api="$ANDROID_API" \
   --local-recipes "$(pwd)/scripts/recipes" \
   --sdk-dir="$SDK_DIR" \
   --ndk-dir="$NDK_DIR" \

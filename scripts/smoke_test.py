@@ -1,7 +1,9 @@
 """Simple localhost smoke test for the Python service."""
 
 import json
+import time
 import urllib.request
+from urllib.error import URLError
 
 BASE = "http://127.0.0.1:8765"
 
@@ -24,7 +26,15 @@ def _get(path):
 
 
 def main():
-    print(_get("/health"))
+    deadline = time.time() + 15
+    while True:
+        try:
+            print(_get("/health"))
+            break
+        except URLError:
+            if time.time() > deadline:
+                raise
+            time.sleep(0.5)
     perm = _post("/permissions/request", {"tool": "filesystem", "detail": "list", "scope": "once"})
     print("permission", perm)
     _post(f"/permissions/{perm['id']}/approve", {})
