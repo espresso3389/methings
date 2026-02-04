@@ -334,6 +334,68 @@ pty_owner_text = pty_owner_text.replace(
     "dropbear_log(LOG_WARNING, \"chmod(%.100s, 0%o) failed: %.100s\",",
 )
 pty_owner_path.write_text(pty_owner_text)
+
+exec_path = Path("src/svr-chansession.c")
+exec_text = exec_path.read_text()
+exec_old = """\tusershell = m_strdup(get_user_shell());
+\trun_shell_command(chansess->cmd, ses.maxfd, usershell);
+"""
+exec_new = """#if defined(__ANDROID__)
+\tif (chansess->cmd == NULL && chansess->term == NULL) {
+\t\tconst char *prompt = "kugutz> ";
+\t\tchar linebuf[1024];
+\t\twhile (1) {
+\t\t\tsize_t pos = 0;
+\t\t\t(void)write(1, prompt, strlen(prompt));
+\t\t\twhile (1) {
+\t\t\t\tchar ch;
+\t\t\t\tssize_t r = read(0, &ch, 1);
+\t\t\t\tif (r <= 0) {
+\t\t\t\t\treturn;
+\t\t\t\t}
+\t\t\t\tif (ch == '\\r') {
+\t\t\t\t\tcontinue;
+\t\t\t\t}
+\t\t\t\tif (ch == '\\n') {
+\t\t\t\t\tbreak;
+\t\t\t\t}
+\t\t\t\tif (pos + 1 < sizeof(linebuf)) {
+\t\t\t\t\tlinebuf[pos++] = ch;
+\t\t\t\t}
+\t\t\t}
+\t\t\tlinebuf[pos] = '\\0';
+\t\t\tif (pos == 0) {
+\t\t\t\tcontinue;
+\t\t\t}
+\t\t\tif (strcmp(linebuf, "exit") == 0 || strcmp(linebuf, "logout") == 0) {
+\t\t\t\treturn;
+\t\t\t}
+\t\t\tif (strncmp(linebuf, "cd ", 3) == 0) {
+\t\t\t\tif (chdir(linebuf + 3) < 0) {
+\t\t\t\t\tdprintf(2, "cd: %s\\n", strerror(errno));
+\t\t\t\t}
+\t\t\t\tcontinue;
+\t\t\t}
+\t\t\tpid_t pid = fork();
+\t\t\tif (pid == 0) {
+\t\t\t\texecl("/system/bin/sh", "sh", "-c", linebuf, (char *)NULL);
+\t\t\t\t_exit(127);
+\t\t\t} else if (pid > 0) {
+\t\t\t\tint status = 0;
+\t\t\t\t(void)waitpid(pid, &status, 0);
+\t\t\t} else {
+\t\t\t\tdprintf(2, "fork failed: %s\\n", strerror(errno));
+\t\t\t}
+\t\t}
+\t}
+#endif
+\tusershell = m_strdup(get_user_shell());
+\trun_shell_command(chansess->cmd, ses.maxfd, usershell);
+"""
+if exec_old not in exec_text:
+    raise SystemExit("Failed to locate execchild shell command block")
+exec_text = exec_text.replace(exec_old, exec_new)
+exec_path.write_text(exec_text)
 PY
 
   export CC="$TOOLCHAIN/bin/${triple}${API_LEVEL}-clang"
