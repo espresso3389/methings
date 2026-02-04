@@ -58,7 +58,8 @@ android {
 }
 
 val syncServerAssets by tasks.registering(Copy::class) {
-    val srcDir = rootProject.projectDir.resolve("server")
+    val repoRoot = rootProject.projectDir.parentFile.parentFile
+    val srcDir = repoRoot.resolve("server")
     val dstDir = projectDir.resolve("src/main/assets/server")
     from(srcDir)
     into(dstDir)

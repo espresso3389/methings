@@ -49,6 +49,8 @@ _PROGRAMS: Dict[str, Dict] = {}
 _PROGRAM_LOCK = threading.Lock()
 _UI_VERSION = 0
 _SSH_PORT = None
+_SSH_LAST_ERROR = None
+_SSH_LAST_ERROR_TS = None
 
 
 def _now_ms() -> int:
@@ -464,13 +466,19 @@ def _write_authorized_keys():
     lines = [row["key"] for row in keys]
     content = "\n".join(lines) + ("\n" if lines else "")
     key_path = _ssh_key_path()
+    try:
+        key_path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
     key_path.write_text(content, encoding="utf-8")
     try:
         os.chmod(ssh_dir, 0o700)
+        os.chmod(key_path.parent, 0o700)
         os.chmod(key_path, 0o600)
     except Exception:
         pass
-    ssh_subdir = ssh_home_dir / ".ssh"
+    # Backward-compatible copy under the legacy ssh dir.
+    ssh_subdir = ssh_dir / ".ssh"
     try:
         ssh_subdir.mkdir(parents=True, exist_ok=True)
         os.chmod(ssh_subdir, 0o700)
@@ -507,24 +515,31 @@ def _dropbear_running() -> bool:
     except Exception:
         return False
 
+
+def _record_ssh_error(error: str | None) -> None:
+    global _SSH_LAST_ERROR, _SSH_LAST_ERROR_TS
+    _SSH_LAST_ERROR = error
+    _SSH_LAST_ERROR_TS = _now_ms() if error else None
+
 def _start_dropbear(port: int, log_event: bool = True) -> Dict:
-    bin_path = _ssh_bin()
-    if not bin_path.exists():
-        raise HTTPException(status_code=500, detail="dropbear_missing")
-    if _dropbear_running():
-        return {"status": "already_running"}
-    global _SSH_PORT
-    _SSH_PORT = port
-    _write_authorized_keys()
-    _ensure_host_keys()
-    host_keys = _ssh_host_key_paths()
-    pid_path = _ssh_pid_path()
-    env = dict(os.environ)
-    ssh_work_dir = ssh_home_dir
-    env["HOME"] = str(ssh_home_dir)
-    env["PWD"] = str(ssh_work_dir)
-    log_path = ssh_dir / "dropbear.log"
     try:
+        bin_path = _ssh_bin()
+        if not bin_path.exists():
+            raise RuntimeError("dropbear_missing")
+        if _dropbear_running():
+            return {"status": "already_running"}
+        global _SSH_PORT
+        _SSH_PORT = port
+        _write_authorized_keys()
+        _ensure_host_keys()
+        host_keys = _ssh_host_key_paths()
+        pid_path = _ssh_pid_path()
+        env = dict(os.environ)
+        ssh_work_dir = ssh_home_dir
+        env["HOME"] = str(ssh_home_dir)
+        env["PWD"] = str(ssh_work_dir)
+        log_path = ssh_dir / "dropbear.log"
+
         log_fh = open(log_path, "a", encoding="utf-8")
         args = [
             str(bin_path),
@@ -557,11 +572,16 @@ def _start_dropbear(port: int, log_event: bool = True) -> Dict:
             stdout=log_fh,
             stderr=log_fh,
         )
+        time.sleep(0.2)
+        if proc.poll() is not None:
+            raise RuntimeError(f"dropbear_exited:{proc.returncode}")
     except Exception as ex:
+        _record_ssh_error(str(ex))
         _emit_log("ssh_start_failed", {"error": str(ex)})
         raise HTTPException(status_code=500, detail=f"ssh_start_failed: {ex}")
     if log_event:
         asyncio.create_task(_log("ssh_started", {"port": port, "pid": proc.pid}))
+    _record_ssh_error(None)
     return {"status": "started", "port": port, "pid": proc.pid}
 
 def _stop_dropbear(log_event: bool = True) -> Dict:
@@ -578,6 +598,7 @@ def _stop_dropbear(log_event: bool = True) -> Dict:
         pass
     if log_event:
         asyncio.create_task(_log("ssh_stopped", {"pid": pid}))
+    _record_ssh_error(None)
     return {"status": "stopping"}
 
 
@@ -644,6 +665,8 @@ async def ssh_status():
         "port": port,
         "enabled": _get_setting_bool("ssh_enabled", True),
         "username": _ssh_username(),
+        "last_error": _SSH_LAST_ERROR,
+        "last_error_ts": _SSH_LAST_ERROR_TS,
     }
 
 
