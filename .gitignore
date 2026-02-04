@@ -6,6 +6,7 @@ pyenv/
 .cxx/
 app/android/app/build/
 app/android/app/src/main/assets/bin/
+app/android/app/src/main/assets/server/
 .dropbear-build/
 gradle-cli.jar
 gradle-wrapper-shared.jar

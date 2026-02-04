@@ -43,6 +43,7 @@ content_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/ui", StaticFiles(directory=content_dir, html=True), name="ui")
 ssh_dir = data_dir / "ssh"
 ssh_dir.mkdir(parents=True, exist_ok=True)
+ssh_home_dir = data_dir
 
 _PROGRAMS: Dict[str, Dict] = {}
 _PROGRAM_LOCK = threading.Lock()
@@ -395,7 +396,7 @@ def _ssh_keygen_bin() -> Path:
 
 
 def _ssh_key_path() -> Path:
-    return ssh_dir / "authorized_keys"
+    return ssh_home_dir / ".ssh" / "authorized_keys"
 
 
 def _ssh_pid_path() -> Path:
@@ -469,7 +470,7 @@ def _write_authorized_keys():
         os.chmod(key_path, 0o600)
     except Exception:
         pass
-    ssh_subdir = ssh_dir / ".ssh"
+    ssh_subdir = ssh_home_dir / ".ssh"
     try:
         ssh_subdir.mkdir(parents=True, exist_ok=True)
         os.chmod(ssh_subdir, 0o700)
@@ -519,7 +520,9 @@ def _start_dropbear(port: int, log_event: bool = True) -> Dict:
     host_keys = _ssh_host_key_paths()
     pid_path = _ssh_pid_path()
     env = dict(os.environ)
-    env["HOME"] = str(ssh_dir)
+    ssh_work_dir = ssh_home_dir
+    env["HOME"] = str(ssh_home_dir)
+    env["PWD"] = str(ssh_work_dir)
     log_path = ssh_dir / "dropbear.log"
     try:
         log_fh = open(log_path, "a", encoding="utf-8")
@@ -549,7 +552,7 @@ def _start_dropbear(port: int, log_event: bool = True) -> Dict:
             args.extend(["-v", "-v", "-v"])
         proc = subprocess.Popen(
             args,
-            cwd=str(ssh_dir),
+            cwd=str(ssh_work_dir),
             env=env,
             stdout=log_fh,
             stderr=log_fh,

@@ -57,6 +57,20 @@ android {
     }
 }
 
+val syncServerAssets by tasks.registering(Copy::class) {
+    val srcDir = rootProject.projectDir.resolve("server")
+    val dstDir = projectDir.resolve("src/main/assets/server")
+    from(srcDir)
+    into(dstDir)
+    doFirst {
+        dstDir.deleteRecursively()
+    }
+}
+
+tasks.named("preBuild") {
+    dependsOn(syncServerAssets)
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
