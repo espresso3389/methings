@@ -439,7 +439,7 @@ index 94ae728..09ee3b4 100644
  
  /* Checks that a file is owned by the user or root, and isn't writable by
 diff --git a/src/svr-chansession.c b/src/svr-chansession.c
-index 11205f3..c7b8c6b 100644
+index 11205f3..a9fb50c 100644
 --- a/src/svr-chansession.c
 +++ b/src/svr-chansession.c
 @@ -597,6 +597,12 @@ static int sessionpty(struct ChanSess * chansess) {
@@ -500,7 +500,7 @@ index 11205f3..c7b8c6b 100644
 +				char ch;
 +				ssize_t r = read(0, &ch, 1);
 +				if (r <= 0) {
-+					return;
++					_exit(0);
 +				}
 +				if (ch == '\r') {
 +					(void)write(1, "\r\n", 2);
@@ -525,7 +525,7 @@ index 11205f3..c7b8c6b 100644
 +				continue;
 +			}
 +			if (strcmp(linebuf, "exit") == 0 || strcmp(linebuf, "logout") == 0) {
-+				return;
++				_exit(0);
 +			}
 +			if (strncmp(linebuf, "cd ", 3) == 0) {
 +				if (chdir(linebuf + 3) < 0) {
