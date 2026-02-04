@@ -1,6 +1,5 @@
 import sqlite3
 import os
-import base64
 from pathlib import Path
 from typing import Dict, List, Optional
 import time

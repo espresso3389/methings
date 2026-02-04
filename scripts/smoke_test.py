@@ -25,9 +25,6 @@ def _get(path):
 
 def main():
     print(_get("/health"))
-    session = _post("/sessions", {})
-    print("session", session)
-    _post(f"/sessions/{session['id']}/messages", {"role": "user", "content": "hello"})
     perm = _post("/permissions/request", {"tool": "filesystem", "detail": "list", "scope": "once"})
     print("permission", perm)
     _post(f"/permissions/{perm['id']}/approve", {})
