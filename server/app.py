@@ -17,7 +17,7 @@ import socket
 import hashlib
 import base64
 import getpass
-from typing import Dict
+from typing import Dict, Optional
 from pathlib import Path
 
 from storage.db import Storage
@@ -44,6 +44,7 @@ app.mount("/ui", StaticFiles(directory=content_dir, html=True), name="ui")
 ssh_dir = data_dir / "ssh"
 ssh_dir.mkdir(parents=True, exist_ok=True)
 ssh_home_dir = data_dir
+ssh_noauth_file = ssh_dir / "noauth_until"
 
 _PROGRAMS: Dict[str, Dict] = {}
 _PROGRAM_LOCK = threading.Lock()
@@ -413,6 +414,33 @@ def _ssh_host_key_paths() -> Dict[str, Path]:
     }
 
 
+def _allow_noauth(seconds: int = 10) -> Dict:
+    expires_at = int(time.time()) + max(1, seconds)
+    try:
+        ssh_noauth_file.write_text(str(expires_at), encoding="utf-8")
+        os.chmod(ssh_noauth_file, 0o600)
+    except Exception as ex:
+        raise HTTPException(status_code=500, detail=f"noauth_write_failed: {ex}")
+    return {"expires_at": expires_at}
+
+
+def _noauth_expires() -> Optional[int]:
+    try:
+        if not ssh_noauth_file.exists():
+            return None
+        raw = ssh_noauth_file.read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        expires = int(raw)
+        if expires <= 0:
+            return None
+        if time.time() > expires:
+            return None
+        return expires
+    except Exception:
+        return None
+
+
 def _ensure_host_keys() -> None:
     keygen = _ssh_keygen_bin()
     if not keygen.exists():
@@ -538,6 +566,7 @@ def _start_dropbear(port: int, log_event: bool = True) -> Dict:
         ssh_work_dir = ssh_home_dir
         env["HOME"] = str(ssh_home_dir)
         env["PWD"] = str(ssh_work_dir)
+        env["DROPBEAR_NOAUTH_FILE"] = str(ssh_noauth_file)
         log_path = ssh_dir / "dropbear.log"
 
         log_fh = open(log_path, "a", encoding="utf-8")
@@ -656,6 +685,26 @@ async def ssh_stop(payload: Dict):
     return _stop_dropbear()
 
 
+@app.post("/ssh/noauth/allow")
+async def ssh_noauth_allow(payload: Dict):
+    permission_id = payload.get("permission_id")
+    ui_consent = payload.get("ui_consent") is True
+    if not ui_consent:
+        _require_permission("ssh_noauth", permission_id)
+    seconds = payload.get("seconds")
+    try:
+        seconds = int(seconds) if seconds is not None else 10
+    except Exception:
+        seconds = 10
+    if seconds <= 0:
+        raise HTTPException(status_code=400, detail="invalid_seconds")
+    if not _dropbear_running():
+        _start_dropbear(_SSH_PORT if _SSH_PORT else _get_setting_int("ssh_port", 2222))
+    result = _allow_noauth(seconds)
+    await _log("ssh_noauth_allowed", {"expires_at": result["expires_at"], "seconds": seconds})
+    return {"status": "ok", **result}
+
+
 @app.get("/ssh/status")
 async def ssh_status():
     port = _SSH_PORT if _SSH_PORT else _get_setting_int("ssh_port", 2222)
@@ -665,6 +714,7 @@ async def ssh_status():
         "port": port,
         "enabled": _get_setting_bool("ssh_enabled", True),
         "username": _ssh_username(),
+        "noauth_until": _noauth_expires(),
         "last_error": _SSH_LAST_ERROR,
         "last_error_ts": _SSH_LAST_ERROR_TS,
     }

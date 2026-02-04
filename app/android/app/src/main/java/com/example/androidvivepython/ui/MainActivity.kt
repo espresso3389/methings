@@ -73,8 +73,22 @@ class MainActivity : AppCompatActivity() {
         webView.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
         webView.clearCache(true)
         webView.clearHistory()
-        webView.webChromeClient = WebChromeClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                android.util.Log.d(
+                    "KugutzWeb",
+                    "console: ${message.message()} @${message.lineNumber()} ${message.sourceId()}"
+                )
+                return true
+            }
+        }
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                super.onPageFinished(view, url)
+                android.util.Log.d("KugutzWeb", "page finished: $url")
+                view.evaluateJavascript("console.log('Kugutz page loaded: ' + location.href)", null)
+            }
+
             override fun onReceivedError(
                 view: WebView,
                 request: android.webkit.WebResourceRequest,
@@ -119,6 +133,7 @@ class MainActivity : AppCompatActivity() {
             "ok" -> {
                 statusBadge.text = "Python: OK • $rel"
                 statusBadge.setBackgroundColor(Color.parseColor("#2E7D32"))
+                maybeLoadLocalUi()
             }
             "offline" -> {
                 statusBadge.text = "Python: offline • $rel"
@@ -144,6 +159,21 @@ class MainActivity : AppCompatActivity() {
                 null
             )
         }
+    }
+
+    private fun maybeLoadLocalUi() {
+        val current = webView.url ?: ""
+        if (current.startsWith("file:///android_asset/www_bootstrap/")) {
+            webView.post {
+                webView.loadUrl("http://127.0.0.1:8765/ui/index.html")
+            }
+        }
+    }
+
+    fun notifyNoAuthResult(success: Boolean, expiresAt: Long?) {
+        val exp = expiresAt?.toString() ?: "null"
+        val js = "window.onSshNoAuthResult && window.onSshNoAuthResult(${success}, ${exp})"
+        webView.post { webView.evaluateJavascript(js, null) }
     }
 
     fun showStatusDialog() {

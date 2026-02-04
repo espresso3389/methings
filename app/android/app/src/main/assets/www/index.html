@@ -227,11 +227,14 @@
       <div class="muted" id="sshAddressText">Address: (pending)</div>
       <div class="muted" id="sshUserText">Username: (pending)</div>
       <div class="muted" id="sshCommandText">Command: (pending)</div>
+      <div class="muted" id="sshNoAuthText">No-auth: (inactive)</div>
+      <div class="muted" id="bridgeStatus">Bridge: (unknown)</div>
       <div class="row-actions">
         <label class="toggle">
           <input type="checkbox" id="sshEnabled" checked />
           <span>Enable SSHD</span>
         </label>
+        <button class="btn secondary" id="sshNoAuth">Allow no-auth (10s)</button>
       </div>
     </div>
 
@@ -269,7 +272,10 @@
     const sshAddressText = document.getElementById("sshAddressText");
     const sshUserText = document.getElementById("sshUserText");
     const sshCommandText = document.getElementById("sshCommandText");
+    const sshNoAuthText = document.getElementById("sshNoAuthText");
+    const bridgeStatus = document.getElementById("bridgeStatus");
     const sshEnabled = document.getElementById("sshEnabled");
+    const sshNoAuth = document.getElementById("sshNoAuth");
     const permStatus = document.getElementById("permStatus");
     const auditStatus = document.getElementById("auditStatus");
     const sessionEl = document.getElementById("session");
@@ -445,10 +451,19 @@
         const port = data.port || 2222;
         const user = data.username || "user";
         const ip = getDeviceIp();
+        const noauthUntil = data.noauth_until || null;
         sshStatusText.textContent = `Status: ${running}`;
         sshAddressText.textContent = `Address: ${ip}:${port}`;
         sshUserText.textContent = `Username: ${user}`;
         sshCommandText.textContent = `Command: ssh ${user}@${ip} -p ${port}`;
+        if (noauthUntil) {
+          const now = Math.floor(Date.now() / 1000);
+          const remaining = Math.max(0, noauthUntil - now);
+          const expiry = new Date(noauthUntil * 1000).toLocaleTimeString();
+          sshNoAuthText.textContent = `No-auth: until ${expiry} (${remaining}s)`;
+        } else {
+          sshNoAuthText.textContent = "No-auth: (inactive)";
+        }
         if (sshEnabled) {
           sshToggleBusy = true;
           sshEnabled.checked = !!data.enabled;
@@ -460,6 +475,7 @@
         sshAddressText.textContent = "Address: (unavailable)";
         sshUserText.textContent = "Username: (unavailable)";
         sshCommandText.textContent = "Command: (unavailable)";
+        sshNoAuthText.textContent = "No-auth: (unavailable)";
         if (sshEnabled) {
           sshEnabled.disabled = false;
         }
@@ -718,6 +734,33 @@
       }
     });
 
+    sshNoAuth.addEventListener("click", () => {
+      console.log("sshNoAuth clicked; AndroidBridge=", typeof AndroidBridge);
+      sshNoAuthText.textContent = "No-auth: requested";
+      if (typeof AndroidBridge !== "undefined" && AndroidBridge.allowSshNoAuth) {
+        AndroidBridge.allowSshNoAuth(10);
+        showToast("Waiting for approval…");
+      } else {
+        showToast("No-auth SSH not supported");
+      }
+    });
+
+    window.onSshNoAuthResult = (ok, expiresAt) => {
+      console.log("onSshNoAuthResult", ok, expiresAt);
+      if (!ok) {
+        showToast("No-auth SSH denied");
+        return;
+      }
+      if (expiresAt) {
+        const now = Math.floor(Date.now() / 1000);
+        const remaining = Math.max(0, expiresAt - now);
+        showToast(`No-auth SSH allowed (${remaining}s)`);
+      } else {
+        showToast("No-auth SSH allowed");
+      }
+      refreshSshStatus();
+    };
+
     permBannerBtn.addEventListener("click", () => {
       const permPanel = permList.closest(".panel");
       if (permPanel) {
@@ -733,7 +776,12 @@
     ping();
     pollUiVersion();
     refreshSshStatus();
-    ensureSession();
+    console.log("AndroidBridge available:", typeof AndroidBridge);
+    bridgeStatus.textContent =
+      typeof AndroidBridge !== "undefined" ? "Bridge: available" : "Bridge: missing";
+    if (typeof ensureSession === "function") {
+      ensureSession();
+    }
     refreshPermissions();
     refreshAudit();
     startLogStream();

@@ -17,7 +17,7 @@ class PermissionBroker(private val context: Context) {
     fun requestConsent(tool: String, detail: String, onResult: (Boolean) -> Unit) {
         android.util.Log.d("KugutzPerm", "requestConsent tool=$tool detail=$detail")
         postNotification(tool, detail)
-        if (tool == "credentials" && context is FragmentActivity) {
+        if ((tool == "credentials" || tool == "ssh_noauth") && context is FragmentActivity) {
             val manager = BiometricManager.from(context)
             val canAuth = manager.canAuthenticate(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG or

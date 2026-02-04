@@ -50,6 +50,15 @@ Below is a concise explanation of what we change and why.
      - Emit CRLF on Enter.
    - **Impact:** The `kugutz>` prompt behaves more like a basic terminal even without PTY support.
 
+7) **Time-limited no-auth SSH (biometric grant)**
+   - **Files patched:** `src/svr-auth.c`
+   - **Why:** Support a short, user-approved window where SSH “none” auth succeeds without keys or passwords, gated by an explicit biometric confirmation in the app.
+   - **How it works:**
+     - The app writes a short-lived expiry timestamp to a file (seconds since epoch).
+     - Dropbear checks `DROPBEAR_NOAUTH_FILE` on each `none` auth request.
+     - Optionally restricts the allowed SSH username via `DROPBEAR_NOAUTH_USER`.
+   - **Impact:** No-auth login is allowed only within the configured window (default 10s), and only for the configured username.
+
 6) **Disable agent forwarding**
    - **Files patched:** `localoptions.h`
    - **Why:** Reduces attack surface and avoids features that depend on broader OS integration.
