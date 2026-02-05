@@ -1,12 +1,12 @@
 package jp.espresso3389.kugutz.perm
 
 import android.content.Context
-import jp.espresso3389.kugutz.db.DbProvider
+import jp.espresso3389.kugutz.db.PlainDbProvider
 import jp.espresso3389.kugutz.db.SshKeyEntity
 import java.security.MessageDigest
 
 class SshKeyStore(context: Context) {
-    private val dao = DbProvider.get(context).sshKeyDao()
+    private val dao = PlainDbProvider.get(context).sshKeyDao()
 
     fun upsert(key: String, label: String?, expiresAt: Long?): SshKeyEntity {
         val fingerprint = fingerprintFor(key)

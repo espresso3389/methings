@@ -1,5 +1,4 @@
 import sqlite3
-import os
 from pathlib import Path
 from typing import Dict, List, Optional
 import time
@@ -16,76 +15,23 @@ class Storage:
     def __init__(self, db_path: Path):
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._encryption_mode = "unknown"
+        self._encryption_mode = "sqlite"
         self._init_db()
 
     def _connect(self):
-        key = self._load_sqlcipher_key()
-        if key:
-            conn = self._connect_sqlcipher(key)
-        else:
-            conn = sqlite3.connect(self.db_path)
-            self._encryption_mode = "sqlite_no_key"
-            conn.row_factory = _row_factory
-        return conn
-
-    def _connect_sqlcipher(self, key: str):
-        try:
-            import importlib
-            dbapi2 = importlib.import_module("pysqlcipher3.dbapi2")
-        except Exception as exc:
-            self._encryption_mode = "sqlcipher_missing"
-            raise RuntimeError("pysqlcipher3 is required for encrypted storage") from exc
-        conn = dbapi2.connect(str(self.db_path))
-        conn.execute(f"PRAGMA key = '{key}';")
-        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = _row_factory
-        self._encryption_mode = "sqlcipher"
         return conn
-
-    def _load_sqlcipher_key(self):
-        key_file = os.environ.get("SQLCIPHER_KEY_FILE")
-        if not key_file:
-            return None
-        try:
-            raw = Path(key_file).read_text().strip()
-            if not raw:
-                return None
-            return raw
-        except Exception:
-            return None
 
     def encryption_status(self) -> Dict[str, object]:
         return {
-            "encrypted": self._encryption_mode == "sqlcipher",
+            "encrypted": False,
             "mode": self._encryption_mode,
         }
 
     def _init_db(self):
-        key = self._load_sqlcipher_key()
-        if key:
-            self._ensure_encrypted_db(key)
         with self._connect() as conn:
             self._create_schema(conn)
-
-    def _ensure_encrypted_db(self, key: str) -> None:
-        if not self.db_path.exists():
-            return
-        try:
-            conn = self._connect_sqlcipher(key)
-            conn.close()
-            return
-        except Exception:
-            self._delete_db_files()
-            self._encryption_mode = "sqlcipher_reset"
-
-    def _delete_db_files(self) -> None:
-        base = str(self.db_path)
-        for suffix in ("", "-wal", "-shm"):
-            try:
-                Path(base + suffix).unlink(missing_ok=True)
-            except Exception:
-                pass
 
     def _create_schema(self, conn):
         cur = conn.cursor()
@@ -139,17 +85,6 @@ class Storage:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 event TEXT,
                 data TEXT,
-                created_at INTEGER
-            )
-            """
-        )
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS ssh_keys (
-                fingerprint TEXT PRIMARY KEY,
-                key TEXT,
-                label TEXT,
-                expires_at INTEGER,
                 created_at INTEGER
             )
             """
@@ -210,40 +145,6 @@ class Storage:
             cur = conn.execute(
                 "SELECT event, data, created_at FROM audit_log ORDER BY id DESC LIMIT ?",
                 (limit,),
-            )
-            return [dict(r) for r in cur.fetchall()]
-
-    def add_ssh_key(self, fingerprint: str, key: str, label: str | None, expires_at: int | None) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO ssh_keys (fingerprint, key, label, expires_at, created_at)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(fingerprint) DO UPDATE SET
-                    key=excluded.key,
-                    label=excluded.label,
-                    expires_at=excluded.expires_at
-                """,
-                (fingerprint, key, label, expires_at, _now_ms()),
-            )
-
-    def delete_ssh_key(self, fingerprint: str) -> None:
-        with self._connect() as conn:
-            conn.execute("DELETE FROM ssh_keys WHERE fingerprint = ?", (fingerprint,))
-
-    def list_ssh_keys(self) -> List[Dict]:
-        with self._connect() as conn:
-            cur = conn.execute(
-                "SELECT fingerprint, label, expires_at, created_at FROM ssh_keys ORDER BY created_at DESC"
-            )
-            return [dict(r) for r in cur.fetchall()]
-
-    def list_active_ssh_keys(self) -> List[Dict]:
-        now = _now_ms()
-        with self._connect() as conn:
-            cur = conn.execute(
-                "SELECT fingerprint, key, label, expires_at FROM ssh_keys WHERE expires_at IS NULL OR expires_at > ?",
-                (now,),
             )
             return [dict(r) for r in cur.fetchall()]
 

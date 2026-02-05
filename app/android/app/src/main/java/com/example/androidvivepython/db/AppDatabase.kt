@@ -4,12 +4,12 @@ import androidx.room.Database
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [PermissionEntity::class, CredentialEntity::class, SshKeyEntity::class],
+    entities = [PermissionEntity::class, SshKeyEntity::class, CredentialEntity::class],
     version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun permissionDao(): PermissionDao
-    abstract fun credentialDao(): CredentialDao
     abstract fun sshKeyDao(): SshKeyDao
+    abstract fun credentialDao(): CredentialDao
 }

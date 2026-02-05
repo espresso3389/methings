@@ -9,7 +9,7 @@ import java.io.InputStream
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import org.json.JSONObject
-import jp.espresso3389.kugutz.perm.PermissionStore
+import jp.espresso3389.kugutz.perm.PermissionStoreFacade
 import jp.espresso3389.kugutz.perm.CredentialStore
 import jp.espresso3389.kugutz.perm.SshKeyStore
 import jp.espresso3389.kugutz.perm.SshKeyPolicy
@@ -20,10 +20,11 @@ class LocalHttpServer(
 ) : NanoHTTPD(HOST, PORT) {
     private val uiRoot = File(context.filesDir, "www")
     private val sshdManager = SshdManager(context)
-    private val permissionStore = PermissionStore(context)
+    private val permissionStore = PermissionStoreFacade(context)
     private val credentialStore = CredentialStore(context)
     private val sshKeyStore = SshKeyStore(context)
     private val sshKeyPolicy = SshKeyPolicy(context)
+    private val sshPinManager = SshPinManager(context)
     private val agentTasks = java.util.concurrent.ConcurrentHashMap<String, AgentTask>()
 
     fun startServer(): Boolean {
@@ -104,8 +105,12 @@ class LocalHttpServer(
                 val requestedScope = payload.optString("scope", "once")
                 val scope = if (tool == "ssh_keys") "once" else requestedScope
                 val req = permissionStore.create(tool, detail, scope)
-                if (tool == "credentials" || tool == "ssh_keys") {
-                    val forceBio = tool == "ssh_keys" && sshKeyPolicy.isBiometricRequired()
+                if (tool == "credentials" || tool == "ssh_keys" || tool == "ssh_pin") {
+                    val forceBio = when (tool) {
+                        "ssh_keys" -> sshKeyPolicy.isBiometricRequired()
+                        "ssh_pin" -> true
+                        else -> false
+                    }
                     sendPermissionPrompt(req.id, tool, detail, forceBio)
                 }
                 jsonResponse(
@@ -132,6 +137,22 @@ class LocalHttpServer(
                     )
                 }
                 jsonResponse(JSONObject().put("items", arr))
+            }
+            uri.startsWith("/permissions/") && session.method == Method.GET -> {
+                val id = uri.removePrefix("/permissions/").trim()
+                if (id.isBlank()) {
+                    return notFound()
+                }
+                val req = permissionStore.get(id) ?: return notFound()
+                jsonResponse(
+                    JSONObject()
+                        .put("id", req.id)
+                        .put("tool", req.tool)
+                        .put("detail", req.detail)
+                        .put("scope", req.scope)
+                        .put("status", req.status)
+                        .put("created_at", req.createdAt)
+                )
             }
             uri.startsWith("/permissions/") && session.method == Method.POST -> {
                 val parts = uri.removePrefix("/permissions/").split("/")
@@ -259,6 +280,38 @@ class LocalHttpServer(
                 sshKeyStore.delete(fingerprint)
                 syncAuthorizedKeys()
                 jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/ssh/pin/status" -> {
+                val state = sshPinManager.status()
+                jsonResponse(
+                    JSONObject()
+                        .put("active", state.active)
+                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
+                )
+            }
+            uri == "/ssh/pin/start" && session.method == Method.POST -> {
+                val payload = JSONObject(readBody(session).ifBlank { "{}" })
+                val permissionId = payload.optString("permission_id", "")
+                val seconds = payload.optInt("seconds", 10)
+                if (!isPermissionApproved(permissionId, consume = true)) {
+                    return forbidden("permission_required")
+                }
+                val state = sshPinManager.startPin(seconds)
+                jsonResponse(
+                    JSONObject()
+                        .put("active", state.active)
+                        .put("pin", state.pin ?: "")
+                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
+                )
+            }
+            uri == "/ssh/pin/stop" && session.method == Method.POST -> {
+                val payload = JSONObject(readBody(session).ifBlank { "{}" })
+                val permissionId = payload.optString("permission_id", "")
+                if (!isPermissionApproved(permissionId, consume = true)) {
+                    return forbidden("permission_required")
+                }
+                sshPinManager.stopPin()
+                jsonResponse(JSONObject().put("active", false))
             }
             uri == "/ssh/config" && session.method == Method.POST -> {
                 val body = readBody(session)

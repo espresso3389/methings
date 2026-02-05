@@ -123,12 +123,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun notifyPinResult(success: Boolean, expiresAt: Long?) {
-        val exp = expiresAt?.toString() ?: "null"
-        val js = "window.onSshPinResult && window.onSshPinResult(${success}, ${exp})"
-        webView.post { webView.evaluateJavascript(js, null) }
-    }
-
     fun reloadUi() {
         val url = "http://127.0.0.1:8765/ui/index.html?ts=${System.currentTimeMillis()}"
         webView.post { webView.loadUrl(url) }

@@ -12,4 +12,3 @@ charset-normalizer
 idna
 urllib3
 certifi
-pysqlcipher3

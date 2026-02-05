@@ -1,12 +1,12 @@
 package jp.espresso3389.kugutz.perm
 
 import android.content.Context
-import jp.espresso3389.kugutz.db.DbProvider
+import jp.espresso3389.kugutz.db.PlainDbProvider
 import jp.espresso3389.kugutz.db.PermissionEntity
 import java.util.concurrent.atomic.AtomicLong
 
 class PermissionStore(context: Context) {
-    private val dao = DbProvider.get(context).permissionDao()
+    private val dao = PlainDbProvider.get(context).permissionDao()
     private val counter = AtomicLong(System.currentTimeMillis())
 
     fun create(tool: String, detail: String, scope: String): PermissionRequest {

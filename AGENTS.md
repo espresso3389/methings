@@ -52,6 +52,7 @@ Build an Android 14+ app that provides a Python development environment with:
 - All actions that touch filesystem, network, or shell must pass the permission broker.
 - Maintain a per-session audit trail.
 - Provide granular toggles (e.g., read-only FS, no network, no shell).
+- Permissions/SSH keys use a plain Room DB; credentials are encrypted with Android Keystore (AES-GCM) and stored as ciphertext in the same DB.
 
 ## Background Execution
 - Background service runs local HTTP service and SSHD.
@@ -63,6 +64,6 @@ Build an Android 14+ app that provides a Python development environment with:
 - Manual test checklist for SSHD + permission prompts.
 
 ## Current UI (2026-02)
-- Minimal control panel in WebView (Python worker, SSHD, Wi-Fi IP, Reset UI).
+- Minimal control panel in WebView (Python worker, SSHD, PIN auth, Wi-Fi IP, Reset UI).
 - UI assets are served from `files/www` and can be reset from the UI.
 - No chat/terminal/shell UI at the moment (to be reconsidered later).

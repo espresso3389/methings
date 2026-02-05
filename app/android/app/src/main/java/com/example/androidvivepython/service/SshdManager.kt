@@ -41,6 +41,7 @@ class SshdManager(private val context: Context) {
         val pidFile = File(protectedDir, "dropbear.pid")
         val noauthDir = File(protectedDir, "noauth_prompts")
         noauthDir.mkdirs()
+        val pinFile = File(protectedDir, "pin_auth")
         val noauthEnabled = isNoAuthEnabled()
         val authDir = if (noauthEnabled) File(protectedDir, "noauth_keys") else sshDir
         authDir.mkdirs()
@@ -81,12 +82,12 @@ class SshdManager(private val context: Context) {
             "-D",
             authDir.absolutePath,
             "-P",
-            pidFile.absolutePath,
-            "-s"
+            pidFile.absolutePath
         )
         return try {
             val pb = ProcessBuilder(args)
             pb.environment()["HOME"] = userHome.absolutePath
+            pb.environment()["DROPBEAR_PIN_FILE"] = pinFile.absolutePath
             if (noauthEnabled) {
                 pb.environment()["DROPBEAR_NOAUTH_PROMPT_DIR"] = noauthDir.absolutePath
                 pb.environment()["DROPBEAR_NOAUTH_PROMPT_TIMEOUT"] = "10"

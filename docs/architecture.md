@@ -44,6 +44,7 @@
   - Shell commands
 - Consent UI required for any tool with external effects.
 - Audit trail for all tool calls and AI actions.
+- Permissions/SSH keys are stored in a plain Room DB; credentials are encrypted with Android Keystore (AES-GCM) and stored as ciphertext in the same DB.
 
 ## Background Execution
 - Android foreground service runs Kotlin control plane and SSHD.
@@ -100,7 +101,7 @@
 - Persist permissions in SQLite
 
 3) Web UI
-- Minimal control panel (Python worker, SSHD, Wi-Fi IP, Reset UI)
+- Minimal control panel (Python worker, SSHD, PIN auth, Wi-Fi IP, Reset UI)
 - Trigger native consent dialogs via JS bridge
 
 4) Security
@@ -114,7 +115,7 @@
 -- UI content
   - `files/www/` (Web UI content, copied from assets; resettable)
 -- Protected (app-only)
-  - `files/protected/app.db` (permissions, audit, credential metadata)
+  - `files/protected/app.db` (permissions, ssh keys, audit, encrypted credential ciphertext)
   - `files/protected/ssh/` (Dropbear host keys, logs, pid, auth prompt files)
 -- Runtime/supporting
   - `files/bin/` (bundled native binaries copied at runtime)

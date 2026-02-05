@@ -20,6 +20,8 @@
         font-family: "Georgia", "Times New Roman", serif;
         background: var(--bg);
         color: var(--ink);
+        max-width: 100vw;
+        overflow-x: hidden;
       }
       header {
         padding: 18px 20px 8px;
@@ -37,12 +39,15 @@
         grid-template-columns: 1fr;
         gap: 16px;
         padding: 16px 20px 28px;
+        width: 100%;
+        box-sizing: border-box;
       }
       .card {
         background: var(--card);
         border-radius: 14px;
         padding: 16px;
         box-shadow: 0 8px 18px rgba(0, 0, 0, 0.06);
+        box-sizing: border-box;
       }
       .row {
         display: flex;
@@ -81,6 +86,25 @@
       .muted {
         color: var(--muted);
         font-size: 14px;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+      }
+      @media (max-width: 640px) {
+        header {
+          padding: 14px 16px 6px;
+        }
+        .grid {
+          padding: 12px 16px 24px;
+        }
+        .card {
+          padding: 14px;
+        }
+        .row {
+          justify-content: flex-start;
+        }
+        button {
+          width: 100%;
+        }
       }
       @media (min-width: 720px) {
         .grid {
@@ -107,12 +131,11 @@
             <input type="checkbox" id="sshNoAuth" />
             Notification auth
           </label>
-          <label>
-            Port
-            <input type="number" id="sshPort" value="2222" min="1" max="65535" style="width: 90px;" />
-          </label>
-          <button id="applySsh">Apply</button>
         </div>
+        <div class="row" style="margin-top: 12px;">
+          <button id="startPin">Start PIN</button>
+        </div>
+        <p class="muted" id="pinDetail">PIN auth inactive.</p>
         <p class="muted" id="sshDetail">Waiting for status…</p>
       </section>
 
@@ -159,8 +182,8 @@
       const sshStatus = document.getElementById("sshStatus");
       const sshEnabled = document.getElementById("sshEnabled");
       const sshNoAuth = document.getElementById("sshNoAuth");
-      const sshPort = document.getElementById("sshPort");
       const sshDetail = document.getElementById("sshDetail");
+      const pinDetail = document.getElementById("pinDetail");
 
       function setStatus(el, value) {
         el.textContent = value;
@@ -190,13 +213,59 @@
           setStatus(sshStatus, data.running ? "ok" : "offline");
           sshEnabled.checked = !!data.enabled;
           sshNoAuth.checked = !!data.noauth_enabled;
-          sshPort.value = data.port || 2222;
           sshDetail.textContent =
             "Home: " + data.home_dir + " • authorized_keys: " + data.authorized_keys;
         } catch (_) {
           setStatus(sshStatus, "offline");
           sshDetail.textContent = "SSHD status unavailable";
         }
+      }
+
+      async function refreshPin() {
+        try {
+          const res = await fetch("http://127.0.0.1:8765/ssh/pin/status");
+          if (!res.ok) throw new Error("pin status failed");
+          const data = await res.json();
+          if (data.active) {
+            const exp = data.expires_at ? new Date(data.expires_at).toLocaleTimeString() : "soon";
+            pinDetail.textContent = "PIN auth active until " + exp;
+          } else {
+            pinDetail.textContent = "PIN auth inactive.";
+          }
+        } catch (_) {
+          pinDetail.textContent = "PIN auth unavailable.";
+        }
+      }
+
+      async function requestPermission(tool, detail) {
+        const res = await fetch("http://127.0.0.1:8765/permissions/request", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tool, detail, scope: "once" }),
+        });
+        if (!res.ok) throw new Error("permission request failed");
+        const data = await res.json();
+        if (data.status === "approved") {
+          return data.id;
+        }
+        const deadline = Date.now() + 30000;
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          try {
+            const statusRes = await fetch("http://127.0.0.1:8765/permissions/" + data.id);
+            if (!statusRes.ok) continue;
+            const statusData = await statusRes.json();
+            if (statusData.status === "approved") {
+              return data.id;
+            }
+            if (statusData.status === "denied") {
+              throw new Error("permission denied");
+            }
+          } catch (_) {
+            // ignore and keep polling
+          }
+        }
+        throw new Error("permission timeout");
       }
 
       document.getElementById("startPython").addEventListener("click", async () => {
@@ -239,20 +308,41 @@
           wifiIp.textContent = ip || "unavailable";
         }
       }
-      document.getElementById("applySsh").addEventListener("click", async () => {
+      async function updateSshConfig() {
         const enabled = sshEnabled.checked;
         const noauth_enabled = sshNoAuth.checked;
-        const port = parseInt(sshPort.value || "2222", 10);
         try {
           const res = await fetch("http://127.0.0.1:8765/ssh/config", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enabled, port, noauth_enabled }),
+            body: JSON.stringify({ enabled, noauth_enabled }),
           });
           if (!res.ok) throw new Error("apply failed");
           await refreshSsh();
         } catch (_) {
           sshDetail.textContent = "Failed to apply SSHD settings";
+        }
+      }
+
+      sshEnabled.addEventListener("change", updateSshConfig);
+      sshNoAuth.addEventListener("change", updateSshConfig);
+
+      document.getElementById("startPin").addEventListener("click", async () => {
+        try {
+          const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
+          const res = await fetch("http://127.0.0.1:8765/ssh/pin/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ permission_id, seconds: 10 }),
+          });
+          if (!res.ok) throw new Error("pin start failed");
+          const data = await res.json();
+          if (data.pin) {
+            alert("PIN: " + data.pin + " (valid ~10 seconds)");
+          }
+          refreshPin();
+        } catch (_) {
+          pinDetail.textContent = "PIN auth start failed.";
         }
       });
 
@@ -262,9 +352,11 @@
 
       refreshPython();
       refreshSsh();
+      refreshPin();
       refreshIp();
       setInterval(refreshPython, 5000);
       setInterval(refreshSsh, 5000);
+      setInterval(refreshPin, 5000);
       setInterval(refreshIp, 15000);
     </script>
   </body>

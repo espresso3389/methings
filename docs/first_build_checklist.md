@@ -18,7 +18,7 @@
 - Confirm the UI loads (from `files/www`)
 - Toggle SSHD and verify status shows running
 - Start/stop Python worker and confirm status updates
-- Test SSH login (public-key or notification-based no-auth)
+- Test SSH login (public-key, notification-based no-auth, or PIN auth)
 
 ## 5) Optional local smoke test (desktop)
 - Run `python server/app.py`

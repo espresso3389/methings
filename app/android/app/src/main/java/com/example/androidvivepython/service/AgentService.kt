@@ -21,6 +21,7 @@ class AgentService : Service() {
         val extractor = AssetExtractor(this)
         extractor.extractUiAssetsIfMissing()
         extractor.extractDropbearIfMissing()
+        jp.espresso3389.kugutz.db.PlainDbProvider.get(this)
         runtimeManager = PythonRuntimeManager(this)
         sshdManager = SshdManager(this).also { it.startIfEnabled() }
         noAuthPromptManager = SshNoAuthPromptManager(this).also { it.start() }

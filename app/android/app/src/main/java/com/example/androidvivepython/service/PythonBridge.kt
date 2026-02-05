@@ -15,7 +15,6 @@ object PythonBridge {
         val libs = listOf(
             "libcrypto1.1.so",
             "libssl1.1.so",
-            "libsqlcipher.so",
             "libsqlite3.so",
             "libpython3.11.so"
         )

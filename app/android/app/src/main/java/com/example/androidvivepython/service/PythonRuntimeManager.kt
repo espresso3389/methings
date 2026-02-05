@@ -11,7 +11,6 @@ class PythonRuntimeManager(private val context: Context) {
     private var runtimeThread: Thread? = null
     private val extractor = AssetExtractor(context)
     private val installer = PythonRuntimeInstaller(context)
-    private val keyManager = SqlcipherKeyManager(context)
     private val lock = Any()
     private val statusLock = Any()
     private var status: String = "offline"
@@ -30,8 +29,6 @@ class PythonRuntimeManager(private val context: Context) {
         }
 
         val serverDir = extractor.extractServerAssets()
-        val keyFile = keyManager.ensureKeyFile()
-        keyManager.cleanupLegacySecretsDir()
         val pythonHome = File(context.filesDir, "pyenv")
         val serverScript = File(context.filesDir, "server/app.py")
 
@@ -53,14 +50,13 @@ class PythonRuntimeManager(private val context: Context) {
                 val result = PythonBridge.start(
                     pythonHome.absolutePath,
                     serverDir.absolutePath,
-                    keyFile?.absolutePath,
+                    null,
                     nativeLibDir
                 )
                 Log.i(TAG, "Python bridge exited with code $result")
             } catch (ex: Exception) {
                 Log.e(TAG, "Failed to start Python service", ex)
             } finally {
-                keyManager.deleteKeyFile()
                 val shouldRestart: Boolean
                 synchronized(lock) {
                     runtimeThread = null

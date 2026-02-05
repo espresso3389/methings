@@ -23,9 +23,6 @@ Simple localhost smoke test for the Python service. Run after `python server/app
 
 ## Notes
 - Python-for-Android is most reliable on Linux; use WSL if on Windows.
-- Ensure `pysqlcipher3` is included in requirements for SQLCipher support.
 - Python tooling should use uv/venv (avoid system pip).
 - `build_p4a.sh` needs internet access to download build dependencies.
-- If SQLCipher headers are missing, the build retries without `pysqlcipher3`.
-- If `tclsh` is missing, `build_p4a.sh` builds a local Tcl under `$WORK_DIR/tcl` for SQLCipher amalgamation.
 - Native libs from the dist are copied into `app/android/app/src/main/jniLibs/<arch>/`.
