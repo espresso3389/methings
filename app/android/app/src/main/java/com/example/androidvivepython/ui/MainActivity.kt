@@ -174,12 +174,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun notifyNoAuthResult(success: Boolean, expiresAt: Long?) {
-        val exp = expiresAt?.toString() ?: "null"
-        val js = "window.onSshNoAuthResult && window.onSshNoAuthResult(${success}, ${exp})"
-        webView.post { webView.evaluateJavascript(js, null) }
-    }
-
     fun notifyPinResult(success: Boolean, expiresAt: Long?) {
         val exp = expiresAt?.toString() ?: "null"
         val js = "window.onSshPinResult && window.onSshPinResult(${success}, ${exp})"

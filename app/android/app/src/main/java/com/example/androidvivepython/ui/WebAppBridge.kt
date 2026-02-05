@@ -87,48 +87,6 @@ class WebAppBridge(private val activity: Activity) {
     }
 
     @JavascriptInterface
-    fun allowSshNoAuth(seconds: Int) {
-        handler.post {
-            val duration = if (seconds > 0) seconds else 10
-            val detail = "Allow no-auth SSH login (${duration}s)"
-            Log.d(tag, "allowSshNoAuth seconds=$duration")
-            broker.requestConsent("ssh_noauth", detail) { approved ->
-                Log.d(tag, "allowSshNoAuth consent approved=$approved")
-                if (!approved) {
-                    if (activity is MainActivity) {
-                        activity.notifyNoAuthResult(false, null)
-                    }
-                    return@requestConsent
-                }
-                Thread {
-                    try {
-                        val payload = JSONObject()
-                            .put("seconds", duration)
-                            .put("ui_consent", true)
-                        val response = postJson(
-                            "http://127.0.0.1:8765/ssh/noauth/allow",
-                            payload.toString()
-                        )
-                        val expiresAt = try {
-                            JSONObject(response).optLong("expires_at", 0L)
-                        } catch (_: Exception) {
-                            0L
-                        }
-                        if (activity is MainActivity) {
-                            activity.notifyNoAuthResult(true, if (expiresAt > 0) expiresAt else null)
-                        }
-                    } catch (ex: Exception) {
-                        Log.e(tag, "allowSshNoAuth request failed", ex)
-                        if (activity is MainActivity) {
-                            activity.notifyNoAuthResult(false, null)
-                        }
-                    }
-                }.start()
-            }
-        }
-    }
-
-    @JavascriptInterface
     fun allowSshPinAuth(seconds: Int) {
         handler.post {
             val duration = if (seconds > 0) seconds else 30

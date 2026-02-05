@@ -225,14 +225,12 @@
       <strong>SSH</strong>
       <div class="muted" id="sshStatusText">Status: unknown</div>
       <div class="muted" id="sshAddressText">Address: (pending)</div>
-      <div class="muted" id="sshNoAuthText">No-auth: (inactive)</div>
       <div class="muted" id="sshPinText">PIN: (inactive)</div>
       <div class="row-actions">
         <label class="toggle">
           <input type="checkbox" id="sshEnabled" checked />
           <span>Enable SSHD</span>
         </label>
-        <button class="btn secondary" id="sshNoAuth">Allow no-auth (10s)</button>
         <button class="btn secondary" id="sshPin">Allow PIN (30s)</button>
       </div>
     </div>
@@ -269,10 +267,8 @@
     const resetUi = document.getElementById("resetUi");
     const sshStatusText = document.getElementById("sshStatusText");
     const sshAddressText = document.getElementById("sshAddressText");
-    const sshNoAuthText = document.getElementById("sshNoAuthText");
     const sshPinText = document.getElementById("sshPinText");
     const sshEnabled = document.getElementById("sshEnabled");
-    const sshNoAuth = document.getElementById("sshNoAuth");
     const sshPin = document.getElementById("sshPin");
     const permStatus = document.getElementById("permStatus");
     const auditStatus = document.getElementById("auditStatus");
@@ -448,18 +444,9 @@
         const running = data.running ? "running" : "stopped";
         const port = data.port || 2222;
         const ip = getDeviceIp();
-        const noauthUntil = data.noauth_until || null;
         const pinUntil = data.pin_until || null;
         sshStatusText.textContent = `Status: ${running}`;
         sshAddressText.textContent = `Address: ${ip}:${port}`;
-        if (noauthUntil) {
-          const now = Math.floor(Date.now() / 1000);
-          const remaining = Math.max(0, noauthUntil - now);
-          const expiry = new Date(noauthUntil * 1000).toLocaleTimeString();
-          sshNoAuthText.textContent = `No-auth: until ${expiry} (${remaining}s)`;
-        } else {
-          sshNoAuthText.textContent = "No-auth: (inactive)";
-        }
         if (pinUntil) {
           const now = Math.floor(Date.now() / 1000);
           const remaining = Math.max(0, pinUntil - now);
@@ -477,7 +464,6 @@
       } catch (_) {
         sshStatusText.textContent = "Status: offline";
         sshAddressText.textContent = "Address: (unavailable)";
-        sshNoAuthText.textContent = "No-auth: (unavailable)";
         sshPinText.textContent = "PIN: (unavailable)";
         if (sshEnabled) {
           sshEnabled.disabled = false;
@@ -737,17 +723,6 @@
       }
     });
 
-    sshNoAuth.addEventListener("click", () => {
-      console.log("sshNoAuth clicked; AndroidBridge=", typeof AndroidBridge);
-      sshNoAuthText.textContent = "No-auth: requested";
-      if (typeof AndroidBridge !== "undefined" && AndroidBridge.allowSshNoAuth) {
-        AndroidBridge.allowSshNoAuth(10);
-        showToast("Waiting for approval…");
-      } else {
-        showToast("No-auth SSH not supported");
-      }
-    });
-
     sshPin.addEventListener("click", () => {
       sshPinText.textContent = "PIN: requested";
       if (typeof AndroidBridge !== "undefined" && AndroidBridge.allowSshPinAuth) {
@@ -757,22 +732,6 @@
         showToast("PIN auth not supported");
       }
     });
-
-    window.onSshNoAuthResult = (ok, expiresAt) => {
-      console.log("onSshNoAuthResult", ok, expiresAt);
-      if (!ok) {
-        showToast("No-auth SSH denied");
-        return;
-      }
-      if (expiresAt) {
-        const now = Math.floor(Date.now() / 1000);
-        const remaining = Math.max(0, expiresAt - now);
-        showToast(`No-auth SSH allowed (${remaining}s)`);
-      } else {
-        showToast("No-auth SSH allowed");
-      }
-      refreshSshStatus();
-    };
 
     window.onSshPinResult = (ok, expiresAt) => {
       if (!ok) {

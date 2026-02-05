@@ -19,7 +19,7 @@ class PermissionBroker(private val context: Context) {
         if (tool != "ssh_pin") {
             postNotification(tool, detail)
         }
-        if ((tool == "credentials" || tool == "ssh_noauth" || tool == "ssh_pin") && context is FragmentActivity) {
+        if ((tool == "credentials" || tool == "ssh_pin") && context is FragmentActivity) {
             val manager = BiometricManager.from(context)
             val canAuth = manager.canAuthenticate(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG or
