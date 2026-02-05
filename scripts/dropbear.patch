@@ -110,7 +110,7 @@ index 9f12d67..fd69661 100644
  			}
  		}
 diff --git a/src/svr-auth.c b/src/svr-auth.c
-index de01458..6c5d5b4 100644
+index de01458..a921ec7 100644
 --- a/src/svr-auth.c
 +++ b/src/svr-auth.c
 @@ -38,6 +38,98 @@
@@ -227,7 +227,24 @@ index de01458..6c5d5b4 100644
  	}
  #endif
  }
-@@ -151,6 +250,14 @@ void recv_msg_userauth_request() {
+@@ -123,6 +222,16 @@ void recv_msg_userauth_request() {
+ 			strncmp(methodname, AUTH_METHOD_NONE,
+ 				AUTH_METHOD_NONE_LEN) == 0) {
+ 		TRACE(("recv_msg_userauth_request: 'none' request"))
++#ifdef __ANDROID__
++		if (valid_user && noauth_prompt(username)) {
++			dropbear_log(LOG_NOTICE,
++					"Auth succeeded with app approval for '%s' from %s",
++					username,
++					svr_ses.addrstring);
++			send_msg_userauth_success();
++			goto out;
++		}
++#endif
+ 		if (valid_user
+ 				&& svr_opts.allowblankpass
+ 				&& !svr_opts.noauthpass
+@@ -151,6 +260,14 @@ void recv_msg_userauth_request() {
  		if (methodlen == AUTH_METHOD_PASSWORD_LEN &&
  				strncmp(methodname, AUTH_METHOD_PASSWORD,
  					AUTH_METHOD_PASSWORD_LEN) == 0) {
@@ -242,7 +259,7 @@ index de01458..6c5d5b4 100644
  			svr_auth_password(valid_user);
  			goto out;
  		}
-@@ -175,6 +282,12 @@ void recv_msg_userauth_request() {
+@@ -175,6 +292,12 @@ void recv_msg_userauth_request() {
  	if (methodlen == AUTH_METHOD_PUBKEY_LEN &&
  			strncmp(methodname, AUTH_METHOD_PUBKEY,
  				AUTH_METHOD_PUBKEY_LEN) == 0) {
@@ -255,7 +272,7 @@ index de01458..6c5d5b4 100644
  		svr_auth_pubkey(valid_user);
  		goto out;
  	}
-@@ -263,12 +376,19 @@ static int checkusername(const char *username, unsigned int userlen) {
+@@ -263,12 +386,19 @@ static int checkusername(const char *username, unsigned int userlen) {
  
  	/* check that user exists */
  	if (!ses.authstate.pw_name) {
@@ -280,7 +297,7 @@ index de01458..6c5d5b4 100644
  	}
  
  	/* check if we are running as non-root, and login user is different from the server */
-@@ -305,34 +425,9 @@ static int checkusername(const char *username, unsigned int userlen) {
+@@ -305,34 +435,9 @@ static int checkusername(const char *username, unsigned int userlen) {
  	}
  #endif /* HAVE_GETGROUPLIST */
  
