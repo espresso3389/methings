@@ -46,6 +46,8 @@ ssh_dir.mkdir(parents=True, exist_ok=True)
 ssh_home_dir = data_dir
 ssh_noauth_file = ssh_dir / "noauth_until"
 ssh_pin_file = ssh_dir / "pin_auth"
+ssh_noauth_prompt_dir = ssh_dir / "noauth_prompts"
+ssh_noauth_prompt_dir.mkdir(parents=True, exist_ok=True)
 
 _PROGRAMS: Dict[str, Dict] = {}
 _PROGRAM_LOCK = threading.Lock()
@@ -480,6 +482,68 @@ def _pin_expires() -> Optional[int]:
         return None
 
 
+def _read_noauth_prompt(path: Path) -> Optional[Dict]:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    if not raw:
+        return None
+    parts = raw.split("\t")
+    if len(parts) < 4:
+        return None
+    req_id = parts[0].strip()
+    user = parts[1].strip()
+    addr = parts[2].strip()
+    try:
+        created_at = int(parts[3])
+    except Exception:
+        created_at = 0
+    if not req_id:
+        return None
+    return {
+        "id": req_id,
+        "user": user,
+        "addr": addr,
+        "created_at": created_at,
+    }
+
+
+def _list_noauth_prompts() -> list[Dict]:
+    if not ssh_noauth_prompt_dir.exists():
+        return []
+    now = int(time.time())
+    requests = []
+    for path in sorted(ssh_noauth_prompt_dir.glob("*.req"), key=lambda p: p.stat().st_mtime):
+        try:
+            mtime = int(path.stat().st_mtime)
+        except Exception:
+            mtime = now
+        if now - mtime > 60:
+            try:
+                resp = ssh_noauth_prompt_dir / f"{path.stem}.resp"
+                path.unlink(missing_ok=True)
+                resp.unlink(missing_ok=True)
+            except Exception:
+                pass
+            continue
+        resp = ssh_noauth_prompt_dir / f"{path.stem}.resp"
+        if resp.exists():
+            continue
+        req = _read_noauth_prompt(path)
+        if req:
+            requests.append(req)
+    return requests
+
+
+def _respond_noauth_prompt(req_id: str, allow: bool) -> None:
+    if not ssh_noauth_prompt_dir.exists():
+        ssh_noauth_prompt_dir.mkdir(parents=True, exist_ok=True)
+    resp_path = ssh_noauth_prompt_dir / f"{req_id}.resp"
+    resp_path.write_text("allow" if allow else "deny", encoding="utf-8")
+    os.chmod(resp_path, 0o600)
+
+
 def _ensure_host_keys() -> None:
     keygen = _ssh_keygen_bin()
     if not keygen.exists():
@@ -606,10 +670,12 @@ def _start_dropbear(port: int, log_event: bool = True) -> Dict:
         pid_path = _ssh_pid_path()
         env = dict(os.environ)
         ssh_work_dir = ssh_home_dir
-        env["HOME"] = str(ssh_home_dir)
-        env["PWD"] = str(ssh_work_dir)
-        env["DROPBEAR_NOAUTH_FILE"] = str(ssh_noauth_file)
-        env["DROPBEAR_PIN_FILE"] = str(ssh_pin_file)
+    env["HOME"] = str(ssh_home_dir)
+    env["PWD"] = str(ssh_work_dir)
+    env["DROPBEAR_NOAUTH_FILE"] = str(ssh_noauth_file)
+    env["DROPBEAR_PIN_FILE"] = str(ssh_pin_file)
+    env["DROPBEAR_NOAUTH_PROMPT_DIR"] = str(ssh_noauth_prompt_dir)
+    env["DROPBEAR_NOAUTH_PROMPT_TIMEOUT"] = str(_get_setting_int("ssh_noauth_prompt_timeout", 10))
         log_path = ssh_dir / "dropbear.log"
 
         log_fh = open(log_path, "a", encoding="utf-8", buffering=1)
@@ -746,6 +812,26 @@ async def ssh_noauth_allow(payload: Dict):
     result = _allow_noauth(seconds)
     await _log("ssh_noauth_allowed", {"expires_at": result["expires_at"], "seconds": seconds})
     return {"status": "ok", **result}
+
+
+@app.get("/ssh/noauth/requests")
+async def ssh_noauth_requests():
+    return {"requests": _list_noauth_prompts()}
+
+
+@app.post("/ssh/noauth/respond")
+async def ssh_noauth_respond(payload: Dict):
+    permission_id = payload.get("permission_id")
+    ui_consent = payload.get("ui_consent") is True
+    if not ui_consent:
+        _require_permission("ssh_noauth", permission_id)
+    req_id = (payload.get("id") or "").strip()
+    if not req_id:
+        raise HTTPException(status_code=400, detail="missing_id")
+    allow = payload.get("allow") is True
+    _respond_noauth_prompt(req_id, allow)
+    await _log("ssh_noauth_prompt", {"id": req_id, "allow": allow})
+    return {"status": "ok"}
 
 
 @app.post("/ssh/pin/allow")

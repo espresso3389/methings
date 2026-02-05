@@ -26,6 +26,9 @@
             android:name=".service.AgentService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <receiver
+            android:name=".service.SshNoAuthReceiver"
+            android:exported="false" />
 
     </application>
 </manifest>

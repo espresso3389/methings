@@ -58,7 +58,16 @@ Below is a concise explanation of what we change and why.
      - Dropbear checks `DROPBEAR_NOAUTH_FILE` on each `none` auth request.
    - **Impact:** No-auth login is allowed only within the configured window (default 10s).
 
-8) **Time-limited PIN SSH (biometric grant)**
+8) **Per-connection no-auth prompt (notification allow/deny)**
+   - **Files patched:** `src/svr-auth.c`
+   - **Why:** Allow a “no-auth” login to proceed only after the phone user explicitly approves the connection.
+   - **How it works:**
+     - Dropbear writes a request file in `DROPBEAR_NOAUTH_PROMPT_DIR` with `id\tuser\taddr\ttimestamp`.
+     - The Android app polls `/ssh/noauth/requests` and shows a notification with Allow/Deny actions.
+     - The app writes `allow` or `deny` to `<id>.resp`, which Dropbear waits for (timeout via `DROPBEAR_NOAUTH_PROMPT_TIMEOUT`).
+   - **Impact:** Each no-auth connection requires a phone prompt; if no response arrives, the login is denied.
+
+9) **Time-limited PIN SSH (biometric grant)**
    - **Files patched:** `src/svr-authpasswd.c`
    - **Why:** Allow `ssh-copy-id` or other password-based tools to work for a short, user-approved window.
    - **How it works:**

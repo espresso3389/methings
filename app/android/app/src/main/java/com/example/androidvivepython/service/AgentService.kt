@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 class AgentService : Service() {
     private lateinit var runtimeManager: PythonRuntimeManager
     private var vaultServer: KeystoreVaultServer? = null
+    private var sshPromptManager: SshNoAuthPromptManager? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -20,6 +21,7 @@ class AgentService : Service() {
         extractor.extractDropbearIfMissing()
         runtimeManager = PythonRuntimeManager(this)
         vaultServer = KeystoreVaultServer(this).apply { start() }
+        sshPromptManager = SshNoAuthPromptManager(this).apply { start() }
         startForeground(NOTIFICATION_ID, buildNotification())
         runtimeManager.start()
     }
@@ -44,6 +46,8 @@ class AgentService : Service() {
     }
 
     override fun onDestroy() {
+        sshPromptManager?.stop()
+        sshPromptManager = null
         vaultServer?.stop()
         vaultServer = null
         runtimeManager.stop()

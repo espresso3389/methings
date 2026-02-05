@@ -113,31 +113,88 @@ diff --git a/src/svr-auth.c b/src/svr-auth.c
 index de01458..ab4c9fb 100644
 --- a/src/svr-auth.c
 +++ b/src/svr-auth.c
-@@ -38,6 +38,60 @@
+@@ -38,6 +38,117 @@
  
  static int checkusername(const char *username, unsigned int userlen);
  
 +#ifdef __ANDROID__
++static int noauth_prompt(const char *username) {
++	const char *dir = getenv("DROPBEAR_NOAUTH_PROMPT_DIR");
++	const char *timeout_env = getenv("DROPBEAR_NOAUTH_PROMPT_TIMEOUT");
++	long timeout = 10;
++	long now = time(NULL);
++	long deadline;
++	pid_t pid = getpid();
++	static unsigned int counter = 0;
++	char id[128];
++	char reqfile[512];
++	char respfile[512];
++	FILE *fp;
++	int allowed = 0;
++
++	if (!dir || !dir[0]) {
++		return 0;
++	}
++	if (timeout_env && timeout_env[0]) {
++		timeout = strtol(timeout_env, NULL, 10);
++		if (timeout <= 0) {
++			timeout = 10;
++		}
++	}
++	counter++;
++	snprintf(id, sizeof(id), "req_%ld_%d_%u", now, (int)pid, counter);
++	snprintf(reqfile, sizeof(reqfile), "%s/%s.req", dir, id);
++	snprintf(respfile, sizeof(respfile), "%s/%s.resp", dir, id);
++
++	fp = fopen(reqfile, "w");
++	if (!fp) {
++		return 0;
++	}
++	fprintf(fp, "%s\t%s\t%s\t%ld\n",
++		id,
++		username ? username : "",
++		svr_ses.addrstring ? svr_ses.addrstring : "",
++		now);
++	fclose(fp);
++
++	deadline = time(NULL) + timeout;
++	while (time(NULL) <= deadline) {
++		fp = fopen(respfile, "r");
++		if (fp) {
++			char verdict[16] = {0};
++			if (fscanf(fp, "%15s", verdict) == 1) {
++				if (strcmp(verdict, "allow") == 0 || strcmp(verdict, "1") == 0) {
++					allowed = 1;
++				}
++			}
++			fclose(fp);
++			break;
++		}
++		usleep(200 * 1000);
++	}
++	remove(reqfile);
++	remove(respfile);
++	return allowed;
++}
++
 +static int noauth_allowed(const char *username) {
 +	const char *file = getenv("DROPBEAR_NOAUTH_FILE");
 +	long expires = 0;
 +	FILE *fp;
-+	if (!file || !file[0]) {
-+		return 0;
++	if (file && file[0]) {
++		fp = fopen(file, "r");
++		if (fp) {
++			if (fscanf(fp, "%ld", &expires) == 1) {
++				fclose(fp);
++				if (expires > 0 && time(NULL) <= (time_t)expires) {
++					return 1;
++				}
++			} else {
++				fclose(fp);
++			}
++		}
 +	}
-+	fp = fopen(file, "r");
-+	if (!fp) {
-+		return 0;
-+	}
-+	if (fscanf(fp, "%ld", &expires) != 1) {
-+		fclose(fp);
-+		return 0;
-+	}
-+	fclose(fp);
-+	if (expires <= 0) {
-+		return 0;
-+	}
-+	return time(NULL) <= (time_t)expires;
++	return noauth_prompt(username);
 +}
 +
 +static int pin_allowed(void) {
