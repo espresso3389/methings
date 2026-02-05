@@ -17,6 +17,7 @@ import socket
 import hashlib
 import base64
 import getpass
+import shutil
 from typing import Dict, Optional
 from pathlib import Path
 
@@ -33,17 +34,33 @@ app.add_middleware(
 )
 
 LOG_QUEUE: asyncio.Queue = asyncio.Queue()
-data_dir = Path(__file__).parent / "data"
+base_dir = Path(__file__).parent.parent
+legacy_data_dir = Path(__file__).parent / "data"
+protected_dir = base_dir / "protected"
+protected_dir.mkdir(parents=True, exist_ok=True)
+if legacy_data_dir.exists():
+    for entry in legacy_data_dir.iterdir():
+        dest = protected_dir / entry.name
+        if dest.exists():
+            continue
+        try:
+            shutil.move(str(entry), str(dest))
+        except Exception:
+            pass
+data_dir = protected_dir
 storage = Storage(data_dir / "app.db")
 tool_router = ToolRouter(data_dir)
-program_dir = data_dir / "programs"
+python_dir = base_dir / "python"
+program_dir = python_dir / "apps"
 program_dir.mkdir(parents=True, exist_ok=True)
-content_dir = Path(__file__).parent.parent / "www"
+content_dir = base_dir / "www"
 content_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/ui", StaticFiles(directory=content_dir, html=True), name="ui")
+ssh_public_dir = base_dir / ".ssh"
+ssh_public_dir.mkdir(parents=True, exist_ok=True)
 ssh_dir = data_dir / "ssh"
 ssh_dir.mkdir(parents=True, exist_ok=True)
-ssh_home_dir = data_dir
+ssh_home_dir = content_dir
 ssh_pin_file = ssh_dir / "pin_auth"
 ssh_noauth_prompt_dir = ssh_dir / "noauth_prompts"
 ssh_noauth_prompt_dir.mkdir(parents=True, exist_ok=True)
@@ -401,7 +418,7 @@ def _ssh_keygen_bin() -> Path:
 
 
 def _ssh_key_path() -> Path:
-    return ssh_home_dir / ".ssh" / "authorized_keys"
+    return ssh_public_dir / "authorized_keys"
 
 
 def _ssh_pid_path() -> Path:
@@ -595,7 +612,7 @@ def _write_authorized_keys():
             existing = ""
         if existing:
             try:
-                os.chmod(ssh_dir, 0o700)
+                os.chmod(ssh_public_dir, 0o700)
                 os.chmod(key_path.parent, 0o700)
                 os.chmod(key_path, 0o600)
             except Exception:
@@ -604,7 +621,7 @@ def _write_authorized_keys():
     content = "\n".join(lines) + ("\n" if lines else "")
     key_path.write_text(content, encoding="utf-8")
     try:
-        os.chmod(ssh_dir, 0o700)
+        os.chmod(ssh_public_dir, 0o700)
         os.chmod(key_path.parent, 0o700)
         os.chmod(key_path, 0o600)
     except Exception:
@@ -676,7 +693,7 @@ def _start_dropbear(port: int, log_event: bool = True) -> Dict:
             "-p",
             str(port),
             "-D",
-            str(ssh_home_dir / ".ssh"),
+            str(ssh_public_dir),
             "-r",
             str(host_keys["rsa"]),
             "-r",
