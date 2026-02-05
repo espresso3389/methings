@@ -96,6 +96,12 @@ When you need to change Dropbear modifications, edit the submodule and commit th
    - `git add third_party/dropbear`
    - `git commit -m "dropbear: bump submodule"`
 
+## Setup (Submodule Init)
+
+If the submodule is missing, initialize it explicitly:
+
+- `git submodule update --init --recursive third_party/dropbear`
+
 ## Behavior Tradeoffs
 
 - **No true interactive TTY**: Interactive shells that require a PTY may not behave perfectly. Non-PTY exec commands work normally.
