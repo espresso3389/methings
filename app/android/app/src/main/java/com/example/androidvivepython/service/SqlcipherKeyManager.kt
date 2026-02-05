@@ -48,6 +48,17 @@ class SqlcipherKeyManager(private val context: Context) {
         }
     }
 
+    fun deleteKeyFile() {
+        try {
+            val keyFile = File(context.filesDir, "protected/secrets/sqlcipher.key")
+            if (keyFile.exists()) {
+                keyFile.delete()
+            }
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to delete sqlcipher key file", ex)
+        }
+    }
+
     fun cleanupLegacySecretsDir() {
         try {
             val legacyDir = File(context.filesDir, "secrets")

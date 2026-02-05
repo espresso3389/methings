@@ -58,6 +58,7 @@ class PythonRuntimeManager(private val context: Context) {
             } catch (ex: Exception) {
                 Log.e(TAG, "Failed to start Python service", ex)
             } finally {
+                keyManager.deleteKeyFile()
                 val shouldRestart: Boolean
                 synchronized(lock) {
                     runtimeThread = null
