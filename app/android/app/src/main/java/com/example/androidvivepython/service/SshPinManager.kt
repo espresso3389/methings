@@ -37,14 +37,12 @@ class SshPinManager(context: Context) {
         }
         val parts = raw.split(" ")
         if (parts.size < 2) {
-            stopPin()
             return PinState(active = false, pin = null, expiresAt = null)
         }
         val expiresSec = parts[0].toLongOrNull() ?: 0L
         val expiresAt = expiresSec * 1000L
         if (expiresAt <= System.currentTimeMillis()) {
-            stopPin()
-            return PinState(active = false, pin = null, expiresAt = null)
+            return PinState(active = false, pin = null, expiresAt = expiresAt, expired = true)
         }
         return PinState(active = true, pin = null, expiresAt = expiresAt)
     }
@@ -52,7 +50,8 @@ class SshPinManager(context: Context) {
     data class PinState(
         val active: Boolean,
         val pin: String?,
-        val expiresAt: Long?
+        val expiresAt: Long?,
+        val expired: Boolean = false
     )
 
     companion object {

@@ -42,8 +42,12 @@ class SshdManager(private val context: Context) {
         val noauthDir = File(protectedDir, "noauth_prompts")
         noauthDir.mkdirs()
         val pinFile = File(protectedDir, "pin_auth")
-        val noauthEnabled = isNoAuthEnabled()
-        val authDir = if (noauthEnabled) File(protectedDir, "noauth_keys") else sshDir
+        val authMode = getAuthMode()
+        val authDir = when (authMode) {
+            AUTH_MODE_NOTIFICATION -> File(protectedDir, "noauth_keys")
+            AUTH_MODE_PIN -> File(protectedDir, "pin_keys")
+            else -> sshDir
+        }
         authDir.mkdirs()
 
         if (pidFile.exists()) {
@@ -88,7 +92,7 @@ class SshdManager(private val context: Context) {
             val pb = ProcessBuilder(args)
             pb.environment()["HOME"] = userHome.absolutePath
             pb.environment()["DROPBEAR_PIN_FILE"] = pinFile.absolutePath
-            if (noauthEnabled) {
+            if (authMode == AUTH_MODE_NOTIFICATION) {
                 pb.environment()["DROPBEAR_NOAUTH_PROMPT_DIR"] = noauthDir.absolutePath
                 pb.environment()["DROPBEAR_NOAUTH_PROMPT_TIMEOUT"] = "10"
             }
@@ -157,6 +161,63 @@ class SshdManager(private val context: Context) {
 
     fun isNoAuthEnabled(): Boolean = prefs.getBoolean(KEY_NOAUTH, false)
 
+    fun setAuthMode(mode: String) {
+        val normalized = when (mode) {
+            AUTH_MODE_NOTIFICATION -> AUTH_MODE_NOTIFICATION
+            AUTH_MODE_PIN -> AUTH_MODE_PIN
+            else -> AUTH_MODE_PUBLIC_KEY
+        }
+        prefs.edit().putString(KEY_AUTH_MODE, normalized).apply()
+        prefs.edit().putBoolean(KEY_NOAUTH, normalized == AUTH_MODE_NOTIFICATION).apply()
+        if (normalized != AUTH_MODE_PIN) {
+            val pinFile = File(context.filesDir, "protected/ssh/pin_auth")
+            if (pinFile.exists()) {
+                pinFile.delete()
+            }
+        }
+        if (isEnabled()) {
+            stop()
+            start()
+        }
+    }
+
+    fun enterPinMode() {
+        val current = getAuthMode()
+        if (current != AUTH_MODE_PIN) {
+            prefs.edit().putString(KEY_AUTH_MODE_PRE_PIN, current).apply()
+        }
+        setAuthMode(AUTH_MODE_PIN)
+    }
+
+    fun exitPinMode() {
+        val prev = prefs.getString(KEY_AUTH_MODE_PRE_PIN, AUTH_MODE_PUBLIC_KEY)
+            ?: AUTH_MODE_PUBLIC_KEY
+        prefs.edit().remove(KEY_AUTH_MODE_PRE_PIN).apply()
+        setAuthMode(prev)
+    }
+
+    fun getAuthMode(): String =
+        prefs.getString(KEY_AUTH_MODE, AUTH_MODE_PUBLIC_KEY) ?: AUTH_MODE_PUBLIC_KEY
+
+    fun getHostIp(): String {
+        return try {
+            val cm = context.applicationContext.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+                as? android.net.ConnectivityManager
+            val network = cm?.activeNetwork ?: return ""
+            val caps = cm.getNetworkCapabilities(network) ?: return ""
+            if (!caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) {
+                return ""
+            }
+            val linkProps = cm.getLinkProperties(network) ?: return ""
+            val addr = linkProps.linkAddresses
+                .mapNotNull { it.address }
+                .firstOrNull { it is java.net.Inet4Address }
+            addr?.hostAddress ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     private fun generateHostKey(dropbearkey: File, hostKey: File): Boolean {
         return try {
             val proc = ProcessBuilder(
@@ -201,5 +262,10 @@ class SshdManager(private val context: Context) {
         const val KEY_ENABLED = "enabled"
         const val KEY_PORT = "port"
         const val KEY_NOAUTH = "noauth_enabled"
+        const val KEY_AUTH_MODE = "auth_mode"
+        const val KEY_AUTH_MODE_PRE_PIN = "auth_mode_pre_pin"
+        const val AUTH_MODE_PUBLIC_KEY = "public_key"
+        const val AUTH_MODE_NOTIFICATION = "notification"
+        const val AUTH_MODE_PIN = "pin"
     }
 }

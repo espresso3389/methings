@@ -89,6 +89,46 @@
         word-break: break-word;
         overflow-wrap: anywhere;
       }
+      .pin-bar {
+        width: 100%;
+        height: 8px;
+        background: #e6dccb;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .pin-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: #2e7d32;
+        transition: width 0.2s ease;
+      }
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        z-index: 999;
+      }
+      .modal.show {
+        display: flex;
+      }
+      .modal-card {
+        width: 100%;
+        max-width: 360px;
+        background: var(--card);
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+      }
+      .pin-code {
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 2px;
+        margin: 8px 0;
+      }
       @media (max-width: 640px) {
         header {
           padding: 14px 16px 6px;
@@ -127,15 +167,18 @@
             <input type="checkbox" id="sshEnabled" />
             Enable SSHD
           </label>
+        </div>
+        <div class="row" style="margin-top: 8px;">
           <label>
-            <input type="checkbox" id="sshNoAuth" />
-            Notification auth
+            <input type="radio" name="authMethod" id="authPublic" />
+            Public-key
           </label>
+          <label>
+            <input type="radio" name="authMethod" id="authNotification" />
+            Notification
+          </label>
+          <button id="authPin">PIN</button>
         </div>
-        <div class="row" style="margin-top: 12px;">
-          <button id="startPin">Start PIN</button>
-        </div>
-        <p class="muted" id="pinDetail">PIN auth inactive.</p>
         <p class="muted" id="sshDetail">Waiting for status…</p>
       </section>
 
@@ -157,16 +200,6 @@
       <section class="card">
         <div class="row">
           <div>
-            <div class="label">Device IP (Wi‑Fi)</div>
-            <div id="wifiIp" class="status">—</div>
-          </div>
-        </div>
-        <p class="muted">Use this to connect via LAN services (SSHD will move to native in this phase).</p>
-      </section>
-
-      <section class="card">
-        <div class="row">
-          <div>
             <div class="label">UI Maintenance</div>
             <div class="muted">Reset the UI files to defaults.</div>
           </div>
@@ -174,16 +207,35 @@
         </div>
       </section>
     </main>
+    <div class="modal" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
+      <div class="modal-card">
+        <div class="label" id="pinTitle">PIN auth</div>
+        <div class="pin-code" id="pinCode">------</div>
+        <div class="muted" id="pinCountdown">PIN inactive.</div>
+        <div class="pin-bar" aria-hidden="true" style="margin: 10px 0 16px;">
+          <div id="pinBarFill" class="pin-bar-fill"></div>
+        </div>
+        <button class="danger" id="pinClose">End PIN</button>
+      </div>
+    </div>
 
     <script>
       const pythonStatus = document.getElementById("pythonStatus");
       const pythonDetail = document.getElementById("pythonDetail");
-      const wifiIp = document.getElementById("wifiIp");
       const sshStatus = document.getElementById("sshStatus");
       const sshEnabled = document.getElementById("sshEnabled");
-      const sshNoAuth = document.getElementById("sshNoAuth");
+      const authPublic = document.getElementById("authPublic");
+      const authNotification = document.getElementById("authNotification");
+      const authPin = document.getElementById("authPin");
       const sshDetail = document.getElementById("sshDetail");
-      const pinDetail = document.getElementById("pinDetail");
+      const pinModal = document.getElementById("pinModal");
+      const pinCode = document.getElementById("pinCode");
+      const pinCountdown = document.getElementById("pinCountdown");
+      const pinClose = document.getElementById("pinClose");
+      const pinBarFill = document.getElementById("pinBarFill");
+      const pinDurationMs = 20000;
+      let pinExpiresAt = null;
+      let lastAuthSelection = "public_key";
 
       function setStatus(el, value) {
         el.textContent = value;
@@ -212,9 +264,16 @@
           const data = await res.json();
           setStatus(sshStatus, data.running ? "ok" : "offline");
           sshEnabled.checked = !!data.enabled;
-          sshNoAuth.checked = !!data.noauth_enabled;
-          sshDetail.textContent =
-            "Home: " + data.home_dir + " • authorized_keys: " + data.authorized_keys;
+          const mode = data.auth_mode || "public_key";
+          if (mode !== "pin") {
+            lastAuthSelection = mode === "notification" ? "notification" : "public_key";
+          }
+          authPublic.checked = lastAuthSelection === "public_key";
+          authNotification.checked = lastAuthSelection === "notification";
+          const pinActive = mode === "pin";
+          authPublic.disabled = pinActive;
+          authNotification.disabled = pinActive;
+          sshDetail.textContent = "ssh " + (data.host || "aaa.bbb.ccc.ddd") + " -p " + (data.port || 2222);
         } catch (_) {
           setStatus(sshStatus, "offline");
           sshDetail.textContent = "SSHD status unavailable";
@@ -227,14 +286,46 @@
           if (!res.ok) throw new Error("pin status failed");
           const data = await res.json();
           if (data.active) {
-            const exp = data.expires_at ? new Date(data.expires_at).toLocaleTimeString() : "soon";
-            pinDetail.textContent = "PIN auth active until " + exp;
+            pinExpiresAt = data.expires_at || null;
+            if (pinModal && !pinModal.classList.contains("show")) {
+              pinModal.classList.add("show");
+            }
+            updatePinCountdown();
           } else {
-            pinDetail.textContent = "PIN auth inactive.";
+            pinExpiresAt = null;
+            pinBarFill.style.width = "0%";
+            pinCountdown.textContent = "PIN inactive.";
+            pinCode.textContent = "------";
+            pinModal.classList.remove("show");
           }
         } catch (_) {
-          pinDetail.textContent = "PIN auth unavailable.";
+          pinExpiresAt = null;
+          pinBarFill.style.width = "0%";
+          pinCountdown.textContent = "PIN unavailable.";
+          pinCode.textContent = "------";
+          pinModal.classList.remove("show");
         }
+      }
+
+      function updatePinCountdown() {
+        if (!pinExpiresAt) {
+          pinBarFill.style.width = "0%";
+          pinCountdown.textContent = "PIN inactive.";
+          return;
+        }
+        const remainingMs = pinExpiresAt - Date.now();
+        if (remainingMs <= 0) {
+          pinBarFill.style.width = "0%";
+          pinExpiresAt = null;
+          pinCountdown.textContent = "PIN inactive.";
+          pinCode.textContent = "------";
+          pinModal.classList.remove("show");
+          return;
+        }
+        const seconds = Math.ceil(remainingMs / 1000);
+        pinCountdown.textContent = "Active (" + seconds + "s)";
+        const ratio = Math.max(0, Math.min(1, remainingMs / pinDurationMs));
+        pinBarFill.style.width = Math.round(ratio * 100) + "%";
       }
 
       async function requestPermission(tool, detail) {
@@ -302,20 +393,14 @@
           AndroidBridge.resetUiToDefaults();
         }
       });
-      function refreshIp() {
-        if (typeof AndroidBridge !== "undefined" && AndroidBridge.getWifiIp) {
-          const ip = AndroidBridge.getWifiIp();
-          wifiIp.textContent = ip || "unavailable";
-        }
-      }
-      async function updateSshConfig() {
+      async function updateSshConfig(forcedMode) {
         const enabled = sshEnabled.checked;
-        const noauth_enabled = sshNoAuth.checked;
+        const auth_mode = forcedMode || (authNotification.checked ? "notification" : "public_key");
         try {
           const res = await fetch("http://127.0.0.1:8765/ssh/config", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ enabled, noauth_enabled }),
+            body: JSON.stringify({ enabled, auth_mode }),
           });
           if (!res.ok) throw new Error("apply failed");
           await refreshSsh();
@@ -325,24 +410,62 @@
       }
 
       sshEnabled.addEventListener("change", updateSshConfig);
-      sshNoAuth.addEventListener("change", updateSshConfig);
-
-      document.getElementById("startPin").addEventListener("click", async () => {
+      authPublic.addEventListener("change", () => {
+        authPublic.checked = true;
+        authNotification.checked = false;
+        updateSshConfig("public_key");
+      });
+      authNotification.addEventListener("change", () => {
+        authNotification.checked = true;
+        authPublic.checked = false;
+        updateSshConfig("notification");
+      });
+      authPin.addEventListener("click", async () => {
         try {
           const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
           const res = await fetch("http://127.0.0.1:8765/ssh/pin/start", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ permission_id, seconds: 10 }),
+            body: JSON.stringify({ permission_id, seconds: 20 }),
           });
           if (!res.ok) throw new Error("pin start failed");
           const data = await res.json();
           if (data.pin) {
-            alert("PIN: " + data.pin + " (valid ~10 seconds)");
+            pinCode.textContent = data.pin;
           }
-          refreshPin();
+          pinModal.classList.add("show");
+          pinExpiresAt = data.expires_at || (Date.now() + pinDurationMs);
+          updatePinCountdown();
+          const cfg = await fetch("http://127.0.0.1:8765/ssh/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ enabled: sshEnabled.checked, auth_mode: "pin" }),
+          });
+          if (!cfg.ok) throw new Error("pin config failed");
+          await refreshSsh();
         } catch (_) {
-          pinDetail.textContent = "PIN auth start failed.";
+          sshDetail.textContent = "Failed to start PIN auth";
+        }
+      });
+
+      pinClose.addEventListener("click", async () => {
+        try {
+          const res = await fetch("http://127.0.0.1:8765/ssh/pin/stop", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          if (!res.ok) throw new Error("pin stop failed");
+          await refreshPin();
+          await refreshSsh();
+        } catch (_) {
+          // ignore
+        } finally {
+          pinExpiresAt = null;
+          pinBarFill.style.width = "0%";
+          pinCountdown.textContent = "PIN inactive.";
+          pinCode.textContent = "------";
+          pinModal.classList.remove("show");
         }
       });
 
@@ -353,11 +476,10 @@
       refreshPython();
       refreshSsh();
       refreshPin();
-      refreshIp();
       setInterval(refreshPython, 5000);
       setInterval(refreshSsh, 5000);
       setInterval(refreshPin, 5000);
-      setInterval(refreshIp, 15000);
+      setInterval(updatePinCountdown, 1000);
     </script>
   </body>
 </html>

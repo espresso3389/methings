@@ -218,8 +218,8 @@ class LocalHttpServer(
                         .put("running", status.running)
                         .put("port", status.port)
                         .put("noauth_enabled", status.noauthEnabled)
-                        .put("home_dir", status.homeDir)
-                        .put("authorized_keys", status.authorizedKeys)
+                        .put("auth_mode", sshdManager.getAuthMode())
+                        .put("host", sshdManager.getHostIp())
                 )
             }
             uri == "/ssh/keys" -> {
@@ -283,6 +283,10 @@ class LocalHttpServer(
             }
             uri == "/ssh/pin/status" -> {
                 val state = sshPinManager.status()
+                if (state.expired) {
+                    sshPinManager.stopPin()
+                    sshdManager.exitPinMode()
+                }
                 jsonResponse(
                     JSONObject()
                         .put("active", state.active)
@@ -296,6 +300,8 @@ class LocalHttpServer(
                 if (!isPermissionApproved(permissionId, consume = true)) {
                     return forbidden("permission_required")
                 }
+                Log.i(TAG, "PIN auth start requested")
+                sshdManager.enterPinMode()
                 val state = sshPinManager.startPin(seconds)
                 jsonResponse(
                     JSONObject()
@@ -305,12 +311,9 @@ class LocalHttpServer(
                 )
             }
             uri == "/ssh/pin/stop" && session.method == Method.POST -> {
-                val payload = JSONObject(readBody(session).ifBlank { "{}" })
-                val permissionId = payload.optString("permission_id", "")
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
-                }
+                Log.i(TAG, "PIN auth stop requested")
                 sshPinManager.stopPin()
+                sshdManager.exitPinMode()
                 jsonResponse(JSONObject().put("active", false))
             }
             uri == "/ssh/config" && session.method == Method.POST -> {
@@ -318,7 +321,11 @@ class LocalHttpServer(
                 val payload = JSONObject(body.ifBlank { "{}" })
                 val enabled = payload.optBoolean("enabled", sshdManager.isEnabled())
                 val port = if (payload.has("port")) payload.optInt("port", sshdManager.getPort()) else null
+                val authMode = payload.optString("auth_mode", "")
                 val noauthEnabled = if (payload.has("noauth_enabled")) payload.optBoolean("noauth_enabled") else null
+                if (authMode.isNotBlank()) {
+                    sshdManager.setAuthMode(authMode)
+                }
                 val status = sshdManager.updateConfig(enabled, port, noauthEnabled)
                 jsonResponse(
                     JSONObject()
