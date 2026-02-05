@@ -6,6 +6,8 @@ ASSETS_DIR="$ROOT_DIR/app/android/app/src/main/assets/bin"
 JNI_DIR="$ROOT_DIR/app/android/app/src/main/jniLibs"
 WORK_DIR="$ROOT_DIR/.dropbear-build"
 SRC_DIR="$WORK_DIR/src"
+DROPBEAR_REPO=${DROPBEAR_REPO:-"https://github.com/espresso3389/dropbear.git"}
+DROPBEAR_REF=${DROPBEAR_REF:-"main"}
 
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
   if [[ -n "${ANDROID_SDK_ROOT:-}" && -d "$ANDROID_SDK_ROOT/ndk" ]]; then
@@ -24,30 +26,17 @@ API_LEVEL=${DROPBEAR_ANDROID_API:-21}
 mkdir -p "$WORK_DIR"
 
 cd "$WORK_DIR"
-if [[ ! -f dropbear.tar.bz2 ]]; then
-  echo "Downloading dropbear..."
-  curl -fsSL "https://matt.ucc.asn.au/dropbear/releases/" -o releases.html
-  TARBALL=$(grep -oE 'dropbear-[0-9.]+\.tar\.bz2' releases.html | sort -V | tail -n 1 || true)
-  if [[ -z "$TARBALL" ]]; then
-    echo "Failed to discover dropbear tarball" >&2
-    exit 1
-  fi
-  curl -fsSL "https://matt.ucc.asn.au/dropbear/releases/${TARBALL}" -o dropbear.tar.bz2
-  echo "$TARBALL" > dropbear.version
+if [[ ! -d "$SRC_DIR/.git" ]]; then
+  echo "Cloning dropbear fork..."
+  rm -rf "$SRC_DIR"
+  git clone "$DROPBEAR_REPO" "$SRC_DIR"
 fi
 
-if [[ ! -d "$SRC_DIR" ]]; then
-  mkdir -p "$SRC_DIR"
-  tar -xjf dropbear.tar.bz2 -C "$SRC_DIR" --strip-components=1
-  if command -v git >/dev/null 2>&1; then
-    pushd "$SRC_DIR" >/dev/null
-    # Keep an "orig" snapshot for patch generation.
-    git init -q
-    git add -A
-    git commit -q -m "orig"
-    popd >/dev/null
-  fi
-fi
+pushd "$SRC_DIR" >/dev/null
+git fetch --tags --prune origin
+git checkout -q "$DROPBEAR_REF"
+git reset -q --hard "origin/${DROPBEAR_REF}"
+popd >/dev/null
 
 TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
 if [[ ! -d "$TOOLCHAIN" ]]; then
@@ -95,7 +84,11 @@ build_one() {
 
   if [[ "$use_patch" == "1" ]]; then
     if [[ -f "$ROOT_DIR/scripts/dropbear.patch" ]]; then
-      (cd "$build_dir" && patch -p1 < "$ROOT_DIR/scripts/dropbear.patch")
+      if (cd "$build_dir" && patch -p1 --dry-run < "$ROOT_DIR/scripts/dropbear.patch" >/dev/null 2>&1); then
+        (cd "$build_dir" && patch -p1 < "$ROOT_DIR/scripts/dropbear.patch")
+      else
+        echo "Patch does not apply cleanly; skipping patch for $abi build"
+      fi
     else
       echo "Missing scripts/dropbear.patch; cannot patch dropbear sources" >&2
       exit 1
