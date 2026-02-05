@@ -190,11 +190,9 @@
           </div>
         </div>
         <div class="row" style="margin-top: 12px;">
-          <button class="primary" id="startPython">Start</button>
           <button id="restartPython">Restart</button>
-          <button class="danger" id="stopPython">Stop</button>
         </div>
-        <p class="muted" id="pythonDetail">Starts only when requested.</p>
+        <p class="muted" id="pythonDetail">Emergency restart only.</p>
       </section>
 
       <section class="card">
@@ -367,15 +365,6 @@
         throw new Error("permission timeout");
       }
 
-      document.getElementById("startPython").addEventListener("click", async () => {
-        if (typeof AndroidBridge !== "undefined" && AndroidBridge.startPythonWorker) {
-          AndroidBridge.startPythonWorker();
-        } else {
-          await fetch("http://127.0.0.1:8765/python/start", { method: "POST" });
-        }
-        pythonDetail.textContent = "Starting worker…";
-        setStatus(pythonStatus, "starting");
-      });
       document.getElementById("restartPython").addEventListener("click", async () => {
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonWorker) {
           AndroidBridge.restartPythonWorker();
@@ -384,15 +373,6 @@
         }
         pythonDetail.textContent = "Restart requested";
         setStatus(pythonStatus, "starting");
-      });
-      document.getElementById("stopPython").addEventListener("click", async () => {
-        if (typeof AndroidBridge !== "undefined" && AndroidBridge.stopPythonWorker) {
-          AndroidBridge.stopPythonWorker();
-        } else {
-          await fetch("http://127.0.0.1:8765/python/stop", { method: "POST" });
-        }
-        pythonDetail.textContent = "Stop requested";
-        setStatus(pythonStatus, "stopping");
       });
       document.getElementById("resetUi").addEventListener("click", () => {
         const ok = window.confirm("Reset UI to defaults? This will overwrite any local changes.");
