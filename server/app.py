@@ -47,23 +47,6 @@ if legacy_data_dir.exists():
             shutil.move(str(entry), str(dest))
         except Exception:
             pass
-legacy_secrets_dir = base_dir / "secrets"
-protected_secrets_dir = protected_dir / "secrets"
-if legacy_secrets_dir.exists():
-    protected_secrets_dir.mkdir(parents=True, exist_ok=True)
-    for entry in legacy_secrets_dir.iterdir():
-        dest = protected_secrets_dir / entry.name
-        if dest.exists():
-            continue
-        try:
-            shutil.move(str(entry), str(dest))
-        except Exception:
-            pass
-    try:
-        if not any(legacy_secrets_dir.iterdir()):
-            legacy_secrets_dir.rmdir()
-    except Exception:
-        pass
 data_dir = protected_dir
 storage = Storage(data_dir / "app.db")
 tool_router = ToolRouter(data_dir)
