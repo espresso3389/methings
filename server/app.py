@@ -50,17 +50,39 @@ if legacy_data_dir.exists():
 data_dir = protected_dir
 storage = Storage(data_dir / "app.db")
 tool_router = ToolRouter(data_dir)
-python_dir = base_dir / "python"
+user_dir = base_dir / "user"
+user_dir.mkdir(parents=True, exist_ok=True)
+
+legacy_www = base_dir / "www"
+legacy_python = base_dir / "python"
+legacy_ssh = base_dir / ".ssh"
+if legacy_www.exists() and not (user_dir / "www").exists():
+    try:
+        shutil.move(str(legacy_www), str(user_dir / "www"))
+    except Exception:
+        pass
+if legacy_python.exists() and not (user_dir / "python").exists():
+    try:
+        shutil.move(str(legacy_python), str(user_dir / "python"))
+    except Exception:
+        pass
+if legacy_ssh.exists() and not (user_dir / ".ssh").exists():
+    try:
+        shutil.move(str(legacy_ssh), str(user_dir / ".ssh"))
+    except Exception:
+        pass
+
+python_dir = user_dir / "python"
 program_dir = python_dir / "apps"
 program_dir.mkdir(parents=True, exist_ok=True)
-content_dir = base_dir / "www"
+content_dir = user_dir / "www"
 content_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/ui", StaticFiles(directory=content_dir, html=True), name="ui")
-ssh_public_dir = base_dir / ".ssh"
+ssh_public_dir = user_dir / ".ssh"
 ssh_public_dir.mkdir(parents=True, exist_ok=True)
 ssh_dir = data_dir / "ssh"
 ssh_dir.mkdir(parents=True, exist_ok=True)
-ssh_home_dir = base_dir
+ssh_home_dir = user_dir
 ssh_pin_file = ssh_dir / "pin_auth"
 ssh_noauth_prompt_dir = ssh_dir / "noauth_prompts"
 ssh_noauth_prompt_dir.mkdir(parents=True, exist_ok=True)

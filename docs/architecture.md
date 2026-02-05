@@ -116,10 +116,10 @@
 - Record audit events with timestamps and user decisions
 
 ## Runtime Data Layout
-- Editable
-  - `files/www` (Web UI content)
-  - `files/python/apps` (user Python code)
-  - `files/.ssh/authorized_keys` (SSH public keys)
+- Editable (SSH HOME)
+  - `files/user/www` (Web UI content)
+  - `files/user/python/apps` (user Python code)
+  - `files/user/.ssh/authorized_keys` (SSH public keys)
 - Protected (app-only)
   - `files/protected/app.db` (permissions, audit, credential metadata)
   - `files/protected/secrets/` (encrypted credential vault)
