@@ -117,6 +117,7 @@
 
 ## Runtime Data Layout
 - Editable (SSH HOME)
+  - `files/user/` (user-editable root)
   - `files/user/www` (Web UI content)
   - `files/user/python/apps` (user Python code)
   - `files/user/.ssh/authorized_keys` (SSH public keys)
@@ -124,6 +125,11 @@
   - `files/protected/app.db` (permissions, audit, credential metadata)
   - `files/protected/secrets/` (encrypted credential vault)
   - `files/protected/ssh/` (Dropbear host keys, logs, pid, auth prompt files)
+- Runtime/supporting
+  - `files/bin/` (bundled native binaries copied at runtime)
+  - `files/pyenv/` (embedded CPython environment)
+  - `files/server/` (local Python service runtime and logs)
+  - `files/profileInstalled` (bootstrap marker)
 
 ## Open Items
 - Python-for-Android packaging details and bootstrap sequence
