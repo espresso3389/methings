@@ -131,6 +131,8 @@
   - `files/server/` (local Python service runtime and logs)
   - `files/profileInstalled` (bootstrap marker)
 
+Note: `files/protected/` is a **policy boundary**, not a kernel-enforced sandbox. Any code running under the app UID (including Python) could access it unless explicitly blocked. Treat it as sensitive and enforce access via app policy and encryption.
+
 ## Open Items
 - Python-for-Android packaging details and bootstrap sequence
 - WebView security constraints and local file access strategy
