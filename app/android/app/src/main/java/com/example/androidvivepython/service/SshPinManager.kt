@@ -40,11 +40,12 @@ class SshPinManager(context: Context) {
             return PinState(active = false, pin = null, expiresAt = null)
         }
         val expiresSec = parts[0].toLongOrNull() ?: 0L
+        val pin = parts[1]
         val expiresAt = expiresSec * 1000L
         if (expiresAt <= System.currentTimeMillis()) {
             return PinState(active = false, pin = null, expiresAt = expiresAt, expired = true)
         }
-        return PinState(active = true, pin = null, expiresAt = expiresAt)
+        return PinState(active = true, pin = pin, expiresAt = expiresAt)
     }
 
     data class PinState(

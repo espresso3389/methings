@@ -286,10 +286,13 @@ class LocalHttpServer(
                 if (state.expired) {
                     sshPinManager.stopPin()
                     sshdManager.exitPinMode()
+                } else if (!state.active && sshdManager.getAuthMode() == "pin") {
+                    sshdManager.exitPinMode()
                 }
                 jsonResponse(
                     JSONObject()
                         .put("active", state.active)
+                        .put("pin", state.pin ?: "")
                         .put("expires_at", state.expiresAt ?: JSONObject.NULL)
                 )
             }
@@ -303,6 +306,7 @@ class LocalHttpServer(
                 Log.i(TAG, "PIN auth start requested")
                 sshdManager.enterPinMode()
                 val state = sshPinManager.startPin(seconds)
+                Log.i(TAG, "PIN auth generated pin=${state.pin}")
                 jsonResponse(
                     JSONObject()
                         .put("active", state.active)

@@ -235,6 +235,7 @@
       const pinBarFill = document.getElementById("pinBarFill");
       const pinDurationMs = 20000;
       let pinExpiresAt = null;
+      let lastPin = null;
       let lastAuthSelection = "public_key";
 
       function setStatus(el, value) {
@@ -287,13 +288,23 @@
             if (pinModal && !pinModal.classList.contains("show")) {
               pinModal.classList.add("show");
             }
+            if (data.pin) {
+              pinCode.textContent = data.pin;
+              lastPin = data.pin;
+            } else if (lastPin && pinCode.textContent === "------") {
+              pinCode.textContent = lastPin;
+            }
             updatePinCountdown();
           } else {
             pinExpiresAt = null;
             pinBarFill.style.width = "0%";
             pinCountdown.textContent = "PIN inactive.";
             pinCode.textContent = "------";
-            pinModal.classList.remove("show");
+            lastPin = null;
+            if (pinModal.classList.contains("show")) {
+              pinModal.classList.remove("show");
+              await refreshSsh();
+            }
           }
         } catch (_) {
           pinExpiresAt = null;
@@ -419,6 +430,10 @@
       });
       authPin.addEventListener("click", async () => {
         try {
+          pinCode.textContent = "••••••";
+          pinCountdown.textContent = "Generating PIN…";
+          pinBarFill.style.width = "0%";
+          pinModal.classList.add("show");
           const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
           const res = await fetch("http://127.0.0.1:8765/ssh/pin/start", {
             method: "POST",
@@ -429,6 +444,11 @@
           const data = await res.json();
           if (data.pin) {
             pinCode.textContent = data.pin;
+            lastPin = data.pin;
+          } else if (lastPin) {
+            pinCode.textContent = lastPin;
+          } else {
+            pinCode.textContent = "PIN unavailable";
           }
           pinModal.classList.add("show");
           pinExpiresAt = data.expires_at || (Date.now() + pinDurationMs);
@@ -462,6 +482,7 @@
           pinBarFill.style.width = "0%";
           pinCountdown.textContent = "PIN inactive.";
           pinCode.textContent = "------";
+          lastPin = null;
           pinModal.classList.remove("show");
         }
       });
@@ -475,7 +496,7 @@
       refreshPin();
       setInterval(refreshPython, 5000);
       setInterval(refreshSsh, 5000);
-      setInterval(refreshPin, 5000);
+      setInterval(refreshPin, 1000);
       setInterval(updatePinCountdown, 1000);
     </script>
   </body>
