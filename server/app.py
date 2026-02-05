@@ -568,6 +568,33 @@ def _ssh_fingerprint(key: str) -> str:
     digest = hashlib.sha256(key.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
 
+
+def _ssh_has_pubkeys() -> bool:
+    try:
+        return len(storage.list_active_ssh_keys()) > 0
+    except Exception:
+        return False
+
+
+def _ssh_pin_active() -> bool:
+    expires = _pin_expires()
+    if expires is None:
+        return False
+    return expires > int(time.time())
+
+
+def _ssh_allow_noauth() -> bool:
+    return not _ssh_has_pubkeys() and not _ssh_pin_active()
+
+
+def _restart_dropbear_if_running() -> None:
+    if not _dropbear_running():
+        return
+    port = _SSH_PORT if _SSH_PORT else _get_setting_int("ssh_port", 2222)
+    _stop_dropbear(log_event=False)
+    time.sleep(0.1)
+    _start_dropbear(port, log_event=False)
+
 def _get_setting_bool(key: str, default: bool) -> bool:
     raw = storage.get_setting(key)
     if raw is None:
@@ -672,10 +699,13 @@ def _start_dropbear(port: int, log_event: bool = True) -> Dict:
         ssh_work_dir = ssh_home_dir
         env["HOME"] = str(ssh_home_dir)
         env["PWD"] = str(ssh_work_dir)
-        env["DROPBEAR_NOAUTH_FILE"] = str(ssh_noauth_file)
         env["DROPBEAR_PIN_FILE"] = str(ssh_pin_file)
-        env["DROPBEAR_NOAUTH_PROMPT_DIR"] = str(ssh_noauth_prompt_dir)
-        env["DROPBEAR_NOAUTH_PROMPT_TIMEOUT"] = str(_get_setting_int("ssh_noauth_prompt_timeout", 10))
+        if _ssh_allow_noauth():
+            env["DROPBEAR_NOAUTH_FILE"] = str(ssh_noauth_file)
+            env["DROPBEAR_NOAUTH_PROMPT_DIR"] = str(ssh_noauth_prompt_dir)
+            env["DROPBEAR_NOAUTH_PROMPT_TIMEOUT"] = str(
+                _get_setting_int("ssh_noauth_prompt_timeout", 10)
+            )
         log_path = ssh_dir / "dropbear.log"
 
         log_fh = open(log_path, "a", encoding="utf-8", buffering=1)
@@ -760,6 +790,7 @@ async def ssh_add_key(payload: Dict):
     fingerprint = _ssh_fingerprint(key)
     storage.add_ssh_key(fingerprint, key, label, expires_at)
     _write_authorized_keys()
+    _restart_dropbear_if_running()
     await _log("ssh_key_added", {"fingerprint": fingerprint, "label": label})
     return {"fingerprint": fingerprint, "expires_at": expires_at}
 
@@ -775,6 +806,7 @@ async def ssh_delete_key(fingerprint: str, permission_id: str):
     _require_permission("ssh", permission_id)
     storage.delete_ssh_key(fingerprint)
     _write_authorized_keys()
+    _restart_dropbear_if_running()
     await _log("ssh_key_deleted", {"fingerprint": fingerprint})
     return {"status": "ok"}
 
@@ -800,6 +832,8 @@ async def ssh_noauth_allow(payload: Dict):
     ui_consent = payload.get("ui_consent") is True
     if not ui_consent:
         _require_permission("ssh_noauth", permission_id)
+    if not _ssh_allow_noauth():
+        raise HTTPException(status_code=409, detail="noauth_disabled_by_auth")
     seconds = payload.get("seconds")
     try:
         seconds = int(seconds) if seconds is not None else 10
@@ -825,6 +859,8 @@ async def ssh_noauth_respond(payload: Dict):
     ui_consent = payload.get("ui_consent") is True
     if not ui_consent:
         _require_permission("ssh_noauth", permission_id)
+    if not _ssh_allow_noauth():
+        raise HTTPException(status_code=409, detail="noauth_disabled_by_auth")
     req_id = (payload.get("id") or "").strip()
     if not req_id:
         raise HTTPException(status_code=400, detail="missing_id")
@@ -853,6 +889,7 @@ async def ssh_pin_allow(payload: Dict):
     if not _dropbear_running():
         _start_dropbear(_SSH_PORT if _SSH_PORT else _get_setting_int("ssh_port", 2222))
     result = _allow_pin(pin, seconds)
+    _restart_dropbear_if_running()
     await _log("ssh_pin_allowed", {"expires_at": result["expires_at"], "seconds": seconds})
     return {"status": "ok", **result}
 
@@ -864,6 +901,7 @@ async def ssh_pin_clear(payload: Dict):
     if not ui_consent:
         _require_permission("ssh_pin", permission_id)
     _clear_pin()
+    _restart_dropbear_if_running()
     await _log("ssh_pin_cleared", {})
     return {"status": "ok"}
 
