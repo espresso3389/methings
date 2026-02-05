@@ -1,6 +1,6 @@
 # Dropbear Modifications (Android App Sandbox)
 
-This project bundles Dropbear SSH server to provide on-device SSH access. Dropbear’s default server assumes a traditional Linux user database, full PTY/tty ownership control, and system-level permissions. On Android (non-root, app sandbox), those assumptions do not hold. We apply a small set of source patches at build time to make Dropbear usable inside the app’s private sandbox.
+This project bundles Dropbear SSH server to provide on-device SSH access. Dropbear’s default server assumes a traditional Linux user database, full PTY/tty ownership control, and system-level permissions. On Android (non-root, app sandbox), those assumptions do not hold. We maintain a forked Dropbear submodule with the required source changes.
 
 Below is a concise explanation of what we change and why.
 
@@ -50,15 +50,7 @@ Below is a concise explanation of what we change and why.
      - Emit CRLF on Enter.
    - **Impact:** The `kugutz>` prompt behaves more like a basic terminal even without PTY support.
 
-7) **Time-limited no-auth SSH (biometric grant)**
-   - **Files patched:** `src/svr-auth.c`
-   - **Why:** Support a short, user-approved window where SSH “none” auth succeeds without keys or passwords, gated by an explicit biometric confirmation in the app.
-   - **How it works:**
-     - The app writes a short-lived expiry timestamp to a file (seconds since epoch).
-     - Dropbear checks `DROPBEAR_NOAUTH_FILE` on each `none` auth request.
-   - **Impact:** No-auth login is allowed only within the configured window (default 10s).
-
-8) **Per-connection no-auth prompt (notification allow/deny)**
+7) **Per-connection no-auth prompt (notification allow/deny)**
    - **Files patched:** `src/svr-auth.c`
    - **Why:** Allow a “no-auth” login to proceed only after the phone user explicitly approves the connection.
    - **How it works:**
@@ -67,7 +59,7 @@ Below is a concise explanation of what we change and why.
      - The app writes `allow` or `deny` to `<id>.resp`, which Dropbear waits for (timeout via `DROPBEAR_NOAUTH_PROMPT_TIMEOUT`).
    - **Impact:** Each no-auth connection requires a phone prompt; if no response arrives, the login is denied.
 
-9) **Time-limited PIN SSH (biometric grant)**
+8) **Time-limited PIN SSH (biometric grant)**
    - **Files patched:** `src/svr-authpasswd.c`
    - **Why:** Allow `ssh-copy-id` or other password-based tools to work for a short, user-approved window.
    - **How it works:**
@@ -83,39 +75,26 @@ Below is a concise explanation of what we change and why.
 
 ## Where the Patches Live
 
-All modifications are applied during Dropbear build using:
+All modifications live in the forked Dropbear submodule and are built by:
 
-- `scripts/dropbear.patch`
+- `third_party/dropbear` (git submodule)
 - `scripts/build_dropbear.sh`
 
 The build script:
-1. Downloads the latest Dropbear tarball.
-2. Applies `scripts/dropbear.patch` with `patch -p1`.
-3. Builds Dropbear for Android ABIs and installs binaries into:
+1. Uses the `third_party/dropbear` submodule sources.
+2. Builds Dropbear for Android ABIs and installs binaries into:
    - `app/android/app/src/main/assets/bin/<abi>/`
    - `app/android/app/src/main/jniLibs/<abi>/`
 
-## How to Update the Patch (Dev Workflow)
+## How to Update Dropbear (Dev Workflow)
 
-When you need to change Dropbear modifications, generate a fresh patch file from a clean source tree. This keeps the build script simple and the patch reviewable.
+When you need to change Dropbear modifications, edit the submodule and commit there:
 
-Recommended flow (single working tree):
-1. Use `.dropbear-build/src` as the only working tree (the build script uses it too).
-2. Initialize a git baseline there:
-   - `git init`
-   - `git add .`
-   - `git commit -m "orig"`
-3. Apply your edits in `.dropbear-build/src`.
-4. Generate the patch:
-   - `git -C .dropbear-build/src diff --patch > /home/kawasaki/work/kugut/scripts/dropbear.patch`
-5. Reset the working tree back to the baseline (first commit) so builds use clean+patch:
-   - `git -C .dropbear-build/src reset --hard $(git -C .dropbear-build/src rev-list --max-parents=0 HEAD | tail -n 1)`
-   - `git -C .dropbear-build/src clean -fd`
-
-Shortcut:
-- `scripts/finalize_dropbear_patch.sh` (generates the patch, then resets and cleans)
-
-After that, the build script will apply the patch automatically during builds.
+1. `cd third_party/dropbear`
+2. Make changes, then `git commit` and `git push` to the fork.
+3. Update the submodule pointer in this repo:
+   - `git add third_party/dropbear`
+   - `git commit -m "dropbear: bump submodule"`
 
 ## Behavior Tradeoffs
 
@@ -127,4 +106,5 @@ After that, the build script will apply the patch automatically during builds.
 
 The goal is to provide a usable, secure SSH entry point within Android’s app sandbox **without root**. The changes are conservative: they remove assumptions that do not apply in this environment and avoid crashing on normal SSH flows.
 
-If you want to review or adjust any of these patches, check `scripts/build_dropbear.sh` and search for the patch blocks.
+If you want to review or adjust any of these changes, inspect the fork history in
+`third_party/dropbear` and the build script `scripts/build_dropbear.sh`.

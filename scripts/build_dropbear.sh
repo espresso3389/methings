@@ -24,12 +24,8 @@ API_LEVEL=${DROPBEAR_ANDROID_API:-21}
 mkdir -p "$WORK_DIR"
 
 if [[ ! -d "$SRC_DIR/.git" ]]; then
-  echo "Initializing dropbear submodule..."
-  git -C "$ROOT_DIR" submodule update --init --recursive third_party/dropbear
-fi
-
-if [[ ! -d "$SRC_DIR/.git" ]]; then
   echo "Missing dropbear submodule at $SRC_DIR" >&2
+  echo "Run: git submodule update --init --recursive third_party/dropbear" >&2
   exit 1
 fi
 
