@@ -1,16 +1,3 @@
-diff --git a/src/auth.h b/src/auth.h
-index 5eb4690..ff06890 100644
---- a/src/auth.h
-+++ b/src/auth.h
-@@ -126,6 +126,8 @@ struct AuthState {
- 	                                has already failed */
- 	struct timespec auth_starttime; /* Server only, time of receiving current 
- 									SSH_MSG_USERAUTH_REQUEST */
-+	int app_approval_set;
-+	int app_approved;
- 
- 	/* These are only used for the server */
- 	uid_t pw_uid;
 diff --git a/src/loginrec.c b/src/loginrec.c
 index 3118bf6..14e6299 100644
 --- a/src/loginrec.c
@@ -123,10 +110,10 @@ index 9f12d67..fd69661 100644
  			}
  		}
 diff --git a/src/svr-auth.c b/src/svr-auth.c
-index de01458..673ce3d 100644
+index de01458..6c5d5b4 100644
 --- a/src/svr-auth.c
 +++ b/src/svr-auth.c
-@@ -38,6 +38,112 @@
+@@ -38,6 +38,98 @@
  
  static int checkusername(const char *username, unsigned int userlen);
  
@@ -220,26 +207,12 @@ index de01458..673ce3d 100644
 +	return time(NULL) <= (time_t)expires;
 +}
 +
-+static int app_approve(const char *username) {
-+	if (ses.authstate.app_approval_set) {
-+		return ses.authstate.app_approved;
-+	}
-+	ses.authstate.app_approval_set = 1;
-+	ses.authstate.app_approved = noauth_prompt(username) ? 1 : 0;
-+	if (!ses.authstate.app_approved) {
-+		dropbear_log(LOG_NOTICE,
-+				"Auth denied by app for '%s' from %s",
-+				username ? username : "",
-+				svr_ses.addrstring);
-+	}
-+	return ses.authstate.app_approved;
-+}
 +#endif
 +
  /* initialise the first time for a session, resetting all parameters */
  void svr_authinitialise() {
  	memset(&ses.authstate, 0, sizeof(ses.authstate));
-@@ -46,7 +152,14 @@ void svr_authinitialise() {
+@@ -46,7 +138,14 @@ void svr_authinitialise() {
  #endif
  #if DROPBEAR_SVR_PASSWORD_AUTH || DROPBEAR_SVR_PAM_AUTH
  	if (!svr_opts.noauthpass) {
@@ -254,7 +227,7 @@ index de01458..673ce3d 100644
  	}
  #endif
  }
-@@ -151,6 +264,20 @@ void recv_msg_userauth_request() {
+@@ -151,6 +250,14 @@ void recv_msg_userauth_request() {
  		if (methodlen == AUTH_METHOD_PASSWORD_LEN &&
  				strncmp(methodname, AUTH_METHOD_PASSWORD,
  					AUTH_METHOD_PASSWORD_LEN) == 0) {
@@ -266,16 +239,10 @@ index de01458..673ce3d 100644
 +			}
 +			ses.authstate.authtypes |= AUTH_TYPE_PASSWORD;
 +#endif
-+#ifdef __ANDROID__
-+			if (valid_user && !app_approve(username)) {
-+				send_msg_userauth_failure(0, 1);
-+				goto out;
-+			}
-+#endif
  			svr_auth_password(valid_user);
  			goto out;
  		}
-@@ -175,6 +302,18 @@ void recv_msg_userauth_request() {
+@@ -175,6 +282,12 @@ void recv_msg_userauth_request() {
  	if (methodlen == AUTH_METHOD_PUBKEY_LEN &&
  			strncmp(methodname, AUTH_METHOD_PUBKEY,
  				AUTH_METHOD_PUBKEY_LEN) == 0) {
@@ -285,16 +252,10 @@ index de01458..673ce3d 100644
 +			goto out;
 +		}
 +#endif
-+#ifdef __ANDROID__
-+		if (valid_user && !app_approve(username)) {
-+			send_msg_userauth_failure(0, 1);
-+			goto out;
-+		}
-+#endif
  		svr_auth_pubkey(valid_user);
  		goto out;
  	}
-@@ -263,12 +402,19 @@ static int checkusername(const char *username, unsigned int userlen) {
+@@ -263,12 +376,19 @@ static int checkusername(const char *username, unsigned int userlen) {
  
  	/* check that user exists */
  	if (!ses.authstate.pw_name) {
@@ -319,7 +280,7 @@ index de01458..673ce3d 100644
  	}
  
  	/* check if we are running as non-root, and login user is different from the server */
-@@ -305,34 +451,9 @@ static int checkusername(const char *username, unsigned int userlen) {
+@@ -305,34 +425,9 @@ static int checkusername(const char *username, unsigned int userlen) {
  	}
  #endif /* HAVE_GETGROUPLIST */
  
