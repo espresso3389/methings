@@ -29,6 +29,7 @@ class PythonRuntimeManager(private val context: Context) {
 
         val serverDir = extractor.extractServerAssets()
         val keyFile = keyManager.ensureKeyFile()
+        keyManager.cleanupLegacySecretsDir()
         val pythonHome = File(context.filesDir, "pyenv")
         val serverScript = File(context.filesDir, "server/app.py")
 

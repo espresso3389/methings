@@ -37,14 +37,25 @@ class SqlcipherKeyManager(private val context: Context) {
         }
 
         return try {
-            val secretDir = File(context.filesDir, "secrets")
-            secretDir.mkdirs()
-            val keyFile = File(secretDir, "sqlcipher.key")
+            val protectedDir = File(context.filesDir, "protected/secrets")
+            protectedDir.mkdirs()
+            val keyFile = File(protectedDir, "sqlcipher.key")
             keyFile.writeText(Base64.encodeToString(keyBytes, Base64.NO_WRAP))
             keyFile
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to write sqlcipher key file", ex)
             null
+        }
+    }
+
+    fun cleanupLegacySecretsDir() {
+        try {
+            val legacyDir = File(context.filesDir, "secrets")
+            if (legacyDir.exists() && legacyDir.isDirectory) {
+                legacyDir.deleteRecursively()
+            }
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to remove legacy secrets dir", ex)
         }
     }
 
@@ -78,7 +89,7 @@ class SqlcipherKeyManager(private val context: Context) {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "sqlcipher_key_alias"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
-        private const val PREFS_NAME = "oauth_secrets"
+        private const val PREFS_NAME = "sqlcipher_secrets"
         private const val PREF_ENC_KEY = "enc_sqlcipher_key"
         private const val PREF_IV = "enc_sqlcipher_iv"
     }
