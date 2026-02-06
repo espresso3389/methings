@@ -1,9 +1,11 @@
 import contextlib
 import io
 import json
+import os
 import re
 import runpy
 import shlex
+import ssl
 import subprocess
 import sys
 import threading
@@ -108,6 +110,7 @@ def _run_curl_args(args: list[str], workdir: Path) -> int:
     silent = False
     show_error = False
     fail_mode = ""
+    insecure = False
     i = 0
     while i < len(args):
         token = args[i]
@@ -117,6 +120,10 @@ def _run_curl_args(args: list[str], workdir: Path) -> int:
             continue
         if token in {"-S", "--show-error"}:
             show_error = True
+            i += 1
+            continue
+        if token in {"-k", "--insecure"}:
+            insecure = True
             i += 1
             continue
         if token in {"-L", "--location"}:
@@ -195,8 +202,27 @@ def _run_curl_args(args: list[str], workdir: Path) -> int:
     body_len = 0
     start = time.monotonic()
 
+    def _make_ssl_context() -> ssl.SSLContext:
+        if insecure:
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return ctx
+
+        cafile = str(os.environ.get("SSL_CERT_FILE") or "").strip()
+        if cafile and Path(cafile).exists():
+            return ssl.create_default_context(cafile=cafile)
+
+        # Fallback to certifi if present in the embedded pyenv.
+        try:
+            import certifi  # type: ignore
+
+            return ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            return ssl.create_default_context()
+
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=_make_ssl_context()) as resp:
             status = int(getattr(resp, "status", 0) or 0)
             reason = str(getattr(resp, "reason", "") or "")
             if include_headers or head_only:
