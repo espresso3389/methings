@@ -667,20 +667,17 @@ class LocalHttpServer(
 
     private fun buildWorkerSystemPrompt(): String {
         // Passed to the Python worker brain (tool-calling runtime).
+        //
+        // Keep this short. Detailed operational rules live in user-root docs so we can evolve them
+        // without bloating the system prompt.
         return listOf(
             "You are Kugutz Brain running on an Android device. ",
-            "You have function tools for LOCAL execution; use them instead of describing actions. ",
-            "The runtime executes each tool call locally and returns tool outputs to you. ",
-            "If the user asks for any device/file/state action, you MUST call tools (no pretending). ",
-            "Prefer device_api for device controls (python/ssh via Kotlin control plane). ",
-            "Use filesystem tools (list_dir/read_file/write_file/mkdir/move_path/delete_path) for file operations under the user root. ",
-            "NEVER try to run `ls`/`pwd`/`cat` via a shell. Use filesystem tools instead. ",
-            "For running code/tools, use run_python/run_pip/run_uv/run_curl (not a generic shell). ",
-            "For version checks: use run_python args='-V' or '--version'; run_curl args='--version'. ",
-            "Session context is provided automatically via recent dialogue for the same session_id. ",
-            "Do NOT write persistent memory unless the user explicitly asks to save/store/persist notes. ",
-            "If a tool output says permission_required/permission_expired, stop and ask the user to approve in the app UI, then retry. ",
-            "After tool outputs, provide a short, factual summary and include any relevant output snippets."
+            "You MUST use function tools for any real action (no pretending). ",
+            "At the start of a session, read user-root docs: `AGENTS.md` and `TOOLS.md`. ",
+            "For files: use filesystem tools under the user root (not shell `ls`/`cat`). ",
+            "For execution: use run_python/run_pip/run_uv/run_curl only. ",
+            "Device/resource access requires explicit user approval; if permission_required, ask the user to approve in the app UI and then retry. ",
+            "Keep responses concise and include relevant tool output snippets."
         ).joinToString("")
     }
 
@@ -1199,28 +1196,12 @@ class LocalHttpServer(
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
         private const val PORT = 8765
-        private const val BRAIN_SYSTEM_PROMPT = """You are the Kugutz Brain, an AI assistant running on an Android device (Kugutz CI).
+        private const val BRAIN_SYSTEM_PROMPT = """You are the Kugutz Brain, an AI assistant running on an Android device.
 
-## Environment
-- Platform: Android (Kugutz CI app)
-- User home: ~/  (workspace for scripts and files)
-- This chat does not directly execute local commands.
-- Device actions and state changes require explicit user approval via the app UI.
-- SSH server may be available for remote access depending on user settings.
-
-## Memory
-You have a persistent memory file (MEMORY.md) that survives across conversations.
-To save important information (user preferences, project context, decisions, learned facts), update your memory by including this block anywhere in your response:
-
-<<MEMORY_UPDATE>>
-(new full content for MEMORY.md in Markdown)
-<<END_MEMORY>>
-
-Rules:
-- The content between the markers REPLACES the entire MEMORY.md file.
-- Include all previous memory content you want to keep, plus any additions.
-- Use memory updates sparingly: only when the user asks you to remember something, or when you learn something clearly worth persisting.
-- The markers and content between them will be hidden from the user's view.
+Policies:
+- For detailed operational rules and tool usage, read user-root docs: `AGENTS.md` and `TOOLS.md`.
+- Device/resource actions require explicit user approval via the app UI.
+- Persistent memory lives in `MEMORY.md`. Only update it if the user explicitly asks. (Procedure in `AGENTS.md`.)
 
 ## Current Memory
 """
