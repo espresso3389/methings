@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ASSETS_PATH=${ASSETS_PATH:-"$(pwd)/app/android/app/src/main/assets/pyenv"}
-JNI_LIBS_PATH=${JNI_LIBS_PATH:-"$(pwd)/app/android/app/src/main/jniLibs"}
+ROOT_DIR=${ROOT_DIR:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"}
+ASSETS_PATH=${ASSETS_PATH:-"$ROOT_DIR/app/android/app/src/main/assets/pyenv"}
+JNI_LIBS_PATH=${JNI_LIBS_PATH:-"$ROOT_DIR/app/android/app/src/main/jniLibs"}
 SDK_DIR=${SDK_DIR:-""}
 NDK_DIR=${NDK_DIR:-""}
 ARCH=${ARCH:-"arm64-v8a"}
@@ -38,10 +39,13 @@ run_p4a() {
 run_p4a "$REQUIREMENTS"
 
 # Try to locate the built python runtime.
-PY_RUNTIME_DIR="/home/kawasaki/.local/share/python-for-android/dists/$DIST_NAME/_python_bundle__${ARCH}/_python_bundle"
-DIST_LIBS_DIR="/home/kawasaki/.local/share/python-for-android/dists/$DIST_NAME/libs/$ARCH"
+P4A_DIST_ROOT=${P4A_DIST_ROOT:-"$HOME/.local/share/python-for-android/dists"}
+DIST_ROOT="$P4A_DIST_ROOT/$DIST_NAME"
+PY_RUNTIME_DIR="$DIST_ROOT/_python_bundle__${ARCH}/_python_bundle"
+DIST_LIBS_DIR="$DIST_ROOT/libs/$ARCH"
 if [[ ! -d "$PY_RUNTIME_DIR" ]]; then
   echo "Could not find python bundle at $PY_RUNTIME_DIR" >&2
+  echo "Set P4A_DIST_ROOT if your python-for-android dist root differs from $P4A_DIST_ROOT" >&2
   exit 2
 fi
 

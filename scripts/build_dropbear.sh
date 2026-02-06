@@ -8,6 +8,20 @@ WORK_DIR="$ROOT_DIR/.dropbear-build"
 SRC_DIR="$ROOT_DIR/third_party/dropbear"
 
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
+  if [[ -n "${NDK_DIR:-}" && -d "${NDK_DIR}" ]]; then
+    ANDROID_NDK_HOME="${NDK_DIR}"
+    export ANDROID_NDK_HOME
+  fi
+fi
+
+if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
+  if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "${ANDROID_NDK_ROOT}" ]]; then
+    ANDROID_NDK_HOME="${ANDROID_NDK_ROOT}"
+    export ANDROID_NDK_HOME
+  fi
+fi
+
+if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
   if [[ -n "${ANDROID_SDK_ROOT:-}" && -d "$ANDROID_SDK_ROOT/ndk" ]]; then
     ANDROID_NDK_HOME=$(ls -1d "$ANDROID_SDK_ROOT/ndk"/* 2>/dev/null | sort -V | tail -n 1)
     export ANDROID_NDK_HOME
