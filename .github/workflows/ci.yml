@@ -29,6 +29,7 @@ jobs:
             cmake \
             gettext \
             libtool-bin \
+            libltdl-dev \
             m4 \
             libtool \
             ninja-build \
