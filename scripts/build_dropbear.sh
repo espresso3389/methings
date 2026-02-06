@@ -8,6 +8,20 @@ WORK_DIR="$ROOT_DIR/.dropbear-build"
 SRC_DIR="$ROOT_DIR/third_party/dropbear"
 
 if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
+  if [[ -n "${NDK_DIR:-}" && -d "${NDK_DIR}" ]]; then
+    ANDROID_NDK_HOME="${NDK_DIR}"
+    export ANDROID_NDK_HOME
+  fi
+fi
+
+if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
+  if [[ -n "${ANDROID_NDK_ROOT:-}" && -d "${ANDROID_NDK_ROOT}" ]]; then
+    ANDROID_NDK_HOME="${ANDROID_NDK_ROOT}"
+    export ANDROID_NDK_HOME
+  fi
+fi
+
+if [[ -z "${ANDROID_NDK_HOME:-}" ]]; then
   if [[ -n "${ANDROID_SDK_ROOT:-}" && -d "$ANDROID_SDK_ROOT/ndk" ]]; then
     ANDROID_NDK_HOME=$(ls -1d "$ANDROID_SDK_ROOT/ndk"/* 2>/dev/null | sort -V | tail -n 1)
     export ANDROID_NDK_HOME
@@ -42,7 +56,8 @@ write_localoptions() {
 #define DROPBEAR_SVR_PAM_AUTH 0
 #define DROPBEAR_SVR_PUBKEY_AUTH 1
 #define DROPBEAR_SVR_MULTIUSER 1
-#define DROPBEAR_CLI_PASSWORD_AUTH 0
+#define DROPBEAR_CLI_PASSWORD_AUTH 1
+#define DROPBEAR_CLI_PUBKEY_AUTH 1
 #define DROPBEAR_SVR_AGENTFWD 0
 #define DEBUG_TRACE 1
 OPT
@@ -93,7 +108,7 @@ build_one() {
     --disable-loginfunc \
     --disable-syslog
 
-  make PROGRAMS="dropbear dropbearkey"
+  make PROGRAMS="dropbear dbclient scp dropbearkey"
 
   local dropbear_bin="dropbear"
   if [[ ! -f "$dropbear_bin" && -f "dropbearmulti" ]]; then
@@ -119,9 +134,13 @@ build_one() {
   mkdir -p "$jni_out"
   cp -f "$dropbear_bin" "$jni_out/libdropbear.so"
   cp -f "dropbearkey" "$jni_out/libdropbearkey.so"
+  cp -f "dbclient" "$jni_out/libdbclient.so"
+  cp -f "scp" "$jni_out/libscp.so"
   "$STRIP" "$jni_out/libdropbear.so" || true
   "$STRIP" "$jni_out/libdropbearkey.so" || true
-  chmod 0755 "$jni_out/libdropbear.so" "$jni_out/libdropbearkey.so"
+  "$STRIP" "$jni_out/libdbclient.so" || true
+  "$STRIP" "$jni_out/libscp.so" || true
+  chmod 0755 "$jni_out/libdropbear.so" "$jni_out/libdropbearkey.so" "$jni_out/libdbclient.so" "$jni_out/libscp.so"
 
   popd >/dev/null
 }
