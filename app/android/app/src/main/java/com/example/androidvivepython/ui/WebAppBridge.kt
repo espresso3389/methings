@@ -121,9 +121,21 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun setBrainApiKeyPlain(value: String) {
+        if (getSettingsUnlockRemainingMs() <= 0) return
+        brainPrefs.edit().putString("api_key", value.trim()).apply()
+    }
+
+    @JavascriptInterface
     fun getBraveSearchApiKeyPlain(): String {
         if (getSettingsUnlockRemainingMs() <= 0) return ""
         return credentialStore.get("brave_search_api_key")?.value?.trim().orEmpty()
+    }
+
+    @JavascriptInterface
+    fun setBraveSearchApiKeyPlain(value: String) {
+        if (getSettingsUnlockRemainingMs() <= 0) return
+        credentialStore.set("brave_search_api_key", value.trim())
     }
 
     @JavascriptInterface

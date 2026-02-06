@@ -370,12 +370,8 @@
             </div>
           </div>
           <div class="field">
-            <label>Current API Key (plaintext)</label>
-            <input type="text" id="brainApiKeyCurrent" placeholder="(locked)" readonly />
-          </div>
-          <div class="field">
-            <label>Set API Key (plaintext)</label>
-            <input type="text" id="brainApiKey" placeholder="sk-..." />
+            <label>API Key (plaintext)</label>
+            <input type="text" id="brainApiKey" placeholder="(locked)" />
             <div class="muted" id="brainKeyStatus" style="margin-top:4px;"></div>
           </div>
           <div style="margin-top:12px;">
@@ -390,12 +386,8 @@
             Default provider is DuckDuckGo. Brave Search is used only when an API key is configured here.
           </div>
           <div class="field">
-            <label>Current Brave Key (plaintext)</label>
-            <input type="text" id="braveSearchApiKeyCurrent" placeholder="(locked)" readonly />
-          </div>
-          <div class="field">
-            <label>Set Brave Key (plaintext)</label>
-            <input type="text" id="braveSearchApiKey" placeholder="(optional)" />
+            <label>Brave Search API Key (plaintext)</label>
+            <input type="text" id="braveSearchApiKey" placeholder="(locked)" />
             <div class="muted" id="braveSearchKeyStatus" style="margin-top:4px;">Status unknown.</div>
           </div>
           <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
@@ -538,6 +530,17 @@
         return 0;
       }
 
+      function setSettingsUiLocked(locked) {
+        try {
+          $("brainApiKey").disabled = locked;
+          $("braveSearchApiKey").disabled = locked;
+          $("brainSave").disabled = locked;
+          $("braveSearchSave").disabled = locked;
+          $("braveSearchClear").disabled = locked;
+          $("braveSearchCheck").disabled = locked;
+        } catch (_) {}
+      }
+
       function requestSettingsUnlock() {
         if (pendingSettingsUnlock) return pendingSettingsUnlock;
         pendingSettingsUnlock = new Promise((resolve) => {
@@ -567,21 +570,24 @@
 
       function refreshSecretsFromBridge() {
         const locked = getSettingsUnlockRemainingMs() <= 0;
+        setSettingsUiLocked(locked);
         if (locked) {
-          $("brainApiKeyCurrent").value = "";
-          $("brainApiKeyCurrent").placeholder = "(locked)";
-          $("braveSearchApiKeyCurrent").value = "";
-          $("braveSearchApiKeyCurrent").placeholder = "(locked)";
+          $("brainApiKey").value = "";
+          $("brainApiKey").placeholder = "(locked)";
+          $("braveSearchApiKey").value = "";
+          $("braveSearchApiKey").placeholder = "(locked)";
           return;
         }
         try {
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.getBrainApiKeyPlain) {
-            $("brainApiKeyCurrent").value = AndroidBridge.getBrainApiKeyPlain() || "";
+            $("brainApiKey").value = AndroidBridge.getBrainApiKeyPlain() || "";
+            $("brainApiKey").placeholder = "";
           }
         } catch (_) {}
         try {
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.getBraveSearchApiKeyPlain) {
-            $("braveSearchApiKeyCurrent").value = AndroidBridge.getBraveSearchApiKeyPlain() || "";
+            $("braveSearchApiKey").value = AndroidBridge.getBraveSearchApiKeyPlain() || "";
+            $("braveSearchApiKey").placeholder = "";
           }
         } catch (_) {}
       }
@@ -925,6 +931,7 @@
       }
 
       $("brainSave").addEventListener("click", async () => {
+        if (getSettingsUnlockRemainingMs() <= 0) { showToast("Unlock Settings first"); return; }
         const preset = getSelectedPreset();
         if (!preset) { showToast("Choose a model first"); return; }
 
@@ -943,21 +950,25 @@
         }
 
         const apiKey = $("brainApiKey").value.trim();
-        if (apiKey) payload.api_key = apiKey;
+        payload.api_key = apiKey;
 
         try {
+          // Prefer AndroidBridge to avoid extra consent prompts; Settings is already biometric-unlocked.
+          try {
+            if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBrainApiKeyPlain) {
+              AndroidBridge.setBrainApiKeyPlain(apiKey);
+            }
+          } catch (_) {}
+
           const res = await fetch(API + "/brain/config", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify(payload),
           });
-          if (res.ok) {
-            $("brainApiKey").value = "";
-            await loadBrainConfig();
-            showToast("Brain config saved");
-          } else {
-            showToast("Failed to save config");
-          }
+          if (!res.ok) { showToast("Failed to save config"); return; }
+          await loadBrainConfig();
+          refreshSecretsFromBridge();
+          showToast("Brain config saved");
         } catch (_) {
           showToast("Connection error");
         }
@@ -1038,9 +1049,20 @@
 
       $("braveSearchCheck").addEventListener("click", checkBraveSearchKey);
       $("braveSearchSave").addEventListener("click", async () => {
+        if (getSettingsUnlockRemainingMs() <= 0) { showToast("Unlock Settings first"); return; }
         const key = $("braveSearchApiKey").value.trim();
-        if (!key) { showToast("Enter a key (or Clear)"); return; }
         try {
+          // Prefer AndroidBridge to avoid extra consent prompts; Settings is already biometric-unlocked.
+          try {
+            if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBraveSearchApiKeyPlain) {
+              AndroidBridge.setBraveSearchApiKeyPlain(key);
+              refreshSecretsFromBridge();
+              showToast("Brave key saved");
+              await checkBraveSearchKey();
+              return;
+            }
+          } catch (_) {}
+
           const permission_id = await requestPermission("credentials", "Set Brave Search API key");
           const res = await fetch(API + "/vault/credentials", {
             method: "POST",
@@ -1048,7 +1070,6 @@
             body: JSON.stringify({ name: "brave_search_api_key", value: key, permission_id }),
           });
           if (!res.ok) throw 0;
-          $("braveSearchApiKey").value = "";
           showToast("Brave key saved");
           await checkBraveSearchKey();
         } catch (_) {
@@ -1057,7 +1078,19 @@
       });
 
       $("braveSearchClear").addEventListener("click", async () => {
+        if (getSettingsUnlockRemainingMs() <= 0) { showToast("Unlock Settings first"); return; }
         try {
+          // Prefer AndroidBridge to avoid extra consent prompts; Settings is already biometric-unlocked.
+          try {
+            if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBraveSearchApiKeyPlain) {
+              AndroidBridge.setBraveSearchApiKeyPlain("");
+              refreshSecretsFromBridge();
+              showToast("Brave key cleared");
+              await checkBraveSearchKey();
+              return;
+            }
+          } catch (_) {}
+
           const permission_id = await requestPermission("credentials", "Clear Brave Search API key");
           const res = await fetch(API + "/vault/credentials", {
             method: "POST",
@@ -1065,7 +1098,6 @@
             body: JSON.stringify({ name: "brave_search_api_key", value: "", permission_id }),
           });
           if (!res.ok) throw 0;
-          $("braveSearchApiKey").value = "";
           showToast("Brave key cleared");
           await checkBraveSearchKey();
         } catch (_) {
