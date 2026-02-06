@@ -31,7 +31,7 @@ Android App (Kotlin)
 - Started by Kotlin when needed.
 - Should not host the UI or health endpoints.
 - Can crash without taking down the app.
-- Worker health runs on `127.0.0.1:8766`.
+- Worker health runs on `127.0.0.1:8776`.
 
 ## Migration Notes
 - SSH and permission APIs are now handled by Kotlin local service.

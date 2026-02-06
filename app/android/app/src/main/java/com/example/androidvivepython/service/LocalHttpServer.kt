@@ -236,6 +236,15 @@ class LocalHttpServer(
             uri == "/builtins/stt" && session.method == Method.POST -> {
                 return jsonError(Response.Status.NOT_IMPLEMENTED, "not_implemented", JSONObject().put("feature", "stt"))
             }
+            (uri == "/shell/exec" || uri == "/shell/exec/") -> {
+                if (session.method != Method.POST) {
+                    return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
+                }
+                val body = readBody(session)
+                val payload = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                return handleShellExec(payload)
+            }
             uri == "/ssh/status" -> {
                 val status = sshdManager.status()
                 jsonResponse(
@@ -404,6 +413,143 @@ class LocalHttpServer(
         val response = newFixedLengthResponse(status, "application/json", payload.toString())
         response.addHeader("Cache-Control", "no-cache")
         return response
+    }
+
+    private fun handleShellExec(payload: JSONObject): Response {
+        val cmd = payload.optString("cmd")
+        val args = payload.optString("args", "")
+        val cwd = payload.optString("cwd", "")
+        if (cmd != "python" && cmd != "pip") {
+            return jsonError(Response.Status.FORBIDDEN, "command_not_allowed")
+        }
+
+        val pythonExe = resolvePythonBinary()
+        if (pythonExe == null) {
+            if (runtimeManager.getStatus() != "ok") {
+                runtimeManager.startWorker()
+                waitForPythonHealth(5000)
+            }
+            val proxied = proxyShellExecToWorker(cmd, args, cwd)
+            if (proxied != null) {
+                return proxied
+            }
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_missing")
+        }
+        val userHome = File(context.filesDir, "user")
+        val resolvedCwd = resolveUserPath(userHome, cwd) ?: userHome
+
+        val argList = if (args.isBlank()) emptyList() else args.split(Regex("\\s+"))
+        val command = when (cmd) {
+            "pip" -> listOf(pythonExe.absolutePath, "-m", "pip") + argList
+            else -> listOf(pythonExe.absolutePath) + argList
+        }
+
+        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+        val pyenvDir = File(context.filesDir, "pyenv")
+        val serverDir = File(context.filesDir, "server")
+        return try {
+            val pb = ProcessBuilder(command)
+            pb.directory(resolvedCwd)
+            pb.redirectErrorStream(true)
+            pb.environment()["KUGUTZ_PYENV"] = pyenvDir.absolutePath
+            pb.environment()["KUGUTZ_NATIVELIB"] = nativeLibDir
+            pb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
+            pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
+            pb.environment()["PYTHONPATH"] = listOf(
+                serverDir.absolutePath,
+                "${pyenvDir.absolutePath}/site-packages",
+                "${pyenvDir.absolutePath}/modules",
+                "${pyenvDir.absolutePath}/stdlib.zip"
+            ).joinToString(":")
+            val proc = pb.start()
+            val output = proc.inputStream.bufferedReader().readText()
+            val code = proc.waitFor()
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("code", code)
+                    .put("output", output)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "exec_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun resolvePythonBinary(): File? {
+        // Prefer native lib (has correct SELinux context for execution)
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val nativePython = File(nativeDir, "libkugutzpy.so")
+        if (nativePython.exists()) {
+            return nativePython
+        }
+        // Wrapper script in bin/
+        val binPython = File(context.filesDir, "bin/python3")
+        if (binPython.exists() && binPython.canExecute()) {
+            return binPython
+        }
+        return null
+    }
+
+    private fun proxyShellExecToWorker(cmd: String, args: String, cwd: String): Response? {
+        return try {
+            val url = java.net.URL("http://127.0.0.1:8776/shell/exec")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 1500
+            conn.readTimeout = 3000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            val payload = JSONObject()
+                .put("cmd", cmd)
+                .put("args", args)
+                .put("cwd", cwd)
+            conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            val body = stream.bufferedReader().use { it.readText() }
+            newFixedLengthResponse(
+                Response.Status.lookup(conn.responseCode) ?: Response.Status.OK,
+                "application/json",
+                body
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun waitForPythonHealth(timeoutMs: Long) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                val conn = java.net.URL("http://127.0.0.1:8776/health")
+                    .openConnection() as java.net.HttpURLConnection
+                conn.connectTimeout = 500
+                conn.readTimeout = 500
+                conn.requestMethod = "GET"
+                if (conn.responseCode in 200..299) {
+                    return
+                }
+            } catch (_: Exception) {
+            }
+            try {
+                Thread.sleep(250)
+            } catch (_: InterruptedException) {
+                return
+            }
+        }
+    }
+
+    private fun resolveUserPath(root: File, path: String): File? {
+        if (path.isBlank()) {
+            return root
+        }
+        val candidate = if (path.startsWith("/")) File(path) else File(root, path)
+        return try {
+            val canonicalRoot = root.canonicalFile
+            val canonical = candidate.canonicalFile
+            if (canonical.path.startsWith(canonicalRoot.path)) canonical else null
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun textResponse(text: String): Response {

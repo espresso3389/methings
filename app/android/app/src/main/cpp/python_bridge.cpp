@@ -36,6 +36,8 @@ static PyObject_Str_t g_PyObject_Str = nullptr;
 static PyUnicode_AsUTF8_t g_PyUnicode_AsUTF8 = nullptr;
 static Py_DecRef_t g_Py_DecRef = nullptr;
 static bool g_python_initialized = false;
+static std::wstring g_python_home_w;
+static std::wstring g_program_name_w;
 
 static bool load_python_symbols() {
     if (g_python_handle) {
@@ -184,13 +186,13 @@ Java_jp_espresso3389_kugutz_service_PythonBridge_start(
         setenv("DROPBEAR_VERBOSE", "3", 1);
     }
 
-    std::wstring home_w = to_wide(python_home);
+    g_python_home_w = to_wide(python_home);
     if (g_Py_SetPythonHome) {
-        g_Py_SetPythonHome(const_cast<wchar_t *>(home_w.c_str()));
+        g_Py_SetPythonHome(const_cast<wchar_t *>(g_python_home_w.c_str()));
     }
     if (g_Py_SetProgramName) {
-        std::wstring prog_w = to_wide("android_python");
-        g_Py_SetProgramName(const_cast<wchar_t *>(prog_w.c_str()));
+        g_program_name_w = to_wide("android_python");
+        g_Py_SetProgramName(const_cast<wchar_t *>(g_program_name_w.c_str()));
     }
 
     if (!g_python_initialized) {
@@ -218,7 +220,6 @@ Java_jp_espresso3389_kugutz_service_PythonBridge_start(
     int rc = g_PyRun_SimpleString(code.c_str());
     if (rc != 0) {
         LOGE("PyRun_SimpleString failed with code %d", rc);
-        log_python_exception();
         if (g_PyErr_Print) {
             g_PyErr_Print();
         }

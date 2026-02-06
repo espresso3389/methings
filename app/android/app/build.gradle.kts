@@ -83,7 +83,11 @@ val buildUsbLibs by tasks.registering(Exec::class) {
     }
     workingDir = repoRoot
     environment("NDK_DIR", ndkDir)
-    commandLine("bash", "-lc", "./scripts/build_libusb_android.sh && ./scripts/build_libuvc_android.sh")
+    commandLine(
+        "bash",
+        "-lc",
+        "./scripts/build_dropbear.sh && ./scripts/build_libusb_android.sh && ./scripts/build_libuvc_android.sh && ./scripts/build_kugutzsh_android.sh && ./scripts/build_kugutzpy_android.sh"
+    )
 }
 
 tasks.named("preBuild") {

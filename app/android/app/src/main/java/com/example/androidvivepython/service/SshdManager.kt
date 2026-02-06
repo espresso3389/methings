@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.util.concurrent.atomic.AtomicReference
 
 class SshdManager(private val context: Context) {
@@ -24,6 +26,7 @@ class SshdManager(private val context: Context) {
         val binDir = File(context.filesDir, "bin")
         val dropbear = resolveBinary("libdropbear.so", File(binDir, "dropbear"))
         val dropbearkey = resolveBinary("libdropbearkey.so", File(binDir, "dropbearkey"))
+        val shellBin = ensureShellBinary(File(binDir, "kugutzsh"))
         if (dropbear == null) {
             Log.w(TAG, "Dropbear binary missing")
             return false
@@ -31,6 +34,9 @@ class SshdManager(private val context: Context) {
         if (dropbearkey == null) {
             Log.w(TAG, "Dropbearkey binary missing")
             return false
+        }
+        if (shellBin == null) {
+            Log.w(TAG, "Kugutz shell binary missing")
         }
         val userHome = File(context.filesDir, "user")
         val sshDir = File(userHome, ".ssh")
@@ -89,9 +95,36 @@ class SshdManager(private val context: Context) {
             pidFile.absolutePath
         )
         return try {
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir
+            val pyenvDir = File(context.filesDir, "pyenv")
+            val serverDir = File(context.filesDir, "server")
             val pb = ProcessBuilder(args)
             pb.environment()["HOME"] = userHome.absolutePath
+            pb.environment()["KUGUTZ_HOME"] = userHome.absolutePath
+            if (shellBin != null) {
+                pb.environment()["KUGUTZ_SHELL"] = shellBin.absolutePath
+            }
+            pb.environment()["USER"] = "kugutz"
             pb.environment()["DROPBEAR_PIN_FILE"] = pinFile.absolutePath
+            // Python/pip environment for SSH sessions
+            pb.environment()["KUGUTZ_PYENV"] = pyenvDir.absolutePath
+            pb.environment()["KUGUTZ_NATIVELIB"] = nativeLibDir
+            pb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
+            pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
+            pb.environment()["PYTHONPATH"] = listOf(
+                serverDir.absolutePath,
+                "${pyenvDir.absolutePath}/site-packages",
+                "${pyenvDir.absolutePath}/modules",
+                "${pyenvDir.absolutePath}/stdlib.zip"
+            ).joinToString(":")
+            val certFile = File(pyenvDir, "site-packages/certifi/cacert.pem")
+            if (certFile.exists()) {
+                pb.environment()["SSL_CERT_FILE"] = certFile.absolutePath
+                pb.environment()["PIP_CERT"] = certFile.absolutePath
+            }
+            // Add nativeLibDir to PATH so python3/pip are accessible via libkugutzpy.so
+            val existingPath = pb.environment()["PATH"] ?: "/usr/bin:/bin"
+            pb.environment()["PATH"] = "${binDir.absolutePath}:$nativeLibDir:$existingPath"
             if (authMode == AUTH_MODE_NOTIFICATION) {
                 pb.environment()["DROPBEAR_NOAUTH_PROMPT_DIR"] = noauthDir.absolutePath
                 pb.environment()["DROPBEAR_NOAUTH_PROMPT_TIMEOUT"] = "10"
@@ -117,7 +150,7 @@ class SshdManager(private val context: Context) {
     }
 
     fun status(): SshStatus {
-        val running = processRef.get()?.isAlive == true
+        val running = processRef.get()?.isAlive == true || isPortOpen(getPort())
         return SshStatus(
             enabled = isEnabled(),
             running = running,
@@ -254,6 +287,42 @@ class SshdManager(private val context: Context) {
             return fallback
         }
         return null
+    }
+
+    private fun isPortOpen(port: Int): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", port), 200)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun ensureShellBinary(target: File): File? {
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val nativeFile = File(nativeDir, "libkugutzsh.so")
+        if (!nativeFile.exists()) {
+            return if (target.exists()) target else null
+        }
+        if (target.exists()) {
+            target.setExecutable(true, true)
+            return target
+        }
+        return try {
+            target.parentFile?.mkdirs()
+            nativeFile.inputStream().use { input ->
+                target.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            target.setExecutable(true, true)
+            target
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to prepare kugutzsh binary", ex)
+            null
+        }
     }
 
     data class SshStatus(

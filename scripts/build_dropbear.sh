@@ -23,7 +23,7 @@ API_LEVEL=${DROPBEAR_ANDROID_API:-21}
 
 mkdir -p "$WORK_DIR"
 
-if [[ ! -d "$SRC_DIR/.git" ]]; then
+if [[ ! -e "$SRC_DIR/.git" ]]; then
   echo "Missing dropbear submodule at $SRC_DIR" >&2
   echo "Run: git submodule update --init --recursive third_party/dropbear" >&2
   exit 1
@@ -126,9 +126,26 @@ build_one() {
   popd >/dev/null
 }
 
-build_one arm64-v8a aarch64-linux-android
-build_one armeabi-v7a armv7a-linux-androideabi
-build_one x86 i686-linux-android
-build_one x86_64 x86_64-linux-android
+ABIS="${ABIS:-arm64-v8a armeabi-v7a x86 x86_64}"
+for abi in $ABIS; do
+  case "$abi" in
+    arm64-v8a)
+      build_one arm64-v8a aarch64-linux-android
+      ;;
+    armeabi-v7a)
+      build_one armeabi-v7a armv7a-linux-androideabi
+      ;;
+    x86)
+      build_one x86 i686-linux-android
+      ;;
+    x86_64)
+      build_one x86_64 x86_64-linux-android
+      ;;
+    *)
+      echo "Unsupported ABI for dropbear build: $abi" >&2
+      exit 1
+      ;;
+  esac
+done
 
 echo "Dropbear binaries installed to $ASSETS_DIR and $JNI_DIR"

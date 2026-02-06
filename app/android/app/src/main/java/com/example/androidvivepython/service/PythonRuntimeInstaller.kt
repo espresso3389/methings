@@ -12,6 +12,7 @@ class PythonRuntimeInstaller(private val context: Context) {
     fun ensureInstalled(): Boolean {
         val pythonHome = File(context.filesDir, "pyenv")
         val stdlibZip = File(pythonHome, "stdlib.zip")
+        val pipPackage = File(pythonHome, "site-packages/pip")
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val storedVersion = prefs.getLong(KEY_RUNTIME_VERSION, -1)
         val currentVersion = try {
@@ -24,9 +25,11 @@ class PythonRuntimeInstaller(private val context: Context) {
         val installedStamp = readInstalledStamp(pythonHome)
 
         val needsInstall = !stdlibZip.exists() ||
+            !pipPackage.exists() ||
             storedVersion != currentVersion ||
             (assetStamp != null && assetStamp != installedStamp)
         if (!needsInstall) {
+            ensurePythonBinaries()
             return true
         }
 
@@ -43,10 +46,37 @@ class PythonRuntimeInstaller(private val context: Context) {
             if (ok && assetStamp != null) {
                 writeInstalledStamp(pythonHome, assetStamp)
             }
+            if (ok) {
+                ensurePythonBinaries()
+            }
             ok
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to install Python runtime", ex)
             false
+        }
+    }
+
+    /**
+     * Create wrapper scripts in bin/ that exec libkugutzpy.so from the native
+     * lib directory.  Running from nativeLibraryDir avoids SELinux app_data_file
+     * execute restrictions that would block a copied binary.
+     */
+    /**
+     * Ensure the bin/ directory exists for other tools (dropbear, kugutzsh).
+     * python3/pip commands are handled by dropbear shell function injection
+     * (avoids SELinux app_data_file execution restrictions).
+     */
+    private fun ensurePythonBinaries() {
+        try {
+            val binDir = File(context.filesDir, "bin")
+            binDir.mkdirs()
+            // Clean up any stale python/pip entries from previous versions
+            for (name in listOf("python3", "python", "pip", "pip3")) {
+                val f = File(binDir, name)
+                if (f.exists()) f.delete()
+            }
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to set up bin directory", ex)
         }
     }
 

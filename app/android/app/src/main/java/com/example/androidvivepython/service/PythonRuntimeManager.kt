@@ -16,13 +16,19 @@ class PythonRuntimeManager(private val context: Context) {
     private var status: String = "offline"
     private var pendingRestart = false
     private var stopping = false
+    private var startInProgress = false
 
     fun startWorker(): Boolean {
         synchronized(lock) {
+            if (startInProgress) {
+                Log.i(TAG, "Start requested while start already in progress")
+                return true
+            }
             if (runtimeThread != null && runtimeThread?.isAlive == true) {
                 Log.i(TAG, "Start requested but runtime already running")
                 return true
             }
+            startInProgress = true
             runtimeThread = null
             stopping = false
             pendingRestart = false
@@ -34,11 +40,17 @@ class PythonRuntimeManager(private val context: Context) {
 
         if (!installer.ensureInstalled()) {
             Log.w(TAG, "Python runtime install failed")
+            synchronized(lock) {
+                startInProgress = false
+            }
             return false
         }
 
         if (!pythonHome.exists() || !serverScript.exists() || serverDir == null) {
             Log.w(TAG, "Python runtime not found. Expected $pythonHome and $serverScript")
+            synchronized(lock) {
+                startInProgress = false
+            }
             return false
         }
 
@@ -63,6 +75,7 @@ class PythonRuntimeManager(private val context: Context) {
                     shouldRestart = pendingRestart
                     pendingRestart = false
                     stopping = false
+                    startInProgress = false
                 }
                 if (shouldRestart) {
                     updateStatus("starting")
@@ -130,7 +143,7 @@ class PythonRuntimeManager(private val context: Context) {
         updateStatus("stopping")
         Thread {
             try {
-                val conn = URL("http://127.0.0.1:8766/shutdown").openConnection() as HttpURLConnection
+                val conn = URL("http://127.0.0.1:8776/shutdown").openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.connectTimeout = 1500
                 conn.readTimeout = 1500
@@ -179,7 +192,7 @@ class PythonRuntimeManager(private val context: Context) {
         Thread {
             repeat(8) { attempt ->
                 try {
-                    val conn = URL("http://127.0.0.1:8766/health")
+                    val conn = URL("http://127.0.0.1:8776/health")
                         .openConnection() as HttpURLConnection
                     conn.connectTimeout = 1500
                     conn.readTimeout = 1500

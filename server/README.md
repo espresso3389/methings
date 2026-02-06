@@ -43,3 +43,4 @@ python app.py
 - Credential vault endpoints require an approved permission_id from /permissions/request.
 - Service registration requires a credential permission and creates a service-specific vault snapshot.
 - Service vault uses per-service Android Keystore keys via the local vault server on 127.0.0.1:8766.
+- Python worker health runs on 127.0.0.1:8776.

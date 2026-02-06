@@ -17,6 +17,10 @@ import socket
 import shutil
 from typing import Dict, Optional
 from pathlib import Path
+import contextlib
+import io
+import runpy
+import shlex
 
 from storage.db import Storage
 from tools.router import ToolRouter
@@ -238,6 +242,62 @@ async def programs_start(payload: Dict):
         _PROGRAMS[entry["id"]] = entry
     await _log("program_start", {"id": entry["id"], "pid": entry["pid"]})
     return {"id": entry["id"], "pid": entry["pid"], "path": entry["path"]}
+
+
+@app.post("/shell/exec")
+async def shell_exec(payload: Dict):
+    cmd = payload.get("cmd", "")
+    raw_args = payload.get("args", "") or ""
+    cwd = payload.get("cwd", "") or ""
+    if cmd not in {"python", "pip"}:
+        raise HTTPException(status_code=403, detail="command_not_allowed")
+
+    resolved = user_dir / cwd.lstrip("/") if cwd else user_dir
+    try:
+        resolved = resolved.resolve()
+    except Exception:
+        resolved = user_dir
+    if not str(resolved).startswith(str(user_dir.resolve())):
+        resolved = user_dir
+
+    args = shlex.split(raw_args)
+    output = io.StringIO()
+    exit_code = 0
+
+    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+        try:
+            if cmd == "pip":
+                try:
+                    from pip._internal.cli.main import main as pip_main
+                except Exception:
+                    from pip._internal import main as pip_main  # type: ignore
+                exit_code = pip_main(args)
+            else:
+                if not args:
+                    raise RuntimeError("interactive_not_supported")
+                if args[0] in {"-V", "--version"}:
+                    print(sys.version)
+                    exit_code = 0
+                elif args[0] == "-c":
+                    if len(args) < 2:
+                        raise RuntimeError("missing_code")
+                    code = args[1]
+                    exec_globals = {"__name__": "__main__"}
+                    exec(code, exec_globals, exec_globals)
+                    exit_code = 0
+                else:
+                    script_path = Path(args[0])
+                    if not script_path.is_absolute():
+                        script_path = resolved / script_path
+                    runpy.run_path(str(script_path), run_name="__main__")
+                    exit_code = 0
+        except SystemExit as exc:
+            exit_code = int(getattr(exc, "code", 0) or 0)
+        except Exception as exc:
+            exit_code = 1
+            print(f"error: {exc}")
+
+    return {"status": "ok", "code": exit_code, "output": output.getvalue()}
 
 
 @app.get("/programs")
