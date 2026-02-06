@@ -102,6 +102,10 @@ class SshdManager(private val context: Context) {
             pidFile.absolutePath
         )
         return try {
+            // pip build isolation spawns subprocesses that may override PYTHONPATH; make sure
+            // the runtime is installed and pythonXY.zip is present so stdlib imports work.
+            PythonRuntimeInstaller(context).ensureInstalled()
+
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val pyenvDir = File(context.filesDir, "pyenv")
             val serverDir = File(context.filesDir, "server")
