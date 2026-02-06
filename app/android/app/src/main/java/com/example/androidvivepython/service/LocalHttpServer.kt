@@ -236,6 +236,32 @@ class LocalHttpServer(
             uri == "/builtins/stt" && session.method == Method.POST -> {
                 return jsonError(Response.Status.NOT_IMPLEMENTED, "not_implemented", JSONObject().put("feature", "stt"))
             }
+            (uri == "/brain/status" || uri == "/brain/config" || uri == "/brain/messages") && session.method == Method.GET -> {
+                if (runtimeManager.getStatus() != "ok") {
+                    runtimeManager.startWorker()
+                    waitForPythonHealth(5000)
+                }
+                val proxied = proxyWorkerRequest(
+                    path = uri,
+                    method = "GET",
+                    body = null,
+                    query = session.queryParameterString
+                )
+                proxied ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+            }
+            uri.startsWith("/brain/") && session.method == Method.POST -> {
+                if (runtimeManager.getStatus() != "ok") {
+                    runtimeManager.startWorker()
+                    waitForPythonHealth(5000)
+                }
+                val body = readBody(session).ifBlank { "{}" }
+                val proxied = proxyWorkerRequest(
+                    path = uri,
+                    method = "POST",
+                    body = body
+                )
+                proxied ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+            }
             (uri == "/shell/exec" || uri == "/shell/exec/") -> {
                 if (session.method != Method.POST) {
                     return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
@@ -508,25 +534,38 @@ class LocalHttpServer(
     }
 
     private fun proxyShellExecToWorker(cmd: String, args: String, cwd: String): Response? {
+        val payload = JSONObject()
+            .put("cmd", cmd)
+            .put("args", args)
+            .put("cwd", cwd)
+        return proxyWorkerRequest("/shell/exec", "POST", payload.toString())
+    }
+
+    private fun proxyWorkerRequest(
+        path: String,
+        method: String,
+        body: String? = null,
+        query: String? = null
+    ): Response? {
         return try {
-            val url = java.net.URL("http://127.0.0.1:8776/shell/exec")
+            val fullPath = if (!query.isNullOrBlank()) "$path?$query" else path
+            val url = java.net.URL("http://127.0.0.1:8776$fullPath")
             val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "POST"
+            conn.requestMethod = method
             conn.connectTimeout = 1500
-            conn.readTimeout = 3000
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
-            val payload = JSONObject()
-                .put("cmd", cmd)
-                .put("args", args)
-                .put("cwd", cwd)
-            conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+            conn.readTimeout = 5000
+            if (method == "POST") {
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                val out = body ?: "{}"
+                conn.outputStream.use { it.write(out.toByteArray(Charsets.UTF_8)) }
+            }
             val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-            val body = stream.bufferedReader().use { it.readText() }
+            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
             newFixedLengthResponse(
                 Response.Status.lookup(conn.responseCode) ?: Response.Status.OK,
                 "application/json",
-                body
+                responseBody
             )
         } catch (_: Exception) {
             null
