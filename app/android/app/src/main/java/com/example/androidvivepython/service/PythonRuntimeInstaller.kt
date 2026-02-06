@@ -5,6 +5,7 @@ import android.util.Log
 import java.io.File
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import java.util.zip.ZipInputStream
 
 class PythonRuntimeInstaller(private val context: Context) {
     private val extractor = AssetExtractor(context)
@@ -30,6 +31,7 @@ class PythonRuntimeInstaller(private val context: Context) {
             (assetStamp != null && assetStamp != installedStamp)
         if (!needsInstall) {
             ensureStdlibZipAlias(pythonHome)
+            ensureEncodingsExtracted(pythonHome)
             ensurePythonBinaries()
             return true
         }
@@ -49,6 +51,7 @@ class PythonRuntimeInstaller(private val context: Context) {
             }
             if (ok) {
                 ensureStdlibZipAlias(pythonHome)
+                ensureEncodingsExtracted(pythonHome)
                 ensurePythonBinaries()
             }
             ok
@@ -89,6 +92,50 @@ class PythonRuntimeInstaller(private val context: Context) {
             tmp.renameTo(target)
         } catch (ex: Exception) {
             Log.w(TAG, "Failed to ensure stdlib zip alias", ex)
+        }
+    }
+
+    /**
+     * Some pip build-isolation subprocesses appear to fail early if the stdlib is only present
+     * in a zip. To make startup robust, extract the encodings package into lib/pythonX.Y so
+     * init_fs_encoding can import it without relying on zipimport.
+     */
+    private fun ensureEncodingsExtracted(pythonHome: File) {
+        try {
+            val stdlibZip = File(pythonHome, "stdlib.zip")
+            if (!stdlibZip.exists() || stdlibZip.length() <= 0L) return
+
+            val libDir = File(pythonHome, "lib")
+            libDir.mkdirs()
+
+            val verDir = libDir.listFiles()?.firstOrNull { it.isDirectory && it.name.startsWith("python3.") }
+            val verName = verDir?.name ?: "python3.11"
+            val stdlibDir = File(libDir, verName)
+            stdlibDir.mkdirs()
+
+            val encDir = File(stdlibDir, "encodings")
+            val marker = File(encDir, "aliases.py")
+            if (marker.exists() && marker.length() > 0L) return
+
+            encDir.mkdirs()
+            ZipInputStream(stdlibZip.inputStream()).use { zin ->
+                while (true) {
+                    val e = zin.nextEntry ?: break
+                    val name = e.name ?: ""
+                    if (!name.startsWith("encodings/") || name.contains("..")) {
+                        continue
+                    }
+                    if (e.isDirectory) {
+                        File(stdlibDir, name).mkdirs()
+                        continue
+                    }
+                    val outFile = File(stdlibDir, name)
+                    outFile.parentFile?.mkdirs()
+                    outFile.outputStream().use { out -> zin.copyTo(out) }
+                }
+            }
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to extract encodings package", ex)
         }
     }
 

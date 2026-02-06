@@ -22,6 +22,9 @@ class AgentService : Service() {
         extractor.extractUiAssetsIfMissing()
         extractor.extractUserDefaultsIfMissing()
         extractor.extractDropbearIfMissing()
+        // Ensure Python runtime is installed for SSH/pip subprocesses (build isolation) even if the
+        // main Python worker hasn't been started yet.
+        PythonRuntimeInstaller(this).ensureInstalled()
         jp.espresso3389.kugutz.db.PlainDbProvider.get(this)
         // Make sure we always have a CA bundle file in app-private storage before SSH sessions start.
         // The periodic updater will refresh it when the network is available.
