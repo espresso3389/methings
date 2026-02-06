@@ -23,6 +23,7 @@ import runpy
 import shlex
 import re
 
+from agents.runtime import BrainRuntime
 from storage.db import Storage
 from tools.router import ToolRouter
 
@@ -206,53 +207,7 @@ def _vault_request(command: str, name: str, payload: str = "") -> str:
         return ""
 
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "db": storage.encryption_status()}
-
-
-@app.get("/ui/version")
-async def ui_version():
-    return {"version": _UI_VERSION}
-
-
-@app.post("/shutdown")
-async def shutdown():
-    server = globals().get("_UVICORN_SERVER")
-    if server is None:
-        return {"status": "no_server"}
-    server.should_exit = True
-    server.force_exit = True
-    try:
-        loop = asyncio.get_running_loop()
-        loop.call_soon(lambda: setattr(server, "should_exit", True))
-        loop.call_later(0.2, lambda: setattr(server, "force_exit", True))
-    except RuntimeError:
-        pass
-    return {"status": "stopping"}
-
-
-@app.post("/programs/start")
-async def programs_start(payload: Dict):
-    code = payload.get("code", "")
-    if not code.strip():
-        raise HTTPException(status_code=400, detail="missing_code")
-    args = payload.get("args") or {}
-    entry = _spawn_program(code, args)
-    with _PROGRAM_LOCK:
-        _PROGRAMS[entry["id"]] = entry
-    await _log("program_start", {"id": entry["id"], "pid": entry["pid"]})
-    return {"id": entry["id"], "pid": entry["pid"], "path": entry["path"]}
-
-
-@app.post("/shell/exec")
-async def shell_exec(payload: Dict):
-    cmd = payload.get("cmd", "")
-    raw_args = payload.get("args", "") or ""
-    cwd = payload.get("cwd", "") or ""
-    if cmd not in {"python", "pip", "uv"}:
-        raise HTTPException(status_code=403, detail="command_not_allowed")
-
+def _resolve_user_cwd(cwd: str) -> Path:
     resolved = user_dir / cwd.lstrip("/") if cwd else user_dir
     try:
         resolved = resolved.resolve()
@@ -260,8 +215,15 @@ async def shell_exec(payload: Dict):
         resolved = user_dir
     if not str(resolved).startswith(str(user_dir.resolve())):
         resolved = user_dir
+    return resolved
 
-    args = shlex.split(raw_args)
+
+def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
+    if cmd not in {"python", "pip", "uv"}:
+        return {"status": "error", "error": "command_not_allowed"}
+
+    resolved = _resolve_user_cwd(cwd)
+    args = shlex.split(raw_args or "")
     output = io.StringIO()
     exit_code = 0
 
@@ -322,6 +284,112 @@ async def shell_exec(payload: Dict):
             print(f"error: {exc}")
 
     return {"status": "ok", "code": exit_code, "output": output.getvalue()}
+
+
+def _create_permission_request_sync(
+    tool: str,
+    detail: str = "",
+    scope: str = "once",
+    duration_min: int = 0,
+) -> Dict:
+    expires_at = None
+    if scope == "session" and duration_min > 0:
+        expires_at = _now_ms() + duration_min * 60 * 1000
+    request_id = storage.create_permission_request(
+        tool=tool,
+        detail=detail,
+        scope=scope,
+        expires_at=expires_at,
+    )
+    request = storage.get_permission_request(request_id)
+    _emit_log("permission_requested", request)
+    return request
+
+
+def _tool_invoke_impl(
+    tool_name: str,
+    args: Dict,
+    request_id: str = None,
+    detail: str = "",
+) -> Dict:
+    if not request_id:
+        request = _create_permission_request_sync(tool_name, detail=detail)
+        return {"status": "permission_required", "request": request}
+
+    request = storage.get_permission_request(request_id)
+    if not request or request.get("status") != "approved":
+        return {"status": "permission_required", "request": request}
+
+    expires_at = request.get("expires_at")
+    if expires_at and _now_ms() > int(expires_at):
+        storage.update_permission_status(request_id, "expired")
+        return {"status": "permission_expired", "request": request}
+
+    result = tool_router.invoke(tool_name, args)
+    _emit_log("tool_invoked", {"tool": tool_name, "result": result})
+
+    if request.get("scope") == "once":
+        storage.mark_permission_used(request_id)
+    return result
+
+
+BRAIN_RUNTIME = BrainRuntime(
+    user_dir=user_dir,
+    storage=storage,
+    emit_log=_emit_log,
+    shell_exec=_shell_exec_impl,
+    tool_invoke=_tool_invoke_impl,
+)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "db": storage.encryption_status()}
+
+
+@app.get("/ui/version")
+async def ui_version():
+    return {"version": _UI_VERSION}
+
+
+@app.post("/shutdown")
+async def shutdown():
+    server = globals().get("_UVICORN_SERVER")
+    if server is None:
+        return {"status": "no_server"}
+    server.should_exit = True
+    server.force_exit = True
+    try:
+        loop = asyncio.get_running_loop()
+        loop.call_soon(lambda: setattr(server, "should_exit", True))
+        loop.call_later(0.2, lambda: setattr(server, "force_exit", True))
+    except RuntimeError:
+        pass
+    return {"status": "stopping"}
+
+
+@app.post("/programs/start")
+async def programs_start(payload: Dict):
+    code = payload.get("code", "")
+    if not code.strip():
+        raise HTTPException(status_code=400, detail="missing_code")
+    args = payload.get("args") or {}
+    entry = _spawn_program(code, args)
+    with _PROGRAM_LOCK:
+        _PROGRAMS[entry["id"]] = entry
+    await _log("program_start", {"id": entry["id"], "pid": entry["pid"]})
+    return {"id": entry["id"], "pid": entry["pid"], "path": entry["path"]}
+
+
+@app.post("/shell/exec")
+async def shell_exec(payload: Dict):
+    cmd = payload.get("cmd", "")
+    raw_args = payload.get("args", "") or ""
+    cwd = payload.get("cwd", "") or ""
+    result = _shell_exec_impl(cmd, raw_args, cwd)
+    if result.get("status") == "error" and result.get("error") == "command_not_allowed":
+        raise HTTPException(status_code=403, detail="command_not_allowed")
+    return result
 
 
 @app.get("/programs")
@@ -420,37 +488,15 @@ async def permission_deny(request_id: str):
 @app.post("/tools/{tool_name}/invoke")
 async def tool_invoke(tool_name: str, payload: Dict):
     request_id = payload.get("request_id") or payload.get("requestId")
-    if not request_id:
-        request = await permission_request({
-            "tool": tool_name,
-            "detail": payload.get("detail", "")
-        })
-        return JSONResponse(
-            status_code=403,
-            content={"status": "permission_required", "request": request},
-        )
-
-    request = storage.get_permission_request(request_id)
-    if not request or request.get("status") != "approved":
-        return JSONResponse(
-            status_code=403,
-            content={"status": "permission_required", "request": request},
-        )
-
-    expires_at = request.get("expires_at")
-    if expires_at and _now_ms() > int(expires_at):
-        storage.update_permission_status(request_id, "expired")
-        return JSONResponse(
-            status_code=403,
-            content={"status": "permission_expired", "request": request},
-        )
-
     args = payload.get("args", {})
-    result = tool_router.invoke(tool_name, args)
-    await _log("tool_invoked", {"tool": tool_name, "result": result})
-
-    if request.get("scope") == "once":
-        storage.mark_permission_used(request_id)
+    result = _tool_invoke_impl(
+        tool_name=tool_name,
+        args=args,
+        request_id=request_id,
+        detail=payload.get("detail", ""),
+    )
+    if result.get("status") in {"permission_required", "permission_expired"}:
+        return JSONResponse(status_code=403, content=result)
     return result
 
 
@@ -468,6 +514,54 @@ async def logs_stream():
 @app.get("/audit/recent")
 async def audit_recent(limit: int = 50):
     return {"events": storage.get_audit(limit)}
+
+
+@app.get("/brain/status")
+async def brain_status():
+    return BRAIN_RUNTIME.status()
+
+
+@app.get("/brain/config")
+async def brain_config():
+    return BRAIN_RUNTIME.get_config()
+
+
+@app.post("/brain/config")
+async def brain_set_config(payload: Dict):
+    return BRAIN_RUNTIME.update_config(payload or {})
+
+
+@app.post("/brain/start")
+async def brain_start():
+    return BRAIN_RUNTIME.start()
+
+
+@app.post("/brain/stop")
+async def brain_stop():
+    return BRAIN_RUNTIME.stop()
+
+
+@app.post("/brain/inbox/chat")
+async def brain_inbox_chat(payload: Dict):
+    text = str(payload.get("text") or "")
+    meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="missing_text")
+    return BRAIN_RUNTIME.enqueue_chat(text, meta=meta)
+
+
+@app.post("/brain/inbox/event")
+async def brain_inbox_event(payload: Dict):
+    name = str(payload.get("name") or "")
+    body = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    if not name.strip():
+        raise HTTPException(status_code=400, detail="missing_name")
+    return BRAIN_RUNTIME.enqueue_event(name=name, payload=body)
+
+
+@app.get("/brain/messages")
+async def brain_messages(limit: int = 50):
+    return {"messages": BRAIN_RUNTIME.list_messages(limit=limit)}
 
 
 def _require_permission(tool: str, permission_id: str) -> Dict:
@@ -603,6 +697,7 @@ if __name__ == "__main__":
     import uvicorn
 
     _start_ui_watcher()
+    BRAIN_RUNTIME.maybe_autostart()
     config = uvicorn.Config(
         app,
         host="127.0.0.1",

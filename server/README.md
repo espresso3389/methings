@@ -15,6 +15,14 @@ This is a minimal local HTTP server intended to run on-device.
 - POST /programs/{id}/stop
 - GET /programs
 - GET /audit/recent
+- GET /brain/status
+- GET /brain/config
+- POST /brain/config
+- POST /brain/start
+- POST /brain/stop
+- POST /brain/inbox/chat
+- POST /brain/inbox/event
+- GET /brain/messages
 - GET /vault/credentials
 - GET /vault/credentials/{name}
 - POST /vault/credentials/{name}
