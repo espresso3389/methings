@@ -410,9 +410,9 @@ class LocalHttpServer(
             uri == "/brain/agent/bootstrap" && session.method == Method.POST -> {
                 handleBrainAgentBootstrap()
             }
+            // Chat-mode streaming (direct cloud) has been removed. Use agent mode instead.
             uri == "/brain/chat" && session.method == Method.POST -> {
-                val body = readBody(session)
-                handleBrainChat(body)
+                jsonError(Response.Status.GONE, "chat_mode_removed")
             }
             uri == "/brain/memory" && session.method == Method.GET -> {
                 jsonResponse(JSONObject().put("content", readMemory()))
@@ -634,8 +634,8 @@ class LocalHttpServer(
             "You have function tools for LOCAL execution; use them instead of describing actions. ",
             "If the user asks for any device/file/state action, you MUST call tools (no pretending). ",
             "Prefer device_api for device controls (python/ssh/shell/memory via Kotlin control plane). ",
-            "Use shell_exec only with cmd in {python,pip,uv,curl}. ",
-            "Use write_file only under the user root. ",
+            "Use filesystem tools (list_dir/read_file/write_file/mkdir/move_path/delete_path) for file operations under the user root. ",
+            "Use shell_exec only with cmd in {python,pip,uv,curl} when needed. ",
             "If a tool output says permission_required/permission_expired, stop and ask the user to approve in the app UI. ",
             "After tool outputs, provide a short, factual summary."
         ).joinToString("")

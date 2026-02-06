@@ -311,12 +311,7 @@
         </div>
       </div>
       <div class="chat-input-area">
-        <div class="chat-mode">
-          <select id="chatMode" title="Chat mode">
-            <option value="direct">Chat</option>
-            <option value="agent">Agent</option>
-          </select>
-        </div>
+        <div class="chat-mode">Agent</div>
         <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
         <button id="chatSend" title="Send">&#9654;</button>
       </div>
@@ -538,10 +533,8 @@
       const chatMessages = $("chatMessages");
       const chatInput = $("chatInput");
       const chatSend = $("chatSend");
-      const chatMode = $("chatMode");
       const chatWelcome = $("chatWelcome");
       const CHAT_STORAGE_KEY = "kugutz.chat.conversation.v1";
-      const CHAT_MODE_KEY = "kugutz.chat.mode.v1";
       let conversation = [];
       let streaming = false;
 
@@ -589,10 +582,7 @@
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
       });
       chatSend.addEventListener("click", sendChat);
-      chatMode.value = localStorage.getItem(CHAT_MODE_KEY) || "direct";
-      chatMode.addEventListener("change", () => {
-        localStorage.setItem(CHAT_MODE_KEY, chatMode.value);
-      });
+      // Chat UI always uses Agent mode (tool-calling brain loop).
       restoreConversation();
 
       async function sendChat() {
@@ -606,104 +596,7 @@
         saveConversation();
         addMsg("user", text);
 
-        if (chatMode.value === "agent") {
-          await sendAgentChat(text);
-          return;
-        }
-
-        streaming = true;
-        chatSend.disabled = true;
-
-        const aDiv = addMsg("assistant", "");
-        let full = "";
-
-        try {
-          const res = await fetch(API + "/brain/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ messages: conversation }),
-          });
-
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || err.error || "Request failed (" + res.status + ")");
-          }
-
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let buf = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buf += decoder.decode(value, { stream: true });
-            const lines = buf.split("\n");
-            buf = lines.pop() || "";
-            for (const line of lines) {
-              if (!line.startsWith("data: ")) continue;
-              const d = line.slice(6).trim();
-              if (d === "[DONE]") continue;
-              try {
-                const parsed = JSON.parse(d);
-                if (parsed.error) {
-                  throw new Error(parsed.detail || parsed.error);
-                }
-                if (parsed.content) {
-                  full += parsed.content;
-                  const displayText = full.replace(/<<MEMORY_UPDATE>>[\s\S]*/g, "");
-                  aDiv.innerHTML = renderMarkdown(displayText);
-                  chatMessages.scrollTop = chatMessages.scrollHeight;
-                }
-              } catch (pe) {
-                if (pe.message && pe.message !== "Unexpected end of JSON input"
-                    && !pe.message.startsWith("Unexpected token")) {
-                  throw pe;
-                }
-              }
-            }
-          }
-
-          if (full) {
-            // Detect and process memory update markers
-            const memRe = /<<MEMORY_UPDATE>>([\s\S]*?)<<END_MEMORY>>/g;
-            let memMatch;
-            while ((memMatch = memRe.exec(full)) !== null) {
-              const newMemory = memMatch[1].trim();
-              fetch(API + "/brain/memory", {
-                method: "POST",
-                headers: { "Content-Type": "application/json; charset=utf-8" },
-                body: JSON.stringify({ content: newMemory }),
-              }).catch(() => {});
-            }
-            const cleaned = full.replace(/<<MEMORY_UPDATE>>[\s\S]*?<<END_MEMORY>>/g, "").trim();
-            if (cleaned) {
-              aDiv.innerHTML = renderMarkdown(cleaned);
-              conversation.push({ role: "assistant", content: cleaned });
-              saveConversation();
-            } else {
-              aDiv.remove();
-            }
-          } else {
-            aDiv.remove();
-          }
-        } catch (err) {
-          if (!full && aDiv.parentNode) aDiv.remove();
-          const msg = err.message || "Something went wrong";
-          const friendly = {
-            "brain_not_configured": "Brain not configured. Go to Settings to set up your AI provider.",
-            "worker_unavailable": "Python worker is starting up, please try again in a moment.",
-            "upstream_timeout": "The AI provider took too long to respond. Please try again.",
-            "upstream_unreachable": "Cannot reach the AI provider. Check your Base URL in Settings.",
-          };
-          addMsg("error", friendly[msg] || msg);
-          // Remove failed assistant turn from history
-          if (conversation.length && conversation[conversation.length - 1].role === "user") {
-            // keep user msg but don't add assistant
-          }
-        } finally {
-          streaming = false;
-          chatSend.disabled = false;
-        }
+        await sendAgentChat(text);
       }
 
       async function sendAgentChat(text) {
@@ -740,9 +633,26 @@
           if (!answer) {
             throw new Error("Agent timed out");
           }
-          aDiv.innerHTML = renderMarkdown(answer);
-          conversation.push({ role: "assistant", content: answer });
-          saveConversation();
+          const memRe = /<<MEMORY_UPDATE>>([\s\S]*?)<<END_MEMORY>>/g;
+          let cleaned = answer;
+          let memMatch;
+          while ((memMatch = memRe.exec(answer)) !== null) {
+            const newMemory = memMatch[1].trim();
+            fetch(API + "/brain/memory", {
+              method: "POST",
+              headers: { "Content-Type": "application/json; charset=utf-8" },
+              body: JSON.stringify({ content: newMemory }),
+            }).catch(() => {});
+          }
+          cleaned = cleaned.replace(/<<MEMORY_UPDATE>>[\s\S]*?<<END_MEMORY>>/g, "").trim();
+
+          if (cleaned) {
+            aDiv.innerHTML = renderMarkdown(cleaned);
+            conversation.push({ role: "assistant", content: cleaned });
+            saveConversation();
+          } else {
+            aDiv.remove();
+          }
         } catch (err) {
           if (aDiv.parentNode) aDiv.remove();
           const msg = err.message || "Agent request failed";

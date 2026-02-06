@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import re
@@ -61,8 +62,8 @@ class BrainRuntime:
                 "The runtime executes each tool call locally and returns tool outputs to you. "
                 "If the user asks for any device/file/state action, you MUST call tools (no pretending). "
                 "Prefer device_api for device controls (python/ssh/shell/memory via Kotlin control plane). "
-                "Use shell_exec only with cmd in {python,pip,uv,curl}. "
-                "Use write_file only under the user root. "
+                "Use filesystem tools (list_dir/read_file/write_file/mkdir/move_path/delete_path) for file operations under the user root. "
+                "Use shell_exec only with cmd in {python,pip,uv,curl} when needed. "
                 "If a tool output says permission_required/permission_expired, stop and ask the user to approve in the app UI. "
                 "After tool outputs, provide a short, factual summary and include any relevant output snippets."
             ),
@@ -80,6 +81,9 @@ class BrainRuntime:
         keywords = (
             "run ",
             "execute",
+            "ls",
+            "dir",
+            "pwd",
             "create ",
             "write ",
             "edit ",
@@ -106,6 +110,122 @@ class BrainRuntime:
             "folder",
         )
         return any(k in t for k in keywords)
+
+    def _resolve_user_path(self, rel_path: str) -> Path | None:
+        raw = (rel_path or "").strip()
+        target = Path(raw) if raw else Path(".")
+        if not target.is_absolute():
+            target = (self._user_dir / target).resolve()
+        else:
+            target = target.resolve()
+        root = self._user_dir.resolve()
+        if not str(target).startswith(str(root)):
+            return None
+        return target
+
+    def _fs_list_dir(self, path: str, show_hidden: bool, limit: int) -> Dict:
+        target = self._resolve_user_path(path)
+        if target is None:
+            return {"status": "error", "error": "path_outside_user_dir"}
+        if not target.exists():
+            return {"status": "error", "error": "not_found"}
+        if not target.is_dir():
+            return {"status": "error", "error": "not_a_directory"}
+        limit = max(1, min(int(limit or 200), 5000))
+        entries: List[Dict[str, Any]] = []
+        try:
+            for child in sorted(target.iterdir(), key=lambda p: p.name.lower()):
+                name = child.name
+                if not show_hidden and name.startswith("."):
+                    continue
+                with contextlib.suppress(Exception):
+                    st = child.stat()
+                    entries.append(
+                        {
+                            "name": name,
+                            "type": "dir" if child.is_dir() else "file",
+                            "size": int(getattr(st, "st_size", 0) or 0),
+                            "mtime": int(getattr(st, "st_mtime", 0) or 0),
+                        }
+                    )
+                if len(entries) >= limit:
+                    break
+        except Exception as ex:
+            return {"status": "error", "error": "list_failed", "detail": str(ex)}
+        return {"status": "ok", "path": str(target), "entries": entries, "truncated": len(entries) >= limit}
+
+    def _fs_read_file(self, path: str, max_bytes: int) -> Dict:
+        target = self._resolve_user_path(path)
+        if target is None:
+            return {"status": "error", "error": "path_outside_user_dir"}
+        if not target.exists():
+            return {"status": "error", "error": "not_found"}
+        if not target.is_file():
+            return {"status": "error", "error": "not_a_file"}
+        max_bytes = max(1024, min(int(max_bytes or 262144), 2 * 1024 * 1024))
+        try:
+            data = target.read_bytes()
+            truncated = len(data) > max_bytes
+            if truncated:
+                data = data[:max_bytes]
+            text = data.decode("utf-8", errors="replace")
+            return {"status": "ok", "path": str(target), "content": text, "truncated": truncated}
+        except Exception as ex:
+            return {"status": "error", "error": "read_failed", "detail": str(ex)}
+
+    def _fs_mkdir(self, path: str, parents: bool) -> Dict:
+        target = self._resolve_user_path(path)
+        if target is None:
+            return {"status": "error", "error": "path_outside_user_dir"}
+        try:
+            target.mkdir(parents=bool(parents), exist_ok=True)
+            return {"status": "ok", "path": str(target)}
+        except Exception as ex:
+            return {"status": "error", "error": "mkdir_failed", "detail": str(ex)}
+
+    def _fs_delete(self, path: str, recursive: bool) -> Dict:
+        target = self._resolve_user_path(path)
+        if target is None:
+            return {"status": "error", "error": "path_outside_user_dir"}
+        if not target.exists():
+            return {"status": "ok", "deleted": False}
+        try:
+            if target.is_dir():
+                if recursive:
+                    for p in sorted(target.rglob("*"), key=lambda p: len(str(p)), reverse=True):
+                        if p.is_dir():
+                            p.rmdir()
+                        else:
+                            p.unlink()
+                    target.rmdir()
+                else:
+                    target.rmdir()
+            else:
+                target.unlink()
+            return {"status": "ok", "deleted": True, "path": str(target)}
+        except Exception as ex:
+            return {"status": "error", "error": "delete_failed", "detail": str(ex)}
+
+    def _fs_move(self, src: str, dst: str, overwrite: bool) -> Dict:
+        src_p = self._resolve_user_path(src)
+        dst_p = self._resolve_user_path(dst)
+        if src_p is None or dst_p is None:
+            return {"status": "error", "error": "path_outside_user_dir"}
+        if not src_p.exists():
+            return {"status": "error", "error": "src_not_found"}
+        try:
+            dst_p.parent.mkdir(parents=True, exist_ok=True)
+            if dst_p.exists():
+                if not overwrite:
+                    return {"status": "error", "error": "dst_exists"}
+                if dst_p.is_dir():
+                    dst_p.rmdir()
+                else:
+                    dst_p.unlink()
+            src_p.replace(dst_p)
+            return {"status": "ok", "src": str(src_p), "dst": str(dst_p)}
+        except Exception as ex:
+            return {"status": "error", "error": "move_failed", "detail": str(ex)}
 
     def _env_key_name_for_credential(self, credential_name: str) -> str:
         # Keep mapping explicit (avoid guessing) but cover common providers.
@@ -322,6 +442,35 @@ class BrainRuntime:
         return [
             {
                 "type": "function",
+                "name": "list_dir",
+                "description": "List files/directories under the user root (safe alternative to `ls`).",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "show_hidden": {"type": "boolean"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["path", "show_hidden", "limit"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "read_file",
+                "description": "Read a UTF-8 text file under the user root.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "max_bytes": {"type": "integer"},
+                    },
+                    "required": ["path", "max_bytes"],
+                },
+            },
+            {
+                "type": "function",
                 "name": "device_api",
                 "description": "Invoke allowlisted local device API action on 127.0.0.1:8765.",
                 "parameters": {
@@ -376,6 +525,49 @@ class BrainRuntime:
                         "content": {"type": "string"},
                     },
                     "required": ["path", "content"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "mkdir",
+                "description": "Create a directory under the user root.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "parents": {"type": "boolean"},
+                    },
+                    "required": ["path", "parents"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "move_path",
+                "description": "Move/rename a file or directory within the user root.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "src": {"type": "string"},
+                        "dst": {"type": "string"},
+                        "overwrite": {"type": "boolean"},
+                    },
+                    "required": ["src", "dst", "overwrite"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "delete_path",
+                "description": "Delete a file or directory under the user root.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "recursive": {"type": "boolean"},
+                    },
+                    "required": ["path", "recursive"],
                 },
             },
             {
@@ -755,6 +947,23 @@ class BrainRuntime:
         return {"status": "ok", "path": str(target)}
 
     def _execute_function_tool(self, item: Dict, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        if name == "list_dir":
+            action = {
+                "type": "filesystem",
+                "op": "list_dir",
+                "path": str(args.get("path") or ""),
+                "show_hidden": bool(args.get("show_hidden") or False),
+                "limit": int(args.get("limit") or 200),
+            }
+            return self._execute_action(item, action)
+        if name == "read_file":
+            action = {
+                "type": "filesystem",
+                "op": "read_file",
+                "path": str(args.get("path") or ""),
+                "max_bytes": int(args.get("max_bytes") or 262144),
+            }
+            return self._execute_action(item, action)
         if name == "device_api":
             action = {
                 "type": "tool_invoke",
@@ -779,6 +988,31 @@ class BrainRuntime:
                 "type": "write_file",
                 "path": str(args.get("path") or ""),
                 "content": str(args.get("content") or ""),
+            }
+            return self._execute_action(item, action)
+        if name == "mkdir":
+            action = {
+                "type": "filesystem",
+                "op": "mkdir",
+                "path": str(args.get("path") or ""),
+                "parents": bool(args.get("parents") or False),
+            }
+            return self._execute_action(item, action)
+        if name == "move_path":
+            action = {
+                "type": "filesystem",
+                "op": "move_path",
+                "src": str(args.get("src") or ""),
+                "dst": str(args.get("dst") or ""),
+                "overwrite": bool(args.get("overwrite") or False),
+            }
+            return self._execute_action(item, action)
+        if name == "delete_path":
+            action = {
+                "type": "filesystem",
+                "op": "delete_path",
+                "path": str(args.get("path") or ""),
+                "recursive": bool(args.get("recursive") or False),
             }
             return self._execute_action(item, action)
         if name == "sleep":
@@ -814,6 +1048,37 @@ class BrainRuntime:
                 result = {"status": "error", "error": "missing_path"}
             else:
                 result = self._safe_write_file(path, content)
+        elif a_type == "filesystem":
+            op = str(action.get("op") or "")
+            if op == "list_dir":
+                result = self._fs_list_dir(
+                    path=str(action.get("path") or ""),
+                    show_hidden=bool(action.get("show_hidden") or False),
+                    limit=int(action.get("limit") or 200),
+                )
+            elif op == "read_file":
+                result = self._fs_read_file(
+                    path=str(action.get("path") or ""),
+                    max_bytes=int(action.get("max_bytes") or 262144),
+                )
+            elif op == "mkdir":
+                result = self._fs_mkdir(
+                    path=str(action.get("path") or ""),
+                    parents=bool(action.get("parents") or False),
+                )
+            elif op == "move_path":
+                result = self._fs_move(
+                    src=str(action.get("src") or ""),
+                    dst=str(action.get("dst") or ""),
+                    overwrite=bool(action.get("overwrite") or False),
+                )
+            elif op == "delete_path":
+                result = self._fs_delete(
+                    path=str(action.get("path") or ""),
+                    recursive=bool(action.get("recursive") or False),
+                )
+            else:
+                result = {"status": "error", "error": "unsupported_fs_op"}
         elif a_type == "tool_invoke":
             tool = str(action.get("tool") or "")
             args = action.get("args") if isinstance(action.get("args"), dict) else {}
