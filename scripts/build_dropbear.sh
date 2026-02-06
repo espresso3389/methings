@@ -95,6 +95,12 @@ build_one() {
 
   write_localoptions
 
+  local include_client_tools="${DROPBEAR_INCLUDE_CLIENT_TOOLS:-0}"
+  local programs="dropbear dropbearkey"
+  if [[ "$include_client_tools" == "1" ]]; then
+    programs="dropbear dbclient scp dropbearkey"
+  fi
+
   ./configure \
     --host="$triple" \
     --disable-zlib \
@@ -108,7 +114,7 @@ build_one() {
     --disable-loginfunc \
     --disable-syslog
 
-  make PROGRAMS="dropbear dbclient scp dropbearkey"
+  make PROGRAMS="$programs"
 
   local dropbear_bin="dropbear"
   if [[ ! -f "$dropbear_bin" && -f "dropbearmulti" ]]; then
@@ -134,13 +140,16 @@ build_one() {
   mkdir -p "$jni_out"
   cp -f "$dropbear_bin" "$jni_out/libdropbear.so"
   cp -f "dropbearkey" "$jni_out/libdropbearkey.so"
-  cp -f "dbclient" "$jni_out/libdbclient.so"
-  cp -f "scp" "$jni_out/libscp.so"
   "$STRIP" "$jni_out/libdropbear.so" || true
   "$STRIP" "$jni_out/libdropbearkey.so" || true
-  "$STRIP" "$jni_out/libdbclient.so" || true
-  "$STRIP" "$jni_out/libscp.so" || true
-  chmod 0755 "$jni_out/libdropbear.so" "$jni_out/libdropbearkey.so" "$jni_out/libdbclient.so" "$jni_out/libscp.so"
+  chmod 0755 "$jni_out/libdropbear.so" "$jni_out/libdropbearkey.so"
+  if [[ "$include_client_tools" == "1" ]]; then
+    cp -f "dbclient" "$jni_out/libdbclient.so"
+    cp -f "scp" "$jni_out/libscp.so"
+    "$STRIP" "$jni_out/libdbclient.so" || true
+    "$STRIP" "$jni_out/libscp.so" || true
+    chmod 0755 "$jni_out/libdbclient.so" "$jni_out/libscp.so"
+  fi
 
   popd >/dev/null
 }
