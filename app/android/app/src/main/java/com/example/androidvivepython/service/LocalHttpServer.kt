@@ -27,6 +27,7 @@ class LocalHttpServer(
     private val sshPinManager = SshPinManager(context)
     private val deviceGrantStore = jp.espresso3389.kugutz.perm.DeviceGrantStoreFacade(context)
     private val agentTasks = java.util.concurrent.ConcurrentHashMap<String, AgentTask>()
+    private val lastPermissionPromptAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     fun startServer(): Boolean {
         return try {
@@ -121,6 +122,12 @@ class LocalHttpServer(
                         capability = capability
                     )
                     if (pending != null) {
+                        val forceBio = when (tool) {
+                            "ssh_keys" -> sshKeyPolicy.isBiometricRequired()
+                            "ssh_pin" -> true
+                            else -> false
+                        }
+                        sendPermissionPrompt(pending.id, tool, pending.detail, forceBio)
                         return jsonResponse(
                             JSONObject()
                                 .put("id", pending.id)
@@ -1625,6 +1632,15 @@ class LocalHttpServer(
     }
 
     private fun sendPermissionPrompt(id: String, tool: String, detail: String, forceBiometric: Boolean) {
+        // Throttle duplicate prompts: when permission requests are re-used (pending) the agent
+        // may re-trigger the same request quickly. Avoid spamming, but ensure the user still
+        // gets a timely prompt if the previous one was dismissed/missed.
+        val now = System.currentTimeMillis()
+        val last = lastPermissionPromptAt[id] ?: 0L
+        if ((now - last) < 1500L) {
+            return
+        }
+        lastPermissionPromptAt[id] = now
         val intent = android.content.Intent(ACTION_PERMISSION_PROMPT)
         intent.setPackage(context.packageName)
         intent.putExtra(EXTRA_PERMISSION_ID, id)
