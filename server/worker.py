@@ -409,11 +409,15 @@ class WorkerHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/brain/messages":
             query = parse_qs(parsed.query or "")
+            session_id = str((query.get("session_id") or [""])[0] or "").strip()
             try:
                 limit = int((query.get("limit") or ["50"])[0])
             except Exception:
                 limit = 50
-            self._send_json({"messages": BRAIN_RUNTIME.list_messages(limit=limit)})
+            if session_id:
+                self._send_json({"messages": BRAIN_RUNTIME.list_messages_for_session(session_id=session_id, limit=limit)})
+            else:
+                self._send_json({"messages": BRAIN_RUNTIME.list_messages(limit=limit)})
             return
         if parsed.path.startswith("/vault/credentials/"):
             name = parsed.path.removeprefix("/vault/credentials/").strip()

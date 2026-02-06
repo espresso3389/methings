@@ -98,6 +98,22 @@ class Storage:
             )
             """
         )
+        # Session-scoped chat history stored locally on device. This does not require any
+        # Android permissions (private app storage), but enables session memory to survive
+        # WebView/activity recreation and python worker restarts.
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT,
+                role TEXT,
+                text TEXT,
+                meta TEXT,
+                created_at INTEGER
+            )
+            """
+        )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, id)")
 
     def create_permission_request(self, tool: str, detail: str, scope: str, expires_at: int | None) -> str:
         request_id = f"p_{_now_ms()}"
@@ -147,6 +163,54 @@ class Storage:
                 (limit,),
             )
             return [dict(r) for r in cur.fetchall()]
+
+    def add_chat_message(self, session_id: str, role: str, text: str, meta_json: str) -> None:
+        sid = (session_id or "default").strip() or "default"
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO chat_messages (session_id, role, text, meta, created_at) VALUES (?, ?, ?, ?, ?)",
+                (sid, role, text, meta_json, _now_ms()),
+            )
+            # Keep DB bounded. This is per-session and also global, to prevent unbounded growth.
+            conn.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE id NOT IN (
+                    SELECT id FROM chat_messages
+                    WHERE session_id = ?
+                    ORDER BY id DESC
+                    LIMIT 400
+                ) AND session_id = ?
+                """,
+                (sid, sid),
+            )
+            conn.execute(
+                """
+                DELETE FROM chat_messages
+                WHERE id NOT IN (
+                    SELECT id FROM chat_messages
+                    ORDER BY id DESC
+                    LIMIT 4000
+                )
+                """
+            )
+
+    def list_chat_messages(self, session_id: str, limit: int = 200) -> List[Dict]:
+        sid = (session_id or "default").strip() or "default"
+        limit = max(1, min(int(limit or 200), 1000))
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT role, text, meta, created_at
+                FROM chat_messages
+                WHERE session_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (sid, limit),
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+        return list(reversed(rows))
 
     def get_setting(self, key: str) -> Optional[str]:
         with self._connect() as conn:

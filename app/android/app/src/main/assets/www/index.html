@@ -534,19 +534,41 @@
       const chatInput = $("chatInput");
       const chatSend = $("chatSend");
       const chatWelcome = $("chatWelcome");
-      const CHAT_STORAGE_KEY = "kugutz.chat.conversation.v1";
+      const CHAT_STORAGE_PREFIX = "kugutz.chat.conversation.v1.";
+      const CHAT_SESSION_KEY = "kugutz.chat.session_id.v1";
       let conversation = [];
       let streaming = false;
+      let chatSessionId = "";
+
+      function genSessionId() {
+        // Not cryptographic; just a stable per-conversation identifier for server-side context.
+        return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
+      }
+
+      function loadSessionId() {
+        try {
+          const existing = localStorage.getItem(CHAT_SESSION_KEY);
+          if (existing && typeof existing === "string" && existing.trim()) return existing.trim();
+        } catch (_) {}
+        const created = genSessionId();
+        try { localStorage.setItem(CHAT_SESSION_KEY, created); } catch (_) {}
+        return created;
+      }
+      chatSessionId = loadSessionId();
+
+      function convoStorageKey() {
+        return CHAT_STORAGE_PREFIX + chatSessionId;
+      }
 
       function saveConversation() {
         try {
-          localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(conversation));
+          localStorage.setItem(convoStorageKey(), JSON.stringify(conversation));
         } catch (_) {}
       }
 
       function restoreConversation() {
         try {
-          const raw = localStorage.getItem(CHAT_STORAGE_KEY);
+          const raw = localStorage.getItem(convoStorageKey());
           if (!raw) return;
           const parsed = JSON.parse(raw);
           if (!Array.isArray(parsed)) return;
@@ -573,6 +595,26 @@
         return div;
       }
 
+      async function syncConversationFromServer() {
+        try {
+          const res = await fetch(API + "/brain/messages?limit=300&session_id=" + encodeURIComponent(chatSessionId));
+          if (!res.ok) return;
+          const data = await res.json().catch(() => ({}));
+          const list = Array.isArray(data.messages) ? data.messages : [];
+          const rebuilt = [];
+          for (const msg of list) {
+            if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+            if (typeof msg.text !== "string" || !msg.text.trim()) continue;
+            rebuilt.push({ role: msg.role, content: msg.text });
+          }
+          if (!rebuilt.length) return;
+          conversation = rebuilt.slice(-200);
+          chatMessages.textContent = "";
+          for (const msg of conversation) addMsg(msg.role, msg.content);
+          saveConversation();
+        } catch (_) {}
+      }
+
       function autoResize() {
         chatInput.style.height = "auto";
         chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + "px";
@@ -584,6 +626,8 @@
       chatSend.addEventListener("click", sendChat);
       // Chat UI always uses Agent mode (tool-calling brain loop).
       restoreConversation();
+      // Best-effort rebuild from server-side session history (survives rotation/worker restart).
+      syncConversationFromServer();
 
       async function sendChat() {
         if (streaming) return;
@@ -627,7 +671,7 @@
           const res = await fetch(API + "/brain/inbox/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ text, meta: { source: "chat_ui" } }),
+            body: JSON.stringify({ text, meta: { source: "chat_ui", session_id: chatSessionId } }),
           });
           if (!res.ok) {
             throw new Error(await readError(res, "Agent queue failed"));
@@ -642,18 +686,10 @@
           if (!answer) {
             throw new Error("Agent timed out");
           }
+          // Strip any legacy memory update tags, but do not auto-persist them.
+          // Persistent memory writes must be explicit and permission-gated.
           const memRe = /<<MEMORY_UPDATE>>([\s\S]*?)<<END_MEMORY>>/g;
-          let cleaned = answer;
-          let memMatch;
-          while ((memMatch = memRe.exec(answer)) !== null) {
-            const newMemory = memMatch[1].trim();
-            fetch(API + "/brain/memory", {
-              method: "POST",
-              headers: { "Content-Type": "application/json; charset=utf-8" },
-              body: JSON.stringify({ content: newMemory }),
-            }).catch(() => {});
-          }
-          cleaned = cleaned.replace(/<<MEMORY_UPDATE>>[\s\S]*?<<END_MEMORY>>/g, "").trim();
+          const cleaned = (answer || "").replace(memRe, "").trim();
 
           if (cleaned) {
             aDiv.innerHTML = renderMarkdown(cleaned);
@@ -680,7 +716,9 @@
         const deadline = Date.now() + 60000;
         let lastToolError = "";
         while (Date.now() < deadline) {
-          const res = await fetch(API + "/brain/messages?limit=120");
+          const res = await fetch(
+            API + "/brain/messages?limit=200&session_id=" + encodeURIComponent(chatSessionId)
+          );
           if (!res.ok) {
             await new Promise(r => setTimeout(r, 700));
             continue;

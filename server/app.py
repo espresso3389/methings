@@ -792,7 +792,10 @@ async def brain_inbox_event(payload: Dict):
 
 
 @app.get("/brain/messages")
-async def brain_messages(limit: int = 50):
+async def brain_messages(limit: int = 50, session_id: str = ""):
+    sid = (session_id or "").strip()
+    if sid:
+        return {"messages": BRAIN_RUNTIME.list_messages_for_session(session_id=sid, limit=limit)}
     return {"messages": BRAIN_RUNTIME.list_messages(limit=limit)}
 
 

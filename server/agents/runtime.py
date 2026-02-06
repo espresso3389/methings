@@ -38,6 +38,9 @@ class BrainRuntime:
         self._last_error = ""
         self._last_processed_at = 0
 
+        # Ephemeral per-session notes (no permissions required).
+        self._session_notes: Dict[str, Dict[str, str]] = {}
+
         self._config = self._load_config()
 
     def _default_config(self) -> Dict:
@@ -66,6 +69,9 @@ class BrainRuntime:
                 "NEVER try to run `ls`/`pwd`/`cat` via a shell. For listing or reading files, ALWAYS use filesystem tools. "
                 "For running code/tools, use run_python/run_pip/run_uv/run_curl (not a generic shell). "
                 "For version checks: use run_python args='-V' or '--version'; run_curl args='--version'. "
+                "Session context is provided automatically via recent dialogue. "
+                "Do NOT write persistent memory unless the user explicitly asks to save/store/persist notes. "
+                "Use memory_set only for explicit persistent-memory requests; use memory_get to read persistent notes when asked. "
                 "If a tool output says permission_required/permission_expired, stop and ask the user to approve in the app UI. "
                 "After tool outputs, provide a short, factual summary and include any relevant output snippets."
             ),
@@ -79,6 +85,12 @@ class BrainRuntime:
         # for a local action or a state change.
         t = (text or "").strip().lower()
         if not t:
+            return False
+        # "Remember ..." can be satisfied by session context (recent dialogue) without any device action.
+        # Only require tools if the user explicitly asks to persist/save memory.
+        if any(k in t for k in ("remember", "memorize", "覚えて")):
+            if any(k in t for k in ("save", "store", "persist", "persistent", "memory", "保存", "永続", "メモ")):
+                return True
             return False
         keywords = (
             # Japanese (common UI queries)
@@ -123,6 +135,20 @@ class BrainRuntime:
             "folder",
         )
         return any(k in t for k in keywords)
+
+    def _explicit_persist_memory_requested(self, text: str) -> bool:
+        t = (text or "").strip().lower()
+        if not t:
+            return False
+        # English
+        if ("save" in t or "store" in t or "persist" in t) and ("memory" in t or "note" in t or "notes" in t):
+            return True
+        if "save this" in t or "save it" in t or "persist this" in t:
+            return True
+        # Japanese
+        if "保存" in text or "永続" in text or "メモリに" in text:
+            return True
+        return False
 
     def _resolve_user_path(self, rel_path: str) -> Path | None:
         raw = (rel_path or "").strip()
@@ -349,8 +375,72 @@ class BrainRuntime:
 
     def list_messages(self, limit: int = 50) -> List[Dict]:
         limit = max(1, min(int(limit or 50), 200))
+        # Prefer persistent storage when available so UI can restore after WebView/activity recreation
+        # and so agent context survives python worker restarts.
+        try:
+            if hasattr(self._storage, "list_chat_messages"):
+                rows = self._storage.list_chat_messages("default", limit=limit)
+                out: List[Dict] = []
+                for r in rows:
+                    meta = {}
+                    raw_meta = r.get("meta")
+                    if isinstance(raw_meta, str) and raw_meta.strip():
+                        try:
+                            meta = json.loads(raw_meta)
+                        except Exception:
+                            meta = {}
+                    out.append(
+                        {
+                            "ts": r.get("created_at"),
+                            "role": r.get("role"),
+                            "text": r.get("text"),
+                            "meta": meta,
+                        }
+                    )
+                return out[-limit:]
+        except Exception:
+            pass
         with self._lock:
             return list(self._messages)[-limit:]
+
+    def list_messages_for_session(self, *, session_id: str, limit: int = 200) -> List[Dict]:
+        sid = (session_id or "default").strip() or "default"
+        limit = max(1, min(int(limit or 200), 500))
+        try:
+            if hasattr(self._storage, "list_chat_messages"):
+                rows = self._storage.list_chat_messages(sid, limit=limit)
+                out: List[Dict] = []
+                for r in rows:
+                    meta = {}
+                    raw_meta = r.get("meta")
+                    if isinstance(raw_meta, str) and raw_meta.strip():
+                        try:
+                            meta = json.loads(raw_meta)
+                        except Exception:
+                            meta = {}
+                    out.append(
+                        {
+                            "ts": r.get("created_at"),
+                            "role": r.get("role"),
+                            "text": r.get("text"),
+                            "meta": meta,
+                        }
+                    )
+                return out
+        except Exception:
+            pass
+        # Fallback to in-memory filter.
+        with self._lock:
+            items = list(self._messages)
+        out: List[Dict] = []
+        for msg in reversed(items):
+            if len(out) >= limit:
+                break
+            meta = msg.get("meta") if isinstance(msg.get("meta"), dict) else {}
+            if str((meta or {}).get("session_id") or "default") != sid:
+                continue
+            out.append(msg)
+        return list(reversed(out))
 
     def status(self) -> Dict:
         with self._lock:
@@ -397,17 +487,135 @@ class BrainRuntime:
                     self._busy = False
 
     def _record_message(self, role: str, text: str, meta: Optional[Dict] = None) -> None:
+        meta = dict(meta or {})
         entry = {
             "ts": int(time.time() * 1000),
             "role": role,
             "text": text,
-            "meta": meta or {},
+            "meta": meta,
         }
         with self._lock:
             self._messages.append(entry)
+        try:
+            if hasattr(self._storage, "add_chat_message"):
+                sid = str(meta.get("session_id") or "default").strip() or "default"
+                self._storage.add_chat_message(sid, role, text, json.dumps(meta, ensure_ascii=True))
+        except Exception:
+            pass
+
+    def _session_id_for_item(self, item: Dict) -> str:
+        meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        sid = str((meta or {}).get("session_id") or "").strip()
+        return sid or "default"
+
+    def _list_dialogue(self, *, session_id: str, limit: int = 24) -> List[Dict[str, str]]:
+        # Return only user/assistant messages for the given session_id.
+        limit = max(1, min(int(limit or 24), 120))
+        msgs = self.list_messages_for_session(session_id=session_id, limit=max(limit, 1))
+        out: List[Dict[str, str]] = []
+        for msg in msgs[-limit:]:
+            role = str(msg.get("role") or "")
+            if role not in {"user", "assistant"}:
+                continue
+            text = str(msg.get("text") or "")
+            if not text.strip():
+                continue
+            out.append({"role": role, "text": text})
+        return out
+
+    def _get_persistent_memory(self) -> str:
+        # Stored on the Kotlin control-plane (LocalHttpServer) as a small text blob.
+        try:
+            resp = requests.get("http://127.0.0.1:8765/brain/memory", timeout=2)
+            if not resp.ok:
+                return ""
+            payload = resp.json() if resp.headers.get("Content-Type", "").startswith("application/json") else {}
+            content = payload.get("content") if isinstance(payload, dict) else ""
+            return str(content or "")
+        except Exception:
+            return ""
+
+    def _update_session_notes(self, session_id: str, text: str) -> Dict[str, str]:
+        t = (text or "").strip()
+        if not t:
+            return {}
+        notes = dict(self._session_notes.get(session_id) or {})
+        changed: Dict[str, str] = {}
+
+        m = re.search(r"\bmy favorite colou?r is\s+([a-zA-Z][a-zA-Z\s\-]{0,40})\b", t, re.IGNORECASE)
+        if m:
+            val = m.group(1).strip()
+            if notes.get("favorite_color") != val:
+                notes["favorite_color"] = val
+                changed["favorite_color"] = val
+
+        m = re.search(r"\bmy name is\s+([^\n\r]{1,80})", t, re.IGNORECASE)
+        if m:
+            val = m.group(1).strip().strip(".")
+            if notes.get("name") != val:
+                notes["name"] = val
+                changed["name"] = val
+
+        m = re.search(r"好きな色は\s*([^\n\r]{1,20})", t)
+        if m:
+            val = m.group(1).strip()
+            if notes.get("favorite_color") != val:
+                notes["favorite_color"] = val
+                changed["favorite_color"] = val
+
+        if notes:
+            self._session_notes[session_id] = notes
+
+        # Prevent unbounded growth.
+        if len(self._session_notes) > 50:
+            for k in list(self._session_notes.keys())[:10]:
+                self._session_notes.pop(k, None)
+        return changed
 
     def _process_item(self, item: Dict) -> None:
         self._emit_log("brain_item_started", {"id": item.get("id"), "kind": item.get("kind")})
+        # Record the user message so the agent has per-session context.
+        if str(item.get("kind") or "") == "chat":
+            sid = self._session_id_for_item(item)
+            text = str(item.get("text") or "")
+            changed = self._update_session_notes(sid, text)
+            self._record_message(
+                "user",
+                text,
+                {"item_id": item.get("id"), "session_id": sid},
+            )
+            # Handle simple session-memory cases locally (no cloud/tool calls).
+            # This makes "remember previous discussion" reliable without requiring permissions.
+            if not self._needs_tool_for_text(text):
+                t_low = (text or "").strip().lower()
+                if changed and "?" not in text and "save" not in t_low and "persist" not in t_low and "store" not in t_low:
+                    if "favorite_color" in changed:
+                        self._record_message(
+                            "assistant",
+                            f"Got it. For this session, I'll remember your favorite color is {changed['favorite_color']}.",
+                            {"item_id": item.get("id"), "session_id": sid},
+                        )
+                        self._emit_log("brain_response", {"item_id": item.get("id"), "text": "session_note_ack"})
+                        return
+                    if "name" in changed:
+                        self._record_message(
+                            "assistant",
+                            f"Got it. For this session, I'll remember your name is {changed['name']}.",
+                            {"item_id": item.get("id"), "session_id": sid},
+                        )
+                        self._emit_log("brain_response", {"item_id": item.get("id"), "text": "session_note_ack"})
+                        return
+
+                if ("favorite color" in t_low) or ("好きな色" in text):
+                    fav = (self._session_notes.get(sid) or {}).get("favorite_color", "")
+                    if fav:
+                        self._record_message(
+                            "assistant",
+                            f"Your favorite color (in this session) is {fav}.",
+                            {"item_id": item.get("id"), "session_id": sid},
+                        )
+                        self._emit_log("brain_response", {"item_id": item.get("id"), "text": "session_note_answer"})
+                        return
 
         cfg = self.get_config()
         provider_url = str(cfg.get("provider_url") or "").strip()
@@ -508,6 +716,23 @@ class BrainRuntime:
                         "detail": {"type": "string"},
                     },
                     "required": ["action", "payload", "detail"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "memory_get",
+                "description": "Read persistent memory (notes) stored on the device.",
+                "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []},
+            },
+            {
+                "type": "function",
+                "name": "memory_set",
+                "description": "Replace persistent memory (notes) stored on the device.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"content": {"type": "string"}},
+                    "required": ["content"],
                 },
             },
             {
@@ -639,6 +864,12 @@ class BrainRuntime:
         ]
 
     def _process_with_responses_tools(self, item: Dict) -> None:
+        session_id = self._session_id_for_item(item)
+        persistent_memory = self._get_persistent_memory()
+        dialogue = self._list_dialogue(session_id=session_id, limit=30)
+        # _process_item already recorded the current user message; don't duplicate it in the prompt.
+        if dialogue and dialogue[-1].get("role") == "user" and dialogue[-1].get("text") == str(item.get("text") or ""):
+            dialogue = dialogue[:-1]
         cfg = self.get_config()
         model = str(cfg.get("model") or "").strip()
         provider_url = str(cfg.get("provider_url") or "").strip()
@@ -668,12 +899,25 @@ class BrainRuntime:
         max_actions = max(1, min(int(self._config.get("max_actions", 6) or 6), 12))
         previous_response_id: Optional[str] = None
         forced_rounds = 0
-        pending_input: List[Dict[str, Any]] = [
+        # Build a normal conversation for the model so it can use context naturally.
+        pending_input: List[Dict[str, Any]] = []
+        pending_input.append(
             {
                 "role": "user",
-                "content": f"Task item:\n{json.dumps(item)}",
+                "content": (
+                    "Session notes (ephemeral, no permissions required):\n"
+                    + json.dumps(self._session_notes.get(session_id) or {}, ensure_ascii=True)
+                    + "\n\nPersistent memory (may be empty; writing may require permission):\n"
+                    + (persistent_memory.strip() or "(empty)")
+                ),
             }
-        ]
+        )
+        for msg in dialogue:
+            role = msg.get("role")
+            text = msg.get("text")
+            if role in {"user", "assistant"} and isinstance(text, str) and text.strip():
+                pending_input.append({"role": role, "content": text})
+        pending_input.append({"role": "user", "content": str(item.get("text") or "")})
 
         for _ in range(max_rounds):
             body: Dict[str, Any] = {
@@ -735,7 +979,7 @@ class BrainRuntime:
 
                 # Accept and record any assistant message text (if present).
                 for text in message_texts:
-                    self._record_message("assistant", text, {"item_id": item.get("id")})
+                    self._record_message("assistant", text, {"item_id": item.get("id"), "session_id": session_id})
                     self._emit_log("brain_response", {"item_id": item.get("id"), "text": text[:300]})
                 return
 
@@ -743,7 +987,7 @@ class BrainRuntime:
 
             # Record assistant message text only once we have tool calls for this round.
             for text in message_texts:
-                self._record_message("assistant", text, {"item_id": item.get("id")})
+                self._record_message("assistant", text, {"item_id": item.get("id"), "session_id": session_id})
                 self._emit_log("brain_response", {"item_id": item.get("id"), "text": text[:300]})
 
             pending_input = []
@@ -797,7 +1041,7 @@ class BrainRuntime:
             "Agent tool loop did not finish within the allowed rounds. "
             "The last tool outputs may contain the error (e.g., permission_required or command_not_allowed). "
             "Please retry or rephrase, and approve any pending permissions if prompted.",
-            {"item_id": item.get("id")},
+            {"item_id": item.get("id"), "session_id": session_id},
         )
         self._emit_log("brain_response", {"item_id": item.get("id"), "text": "tool_loop_exhausted"})
         return
@@ -914,10 +1158,13 @@ class BrainRuntime:
                 "actions": [],
             }
 
-        history = self.list_messages(limit=20)
+        session_id = self._session_id_for_item(item)
+        persistent_memory = self._get_persistent_memory()
+        history = self._list_dialogue(session_id=session_id, limit=20)
         user_payload = {
             "item": item,
             "recent_messages": history,
+            "persistent_memory": persistent_memory,
             "constraints": {
                 "device_api_actions": [
                     "python.status",
@@ -1055,13 +1302,44 @@ class BrainRuntime:
             }
             return self._execute_action(item, action)
         if name == "device_api":
+            action_name = str(args.get("action") or "")
+            if action_name == "brain.memory.set" and not self._explicit_persist_memory_requested(str(item.get("text") or "")):
+                return {
+                    "status": "error",
+                    "error": "command_not_allowed",
+                    "detail": "Persistent memory writes require an explicit user request to save/persist.",
+                }
             action = {
                 "type": "tool_invoke",
                 "tool": "device_api",
                 "args": {
-                    "action": str(args.get("action") or ""),
+                    "action": action_name,
                     "payload": args.get("payload") if isinstance(args.get("payload"), dict) else {},
                     "detail": str(args.get("detail") or ""),
+                },
+            }
+            return self._execute_action(item, action)
+        if name == "memory_get":
+            action = {
+                "type": "tool_invoke",
+                "tool": "device_api",
+                "args": {"action": "brain.memory.get", "payload": {}, "detail": "Read persistent memory"},
+            }
+            return self._execute_action(item, action)
+        if name == "memory_set":
+            if not self._explicit_persist_memory_requested(str(item.get("text") or "")):
+                return {
+                    "status": "error",
+                    "error": "command_not_allowed",
+                    "detail": "Persistent memory writes require an explicit user request to save/persist.",
+                }
+            action = {
+                "type": "tool_invoke",
+                "tool": "device_api",
+                "args": {
+                    "action": "brain.memory.set",
+                    "payload": {"content": str(args.get("content") or "")},
+                    "detail": "Write persistent memory",
                 },
             }
             return self._execute_action(item, action)
@@ -1154,6 +1432,7 @@ class BrainRuntime:
     def _execute_action(self, item: Dict, action: Dict) -> Dict:
         a_type = str(action.get("type") or "").strip()
         result: Dict
+        session_id = self._session_id_for_item(item)
 
         if a_type == "shell_exec":
             cmd = str(action.get("cmd") or "")
@@ -1219,7 +1498,7 @@ class BrainRuntime:
         self._record_message(
             "tool",
             json.dumps({"action": action, "result": result}),
-            {"item_id": item.get("id")},
+            {"item_id": item.get("id"), "session_id": session_id},
         )
         self._emit_log(
             "brain_action",

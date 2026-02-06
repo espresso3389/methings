@@ -1,5 +1,4 @@
 import json
-import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional
@@ -45,39 +44,24 @@ class DeviceApiTool:
             detail = str(args.get("detail") or "").strip()
             if not detail:
                 detail = f"{action}: {json.dumps(payload, ensure_ascii=True)[:240]}"
-            perm = self._wait_for_permission(detail)
-            if perm.get("status") != "approved":
-                return {"status": "error", "error": "permission_not_approved", "permission": perm}
+            # Don't block the agent/tool loop waiting for UI approval. Create a request and
+            # return it; the runtime/UI will tell the user to approve and retry.
+            req = self._request_permission(detail)
+            return {"status": "permission_required", "request": req}
 
         body = payload if spec["method"] == "POST" else None
         return self._request_json(spec["method"], spec["path"], body)
 
-    def _wait_for_permission(self, detail: str) -> Dict[str, Any]:
-        req = self._request_json(
+    def _request_permission(self, detail: str) -> Dict[str, Any]:
+        resp = self._request_json(
             "POST",
             "/permissions/request",
             {"tool": "device_api", "detail": detail, "scope": "once"},
         )
-        if req.get("status") != "ok":
-            return {"status": "error", "error": "permission_request_failed", "detail": req}
-
-        request = req.get("body", {})
-        request_id = str(request.get("id") or "")
-        if not request_id:
-            return {"status": "error", "error": "permission_id_missing", "detail": request}
-
-        deadline = time.monotonic() + 30.0
-        while time.monotonic() < deadline:
-            current = self._request_json("GET", f"/permissions/{request_id}")
-            if current.get("status") != "ok":
-                time.sleep(0.5)
-                continue
-            body = current.get("body", {})
-            status = body.get("status")
-            if status in {"approved", "denied", "expired"}:
-                return body
-            time.sleep(0.5)
-        return {"status": "timeout", "id": request_id}
+        if resp.get("status") != "ok":
+            return {"status": "error", "error": "permission_request_failed", "detail": resp}
+        body = resp.get("body")
+        return body if isinstance(body, dict) else {"status": "error", "error": "invalid_permission_response"}
 
     def _request_json(self, method: str, path: str, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         data = None
