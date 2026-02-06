@@ -12,15 +12,27 @@ import android.widget.Toast
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.appcompat.app.AppCompatActivity
 import jp.espresso3389.kugutz.service.AgentService
 import jp.espresso3389.kugutz.service.PythonRuntimeManager
 import jp.espresso3389.kugutz.service.LocalHttpServer
 import jp.espresso3389.kugutz.ui.WebAppBridge
+import jp.espresso3389.kugutz.perm.DevicePermissionPolicy
+import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
+    private val pendingAndroidPermRequestId = AtomicReference<String?>(null)
+    private val pendingAndroidPermAction = AtomicReference<((Boolean) -> Unit)?>(null)
+    private val androidPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            val ok = results.values.all { it }
+            val cb = pendingAndroidPermAction.getAndSet(null)
+            pendingAndroidPermRequestId.set(null)
+            cb?.invoke(ok)
+        }
     private val pythonHealthReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val status = intent?.getStringExtra(PythonRuntimeManager.EXTRA_STATUS) ?: return
@@ -132,22 +144,55 @@ class MainActivity : AppCompatActivity() {
     private fun handlePermissionPrompt(id: String, tool: String, detail: String, forceBiometric: Boolean) {
         val broker = jp.espresso3389.kugutz.perm.PermissionBroker(this)
         broker.requestConsent(tool, detail, forceBiometric) { approved ->
-            Thread {
-                try {
-                    val action = if (approved) "approve" else "deny"
-                    val url = java.net.URL("http://127.0.0.1:8765/permissions/$id/$action")
-                    val conn = url.openConnection() as java.net.HttpURLConnection
-                    conn.requestMethod = "POST"
-                    conn.doOutput = true
-                    conn.connectTimeout = 2000
-                    conn.readTimeout = 2000
-                    conn.outputStream.use { it.write(ByteArray(0)) }
-                    conn.inputStream.use { }
-                    conn.disconnect()
-                } catch (_: Exception) {
-                }
-            }.start()
+            if (!approved) {
+                postPermissionDecision(id, approved = false)
+                return@requestConsent
+            }
+
+            val required = DevicePermissionPolicy.requiredFor(tool, detail)
+            val perms = required?.androidPermissions ?: emptyList()
+            if (perms.isEmpty()) {
+                postPermissionDecision(id, approved = true)
+                return@requestConsent
+            }
+
+            // Request Android runtime permissions. If denied, we deny the tool request as well.
+            // Avoid overlapping requests: if one is already in-flight, fail closed.
+            if (pendingAndroidPermRequestId.get() != null) {
+                postPermissionDecision(id, approved = false)
+                return@requestConsent
+            }
+
+            val missing = perms.filter { p ->
+                ActivityCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missing.isEmpty()) {
+                postPermissionDecision(id, approved = true)
+                return@requestConsent
+            }
+
+            pendingAndroidPermRequestId.set(id)
+            pendingAndroidPermAction.set { ok -> postPermissionDecision(id, approved = ok) }
+            androidPermLauncher.launch(missing.toTypedArray())
         }
+    }
+
+    private fun postPermissionDecision(id: String, approved: Boolean) {
+        Thread {
+            try {
+                val action = if (approved) "approve" else "deny"
+                val url = java.net.URL("http://127.0.0.1:8765/permissions/$id/$action")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.connectTimeout = 2000
+                conn.readTimeout = 2000
+                conn.outputStream.use { it.write(ByteArray(0)) }
+                conn.inputStream.use { }
+                conn.disconnect()
+            } catch (_: Exception) {
+            }
+        }.start()
     }
 
     private fun startPythonWorker() {

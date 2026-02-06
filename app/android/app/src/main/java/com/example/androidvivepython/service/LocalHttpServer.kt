@@ -109,7 +109,11 @@ class LocalHttpServer(
                 val requestedScope = payload.optString("scope", "once")
                 val scope = if (tool == "ssh_keys") "once" else requestedScope
                 val req = permissionStore.create(tool, detail, scope)
-                if (tool == "credentials" || tool == "ssh_keys" || tool == "ssh_pin") {
+                // Permission UX:
+                // - Always prompt immediately for sensitive actions where the user expects an interrupt.
+                // - Device permissions need both in-app consent and often Android runtime permissions.
+                val isDeviceTool = tool.startsWith("device.") || tool == "device_api"
+                if (tool == "credentials" || tool == "ssh_keys" || tool == "ssh_pin" || isDeviceTool) {
                     val forceBio = when (tool) {
                         "ssh_keys" -> sshKeyPolicy.isBiometricRequired()
                         "ssh_pin" -> true
