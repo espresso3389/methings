@@ -180,6 +180,12 @@
           <button id="authPin">PIN</button>
         </div>
         <p class="muted" id="sshDetail">Waiting for status…</p>
+        <div id="hostKeyRow" style="display:none;margin-top:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="muted" style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="hostKeyFp"></span>
+            <button id="copyHostKey" style="padding:6px 10px;font-size:12px;min-width:auto;width:auto;">Copy</button>
+          </div>
+        </div>
       </section>
 
       <section class="card">
@@ -226,6 +232,10 @@
       const authNotification = document.getElementById("authNotification");
       const authPin = document.getElementById("authPin");
       const sshDetail = document.getElementById("sshDetail");
+      const hostKeyRow = document.getElementById("hostKeyRow");
+      const hostKeyFp = document.getElementById("hostKeyFp");
+      const copyHostKey = document.getElementById("copyHostKey");
+      let currentHostKeyPublic = "";
       const pinModal = document.getElementById("pinModal");
       const pinCode = document.getElementById("pinCode");
       const pinCountdown = document.getElementById("pinCountdown");
@@ -270,9 +280,17 @@
           authPublic.checked = lastAuthSelection === "public_key";
           authNotification.checked = lastAuthSelection === "notification";
           sshDetail.textContent = "ssh " + (data.host || "aaa.bbb.ccc.ddd") + " -p " + (data.port || 2222);
+          if (data.host_key_fingerprint) {
+            hostKeyFp.textContent = data.host_key_fingerprint;
+            hostKeyRow.style.display = "block";
+          } else {
+            hostKeyRow.style.display = "none";
+          }
+          currentHostKeyPublic = data.host_key_public || "";
         } catch (_) {
           setStatus(sshStatus, "offline");
           sshDetail.textContent = "SSHD status unavailable";
+          hostKeyRow.style.display = "none";
         }
       }
 
@@ -442,6 +460,18 @@
           await refreshSsh();
         } catch (_) {
           sshDetail.textContent = "Failed to start PIN auth";
+        }
+      });
+
+      copyHostKey.addEventListener("click", async () => {
+        if (!currentHostKeyPublic) return;
+        try {
+          await navigator.clipboard.writeText(currentHostKeyPublic);
+          copyHostKey.textContent = "Copied!";
+          setTimeout(() => { copyHostKey.textContent = "Copy"; }, 1500);
+        } catch (_) {
+          copyHostKey.textContent = "Failed";
+          setTimeout(() => { copyHostKey.textContent = "Copy"; }, 1500);
         }
       });
 

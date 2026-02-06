@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  p4a-build:
+  android-apk-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,10 +26,12 @@ jobs:
             automake \
             autoconf-archive \
             build-essential \
+            cmake \
             gettext \
             libtool-bin \
             m4 \
             libtool \
+            ninja-build \
             pkg-config \
             pkgconf \
             unzip \
@@ -63,71 +65,24 @@ jobs:
           SDK_DIR: ${{ env.ANDROID_SDK_ROOT }}
           NDK_DIR: ${{ env.ANDROID_SDK_ROOT }}/ndk/29.0.14206865
           ARCH: arm64-v8a
-          DIST_NAME: androidvivepython_ci
+          DIST_NAME: kugutz_ci
           ANDROID_API: 34
-          REQUIREMENTS: python3,fastapi==0.99.1,starlette==0.27.0,pydantic==1.10.13,typing-extensions,anyio==3.7.1,sniffio,uvicorn==0.23.2,click,h11,requests,charset-normalizer,idna,urllib3,certifi,sqlcipher
+          REQUIREMENTS: python3,fastapi==0.99.1,starlette==0.27.0,pydantic==1.10.13,typing-extensions,anyio==3.7.1,sniffio,uvicorn==0.23.2,click,h11,requests,charset-normalizer,idna,urllib3,certifi
         run: |
           ./scripts/build_p4a.sh
-      - name: Upload Python bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: pyenv-bundle
-          path: app/android/app/src/main/assets/pyenv
-      - name: Upload JNI libs
-        uses: actions/upload-artifact@v4
-        with:
-          name: jni-libs
-          path: app/android/app/src/main/jniLibs
-
-  android-build:
-    runs-on: ubuntu-latest
-    needs: p4a-build
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: gradle
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Cache Android SDK/NDK
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.ANDROID_SDK_ROOT }}
-          key: ${{ runner.os }}-androidsdk-34-ndk-29.0.14206865
-          restore-keys: |
-            ${{ runner.os }}-androidsdk-34-
-      - name: Install Android NDK
-        run: |
-          yes | sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;29.0.14206865"
-      - name: Download Python bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: pyenv-bundle
-          path: app/android/app/src/main/assets/pyenv
-      - name: Download JNI libs
-        uses: actions/download-artifact@v4
-        with:
-          name: jni-libs
-          path: app/android/app/src/main/jniLibs
-      - name: Build Android App Bundle (debug)
+      - name: Build Debug APK
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4"
         run: |
           cd app/android
-          ./gradlew --parallel --build-cache bundleDebug
-      - name: Upload App Bundle
+          ./gradlew --parallel --build-cache assembleDebug
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: appbundle-debug
-          path: app/android/app/build/outputs/bundle/debug/app-debug.aab
+          name: app-debug-apk
+          path: |
+            app/android/app/build/outputs/apk/debug/app-debug.apk
+            app/android/app/build/outputs/apk/debug/output-metadata.json
 
   smoke-test:
     runs-on: ubuntu-latest

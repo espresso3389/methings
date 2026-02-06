@@ -15,7 +15,7 @@ import signal
 import secrets
 import socket
 import shutil
-from typing import Dict, Optional
+from typing import Dict
 from pathlib import Path
 import contextlib
 import io

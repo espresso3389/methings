@@ -255,6 +255,8 @@ class LocalHttpServer(
                         .put("noauth_enabled", status.noauthEnabled)
                         .put("auth_mode", sshdManager.getAuthMode())
                         .put("host", sshdManager.getHostIp())
+                        .put("host_key_fingerprint", status.hostKeyFingerprint)
+                        .put("host_key_public", status.hostKeyPublic)
                 )
             }
             uri == "/ssh/keys" -> {

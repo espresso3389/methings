@@ -151,13 +151,16 @@ class SshdManager(private val context: Context) {
 
     fun status(): SshStatus {
         val running = processRef.get()?.isAlive == true || isPortOpen(getPort())
+        val keyInfo = getHostKeyInfo()
         return SshStatus(
             enabled = isEnabled(),
             running = running,
             port = getPort(),
             noauthEnabled = isNoAuthEnabled(),
             homeDir = File(context.filesDir, "user").absolutePath,
-            authorizedKeys = File(context.filesDir, "user/.ssh/authorized_keys").absolutePath
+            authorizedKeys = File(context.filesDir, "user/.ssh/authorized_keys").absolutePath,
+            hostKeyFingerprint = keyInfo.first,
+            hostKeyPublic = keyInfo.second
         )
     }
 
@@ -260,6 +263,35 @@ class SshdManager(private val context: Context) {
         }
     }
 
+    private fun getHostKeyInfo(): Pair<String, String> {
+        val hostKey = File(context.filesDir, "protected/ssh/dropbear_host_key")
+        if (!hostKey.exists()) return Pair("", "")
+        val binDir = File(context.filesDir, "bin")
+        val dropbearkey = resolveBinary("libdropbearkey.so", File(binDir, "dropbearkey"))
+            ?: return Pair("", "")
+        return try {
+            val proc = ProcessBuilder(
+                dropbearkey.absolutePath, "-y", "-f", hostKey.absolutePath
+            ).redirectErrorStream(true).start()
+            val output = proc.inputStream.bufferedReader().readText()
+            val rc = proc.waitFor()
+            if (rc != 0) return Pair("", "")
+            var fingerprint = ""
+            var pubKey = ""
+            for (line in output.lines()) {
+                if (line.startsWith("Fingerprint:")) {
+                    fingerprint = line.removePrefix("Fingerprint:").trim()
+                } else if (line.startsWith("ssh-")) {
+                    pubKey = line.trim()
+                }
+            }
+            Pair(fingerprint, pubKey)
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to read host key info", ex)
+            Pair("", "")
+        }
+    }
+
     private fun generateHostKey(dropbearkey: File, hostKey: File): Boolean {
         return try {
             val proc = ProcessBuilder(
@@ -331,7 +363,9 @@ class SshdManager(private val context: Context) {
         val port: Int,
         val noauthEnabled: Boolean,
         val homeDir: String,
-        val authorizedKeys: String
+        val authorizedKeys: String,
+        val hostKeyFingerprint: String = "",
+        val hostKeyPublic: String = ""
     )
 
     companion object {
