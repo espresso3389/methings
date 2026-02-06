@@ -895,10 +895,14 @@ class BrainRuntime:
             return
 
         tools = self._responses_tools()
-        max_rounds = 4
+        # Some models require several tool rounds before they "decide" to stop. Keep this
+        # configurable so we can tune per-provider/model without shipping a new APK.
+        max_rounds = int(self._config.get("max_tool_rounds", 12) or 12)
+        max_rounds = max(1, min(max_rounds, 24))
         max_actions = max(1, min(int(self._config.get("max_actions", 6) or 6), 12))
         previous_response_id: Optional[str] = None
         forced_rounds = 0
+        last_tool_summaries: List[Dict[str, Any]] = []
         # Build a normal conversation for the model so it can use context naturally.
         pending_input: List[Dict[str, Any]] = []
         pending_input.append(
@@ -991,6 +995,7 @@ class BrainRuntime:
                 self._emit_log("brain_response", {"item_id": item.get("id"), "text": text[:300]})
 
             pending_input = []
+            last_tool_summaries = []
             for call in calls[:max_actions]:
                 name = str(call.get("name") or "")
                 call_id = str(call.get("call_id") or "")
@@ -1002,6 +1007,14 @@ class BrainRuntime:
                 if not isinstance(args, dict):
                     args = {}
                 result = self._execute_function_tool(item, name, args)
+                last_tool_summaries.append(
+                    {
+                        "tool": name,
+                        "args": args,
+                        "status": (result.get("status") if isinstance(result, dict) else None),
+                        "error": (result.get("error") if isinstance(result, dict) else None),
+                    }
+                )
                 # If a permission gate is hit, surface it immediately and stop.
                 if isinstance(result, dict) and str(result.get("status") or "") in {"permission_required", "permission_expired"}:
                     req = result.get("request") if isinstance(result.get("request"), dict) else {}
@@ -1014,6 +1027,19 @@ class BrainRuntime:
                     )
                     self._emit_log("brain_response", {"item_id": item.get("id"), "text": "permission_required"})
                     return
+                # If the tool is blocked by policy, stop the loop and surface it clearly. Otherwise models
+                # often keep retrying until max_rounds is exhausted.
+                if isinstance(result, dict) and str(result.get("status") or "") == "error":
+                    err = str(result.get("error") or "")
+                    if err in {"command_not_allowed", "path_not_allowed", "invalid_path"}:
+                        self._record_message(
+                            "assistant",
+                            f"Tool '{name}' failed with {err}. "
+                            "This is blocked by local policy/sandbox. Try a different approach or change the policy.",
+                            {"item_id": item.get("id"), "session_id": session_id},
+                        )
+                        self._emit_log("brain_response", {"item_id": item.get("id"), "text": "tool_error_blocked"})
+                        return
                 pending_input.append(
                     {
                         "type": "function_call_output",
@@ -1026,8 +1052,9 @@ class BrainRuntime:
                 {
                     "role": "user",
                     "content": (
-                        "Tool outputs have been provided. If the task is complete, respond with the final answer now "
-                        "and do not call more tools. Only call another tool if strictly necessary."
+                        "Tool outputs have been provided. You MUST respond with the final answer now and STOP. "
+                        "Do not call more tools unless the user explicitly asks for another action or you are blocked "
+                        "by a permission_required response."
                     ),
                 }
             )
@@ -1036,11 +1063,25 @@ class BrainRuntime:
 
         # If we reach here, we exhausted max_rounds without a final assistant message.
         # Avoid leaving the UI stuck waiting.
+        summary = ""
+        if last_tool_summaries:
+            # Keep it short so we don't spam the UI. This is for debugging.
+            parts = []
+            for s in last_tool_summaries[:6]:
+                tool = str(s.get("tool") or "")
+                status = str(s.get("status") or "")
+                err = str(s.get("error") or "")
+                if err:
+                    parts.append(f"{tool}={status}/{err}")
+                else:
+                    parts.append(f"{tool}={status}")
+            summary = " Last tools: " + ", ".join(parts) + "."
         self._record_message(
             "assistant",
             "Agent tool loop did not finish within the allowed rounds. "
             "The last tool outputs may contain the error (e.g., permission_required or command_not_allowed). "
-            "Please retry or rephrase, and approve any pending permissions if prompted.",
+            "Please retry or rephrase, and approve any pending permissions if prompted."
+            + summary,
             {"item_id": item.get("id"), "session_id": session_id},
         )
         self._emit_log("brain_response", {"item_id": item.get("id"), "text": "tool_loop_exhausted"})
