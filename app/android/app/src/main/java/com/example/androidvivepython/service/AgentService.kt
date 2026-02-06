@@ -22,6 +22,9 @@ class AgentService : Service() {
         extractor.extractUiAssetsIfMissing()
         extractor.extractDropbearIfMissing()
         jp.espresso3389.kugutz.db.PlainDbProvider.get(this)
+        // Make sure we always have a CA bundle file in app-private storage before SSH sessions start.
+        // The periodic updater will refresh it when the network is available.
+        CaBundleManager(this).ensureSeededFromPyenv(java.io.File(filesDir, "pyenv"))
         runtimeManager = PythonRuntimeManager(this)
         sshdManager = SshdManager(this).also { it.startIfEnabled() }
         noAuthPromptManager = SshNoAuthPromptManager(this).also { it.start() }

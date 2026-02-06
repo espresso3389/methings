@@ -146,13 +146,44 @@ int main(int argc, char **argv) {
     }
     setenv("PYTHONPATH", tmp, 0); /* don't override if already set */
 
-    /* Set SSL_CERT_FILE and PIP_CERT for pip/requests if certifi is available */
+    /* Set SSL_CERT_FILE and PIP_CERT for pip/requests.
+     * Priority:
+     *  1) Managed bundle: <filesDir>/protected/ca/cacert.pem (if present)
+     *  2) certifi's baked-in bundle in pyenv
+     *
+     * Don't override if already set by the caller. */
     {
         char cert_path[PATH_MAX];
-        snprintf(cert_path, sizeof(cert_path), "%s/site-packages/certifi/cacert.pem", pyenv);
-        if (access(cert_path, R_OK) == 0) {
-            setenv("SSL_CERT_FILE", cert_path, 0);
-            setenv("PIP_CERT", cert_path, 0);
+        int set = 0;
+
+        /* Try managed path derived from KUGUTZ_HOME/HOME (<filesDir>/user). */
+        const char *khome = getenv("KUGUTZ_HOME");
+        if (!khome || !khome[0]) {
+            khome = getenv("HOME");
+        }
+        if (khome && khome[0]) {
+            char base[PATH_MAX];
+            snprintf(base, sizeof(base), "%s", khome);
+            char *slash = strrchr(base, '/');
+            if (slash) {
+                *slash = '\0';
+                snprintf(cert_path, sizeof(cert_path), "%s/protected/ca/cacert.pem", base);
+                if (access(cert_path, R_OK) == 0) {
+                    setenv("SSL_CERT_FILE", cert_path, 0);
+                    setenv("PIP_CERT", cert_path, 0);
+                    setenv("REQUESTS_CA_BUNDLE", cert_path, 0);
+                    set = 1;
+                }
+            }
+        }
+
+        if (!set) {
+            snprintf(cert_path, sizeof(cert_path), "%s/site-packages/certifi/cacert.pem", pyenv);
+            if (access(cert_path, R_OK) == 0) {
+                setenv("SSL_CERT_FILE", cert_path, 0);
+                setenv("PIP_CERT", cert_path, 0);
+                setenv("REQUESTS_CA_BUNDLE", cert_path, 0);
+            }
         }
     }
 

@@ -127,7 +127,17 @@ Android doesn't have `/etc/ssl/certs/ca-certificates.crt`, which is the default 
 - pip's vendored `certifi.where()` returns the hardcoded `/etc/ssl/certs/` path (p4a modification), ignoring `SSL_CERT_FILE`
 - pip respects its own `PIP_CERT` env var
 
-Both are set to `<pyenv>/site-packages/certifi/cacert.pem`, which ships with the p4a runtime.
+We use a **managed CA bundle** stored under app-private storage:
+
+- `<filesDir>/protected/ca/cacert.pem`
+
+This file is initially **seeded** from `<pyenv>/site-packages/certifi/cacert.pem` (so pip works offline), then **periodically refreshed** by the Android side (WorkManager) by downloading the Mozilla-derived `cacert.pem` bundle from curl.se when the network is available.
+
+For SSH sessions, Dropbear inherits:
+
+- `SSL_CERT_FILE`, `PIP_CERT`, `REQUESTS_CA_BUNDLE` -> `<filesDir>/protected/ca/cacert.pem`
+
+For the embedded Python worker, the native bridge sets the same env vars before launching `worker.py`.
 
 ### pip Build Isolation (Known Limitation)
 

@@ -6,6 +6,7 @@
 #include <locale>
 #include <codecvt>
 #include <cstdlib>
+#include <unistd.h>
 
 #define LOG_TAG "PythonBridgeNative"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -174,6 +175,30 @@ Java_jp_espresso3389_kugutz_service_PythonBridge_start(
     LOGI("PYTHONHOME=%s", python_home.c_str());
     LOGI("PYTHONPATH=%s", python_path.c_str());
     LOGI("SERVER_DIR=%s", server_dir.c_str());
+
+    // TLS trust store: prefer managed CA bundle in app-private storage, else fall back to certifi.
+    // This is critical for pip/requests on Android where /etc/ssl/certs is absent.
+    {
+        std::string base = python_home;
+        // python_home is typically <filesDir>/pyenv
+        if (base.size() >= 6 && base.substr(base.size() - 6) == "/pyenv") {
+            base = base.substr(0, base.size() - 6);
+        }
+        std::string managed = base + "/protected/ca/cacert.pem";
+        std::string certifi = python_home + "/site-packages/certifi/cacert.pem";
+        const char *chosen = nullptr;
+        if (access(managed.c_str(), R_OK) == 0) {
+            chosen = managed.c_str();
+        } else if (access(certifi.c_str(), R_OK) == 0) {
+            chosen = certifi.c_str();
+        }
+        if (chosen) {
+            setenv("SSL_CERT_FILE", chosen, 1);
+            setenv("PIP_CERT", chosen, 1);
+            setenv("REQUESTS_CA_BUNDLE", chosen, 1);
+            LOGI("SSL_CERT_FILE=%s", chosen);
+        }
+    }
 
     if (!key_file.empty()) {
         setenv("SQLCIPHER_KEY_FILE", key_file.c_str(), 1);

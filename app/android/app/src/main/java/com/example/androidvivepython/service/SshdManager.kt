@@ -124,10 +124,18 @@ class SshdManager(private val context: Context) {
                 "${pyenvDir.absolutePath}/modules",
                 "${pyenvDir.absolutePath}/stdlib.zip"
             ).joinToString(":")
-            val certFile = File(pyenvDir, "site-packages/certifi/cacert.pem")
-            if (certFile.exists()) {
-                pb.environment()["SSL_CERT_FILE"] = certFile.absolutePath
-                pb.environment()["PIP_CERT"] = certFile.absolutePath
+            // Prefer the managed CA bundle (app-private, refreshable) over certifi's baked-in file.
+            val managedCa = File(context.filesDir, "protected/ca/cacert.pem")
+            val fallbackCertifi = File(pyenvDir, "site-packages/certifi/cacert.pem")
+            val caFile = when {
+                managedCa.exists() && managedCa.length() > 0 -> managedCa
+                fallbackCertifi.exists() -> fallbackCertifi
+                else -> null
+            }
+            if (caFile != null) {
+                pb.environment()["SSL_CERT_FILE"] = caFile.absolutePath
+                pb.environment()["PIP_CERT"] = caFile.absolutePath
+                pb.environment()["REQUESTS_CA_BUNDLE"] = caFile.absolutePath
             }
             // Add nativeLibDir to PATH so python3/pip are accessible via libkugutzpy.so
             val existingPath = pb.environment()["PATH"] ?: "/usr/bin:/bin"
