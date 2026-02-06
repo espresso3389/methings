@@ -402,6 +402,25 @@ class LocalHttpServer(
                         .put("noauth_enabled", status.noauthEnabled)
                 )
             }
+            uri == "/brain/config" && session.method == Method.GET -> handleBrainConfigGet()
+            uri == "/brain/config" && session.method == Method.POST -> {
+                val body = readBody(session)
+                handleBrainConfigSet(body)
+            }
+            uri == "/brain/chat" && session.method == Method.POST -> {
+                val body = readBody(session)
+                handleBrainChat(body)
+            }
+            uri == "/brain/memory" && session.method == Method.GET -> {
+                jsonResponse(JSONObject().put("content", readMemory()))
+            }
+            uri == "/brain/memory" && session.method == Method.POST -> {
+                val body = readBody(session)
+                val payload = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                writeMemory(payload.optString("content", ""))
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
             uri == "/" || uri == "/ui" || uri == "/ui/" -> serveUiFile("index.html")
             uri.startsWith("/ui/") -> {
                 val raw = uri.removePrefix("/ui/")
@@ -584,6 +603,317 @@ class LocalHttpServer(
         }
     }
 
+    // --- Brain config (SharedPreferences) ---
+    private val brainPrefs by lazy {
+        context.getSharedPreferences("brain_config", Context.MODE_PRIVATE)
+    }
+
+    private fun readMemory(): String {
+        val file = File(File(context.filesDir, "user"), "MEMORY.md")
+        return if (file.exists()) file.readText(Charsets.UTF_8) else ""
+    }
+
+    private fun writeMemory(content: String) {
+        val userDir = File(context.filesDir, "user")
+        userDir.mkdirs()
+        File(userDir, "MEMORY.md").writeText(content, Charsets.UTF_8)
+    }
+
+    private fun buildSystemPrompt(): String {
+        val memory = readMemory().trim()
+        return BRAIN_SYSTEM_PROMPT + if (memory.isEmpty()) "(empty)" else memory
+    }
+
+    private fun handleBrainConfigGet(): Response {
+        val vendor = brainPrefs.getString("vendor", "") ?: ""
+        val baseUrl = brainPrefs.getString("base_url", "") ?: ""
+        val model = brainPrefs.getString("model", "") ?: ""
+        val hasKey = !brainPrefs.getString("api_key", "").isNullOrEmpty()
+        return jsonResponse(
+            JSONObject()
+                .put("vendor", vendor)
+                .put("base_url", baseUrl)
+                .put("model", model)
+                .put("has_api_key", hasKey)
+        )
+    }
+
+    private fun handleBrainConfigSet(body: String): Response {
+        val payload = runCatching { JSONObject(body) }.getOrNull()
+            ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+        val editor = brainPrefs.edit()
+        if (payload.has("vendor")) {
+            editor.putString("vendor", payload.optString("vendor", "").trim())
+        }
+        if (payload.has("base_url")) {
+            editor.putString("base_url", payload.optString("base_url", "").trim().trimEnd('/'))
+        }
+        if (payload.has("model")) {
+            editor.putString("model", payload.optString("model", "").trim())
+        }
+        if (payload.has("api_key")) {
+            editor.putString("api_key", payload.optString("api_key", "").trim())
+        }
+        editor.apply()
+        return handleBrainConfigGet()
+    }
+
+    private fun handleBrainChat(body: String): Response {
+        val payload = runCatching { JSONObject(body) }.getOrNull()
+            ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+        val messages = payload.optJSONArray("messages")
+        if (messages == null || messages.length() == 0) {
+            return jsonError(Response.Status.BAD_REQUEST, "missing_messages")
+        }
+
+        val vendor = brainPrefs.getString("vendor", "") ?: ""
+        val baseUrl = brainPrefs.getString("base_url", "") ?: ""
+        val model = brainPrefs.getString("model", "") ?: ""
+        val apiKey = brainPrefs.getString("api_key", "") ?: ""
+        if (baseUrl.isEmpty() || model.isEmpty() || apiKey.isEmpty()) {
+            return jsonError(Response.Status.BAD_REQUEST, "brain_not_configured")
+        }
+
+        val isAnthropic = vendor == "anthropic"
+
+        val url: String
+        val reqBody: JSONObject
+        if (isAnthropic) {
+            url = baseUrl.trimEnd('/') + "/v1/messages"
+            // Extract system message if present
+            val chatMessages = org.json.JSONArray()
+            var systemText = ""
+            for (i in 0 until messages.length()) {
+                val msg = messages.getJSONObject(i)
+                if (msg.optString("role") == "system") {
+                    systemText = msg.optString("content", "")
+                } else {
+                    chatMessages.put(msg)
+                }
+            }
+            val fullSystem = if (systemText.isNotEmpty()) {
+                buildSystemPrompt() + "\n\n---\n\n" + systemText
+            } else {
+                buildSystemPrompt()
+            }
+            reqBody = JSONObject()
+                .put("model", model)
+                .put("max_tokens", 8192)
+                .put("system", fullSystem)
+                .put("messages", chatMessages)
+                .put("stream", true)
+        } else {
+            // OpenAI Responses API
+            url = baseUrl.trimEnd('/') + "/responses"
+            reqBody = JSONObject()
+                .put("model", model)
+                .put("instructions", buildSystemPrompt())
+                .put("input", messages)
+                .put("stream", true)
+        }
+        val reqBytes = reqBody.toString().toByteArray(Charsets.UTF_8)
+
+        val pipeIn = java.io.PipedInputStream(8192)
+        val pipeOut = java.io.PipedOutputStream(pipeIn)
+
+        Thread {
+            try {
+                val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 15000
+                conn.readTimeout = 120000
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                if (isAnthropic) {
+                    conn.setRequestProperty("x-api-key", apiKey)
+                    conn.setRequestProperty("anthropic-version", "2023-06-01")
+                } else {
+                    conn.setRequestProperty("Authorization", "Bearer $apiKey")
+                }
+                conn.outputStream.use { it.write(reqBytes) }
+
+                if (conn.responseCode !in 200..299) {
+                    val errorBody = (conn.errorStream ?: conn.inputStream)
+                        .bufferedReader().use { it.readText().take(500) }
+                    val errorEvent = "data: " + JSONObject()
+                        .put("error", "upstream_error")
+                        .put("status", conn.responseCode)
+                        .put("detail", errorBody)
+                        .toString() + "\n\n"
+                    pipeOut.write(errorEvent.toByteArray(Charsets.UTF_8))
+                    pipeOut.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+                    pipeOut.flush()
+                    pipeOut.close()
+                    return@Thread
+                }
+
+                conn.inputStream.bufferedReader().use { reader ->
+                    var line: String?
+                    var currentEventType = ""
+                    while (reader.readLine().also { line = it } != null) {
+                        val l = line ?: continue
+                        // Track SSE event type (used by Responses API)
+                        if (l.startsWith("event: ") || l.startsWith("event:")) {
+                            currentEventType = l.removePrefix("event:").trim()
+                            continue
+                        }
+                        if (!l.startsWith("data: ") && !l.startsWith("data:")) continue
+                        val dataStr = l.removePrefix("data:").trim()
+                        if (dataStr == "[DONE]") {
+                            pipeOut.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+                            pipeOut.flush()
+                            break
+                        }
+                        try {
+                            val chunk = JSONObject(dataStr)
+                            val content: String? = if (isAnthropic) {
+                                // Anthropic: {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
+                                val type = chunk.optString("type")
+                                if (type == "content_block_delta") {
+                                    chunk.optJSONObject("delta")?.optString("text", "")
+                                } else if (type == "message_stop") {
+                                    pipeOut.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+                                    pipeOut.flush()
+                                    break
+                                } else null
+                            } else {
+                                // OpenAI Responses API:
+                                // event: response.output_text.delta
+                                // data: {"type":"response.output_text.delta","delta":"..."}
+                                // event: response.completed
+                                // data: {"type":"response.completed",...}
+                                val type = chunk.optString("type", currentEventType)
+                                if (type == "response.output_text.delta") {
+                                    chunk.optString("delta", "")
+                                } else if (type == "response.completed" || type == "response.done") {
+                                    pipeOut.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+                                    pipeOut.flush()
+                                    break
+                                } else null
+                            }
+                            if (!content.isNullOrEmpty()) {
+                                val sseEvent = "data: " + JSONObject()
+                                    .put("content", content)
+                                    .toString() + "\n\n"
+                                pipeOut.write(sseEvent.toByteArray(Charsets.UTF_8))
+                                pipeOut.flush()
+                            }
+                        } catch (_: Exception) {
+                            continue
+                        }
+                        currentEventType = ""
+                    }
+                }
+                // Ensure DONE is sent if stream ended without explicit marker
+                try {
+                    pipeOut.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+                    pipeOut.flush()
+                } catch (_: Exception) {}
+            } catch (ex: java.net.SocketTimeoutException) {
+                try {
+                    val ev = "data: " + JSONObject().put("error", "upstream_timeout").toString() + "\n\n"
+                    pipeOut.write(ev.toByteArray(Charsets.UTF_8))
+                    pipeOut.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+                    pipeOut.flush()
+                } catch (_: Exception) {}
+            } catch (ex: java.net.ConnectException) {
+                try {
+                    val ev = "data: " + JSONObject().put("error", "upstream_unreachable").toString() + "\n\n"
+                    pipeOut.write(ev.toByteArray(Charsets.UTF_8))
+                    pipeOut.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+                    pipeOut.flush()
+                } catch (_: Exception) {}
+            } catch (ex: Exception) {
+                Log.w(TAG, "Brain chat failed", ex)
+                try {
+                    val ev = "data: " + JSONObject().put("error", "internal_error")
+                        .put("detail", ex.message ?: "").toString() + "\n\n"
+                    pipeOut.write(ev.toByteArray(Charsets.UTF_8))
+                    pipeOut.write("data: [DONE]\n\n".toByteArray(Charsets.UTF_8))
+                    pipeOut.flush()
+                } catch (_: Exception) {}
+            } finally {
+                try { pipeOut.close() } catch (_: Exception) {}
+            }
+        }.apply { isDaemon = true }.start()
+
+        val response = newChunkedResponse(Response.Status.OK, "text/event-stream", pipeIn)
+        response.addHeader("Cache-Control", "no-cache")
+        response.addHeader("Connection", "keep-alive")
+        return response
+    }
+
+    private fun proxyGetToWorker(path: String): Response? {
+        return try {
+            val url = java.net.URL("http://127.0.0.1:8776$path")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 3000
+            conn.readTimeout = 5000
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            val body = stream.bufferedReader().use { it.readText() }
+            newFixedLengthResponse(
+                Response.Status.lookup(conn.responseCode) ?: Response.Status.OK,
+                "application/json",
+                body
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun proxyPostToWorker(path: String, body: String): Response? {
+        return try {
+            val url = java.net.URL("http://127.0.0.1:8776$path")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 3000
+            conn.readTimeout = 5000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+            val responseBody = stream.bufferedReader().use { it.readText() }
+            newFixedLengthResponse(
+                Response.Status.lookup(conn.responseCode) ?: Response.Status.OK,
+                "application/json",
+                responseBody
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun proxyStreamToWorker(path: String, body: String): Response? {
+        return try {
+            val url = java.net.URL("http://127.0.0.1:8776$path")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 5000
+            conn.readTimeout = 0
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            if (conn.responseCode !in 200..299) {
+                val errorStream = conn.errorStream ?: conn.inputStream
+                val errorBody = errorStream.bufferedReader().use { it.readText() }
+                return newFixedLengthResponse(
+                    Response.Status.lookup(conn.responseCode) ?: Response.Status.INTERNAL_ERROR,
+                    "application/json",
+                    errorBody
+                )
+            }
+            val inputStream = conn.inputStream
+            val response = newChunkedResponse(Response.Status.OK, "text/event-stream", inputStream)
+            response.addHeader("Cache-Control", "no-cache")
+            response.addHeader("Connection", "keep-alive")
+            response
+        } catch (ex: Exception) {
+            Log.w(TAG, "Brain chat proxy failed", ex)
+            null
+        }
+    }
+
     private fun waitForPythonHealth(timeoutMs: Long) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
@@ -728,6 +1058,31 @@ class LocalHttpServer(
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
         private const val PORT = 8765
+        private const val BRAIN_SYSTEM_PROMPT = """You are the Kugutz Brain, an AI assistant running on an Android device (Kugutz CI).
+
+## Environment
+- Platform: Android (Kugutz CI app)
+- User home: ~/  (workspace for scripts and files)
+- Shell commands: python, pip, uv (via the app's terminal)
+- SSH server available for remote access
+- Permission broker controls sensitive operations (user must approve)
+
+## Memory
+You have a persistent memory file (MEMORY.md) that survives across conversations.
+To save important information (user preferences, project context, decisions, learned facts), update your memory by including this block anywhere in your response:
+
+<<MEMORY_UPDATE>>
+(new full content for MEMORY.md in Markdown)
+<<END_MEMORY>>
+
+Rules:
+- The content between the markers REPLACES the entire MEMORY.md file.
+- Include all previous memory content you want to keep, plus any additions.
+- Use memory updates sparingly: only when the user asks you to remember something, or when you learn something clearly worth persisting.
+- The markers and content between them will be hidden from the user's view.
+
+## Current Memory
+"""
         const val ACTION_PERMISSION_PROMPT = "jp.espresso3389.kugutz.action.PERMISSION_PROMPT"
         const val EXTRA_PERMISSION_ID = "permission_id"
         const val EXTRA_PERMISSION_TOOL = "permission_tool"

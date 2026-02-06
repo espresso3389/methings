@@ -2,8 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Kugutz Local Service</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Kugutz</title>
     <style>
       :root {
         color-scheme: light;
@@ -14,40 +14,183 @@
         --accent: #2e7d32;
         --danger: #c62828;
         --warn: #8d6e63;
+        --border: #e0d8cb;
       }
+      * { box-sizing: border-box; }
       body {
         margin: 0;
         font-family: "Georgia", "Times New Roman", serif;
         background: var(--bg);
         color: var(--ink);
-        max-width: 100vw;
-        overflow-x: hidden;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
       }
-      header {
-        padding: 18px 20px 8px;
+
+      /* --- Pages --- */
+      .page { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+      .page.active { display: flex; }
+
+      /* --- Bottom nav --- */
+      .bottom-nav {
+        display: flex;
+        border-top: 1px solid var(--border);
+        background: var(--card);
+        flex-shrink: 0;
       }
-      h1 {
-        margin: 0 0 4px 0;
-        font-size: 26px;
-      }
-      .sub {
-        margin: 0;
+      .bottom-nav button {
+        flex: 1;
+        padding: 12px 8px;
+        border: none;
+        background: transparent;
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 700;
         color: var(--muted);
+        cursor: pointer;
+      }
+      .bottom-nav button.active { color: var(--accent); }
+
+      /* --- Chat page --- */
+      .chat-messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        -webkit-overflow-scrolling: touch;
+      }
+      .chat-welcome {
+        text-align: center;
+        color: var(--muted);
+        margin-top: 30vh;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      .chat-welcome strong { color: var(--ink); }
+      .msg {
+        max-width: 88%;
+        padding: 10px 14px;
+        border-radius: 16px;
+        line-height: 1.55;
+        word-wrap: break-word;
+        overflow-wrap: anywhere;
+        font-size: 15px;
+      }
+      .msg.user {
+        align-self: flex-end;
+        background: var(--accent);
+        color: white;
+        border-bottom-right-radius: 4px;
+      }
+      .msg.assistant {
+        align-self: flex-start;
+        background: var(--card);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        border-bottom-left-radius: 4px;
+      }
+      .msg.error {
+        align-self: center;
+        background: #fce4ec;
+        color: var(--danger);
+        font-size: 13px;
+        border-radius: 10px;
+      }
+
+      /* Markdown in messages */
+      .msg pre {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 10px 12px;
+        border-radius: 8px;
+        overflow-x: auto;
+        white-space: pre;
+        font-family: "Menlo", "Consolas", monospace;
+        font-size: 13px;
+        margin: 6px 0;
+        line-height: 1.4;
+      }
+      .msg.user pre { background: rgba(0,0,0,0.2); color: #fff; }
+      .msg code:not(pre code) {
+        background: rgba(0,0,0,0.07);
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-family: "Menlo", "Consolas", monospace;
+        font-size: 0.88em;
+      }
+      .msg.user code:not(pre code) { background: rgba(255,255,255,0.2); }
+      .msg p { margin: 4px 0; }
+      .msg ul, .msg ol { margin: 4px 0; padding-left: 20px; }
+      .msg li { margin: 2px 0; }
+      .msg blockquote {
+        border-left: 3px solid var(--border);
+        margin: 6px 0;
+        padding: 2px 0 2px 12px;
+        color: var(--muted);
+      }
+
+      /* Chat input */
+      .chat-input-area {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        padding: 10px 16px 12px;
+        border-top: 1px solid var(--border);
+        background: var(--bg);
+        flex-shrink: 0;
+      }
+      .chat-input-area textarea {
+        flex: 1;
+        border: 1px solid #d4c9b5;
+        border-radius: 14px;
+        padding: 10px 14px;
+        font-family: inherit;
+        font-size: 15px;
+        resize: none;
+        background: var(--card);
+        min-height: 42px;
+        max-height: 120px;
+        line-height: 1.4;
+        outline: none;
+      }
+      .chat-input-area textarea:focus { border-color: var(--accent); }
+      .chat-input-area button {
+        border: none;
+        border-radius: 50%;
+        width: 42px;
+        height: 42px;
+        background: var(--accent);
+        color: white;
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .chat-input-area button:disabled { opacity: 0.5; cursor: default; }
+
+      /* --- Settings page --- */
+      .settings-header {
+        padding: 16px 20px 8px;
+        font-size: 22px;
+        font-weight: 700;
       }
       .grid {
         display: grid;
         grid-template-columns: 1fr;
-        gap: 16px;
-        padding: 16px 20px 28px;
-        width: 100%;
-        box-sizing: border-box;
+        gap: 14px;
+        padding: 10px 20px 28px;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
       }
       .card {
         background: var(--card);
         border-radius: 14px;
         padding: 16px;
-        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.06);
-        box-sizing: border-box;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.05);
       }
       .row {
         display: flex;
@@ -56,17 +199,13 @@
         gap: 12px;
         flex-wrap: wrap;
       }
-      .label {
-        font-weight: 700;
-      }
-      .status {
-        font-weight: 700;
-      }
+      .label { font-weight: 700; }
+      .status { font-weight: 700; }
       .status.ok { color: var(--accent); }
       .status.offline { color: var(--danger); }
       .status.starting { color: #616161; }
       .status.stopping { color: var(--warn); }
-      button {
+      button.btn {
         border: none;
         border-radius: 999px;
         padding: 10px 14px;
@@ -74,173 +213,601 @@
         cursor: pointer;
         background: #ece3d4;
         color: var(--ink);
-      }
-      button.primary {
-        background: #2e7d32;
-        color: white;
-      }
-      button.danger {
-        background: #c62828;
-        color: white;
-      }
-      .muted {
-        color: var(--muted);
+        font-family: inherit;
         font-size: 14px;
-        word-break: break-word;
-        overflow-wrap: anywhere;
       }
-      .pin-bar {
+      button.btn.primary { background: var(--accent); color: white; }
+      button.btn.danger { background: var(--danger); color: white; }
+      .muted { color: var(--muted); font-size: 14px; word-break: break-word; overflow-wrap: anywhere; }
+      .field { margin-top: 10px; }
+      .field label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+      .field select {
         width: 100%;
-        height: 8px;
-        background: #e6dccb;
-        border-radius: 999px;
-        overflow: hidden;
+        padding: 9px 12px;
+        border: 1px solid #d4c9b5;
+        border-radius: 10px;
+        font-family: inherit;
+        font-size: 14px;
+        background: var(--bg);
+        outline: none;
+        appearance: auto;
       }
-      .pin-bar-fill {
-        height: 100%;
-        width: 0%;
-        background: #2e7d32;
-        transition: width 0.2s ease;
+      .field select:focus { border-color: var(--accent); }
+      .field input[type="text"],
+      .field input[type="url"],
+      .field input[type="password"] {
+        width: 100%;
+        padding: 9px 12px;
+        border: 1px solid #d4c9b5;
+        border-radius: 10px;
+        font-family: inherit;
+        font-size: 14px;
+        background: var(--bg);
+        outline: none;
       }
+      .field input:focus { border-color: var(--accent); }
+
+      /* PIN modal */
+      .pin-bar { width: 100%; height: 8px; background: #e6dccb; border-radius: 999px; overflow: hidden; }
+      .pin-bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.2s ease; }
       .modal {
-        position: fixed;
-        inset: 0;
-        background: rgba(0, 0, 0, 0.45);
-        display: none;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-        z-index: 999;
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,0.45);
+        display: none; align-items: center; justify-content: center;
+        padding: 20px; z-index: 999;
       }
-      .modal.show {
-        display: flex;
-      }
+      .modal.show { display: flex; }
       .modal-card {
-        width: 100%;
-        max-width: 360px;
+        width: 100%; max-width: 360px;
         background: var(--card);
-        border-radius: 16px;
-        padding: 18px;
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+        border-radius: 16px; padding: 18px;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.2);
       }
-      .pin-code {
-        font-size: 28px;
-        font-weight: 700;
-        letter-spacing: 2px;
-        margin: 8px 0;
+      .pin-code { font-size: 28px; font-weight: 700; letter-spacing: 2px; margin: 8px 0; }
+
+      /* Toast */
+      .toast {
+        position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+        background: var(--ink); color: white; padding: 10px 20px;
+        border-radius: 10px; font-size: 14px;
+        opacity: 0; transition: opacity 0.3s;
+        pointer-events: none; z-index: 1000;
       }
+      .toast.show { opacity: 1; }
+
       @media (max-width: 640px) {
-        header {
-          padding: 14px 16px 6px;
-        }
-        .grid {
-          padding: 12px 16px 24px;
-        }
-        .card {
-          padding: 14px;
-        }
-        .row {
-          justify-content: flex-start;
-        }
-        button {
-          width: 100%;
-        }
+        .settings-header { padding: 12px 16px 6px; }
+        .grid { padding: 8px 16px 24px; }
+        .card { padding: 14px; }
+        .row { justify-content: flex-start; }
+        .row button.btn { width: 100%; }
       }
       @media (min-width: 720px) {
-        .grid {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-        }
+        .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       }
     </style>
   </head>
   <body>
-    <main class="grid">
-      <section class="card">
-        <div class="row">
-          <div>
-            <div class="label">SSHD</div>
-            <div id="sshStatus" class="status starting">checking</div>
-          </div>
+    <!-- ===== Chat Page ===== -->
+    <div id="chatPage" class="page active">
+      <div class="chat-messages" id="chatMessages">
+        <div class="chat-welcome" id="chatWelcome">
+          <strong>Kugutz Brain</strong><br>
+          Configure your AI provider in Settings,<br>then start chatting.
         </div>
-        <div class="row" style="margin-top: 12px;">
-          <label>
-            <input type="checkbox" id="sshEnabled" />
-            Enable SSHD
-          </label>
-        </div>
-        <div class="row" style="margin-top: 8px;">
-          <label>
-            <input type="radio" name="authMethod" id="authPublic" />
-            Public-key
-          </label>
-          <label>
-            <input type="radio" name="authMethod" id="authNotification" />
-            Notification
-          </label>
-          <button id="authPin">PIN</button>
-        </div>
-        <p class="muted" id="sshDetail">Waiting for status…</p>
-        <div id="clientKeyRow" style="display:none;margin-top:8px;">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="muted" style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="clientKeyFp"></span>
-            <button id="copyClientKey" style="padding:6px 10px;font-size:12px;min-width:auto;width:auto;">Copy</button>
-          </div>
-        </div>
-      </section>
+      </div>
+      <div class="chat-input-area">
+        <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
+        <button id="chatSend" title="Send">&#9654;</button>
+      </div>
+    </div>
 
-      <section class="card">
-        <div class="row">
-          <div>
-            <div class="label">Python Worker</div>
-            <div id="pythonStatus" class="status offline">offline</div>
+    <!-- ===== Settings Page ===== -->
+    <div id="settingsPage" class="page">
+      <div class="settings-header">Settings</div>
+      <div class="grid">
+        <!-- Brain Config -->
+        <section class="card">
+          <div class="label">Brain</div>
+          <div class="field">
+            <label>Model</label>
+            <select id="brainVendorModel">
+              <option value="" disabled>Choose a model...</option>
+              <optgroup label="OpenAI">
+                <option data-vendor="openai" data-url="https://api.openai.com/v1" value="gpt-5.2-codex">GPT-5.2 Codex</option>
+                <option data-vendor="openai" data-url="https://api.openai.com/v1" value="gpt-5.2">GPT-5.2</option>
+                <option data-vendor="openai" data-url="https://api.openai.com/v1" value="gpt-5.1-codex-mini">GPT-5.1 Codex Mini</option>
+              </optgroup>
+              <optgroup label="Anthropic">
+                <option data-vendor="anthropic" data-url="https://api.anthropic.com" value="claude-opus-4-6">Claude Opus 4.6</option>
+                <option data-vendor="anthropic" data-url="https://api.anthropic.com" value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+                <option data-vendor="anthropic" data-url="https://api.anthropic.com" value="claude-haiku-4-5">Claude Haiku 4.5</option>
+              </optgroup>
+              <option data-vendor="custom" value="custom">Custom...</option>
+            </select>
           </div>
-        </div>
-        <div class="row" style="margin-top: 12px;">
-          <button id="restartPython">Restart</button>
-        </div>
-        <p class="muted" id="pythonDetail">Emergency restart only.</p>
-      </section>
+          <div id="brainCustomFields" style="display:none;">
+            <div class="field">
+              <label>Base URL</label>
+              <input type="url" id="brainBaseUrl" placeholder="https://api.openai.com/v1" />
+            </div>
+            <div class="field">
+              <label>Model ID</label>
+              <input type="text" id="brainModelId" placeholder="gpt-5.2" />
+            </div>
+          </div>
+          <div class="field">
+            <label>API Key</label>
+            <input type="password" id="brainApiKey" placeholder="sk-..." />
+            <div class="muted" id="brainKeyStatus" style="margin-top:4px;"></div>
+          </div>
+          <div style="margin-top:12px;">
+            <button class="btn primary" id="brainSave">Save</button>
+          </div>
+        </section>
 
-      <section class="card">
-        <div class="row">
-          <div>
-            <div class="label">UI Maintenance</div>
-            <div class="muted">Reset the UI files to defaults.</div>
+        <!-- Memory -->
+        <section class="card">
+          <div class="label">Memory</div>
+          <div class="muted" style="margin:4px 0 8px;">Persistent notes the AI remembers across conversations.</div>
+          <textarea id="memoryEditor"
+            style="width:100%;min-height:120px;max-height:300px;border:1px solid #d4c9b5;
+                   border-radius:10px;padding:10px 12px;font-family:'Menlo','Consolas',monospace;
+                   font-size:13px;background:var(--bg);resize:vertical;outline:none;box-sizing:border-box;"
+            placeholder="(empty -- the AI or you can add notes here)"></textarea>
+          <div style="margin-top:10px;display:flex;gap:8px;">
+            <button class="btn primary" id="memorySave">Save</button>
+            <button class="btn" id="memoryClear">Clear</button>
           </div>
-          <button id="resetUi">Reset UI</button>
-        </div>
-      </section>
-    </main>
+        </section>
+
+        <!-- SSHD -->
+        <section class="card">
+          <div class="row">
+            <div>
+              <div class="label">SSHD</div>
+              <div id="sshStatus" class="status starting">checking</div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px;">
+            <label><input type="checkbox" id="sshEnabled" /> Enable SSHD</label>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <label><input type="radio" name="authMethod" id="authPublic" /> Public-key</label>
+            <label><input type="radio" name="authMethod" id="authNotification" /> Notification</label>
+            <button class="btn" id="authPin">PIN</button>
+          </div>
+          <p class="muted" id="sshDetail">Waiting for status...</p>
+          <div id="clientKeyRow" style="display:none;margin-top:8px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="muted" style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="clientKeyFp"></span>
+              <button class="btn" id="copyClientKey" style="padding:6px 10px;font-size:12px;min-width:auto;width:auto;">Copy</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Python Worker -->
+        <section class="card">
+          <div class="row">
+            <div>
+              <div class="label">Python Worker</div>
+              <div id="pythonStatus" class="status offline">offline</div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:12px;">
+            <button class="btn" id="restartPython">Restart</button>
+          </div>
+          <p class="muted" id="pythonDetail">Emergency restart only.</p>
+        </section>
+
+        <!-- UI Maintenance -->
+        <section class="card">
+          <div class="row">
+            <div>
+              <div class="label">UI Maintenance</div>
+              <div class="muted">Reset the UI files to defaults.</div>
+            </div>
+            <button class="btn" id="resetUi">Reset UI</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- PIN Modal -->
     <div class="modal" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
       <div class="modal-card">
         <div class="label" id="pinTitle">PIN auth</div>
         <div class="pin-code" id="pinCode">------</div>
         <div class="muted" id="pinCountdown">PIN inactive.</div>
-        <div class="pin-bar" aria-hidden="true" style="margin: 10px 0 16px;">
+        <div class="pin-bar" aria-hidden="true" style="margin:10px 0 16px;">
           <div id="pinBarFill" class="pin-bar-fill"></div>
         </div>
-        <button class="danger" id="pinClose">End PIN</button>
+        <button class="btn danger" id="pinClose">End PIN</button>
       </div>
     </div>
 
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <!-- Bottom Navigation -->
+    <nav class="bottom-nav">
+      <button class="active" data-page="chatPage">Chat</button>
+      <button data-page="settingsPage">Settings</button>
+    </nav>
+
     <script>
-      const pythonStatus = document.getElementById("pythonStatus");
-      const pythonDetail = document.getElementById("pythonDetail");
-      const sshStatus = document.getElementById("sshStatus");
-      const sshEnabled = document.getElementById("sshEnabled");
-      const authPublic = document.getElementById("authPublic");
-      const authNotification = document.getElementById("authNotification");
-      const authPin = document.getElementById("authPin");
-      const sshDetail = document.getElementById("sshDetail");
-      const clientKeyRow = document.getElementById("clientKeyRow");
-      const clientKeyFp = document.getElementById("clientKeyFp");
-      const copyClientKey = document.getElementById("copyClientKey");
+      // ==============================
+      // Helpers
+      // ==============================
+      const API = "http://127.0.0.1:8765";
+      function $(id) { return document.getElementById(id); }
+
+      function showToast(msg, ms) {
+        const t = $("toast");
+        t.textContent = msg;
+        t.classList.add("show");
+        setTimeout(() => t.classList.remove("show"), ms || 2000);
+      }
+
+      // ==============================
+      // Router
+      // ==============================
+      function navigateTo(pageId) {
+        document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+        document.querySelectorAll(".bottom-nav button").forEach(b => b.classList.remove("active"));
+        $(pageId).classList.add("active");
+        document.querySelector('[data-page="' + pageId + '"]').classList.add("active");
+      }
+      function handleHash() {
+        const h = location.hash.replace("#", "") || "chat";
+        navigateTo(h === "settings" ? "settingsPage" : "chatPage");
+        if (h === "settings" && typeof loadMemory === "function") loadMemory();
+      }
+      document.querySelectorAll(".bottom-nav button").forEach(btn => {
+        btn.addEventListener("click", () => {
+          location.hash = btn.dataset.page === "settingsPage" ? "settings" : "chat";
+        });
+      });
+      window.addEventListener("hashchange", handleHash);
+      handleHash();
+
+      // ==============================
+      // Markdown renderer (minimal)
+      // ==============================
+      function renderMarkdown(text) {
+        // Escape HTML
+        let h = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+        // Fenced code blocks
+        h = h.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+          return "<pre><code>" + code.replace(/<br\s*\/?>/g, "\n") + "</code></pre>";
+        });
+
+        // Inline code
+        h = h.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+
+        // Bold
+        h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+
+        // Italic
+        h = h.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
+
+        // Blockquote lines
+        h = h.replace(/(^|\n)&gt; (.+)/g, "$1<blockquote>$2</blockquote>");
+
+        // Paragraphs: double newlines
+        h = h.replace(/\n\n+/g, "</p><p>");
+        h = "<p>" + h + "</p>";
+        h = h.replace(/<p><\/p>/g, "");
+
+        // Single newlines -> <br> (but not inside <pre>)
+        const parts = h.split(/(<pre[\s\S]*?<\/pre>)/g);
+        for (let i = 0; i < parts.length; i++) {
+          if (!parts[i].startsWith("<pre")) {
+            parts[i] = parts[i].replace(/\n/g, "<br>");
+          }
+        }
+        h = parts.join("");
+
+        return h;
+      }
+
+      // ==============================
+      // Chat
+      // ==============================
+      const chatMessages = $("chatMessages");
+      const chatInput = $("chatInput");
+      const chatSend = $("chatSend");
+      const chatWelcome = $("chatWelcome");
+      let conversation = [];
+      let streaming = false;
+
+      function addMsg(role, content) {
+        if (chatWelcome.parentNode) chatWelcome.remove();
+        const div = document.createElement("div");
+        div.className = "msg " + role;
+        if (role === "assistant" || role === "user") {
+          div.innerHTML = renderMarkdown(content);
+        } else {
+          div.textContent = content;
+        }
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        return div;
+      }
+
+      function autoResize() {
+        chatInput.style.height = "auto";
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + "px";
+      }
+      chatInput.addEventListener("input", autoResize);
+      chatInput.addEventListener("keydown", function(e) {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
+      });
+      chatSend.addEventListener("click", sendChat);
+
+      async function sendChat() {
+        if (streaming) return;
+        const text = chatInput.value.trim();
+        if (!text) return;
+        chatInput.value = "";
+        autoResize();
+
+        conversation.push({ role: "user", content: text });
+        addMsg("user", text);
+
+        streaming = true;
+        chatSend.disabled = true;
+
+        const aDiv = addMsg("assistant", "");
+        let full = "";
+
+        try {
+          const res = await fetch(API + "/brain/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ messages: conversation }),
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || err.error || "Request failed (" + res.status + ")");
+          }
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const lines = buf.split("\n");
+            buf = lines.pop() || "";
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const d = line.slice(6).trim();
+              if (d === "[DONE]") continue;
+              try {
+                const parsed = JSON.parse(d);
+                if (parsed.error) {
+                  throw new Error(parsed.detail || parsed.error);
+                }
+                if (parsed.content) {
+                  full += parsed.content;
+                  const displayText = full.replace(/<<MEMORY_UPDATE>>[\s\S]*/g, "");
+                  aDiv.innerHTML = renderMarkdown(displayText);
+                  chatMessages.scrollTop = chatMessages.scrollHeight;
+                }
+              } catch (pe) {
+                if (pe.message && pe.message !== "Unexpected end of JSON input"
+                    && !pe.message.startsWith("Unexpected token")) {
+                  throw pe;
+                }
+              }
+            }
+          }
+
+          if (full) {
+            // Detect and process memory update markers
+            const memRe = /<<MEMORY_UPDATE>>([\s\S]*?)<<END_MEMORY>>/g;
+            let memMatch;
+            while ((memMatch = memRe.exec(full)) !== null) {
+              const newMemory = memMatch[1].trim();
+              fetch(API + "/brain/memory", {
+                method: "POST",
+                headers: { "Content-Type": "application/json; charset=utf-8" },
+                body: JSON.stringify({ content: newMemory }),
+              }).catch(() => {});
+            }
+            const cleaned = full.replace(/<<MEMORY_UPDATE>>[\s\S]*?<<END_MEMORY>>/g, "").trim();
+            if (cleaned) {
+              aDiv.innerHTML = renderMarkdown(cleaned);
+              conversation.push({ role: "assistant", content: cleaned });
+            } else {
+              aDiv.remove();
+            }
+          } else {
+            aDiv.remove();
+          }
+        } catch (err) {
+          if (!full && aDiv.parentNode) aDiv.remove();
+          const msg = err.message || "Something went wrong";
+          const friendly = {
+            "brain_not_configured": "Brain not configured. Go to Settings to set up your AI provider.",
+            "worker_unavailable": "Python worker is starting up, please try again in a moment.",
+            "upstream_timeout": "The AI provider took too long to respond. Please try again.",
+            "upstream_unreachable": "Cannot reach the AI provider. Check your Base URL in Settings.",
+          };
+          addMsg("error", friendly[msg] || msg);
+          // Remove failed assistant turn from history
+          if (conversation.length && conversation[conversation.length - 1].role === "user") {
+            // keep user msg but don't add assistant
+          }
+        } finally {
+          streaming = false;
+          chatSend.disabled = false;
+        }
+      }
+
+      // ==============================
+      // Brain Config
+      // ==============================
+      const brainSelect = $("brainVendorModel");
+      const brainCustom = $("brainCustomFields");
+
+      // Map vendor+model from select to base_url
+      function getSelectedPreset() {
+        const opt = brainSelect.selectedOptions[0];
+        if (!opt || !opt.dataset.vendor) return null;
+        if (opt.dataset.vendor === "custom") return { vendor: "custom" };
+        return {
+          vendor: opt.dataset.vendor,
+          base_url: opt.dataset.url,
+          model: opt.value,
+        };
+      }
+
+      brainSelect.addEventListener("change", () => {
+        const p = getSelectedPreset();
+        brainCustom.style.display = (p && p.vendor === "custom") ? "block" : "none";
+      });
+
+      async function loadBrainConfig() {
+        try {
+          const res = await fetch(API + "/brain/config");
+          if (!res.ok) return;
+          const data = await res.json();
+          $("brainKeyStatus").textContent = data.has_api_key ? "API key is set." : "No API key configured.";
+
+          // Try to match saved config to a preset
+          const vendor = data.vendor || "";
+          const model = data.model || "";
+          let matched = false;
+          for (const opt of brainSelect.options) {
+            if (opt.dataset.vendor && opt.dataset.vendor !== "custom"
+                && opt.dataset.vendor === vendor && opt.value === model) {
+              opt.selected = true;
+              matched = true;
+              break;
+            }
+          }
+          if (!matched && model) {
+            // Select "Custom" and populate fields
+            for (const opt of brainSelect.options) {
+              if (opt.value === "custom") { opt.selected = true; break; }
+            }
+            brainCustom.style.display = "block";
+            $("brainBaseUrl").value = data.base_url || "";
+            $("brainModelId").value = model;
+          } else {
+            brainCustom.style.display = "none";
+          }
+        } catch (_) {}
+      }
+
+      $("brainSave").addEventListener("click", async () => {
+        const preset = getSelectedPreset();
+        if (!preset) { showToast("Choose a model first"); return; }
+
+        const payload = {};
+        if (preset.vendor === "custom") {
+          const baseUrl = $("brainBaseUrl").value.trim();
+          const modelId = $("brainModelId").value.trim();
+          if (!baseUrl || !modelId) { showToast("Fill in Base URL and Model"); return; }
+          payload.vendor = "custom";
+          payload.base_url = baseUrl;
+          payload.model = modelId;
+        } else {
+          payload.vendor = preset.vendor;
+          payload.base_url = preset.base_url;
+          payload.model = preset.model;
+        }
+
+        const apiKey = $("brainApiKey").value.trim();
+        if (apiKey) payload.api_key = apiKey;
+
+        try {
+          const res = await fetch(API + "/brain/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify(payload),
+          });
+          if (res.ok) {
+            $("brainApiKey").value = "";
+            await loadBrainConfig();
+            showToast("Brain config saved");
+          } else {
+            showToast("Failed to save config");
+          }
+        } catch (_) {
+          showToast("Connection error");
+        }
+      });
+
+      loadBrainConfig();
+
+      // ==============================
+      // Memory Editor
+      // ==============================
+      const memoryEditor = $("memoryEditor");
+
+      async function loadMemory() {
+        try {
+          const res = await fetch(API + "/brain/memory");
+          if (!res.ok) return;
+          const data = await res.json();
+          memoryEditor.value = data.content || "";
+        } catch (_) {}
+      }
+
+      $("memorySave").addEventListener("click", async () => {
+        try {
+          const res = await fetch(API + "/brain/memory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ content: memoryEditor.value }),
+          });
+          if (res.ok) showToast("Memory saved");
+          else showToast("Failed to save memory");
+        } catch (_) { showToast("Connection error"); }
+      });
+
+      $("memoryClear").addEventListener("click", async () => {
+        if (!confirm("Clear all memory? This cannot be undone.")) return;
+        memoryEditor.value = "";
+        try {
+          await fetch(API + "/brain/memory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ content: "" }),
+          });
+          showToast("Memory cleared");
+        } catch (_) { showToast("Connection error"); }
+      });
+
+      loadMemory();
+
+      // ==============================
+      // Settings: SSHD, Python, etc.
+      // ==============================
+      const pythonStatus = $("pythonStatus");
+      const pythonDetail = $("pythonDetail");
+      const sshStatus = $("sshStatus");
+      const sshEnabled = $("sshEnabled");
+      const authPublic = $("authPublic");
+      const authNotification = $("authNotification");
+      const authPin = $("authPin");
+      const sshDetail = $("sshDetail");
+      const clientKeyRow = $("clientKeyRow");
+      const clientKeyFp = $("clientKeyFp");
+      const copyClientKey = $("copyClientKey");
       let currentClientKeyPublic = "";
-      const pinModal = document.getElementById("pinModal");
-      const pinCode = document.getElementById("pinCode");
-      const pinCountdown = document.getElementById("pinCountdown");
-      const pinClose = document.getElementById("pinClose");
-      const pinBarFill = document.getElementById("pinBarFill");
+      const pinModal = $("pinModal");
+      const pinCode = $("pinCode");
+      const pinCountdown = $("pinCountdown");
+      const pinClose = $("pinClose");
+      const pinBarFill = $("pinBarFill");
       const pinDurationMs = 20000;
       let pinExpiresAt = null;
       let lastPin = null;
@@ -257,8 +824,8 @@
 
       async function refreshPython() {
         try {
-          const res = await fetch("http://127.0.0.1:8765/python/status");
-          if (!res.ok) throw new Error("status failed");
+          const res = await fetch(API + "/python/status");
+          if (!res.ok) throw 0;
           const data = await res.json();
           setStatus(pythonStatus, data.status || "offline");
         } catch (_) {
@@ -268,8 +835,8 @@
 
       async function refreshSsh() {
         try {
-          const res = await fetch("http://127.0.0.1:8765/ssh/status");
-          if (!res.ok) throw new Error("ssh status failed");
+          const res = await fetch(API + "/ssh/status");
+          if (!res.ok) throw 0;
           const data = await res.json();
           setStatus(sshStatus, data.running ? "ok" : "offline");
           sshEnabled.checked = !!data.enabled;
@@ -296,20 +863,14 @@
 
       async function refreshPin() {
         try {
-          const res = await fetch("http://127.0.0.1:8765/ssh/pin/status");
-          if (!res.ok) throw new Error("pin status failed");
+          const res = await fetch(API + "/ssh/pin/status");
+          if (!res.ok) throw 0;
           const data = await res.json();
           if (data.active) {
             pinExpiresAt = data.expires_at || null;
-            if (pinModal && !pinModal.classList.contains("show")) {
-              pinModal.classList.add("show");
-            }
-            if (data.pin) {
-              pinCode.textContent = data.pin;
-              lastPin = data.pin;
-            } else if (lastPin && pinCode.textContent === "------") {
-              pinCode.textContent = lastPin;
-            }
+            if (!pinModal.classList.contains("show")) pinModal.classList.add("show");
+            if (data.pin) { pinCode.textContent = data.pin; lastPin = data.pin; }
+            else if (lastPin && pinCode.textContent === "------") pinCode.textContent = lastPin;
             updatePinCountdown();
           } else {
             pinExpiresAt = null;
@@ -337,8 +898,8 @@
           pinCountdown.textContent = "PIN inactive.";
           return;
         }
-        const remainingMs = pinExpiresAt - Date.now();
-        if (remainingMs <= 0) {
+        const rem = pinExpiresAt - Date.now();
+        if (rem <= 0) {
           pinBarFill.style.width = "0%";
           pinExpiresAt = null;
           pinCountdown.textContent = "PIN inactive.";
@@ -346,69 +907,60 @@
           pinModal.classList.remove("show");
           return;
         }
-        const seconds = Math.ceil(remainingMs / 1000);
-        pinCountdown.textContent = "Active (" + seconds + "s)";
-        const ratio = Math.max(0, Math.min(1, remainingMs / pinDurationMs));
-        pinBarFill.style.width = Math.round(ratio * 100) + "%";
+        pinCountdown.textContent = "Active (" + Math.ceil(rem / 1000) + "s)";
+        pinBarFill.style.width = Math.round(Math.max(0, Math.min(1, rem / pinDurationMs)) * 100) + "%";
       }
 
       async function requestPermission(tool, detail) {
-        const res = await fetch("http://127.0.0.1:8765/permissions/request", {
+        const res = await fetch(API + "/permissions/request", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json; charset=utf-8" },
           body: JSON.stringify({ tool, detail, scope: "once" }),
         });
         if (!res.ok) throw new Error("permission request failed");
         const data = await res.json();
-        if (data.status === "approved") {
-          return data.id;
-        }
+        if (data.status === "approved") return data.id;
         const deadline = Date.now() + 30000;
         while (Date.now() < deadline) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
+          await new Promise(r => setTimeout(r, 500));
           try {
-            const statusRes = await fetch("http://127.0.0.1:8765/permissions/" + data.id);
-            if (!statusRes.ok) continue;
-            const statusData = await statusRes.json();
-            if (statusData.status === "approved") {
-              return data.id;
-            }
-            if (statusData.status === "denied") {
-              throw new Error("permission denied");
-            }
-          } catch (_) {
-            // ignore and keep polling
-          }
+            const sr = await fetch(API + "/permissions/" + data.id);
+            if (!sr.ok) continue;
+            const sd = await sr.json();
+            if (sd.status === "approved") return data.id;
+            if (sd.status === "denied") throw new Error("permission denied");
+          } catch (_) {}
         }
         throw new Error("permission timeout");
       }
 
-      document.getElementById("restartPython").addEventListener("click", async () => {
+      $("restartPython").addEventListener("click", async () => {
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonWorker) {
           AndroidBridge.restartPythonWorker();
         } else {
-          await fetch("http://127.0.0.1:8765/python/restart", { method: "POST" });
+          await fetch(API + "/python/restart", { method: "POST" });
         }
         pythonDetail.textContent = "Restart requested";
         setStatus(pythonStatus, "starting");
       });
-      document.getElementById("resetUi").addEventListener("click", () => {
-        const ok = window.confirm("Reset UI to defaults? This will overwrite any local changes.");
-        if (!ok) return;
+
+      $("resetUi").addEventListener("click", () => {
+        if (!window.confirm("Reset UI to defaults? This will overwrite any local changes.")) return;
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.resetUiToDefaults) {
           AndroidBridge.resetUiToDefaults();
         }
       });
+
       async function updateSshConfig(forcedMode) {
         const enabled = sshEnabled.checked;
         const auth_mode = forcedMode || (authNotification.checked ? "notification" : "public_key");
         try {
-          const res = await fetch("http://127.0.0.1:8765/ssh/config", {
+          const res = await fetch(API + "/ssh/config", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ enabled, auth_mode }),
           });
-          if (!res.ok) throw new Error("apply failed");
+          if (!res.ok) throw 0;
           await refreshSsh();
         } catch (_) {
           sshDetail.textContent = "Failed to apply SSHD settings";
@@ -428,35 +980,29 @@
       });
       authPin.addEventListener("click", async () => {
         try {
-          pinCode.textContent = "••••••";
-          pinCountdown.textContent = "Generating PIN…";
+          pinCode.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022";
+          pinCountdown.textContent = "Generating PIN...";
           pinBarFill.style.width = "0%";
           pinModal.classList.add("show");
           const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
-          const res = await fetch("http://127.0.0.1:8765/ssh/pin/start", {
+          const res = await fetch(API + "/ssh/pin/start", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ permission_id, seconds: 20 }),
           });
-          if (!res.ok) throw new Error("pin start failed");
+          if (!res.ok) throw 0;
           const data = await res.json();
-          if (data.pin) {
-            pinCode.textContent = data.pin;
-            lastPin = data.pin;
-          } else if (lastPin) {
-            pinCode.textContent = lastPin;
-          } else {
-            pinCode.textContent = "PIN unavailable";
-          }
+          if (data.pin) { pinCode.textContent = data.pin; lastPin = data.pin; }
+          else if (lastPin) pinCode.textContent = lastPin;
+          else pinCode.textContent = "PIN unavailable";
           pinModal.classList.add("show");
           pinExpiresAt = data.expires_at || (Date.now() + pinDurationMs);
           updatePinCountdown();
-          const cfg = await fetch("http://127.0.0.1:8765/ssh/config", {
+          await fetch(API + "/ssh/config", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ enabled: sshEnabled.checked, auth_mode: "pin" }),
           });
-          if (!cfg.ok) throw new Error("pin config failed");
           await refreshSsh();
         } catch (_) {
           sshDetail.textContent = "Failed to start PIN auth";
@@ -477,16 +1023,14 @@
 
       pinClose.addEventListener("click", async () => {
         try {
-          const res = await fetch("http://127.0.0.1:8765/ssh/pin/stop", {
+          await fetch(API + "/ssh/pin/stop", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({}),
           });
-          if (!res.ok) throw new Error("pin stop failed");
           await refreshPin();
           await refreshSsh();
         } catch (_) {
-          // ignore
         } finally {
           pinExpiresAt = null;
           pinBarFill.style.width = "0%";
