@@ -694,6 +694,7 @@ class LocalHttpServer(
         val cfgBody = JSONObject()
             .put("enabled", true)
             .put("auto_start", true)
+            .put("tool_policy", "required")
             .put("provider_url", providerUrl)
             .put("model", model)
             .put("api_key_credential", "openai_api_key")
