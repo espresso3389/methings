@@ -18,17 +18,18 @@ import jp.espresso3389.kugutz.perm.PermissionPrefs
 
 class LocalHttpServer(
     private val context: Context,
-    private val runtimeManager: PythonRuntimeManager
+    private val runtimeManager: PythonRuntimeManager,
+    private val sshdManager: SshdManager,
+    private val sshPinManager: SshPinManager,
+    private val sshNoAuthModeManager: SshNoAuthModeManager
 ) : NanoHTTPD(HOST, PORT) {
     private val uiRoot = File(context.filesDir, "www")
-    private val sshdManager = SshdManager(context)
     private val permissionStore = PermissionStoreFacade(context)
     private val permissionPrefs = PermissionPrefs(context)
     private val installIdentity = InstallIdentity(context)
     private val credentialStore = CredentialStore(context)
     private val sshKeyStore = SshKeyStore(context)
     private val sshKeyPolicy = SshKeyPolicy(context)
-    private val sshPinManager = SshPinManager(context)
     private val deviceGrantStore = jp.espresso3389.kugutz.perm.DeviceGrantStoreFacade(context)
     private val agentTasks = java.util.concurrent.ConcurrentHashMap<String, AgentTask>()
     private val lastPermissionPromptAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -553,6 +554,42 @@ class LocalHttpServer(
                 Log.i(TAG, "PIN auth stop requested")
                 sshPinManager.stopPin()
                 sshdManager.exitPinMode()
+                jsonResponse(JSONObject().put("active", false))
+            }
+            uri == "/ssh/noauth/status" -> {
+                val state = sshNoAuthModeManager.status()
+                if (state.expired) {
+                    sshNoAuthModeManager.stop()
+                    sshdManager.exitNotificationMode()
+                } else if (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_NOTIFICATION) {
+                    sshdManager.exitNotificationMode()
+                }
+                jsonResponse(
+                    JSONObject()
+                        .put("active", state.active)
+                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
+                )
+            }
+            uri == "/ssh/noauth/start" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val permissionId = payload.optString("permission_id", "")
+                val seconds = payload.optInt("seconds", 30)
+                if (!isPermissionApproved(permissionId, consume = true)) {
+                    return forbidden("permission_required")
+                }
+                Log.i(TAG, "Notification auth start requested")
+                sshdManager.enterNotificationMode()
+                val state = sshNoAuthModeManager.start(seconds)
+                jsonResponse(
+                    JSONObject()
+                        .put("active", state.active)
+                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
+                )
+            }
+            uri == "/ssh/noauth/stop" && session.method == Method.POST -> {
+                Log.i(TAG, "Notification auth stop requested")
+                sshNoAuthModeManager.stop()
+                sshdManager.exitNotificationMode()
                 jsonResponse(JSONObject().put("active", false))
             }
             uri == "/ssh/config" && session.method == Method.POST -> {

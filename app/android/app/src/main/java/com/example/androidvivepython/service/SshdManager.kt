@@ -235,6 +235,9 @@ class SshdManager(private val context: Context) {
         if (normalized != AUTH_MODE_PIN) {
             prefs.edit().putString(KEY_AUTH_MODE_LAST_NON_PIN, normalized).apply()
         }
+        if (normalized != AUTH_MODE_NOTIFICATION) {
+            prefs.edit().putString(KEY_AUTH_MODE_LAST_NON_NOTIFICATION, normalized).apply()
+        }
         prefs.edit().putBoolean(KEY_NOAUTH, normalized == AUTH_MODE_NOTIFICATION).apply()
         if (normalized != AUTH_MODE_PIN) {
             val pinFile = File(context.filesDir, "protected/ssh/pin_auth")
@@ -264,6 +267,27 @@ class SshdManager(private val context: Context) {
         prefs.edit().remove(KEY_AUTH_MODE_PRE_PIN).apply()
         val normalizedPrev = when (prev) {
             AUTH_MODE_PUBLIC_KEY, AUTH_MODE_NOTIFICATION -> prev
+            else -> null
+        }
+        setAuthMode(normalizedPrev ?: fallback)
+    }
+
+    fun enterNotificationMode() {
+        val current = getAuthMode()
+        val lastNonNotif = prefs.getString(KEY_AUTH_MODE_LAST_NON_NOTIFICATION, AUTH_MODE_PUBLIC_KEY)
+            ?: AUTH_MODE_PUBLIC_KEY
+        val snapshot = if (current == AUTH_MODE_NOTIFICATION) lastNonNotif else current
+        prefs.edit().putString(KEY_AUTH_MODE_PRE_NOTIFICATION, snapshot).apply()
+        setAuthMode(AUTH_MODE_NOTIFICATION)
+    }
+
+    fun exitNotificationMode() {
+        val prev = prefs.getString(KEY_AUTH_MODE_PRE_NOTIFICATION, null)
+        val fallback = prefs.getString(KEY_AUTH_MODE_LAST_NON_NOTIFICATION, AUTH_MODE_PUBLIC_KEY)
+            ?: AUTH_MODE_PUBLIC_KEY
+        prefs.edit().remove(KEY_AUTH_MODE_PRE_NOTIFICATION).apply()
+        val normalizedPrev = when (prev) {
+            AUTH_MODE_PUBLIC_KEY, AUTH_MODE_PIN -> prev
             else -> null
         }
         setAuthMode(normalizedPrev ?: fallback)
@@ -447,6 +471,8 @@ class SshdManager(private val context: Context) {
         const val KEY_AUTH_MODE = "auth_mode"
         const val KEY_AUTH_MODE_PRE_PIN = "auth_mode_pre_pin"
         const val KEY_AUTH_MODE_LAST_NON_PIN = "auth_mode_last_non_pin"
+        const val KEY_AUTH_MODE_PRE_NOTIFICATION = "auth_mode_pre_notification"
+        const val KEY_AUTH_MODE_LAST_NON_NOTIFICATION = "auth_mode_last_non_notification"
         const val AUTH_MODE_PUBLIC_KEY = "public_key"
         const val AUTH_MODE_NOTIFICATION = "notification"
         const val AUTH_MODE_PIN = "pin"

@@ -424,8 +424,7 @@
             <label><input type="checkbox" id="sshEnabled" /> Enable SSHD</label>
           </div>
           <div class="row" style="margin-top:8px;">
-            <label><input type="radio" name="authMethod" id="authPublic" /> Public-key</label>
-            <label><input type="radio" name="authMethod" id="authNotification" /> Notification</label>
+            <button class="btn" id="authNotification">Notification</button>
             <button class="btn" id="authPin">PIN</button>
           </div>
           <p class="muted" id="sshDetail">Waiting for status...</p>
@@ -1164,7 +1163,6 @@
       const pythonDetail = $("pythonDetail");
       const sshStatus = $("sshStatus");
       const sshEnabled = $("sshEnabled");
-      const authPublic = $("authPublic");
       const authNotification = $("authNotification");
       const authPin = $("authPin");
       const sshDetail = $("sshDetail");
@@ -1180,7 +1178,6 @@
       const pinDurationMs = 20000;
       let pinExpiresAt = null;
       let lastPin = null;
-      let lastAuthSelection = "public_key";
 
       function setStatus(el, value) {
         el.textContent = value;
@@ -1209,12 +1206,6 @@
           const data = await res.json();
           setStatus(sshStatus, data.running ? "ok" : "offline");
           sshEnabled.checked = !!data.enabled;
-          const mode = data.auth_mode || "public_key";
-          if (mode !== "pin") {
-            lastAuthSelection = mode === "notification" ? "notification" : "public_key";
-          }
-          authPublic.checked = lastAuthSelection === "public_key";
-          authNotification.checked = lastAuthSelection === "notification";
           sshDetail.textContent = "ssh " + (data.host || "aaa.bbb.ccc.ddd") + " -p " + (data.port || 2222);
           if (data.client_key_fingerprint) {
             clientKeyFp.textContent = data.client_key_fingerprint;
@@ -1463,14 +1454,13 @@
         }
       });
 
-      async function updateSshConfig(forcedMode) {
+      async function updateSshConfig() {
         const enabled = sshEnabled.checked;
-        const auth_mode = forcedMode || (authNotification.checked ? "notification" : "public_key");
         try {
           const res = await fetch(API + "/ssh/config", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ enabled, auth_mode }),
+            body: JSON.stringify({ enabled }),
           });
           if (!res.ok) throw 0;
           await refreshSsh();
@@ -1480,15 +1470,21 @@
       }
 
       sshEnabled.addEventListener("change", updateSshConfig);
-      authPublic.addEventListener("change", () => {
-        authPublic.checked = true;
-        authNotification.checked = false;
-        updateSshConfig("public_key");
-      });
-      authNotification.addEventListener("change", () => {
-        authNotification.checked = true;
-        authPublic.checked = false;
-        updateSshConfig("notification");
+      authNotification.addEventListener("click", async () => {
+        sshDetail.textContent = "Enabling notification auth...";
+        try {
+          const permission_id = await requestPermission("ssh_noauth", "Enable SSH notification auth");
+          const res = await fetch(API + "/ssh/noauth/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ permission_id, seconds: 30 }),
+          });
+          if (!res.ok) throw 0;
+          sshDetail.textContent = "Notification auth enabled";
+          await refreshSsh();
+        } catch (_) {
+          sshDetail.textContent = "Failed to enable notification auth";
+        }
       });
       authPin.addEventListener("click", async () => {
         try {
@@ -1510,11 +1506,6 @@
           pinModal.classList.add("show");
           pinExpiresAt = data.expires_at || (Date.now() + pinDurationMs);
           updatePinCountdown();
-          await fetch(API + "/ssh/config", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ enabled: sshEnabled.checked, auth_mode: "pin" }),
-          });
           await refreshSsh();
         } catch (_) {
           sshDetail.textContent = "Failed to start PIN auth";

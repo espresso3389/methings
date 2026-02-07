@@ -19,7 +19,11 @@ class AgentService : Service() {
     private var localServer: LocalHttpServer? = null
     private var vaultServer: KeystoreVaultServer? = null
     private var sshdManager: SshdManager? = null
+    private var sshPinManager: SshPinManager? = null
+    private var sshNoAuthModeManager: SshNoAuthModeManager? = null
     private var noAuthPromptManager: SshNoAuthPromptManager? = null
+    private var authModeNotifier: SshAuthModeNotificationManager? = null
+    private var authModeMonitor: SshAuthModeMonitor? = null
     private var permissionReceiverRegistered = false
     private val permissionPromptReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -45,8 +49,23 @@ class AgentService : Service() {
         CaBundleManager(this).ensureSeededFromPyenv(java.io.File(filesDir, "pyenv"))
         runtimeManager = PythonRuntimeManager(this)
         sshdManager = SshdManager(this).also { it.startIfEnabled() }
+        sshPinManager = SshPinManager(this)
+        sshNoAuthModeManager = SshNoAuthModeManager(this)
         noAuthPromptManager = SshNoAuthPromptManager(this).also { it.start() }
-        localServer = LocalHttpServer(this, runtimeManager).also {
+        authModeNotifier = SshAuthModeNotificationManager(this)
+        authModeMonitor = SshAuthModeMonitor(
+            sshdManager = sshdManager!!,
+            pinManager = sshPinManager!!,
+            noAuthModeManager = sshNoAuthModeManager!!,
+            notifier = authModeNotifier!!
+        ).also { it.start() }
+        localServer = LocalHttpServer(
+            this,
+            runtimeManager,
+            sshdManager!!,
+            sshPinManager!!,
+            sshNoAuthModeManager!!
+        ).also {
             it.startServer()
         }
         vaultServer = KeystoreVaultServer(this).apply { start() }
@@ -68,6 +87,16 @@ class AgentService : Service() {
                 android.util.Log.i("AgentService", "Stop action received")
                 runtimeManager.requestShutdown()
             }
+            ACTION_SSH_PIN_STOP -> {
+                android.util.Log.i("AgentService", "SSH PIN stop requested")
+                sshPinManager?.stopPin()
+                sshdManager?.exitPinMode()
+            }
+            ACTION_SSH_NOAUTH_STOP -> {
+                android.util.Log.i("AgentService", "SSH notification auth stop requested")
+                sshNoAuthModeManager?.stop()
+                sshdManager?.exitNotificationMode()
+            }
             else -> {}
         }
         return START_STICKY
@@ -81,8 +110,14 @@ class AgentService : Service() {
         unregisterPermissionPromptReceiver()
         vaultServer?.stop()
         vaultServer = null
+        authModeMonitor?.stop()
+        authModeMonitor = null
+        authModeNotifier?.cancel()
+        authModeNotifier = null
         noAuthPromptManager?.stop()
         noAuthPromptManager = null
+        sshNoAuthModeManager = null
+        sshPinManager = null
         sshdManager?.stop()
         sshdManager = null
         localServer?.stopServer()
@@ -179,5 +214,7 @@ class AgentService : Service() {
         const val ACTION_START_PYTHON = "jp.espresso3389.kugutz.action.START_PYTHON"
         const val ACTION_RESTART_PYTHON = "jp.espresso3389.kugutz.action.RESTART_PYTHON"
         const val ACTION_STOP_PYTHON = "jp.espresso3389.kugutz.action.STOP_PYTHON"
+        const val ACTION_SSH_PIN_STOP = "jp.espresso3389.kugutz.action.SSH_PIN_STOP"
+        const val ACTION_SSH_NOAUTH_STOP = "jp.espresso3389.kugutz.action.SSH_NOAUTH_STOP"
     }
 }
