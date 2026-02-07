@@ -37,6 +37,13 @@ Notes:
 
 Used for allowlisted device control-plane actions (python/ssh/memory/shell.exec, etc). Some actions require user approval and will return `permission_required`.
 
+## Docs Index
+
+Read the relevant doc when working in that domain:
+- `docs/vision.md` (RGBA8888 + TFLite)
+- `docs/usb.md` (USB/UVC control + streaming)
+- `docs/permissions.md` (permission scopes and identity)
+
 ## Permission Requests
 
 Permissions are created via the local HTTP endpoint:
