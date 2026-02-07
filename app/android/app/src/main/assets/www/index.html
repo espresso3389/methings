@@ -6,86 +6,123 @@
     <title>Kugutz</title>
     <style>
       :root {
-        color-scheme: light;
-        --bg: #f5f2ea;
-        --ink: #2a2a2a;
-        --muted: #6b6b6b;
-        --card: #fff7e8;
-        --accent: #2e7d32;
-        --danger: #c62828;
-        --warn: #8d6e63;
-        --border: #e0d8cb;
+        color-scheme: dark;
+        --bg: #0e0e10;
+        --bg-raised: #18181b;
+        --bg-overlay: #1e1e22;
+        --surface: #24242a;
+        --border: #2e2e36;
+        --border-focus: #5b5bd6;
+        --ink: #ececf1;
+        --ink-secondary: #a1a1aa;
+        --ink-muted: #71717a;
+        --accent: #6366f1;
+        --accent-soft: rgba(99,102,241,0.12);
+        --accent-hover: #818cf8;
+        --green: #22c55e;
+        --green-soft: rgba(34,197,94,0.12);
+        --red: #ef4444;
+        --red-soft: rgba(239,68,68,0.12);
+        --amber: #f59e0b;
+        --amber-soft: rgba(245,158,11,0.12);
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-full: 9999px;
+        --shadow: 0 2px 8px rgba(0,0,0,0.3);
+        --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
+        --transition: 180ms ease;
       }
-      * { box-sizing: border-box; }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
       body {
-        margin: 0;
-        font-family: "Georgia", "Times New Roman", serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         background: var(--bg);
         color: var(--ink);
         height: 100vh;
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+        font-size: 15px;
+        line-height: 1.5;
       }
 
       /* --- Pages --- */
-      .page { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+      .page {
+        display: none;
+        flex: 1;
+        flex-direction: column;
+        overflow: hidden;
+      }
       .page.active { display: flex; }
 
-      /* --- Top bar --- */
+      /* --- Topbar --- */
       .topbar {
         flex-shrink: 0;
-        height: 48px;
+        height: 52px;
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0 10px 0 14px;
+        padding: 0 12px 0 16px;
         border-bottom: 1px solid var(--border);
-        background: var(--card);
+        background: var(--bg-raised);
       }
       .topbar .title {
-        font-weight: 800;
-        letter-spacing: 0.2px;
+        font-weight: 700;
+        font-size: 17px;
+        letter-spacing: -0.2px;
       }
       .icon-btn {
-        width: 36px;
-        height: 36px;
-        border-radius: 10px;
+        width: 38px;
+        height: 38px;
+        border-radius: var(--radius-sm);
         border: 1px solid var(--border);
-        background: rgba(255,255,255,0.65);
+        background: var(--surface);
         cursor: pointer;
         display: grid;
         place-items: center;
         font-size: 18px;
+        color: var(--ink-secondary);
+        transition: background var(--transition), border-color var(--transition), color var(--transition);
       }
-      .icon-btn:active { transform: scale(0.98); }
-      .icon-btn.secondary {
-        background: transparent;
-      }
+      .icon-btn:active { transform: scale(0.95); }
+      .icon-btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
+      .icon-btn.secondary { background: transparent; border-color: transparent; }
+      .icon-btn.secondary:hover { background: var(--surface); }
 
       /* --- Chat page --- */
       .chat-messages {
         flex: 1;
         overflow-y: auto;
-        padding: 12px 16px;
+        padding: 16px;
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 12px;
         -webkit-overflow-scrolling: touch;
       }
       .chat-welcome {
         text-align: center;
-        color: var(--muted);
-        margin-top: 30vh;
-        font-size: 15px;
-        line-height: 1.5;
+        color: var(--ink-muted);
+        margin: auto 0;
+        padding: 20px;
+        font-size: 14px;
+        line-height: 1.7;
       }
-      .chat-welcome strong { color: var(--ink); }
+      .chat-welcome strong {
+        display: block;
+        color: var(--ink);
+        font-size: 18px;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
       .msg {
-        max-width: 88%;
+        max-width: 85%;
         padding: 10px 14px;
-        border-radius: 16px;
-        line-height: 1.55;
+        border-radius: var(--radius-lg);
+        line-height: 1.6;
         word-wrap: break-word;
         overflow-wrap: anywhere;
         font-size: 15px;
@@ -93,53 +130,71 @@
       .msg.user {
         align-self: flex-end;
         background: var(--accent);
-        color: white;
+        color: #fff;
         border-bottom-right-radius: 4px;
       }
       .msg.assistant {
         align-self: flex-start;
-        background: var(--card);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        background: var(--bg-raised);
+        border: 1px solid var(--border);
         border-bottom-left-radius: 4px;
       }
       .msg.error {
         align-self: center;
-        background: #fce4ec;
-        color: var(--danger);
+        background: var(--red-soft);
+        color: var(--red);
         font-size: 13px;
-        border-radius: 10px;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(239,68,68,0.2);
+        max-width: 95%;
       }
 
       /* Markdown in messages */
       .msg pre {
-        background: #1e1e1e;
-        color: #d4d4d4;
+        background: #0d0d0f;
+        color: #d4d4d8;
         padding: 10px 12px;
-        border-radius: 8px;
+        border-radius: var(--radius-sm);
         overflow-x: auto;
         white-space: pre;
-        font-family: "Menlo", "Consolas", monospace;
+        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
         font-size: 13px;
-        margin: 6px 0;
-        line-height: 1.4;
+        margin: 8px 0;
+        line-height: 1.5;
+        border: 1px solid var(--border);
       }
-      .msg.user pre { background: rgba(0,0,0,0.2); color: #fff; }
+      .msg.user pre { background: rgba(0,0,0,0.2); border-color: rgba(255,255,255,0.1); color: #fff; }
       .msg code:not(pre code) {
-        background: rgba(0,0,0,0.07);
-        padding: 1px 5px;
+        background: rgba(255,255,255,0.08);
+        padding: 2px 6px;
         border-radius: 4px;
-        font-family: "Menlo", "Consolas", monospace;
+        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
         font-size: 0.88em;
       }
-      .msg.user code:not(pre code) { background: rgba(255,255,255,0.2); }
+      .msg.user code:not(pre code) { background: rgba(255,255,255,0.18); }
       .msg p { margin: 4px 0; }
       .msg ul, .msg ol { margin: 4px 0; padding-left: 20px; }
       .msg li { margin: 2px 0; }
       .msg blockquote {
-        border-left: 3px solid var(--border);
-        margin: 6px 0;
+        border-left: 3px solid var(--accent);
+        margin: 8px 0;
         padding: 2px 0 2px 12px;
-        color: var(--muted);
+        color: var(--ink-secondary);
+      }
+
+      /* Thinking indicator */
+      .thinking-dots { display: inline-flex; gap: 4px; align-items: center; padding: 4px 0; }
+      .thinking-dots span {
+        width: 6px; height: 6px;
+        border-radius: 50%;
+        background: var(--ink-muted);
+        animation: thinking 1.2s infinite;
+      }
+      .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+      .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+      @keyframes thinking {
+        0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
+        30% { opacity: 1; transform: scale(1); }
       }
 
       /* Chat input */
@@ -147,27 +202,42 @@
         display: flex;
         align-items: flex-end;
         gap: 8px;
-        padding: 10px 16px 12px;
+        padding: 10px 12px 14px;
         border-top: 1px solid var(--border);
-        background: var(--bg);
+        background: var(--bg-raised);
         flex-shrink: 0;
+      }
+      .chat-mode-badge {
+        flex-shrink: 0;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--accent);
+        background: var(--accent-soft);
+        padding: 6px 10px;
+        border-radius: var(--radius-full);
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+        align-self: center;
       }
       .chat-input-area textarea {
         flex: 1;
-        border: 1px solid #d4c9b5;
-        border-radius: 14px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
         padding: 10px 14px;
         font-family: inherit;
         font-size: 15px;
         resize: none;
-        background: var(--card);
+        background: var(--surface);
+        color: var(--ink);
         min-height: 42px;
         max-height: 120px;
         line-height: 1.4;
         outline: none;
+        transition: border-color var(--transition);
       }
-      .chat-input-area textarea:focus { border-color: var(--accent); }
-      .chat-input-area button {
+      .chat-input-area textarea::placeholder { color: var(--ink-muted); }
+      .chat-input-area textarea:focus { border-color: var(--border-focus); }
+      .send-btn {
         border: none;
         border-radius: 50%;
         width: 42px;
@@ -180,43 +250,52 @@
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
+        transition: background var(--transition), opacity var(--transition);
       }
-      .chat-input-area button:disabled { opacity: 0.5; cursor: default; }
-      .chat-mode {
-        display: flex;
-        align-items: center;
-      }
-      .chat-mode select {
-        border: 1px solid #d4c9b5;
-        border-radius: 10px;
-        background: var(--card);
-        color: var(--ink);
-        font-family: inherit;
-        font-size: 13px;
-        padding: 8px 10px;
-        outline: none;
-      }
+      .send-btn:hover { background: var(--accent-hover); }
+      .send-btn:active { transform: scale(0.95); }
+      .send-btn:disabled { opacity: 0.35; cursor: default; }
 
       /* --- Settings page --- */
-      .settings-header {
-        padding: 16px 20px 8px;
-        font-size: 22px;
-        font-weight: 700;
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 14px;
-        padding: 10px 20px 28px;
+      .settings-scroll {
+        flex: 1;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
+        padding: 12px 16px 28px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
       }
+
       .card {
-        background: var(--card);
-        border-radius: 14px;
+        background: var(--bg-raised);
+        border-radius: var(--radius-lg);
         padding: 16px;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+        border: 1px solid var(--border);
       }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .card-icon {
+        width: 34px;
+        height: 34px;
+        border-radius: var(--radius-sm);
+        display: grid;
+        place-items: center;
+        font-size: 16px;
+        flex-shrink: 0;
+      }
+      .card-icon.purple { background: var(--accent-soft); color: var(--accent); }
+      .card-icon.green { background: var(--green-soft); color: var(--green); }
+      .card-icon.amber { background: var(--amber-soft); color: var(--amber); }
+      .card-icon.red { background: var(--red-soft); color: var(--red); }
+      .card-title { font-weight: 700; font-size: 15px; }
+      .card-desc { color: var(--ink-muted); font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
+
       .row {
         display: flex;
         align-items: center;
@@ -224,90 +303,261 @@
         gap: 12px;
         flex-wrap: wrap;
       }
-      .label { font-weight: 700; }
-      .status { font-weight: 700; }
-      .status.ok { color: var(--accent); }
-      .status.offline { color: var(--danger); }
-      .status.starting { color: #616161; }
-      .status.stopping { color: var(--warn); }
-      button.btn {
+
+      .status-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: var(--radius-full);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+      .status-badge::before {
+        content: "";
+        width: 6px; height: 6px;
+        border-radius: 50%;
+      }
+      .status-badge.ok { background: var(--green-soft); color: var(--green); }
+      .status-badge.ok::before { background: var(--green); }
+      .status-badge.offline { background: var(--red-soft); color: var(--red); }
+      .status-badge.offline::before { background: var(--red); }
+      .status-badge.starting { background: var(--amber-soft); color: var(--amber); }
+      .status-badge.starting::before { background: var(--amber); }
+      .status-badge.stopping { background: var(--amber-soft); color: var(--amber); }
+      .status-badge.stopping::before { background: var(--amber); }
+
+      /* Buttons */
+      .btn {
         border: none;
-        border-radius: 999px;
-        padding: 10px 14px;
-        font-weight: 700;
+        border-radius: var(--radius-full);
+        padding: 8px 16px;
+        font-weight: 600;
+        font-size: 13px;
         cursor: pointer;
-        background: #ece3d4;
-        color: var(--ink);
         font-family: inherit;
-        font-size: 14px;
+        background: var(--surface);
+        color: var(--ink-secondary);
+        border: 1px solid var(--border);
+        transition: background var(--transition), border-color var(--transition), color var(--transition);
       }
-      button.btn.primary { background: var(--accent); color: white; }
-      button.btn.danger { background: var(--danger); color: white; }
-      .muted { color: var(--muted); font-size: 14px; word-break: break-word; overflow-wrap: anywhere; }
+      .btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
+      .btn:active { transform: scale(0.97); }
+      .btn.primary {
+        background: var(--accent);
+        color: #fff;
+        border-color: var(--accent);
+      }
+      .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+      .btn.danger {
+        background: var(--red);
+        color: #fff;
+        border-color: var(--red);
+      }
+      .btn.danger:hover { background: #dc2626; border-color: #dc2626; }
+      .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+
+      .muted { color: var(--ink-muted); font-size: 13px; word-break: break-word; overflow-wrap: anywhere; }
+
+      /* Form fields */
       .field { margin-top: 10px; }
-      .field label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
-      .field select {
-        width: 100%;
-        padding: 9px 12px;
-        border: 1px solid #d4c9b5;
-        border-radius: 10px;
-        font-family: inherit;
-        font-size: 14px;
-        background: var(--bg);
-        outline: none;
-        appearance: auto;
+      .field label {
+        display: block;
+        color: var(--ink-muted);
+        font-size: 12px;
+        font-weight: 600;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
       }
-      .field select:focus { border-color: var(--accent); }
+      .field select,
       .field input[type="text"],
       .field input[type="url"],
       .field input[type="password"] {
         width: 100%;
         padding: 9px 12px;
-        border: 1px solid #d4c9b5;
-        border-radius: 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
         font-family: inherit;
         font-size: 14px;
-        background: var(--bg);
+        background: var(--surface);
+        color: var(--ink);
         outline: none;
+        transition: border-color var(--transition);
       }
-      .field input:focus { border-color: var(--accent); }
+      .field select { appearance: auto; }
+      .field select:focus,
+      .field input:focus { border-color: var(--border-focus); }
+      .field input::placeholder { color: var(--ink-muted); }
+
+      /* Toggle switch */
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 0;
+      }
+      .toggle-row .toggle-label { font-size: 14px; color: var(--ink-secondary); }
+      .toggle {
+        position: relative;
+        width: 44px;
+        height: 24px;
+        flex-shrink: 0;
+      }
+      .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+      .toggle .slider {
+        position: absolute;
+        inset: 0;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-full);
+        cursor: pointer;
+        transition: background var(--transition), border-color var(--transition);
+      }
+      .toggle .slider::before {
+        content: "";
+        position: absolute;
+        width: 18px; height: 18px;
+        left: 2px; top: 2px;
+        background: var(--ink-muted);
+        border-radius: 50%;
+        transition: transform var(--transition), background var(--transition);
+      }
+      .toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+      .toggle input:checked + .slider::before { transform: translateX(20px); background: #fff; }
+
+      /* Checkbox row */
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 3px 0;
+        font-size: 14px;
+        color: var(--ink-secondary);
+      }
+      .check-row input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: var(--accent);
+        flex-shrink: 0;
+      }
+
+      /* Textarea (memory editor) */
+      .memory-textarea {
+        width: 100%;
+        min-height: 100px;
+        max-height: 280px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 10px 12px;
+        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
+        font-size: 13px;
+        background: var(--surface);
+        color: var(--ink);
+        resize: vertical;
+        outline: none;
+        box-sizing: border-box;
+        line-height: 1.5;
+        transition: border-color var(--transition);
+      }
+      .memory-textarea::placeholder { color: var(--ink-muted); }
+      .memory-textarea:focus { border-color: var(--border-focus); }
+
+      /* Pre output */
+      .output-pre {
+        white-space: pre-wrap;
+        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
+        font-size: 12px;
+        background: var(--surface);
+        color: var(--ink-secondary);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 10px 12px;
+        max-height: 220px;
+        overflow: auto;
+        margin-top: 10px;
+        line-height: 1.5;
+      }
 
       /* PIN modal */
-      .pin-bar { width: 100%; height: 8px; background: #e6dccb; border-radius: 999px; overflow: hidden; }
-      .pin-bar-fill { height: 100%; width: 0%; background: var(--accent); transition: width 0.2s ease; }
       .modal {
         position: fixed; inset: 0;
-        background: rgba(0,0,0,0.45);
+        background: rgba(0,0,0,0.6);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
         display: none; align-items: center; justify-content: center;
         padding: 20px; z-index: 999;
       }
       .modal.show { display: flex; }
       .modal-card {
-        width: 100%; max-width: 360px;
-        background: var(--card);
-        border-radius: 16px; padding: 18px;
-        box-shadow: 0 12px 28px rgba(0,0,0,0.2);
+        width: 100%; max-width: 340px;
+        background: var(--bg-raised);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 20px;
+        box-shadow: var(--shadow-lg);
+        text-align: center;
       }
-      .pin-code { font-size: 28px; font-weight: 700; letter-spacing: 2px; margin: 8px 0; }
+      .modal-card .card-title { margin-bottom: 12px; font-size: 16px; }
+      .pin-code {
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: 4px;
+        margin: 8px 0;
+        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
+        color: var(--accent);
+      }
+      .pin-countdown { color: var(--ink-muted); font-size: 13px; margin-bottom: 12px; }
+      .pin-bar {
+        width: 100%;
+        height: 4px;
+        background: var(--surface);
+        border-radius: var(--radius-full);
+        overflow: hidden;
+        margin-bottom: 16px;
+      }
+      .pin-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: var(--accent);
+        transition: width 0.2s ease;
+        border-radius: var(--radius-full);
+      }
 
       /* Toast */
       .toast {
-        position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
-        background: var(--ink); color: white; padding: 10px 20px;
-        border-radius: 10px; font-size: 14px;
-        opacity: 0; transition: opacity 0.3s;
-        pointer-events: none; z-index: 1000;
+        position: fixed;
+        bottom: 70px;
+        left: 50%;
+        transform: translateX(-50%) translateY(10px);
+        background: var(--ink);
+        color: var(--bg);
+        padding: 10px 20px;
+        border-radius: var(--radius-full);
+        font-size: 13px;
+        font-weight: 600;
+        opacity: 0;
+        transition: opacity 0.25s, transform 0.25s;
+        pointer-events: none;
+        z-index: 1000;
+        box-shadow: var(--shadow);
       }
-      .toast.show { opacity: 1; }
+      .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
-      @media (max-width: 640px) {
-        .grid { padding: 8px 16px 24px; }
+      /* Responsive */
+      @media (max-width: 420px) {
+        .settings-scroll { padding: 8px 10px 24px; }
         .card { padding: 14px; }
-        .row { justify-content: flex-start; }
-        .row button.btn { width: 100%; }
+        .btn-group .btn { flex: 1; text-align: center; min-width: 0; }
       }
-      @media (min-width: 720px) {
-        .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      @media (min-width: 640px) {
+        .settings-scroll {
+          max-width: 560px;
+          margin: 0 auto;
+          width: 100%;
+        }
       }
     </style>
   </head>
@@ -320,14 +570,14 @@
       </div>
       <div class="chat-messages" id="chatMessages">
         <div class="chat-welcome" id="chatWelcome">
-          <strong>Kugutz Brain</strong><br>
+          <strong>Kugutz Brain</strong>
           Configure your AI provider in Settings,<br>then start chatting.
         </div>
       </div>
       <div class="chat-input-area">
-        <div class="chat-mode">Agent</div>
+        <div class="chat-mode-badge">Agent</div>
         <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
-        <button id="chatSend" title="Send">&#9654;</button>
+        <button class="send-btn" id="chatSend" title="Send">&#9654;</button>
       </div>
     </div>
 
@@ -336,12 +586,15 @@
       <div class="topbar">
         <button class="icon-btn secondary" id="backToChatBtn" title="Back" aria-label="Back">&#8592;</button>
         <div class="title">Settings</div>
-        <div style="width:36px;"></div>
+        <div style="width:38px;"></div>
       </div>
-      <div class="grid">
+      <div class="settings-scroll">
         <!-- Brain Config -->
         <section class="card">
-          <div class="label">Brain</div>
+          <div class="card-header">
+            <div class="card-icon purple">&#9733;</div>
+            <div class="card-title">Brain</div>
+          </div>
           <div class="field">
             <label>Model</label>
             <select id="brainVendorModel">
@@ -374,15 +627,18 @@
             <input type="text" id="brainApiKey" placeholder="(locked)" />
             <div class="muted" id="brainKeyStatus" style="margin-top:4px;"></div>
           </div>
-          <div style="margin-top:12px;">
+          <div class="btn-group">
             <button class="btn primary" id="brainSave">Save</button>
           </div>
         </section>
 
         <!-- Web Search -->
         <section class="card">
-          <div class="label">Web Search</div>
-          <div class="muted" style="margin:4px 0 10px;">
+          <div class="card-header">
+            <div class="card-icon green">&#9906;</div>
+            <div class="card-title">Web Search</div>
+          </div>
+          <div class="card-desc">
             Default provider is DuckDuckGo. Brave Search is used only when an API key is configured here.
           </div>
           <div class="field">
@@ -390,7 +646,7 @@
             <input type="text" id="braveSearchApiKey" placeholder="(locked)" />
             <div class="muted" id="braveSearchKeyStatus" style="margin-top:4px;">Status unknown.</div>
           </div>
-          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <div class="btn-group">
             <button class="btn primary" id="braveSearchSave">Save</button>
             <button class="btn" id="braveSearchClear">Clear</button>
             <button class="btn" id="braveSearchCheck">Check</button>
@@ -399,14 +655,15 @@
 
         <!-- Memory -->
         <section class="card">
-          <div class="label">Memory</div>
-          <div class="muted" style="margin:4px 0 8px;">Persistent notes the AI remembers across conversations.</div>
+          <div class="card-header">
+            <div class="card-icon purple">&#9998;</div>
+            <div class="card-title">Memory</div>
+          </div>
+          <div class="card-desc">Persistent notes the AI remembers across conversations.</div>
           <textarea id="memoryEditor"
-            style="width:100%;min-height:120px;max-height:300px;border:1px solid #d4c9b5;
-                   border-radius:10px;padding:10px 12px;font-family:'Menlo','Consolas',monospace;
-                   font-size:13px;background:var(--bg);resize:vertical;outline:none;box-sizing:border-box;"
+            class="memory-textarea"
             placeholder="(empty -- the AI or you can add notes here)"></textarea>
-          <div style="margin-top:10px;display:flex;gap:8px;">
+          <div class="btn-group">
             <button class="btn primary" id="memorySave">Save</button>
             <button class="btn" id="memoryClear">Clear</button>
           </div>
@@ -414,93 +671,105 @@
 
         <!-- SSHD -->
         <section class="card">
-          <div class="row">
-            <div>
-              <div class="label">SSHD</div>
-              <div id="sshStatus" class="status starting">checking</div>
-            </div>
+          <div class="card-header">
+            <div class="card-icon green">&#9741;</div>
+            <div class="card-title">SSHD</div>
+            <div id="sshStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
           </div>
-          <div class="row" style="margin-top:12px;">
-            <label><input type="checkbox" id="sshEnabled" /> Enable SSHD</label>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="sshEnabled" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Enable SSHD</span>
           </div>
-          <div class="row" style="margin-top:8px;">
+          <div class="btn-group" style="margin-top:8px;">
             <button class="btn" id="authNotification">Notification</button>
             <button class="btn" id="authPin">PIN</button>
           </div>
-          <p class="muted" id="sshDetail">Waiting for status...</p>
+          <p class="muted" id="sshDetail" style="margin-top:10px;">Waiting for status...</p>
           <div id="clientKeyRow" style="display:none;margin-top:8px;">
             <div style="display:flex;align-items:center;gap:8px;">
               <span class="muted" style="font-family:monospace;font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="clientKeyFp"></span>
-              <button class="btn" id="copyClientKey" style="padding:6px 10px;font-size:12px;min-width:auto;width:auto;">Copy</button>
+              <button class="btn" id="copyClientKey" style="padding:5px 10px;font-size:12px;">Copy</button>
             </div>
           </div>
         </section>
 
         <!-- Python Worker -->
         <section class="card">
-          <div class="row">
-            <div>
-              <div class="label">Python Worker</div>
-              <div id="pythonStatus" class="status offline">offline</div>
-            </div>
+          <div class="card-header">
+            <div class="card-icon amber">&#9881;</div>
+            <div class="card-title">Python Worker</div>
+            <div id="pythonStatus" class="status-badge offline" style="margin-left:auto;">offline</div>
           </div>
-          <div class="row" style="margin-top:12px;">
+          <p class="muted">Emergency restart only.</p>
+          <div class="btn-group">
             <button class="btn" id="restartPython">Restart</button>
           </div>
-          <p class="muted" id="pythonDetail">Emergency restart only.</p>
+          <p class="muted" id="pythonDetail" style="margin-top:6px;"></p>
         </section>
 
         <!-- Python Packages -->
         <section class="card">
-          <div class="label">Python Packages</div>
-          <div class="muted" style="margin:4px 0 10px;">
-            Download wheels into an on-device cache, then install offline. Source builds are typically not supported on Android.
+          <div class="card-header">
+            <div class="card-icon amber">&#9875;</div>
+            <div class="card-title">Python Packages</div>
+          </div>
+          <div class="card-desc">
+            Download wheels into an on-device cache, then install offline.
+            Source builds are typically not supported on Android.
           </div>
           <div class="field">
             <label>Package spec</label>
             <input type="text" id="pipSpec" placeholder="e.g. pyusb requests==2.32.3" />
           </div>
-          <div class="row" style="margin-top:8px;gap:14px;flex-wrap:wrap;">
-            <label><input type="checkbox" id="pipWithDeps" checked /> Include dependencies</label>
-            <label><input type="checkbox" id="pipOnlyBinary" checked /> Wheels only</label>
+          <div style="margin-top:8px;display:flex;gap:14px;flex-wrap:wrap;">
+            <label class="check-row"><input type="checkbox" id="pipWithDeps" checked /> Include dependencies</label>
+            <label class="check-row"><input type="checkbox" id="pipOnlyBinary" checked /> Wheels only</label>
           </div>
           <div class="field" style="margin-top:10px;">
             <label>Index URL (optional)</label>
             <input type="url" id="pipIndexUrl" placeholder="https://pypi.org/simple" />
           </div>
-          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <div class="btn-group">
             <button class="btn" id="pipDownload">Download wheels</button>
             <button class="btn primary" id="pipInstallOffline">Install (offline)</button>
             <button class="btn" id="pipInstallNet">Install (network)</button>
           </div>
-          <pre id="pipStatus" class="muted" style="margin-top:10px;white-space:pre-wrap;"></pre>
-          <pre id="pipOutput"
-               style="margin-top:10px;white-space:pre-wrap;font-family:'Menlo','Consolas',monospace;
-                      font-size:12px;background:var(--bg);border:1px solid #d4c9b5;border-radius:10px;
-                      padding:10px 12px;max-height:220px;overflow:auto;"></pre>
+          <pre id="pipStatus" class="output-pre" style="margin-top:10px;"></pre>
+          <pre id="pipOutput" class="output-pre"></pre>
         </section>
 
         <!-- UI Maintenance -->
         <section class="card">
+          <div class="card-header">
+            <div class="card-icon red">&#9888;</div>
+            <div class="card-title">UI Maintenance</div>
+          </div>
           <div class="row">
-            <div>
-              <div class="label">UI Maintenance</div>
-              <div class="muted">Reset the UI files to defaults.</div>
-            </div>
+            <span class="muted">Reset the UI files to defaults.</span>
             <button class="btn" id="resetUi">Reset UI</button>
           </div>
         </section>
 
         <!-- Permissions -->
         <section class="card">
-          <div class="label">Permissions</div>
-          <div class="muted" style="margin:4px 0 10px;">
+          <div class="card-header">
+            <div class="card-icon green">&#9872;</div>
+            <div class="card-title">Permissions</div>
+          </div>
+          <div class="card-desc">
             If enabled, tool approvals are remembered (until you clear them), similar to Android runtime permissions.
           </div>
-          <div class="row" style="margin-top:8px;">
-            <label><input type="checkbox" id="permRemember" /> Remember approvals</label>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="permRemember" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Remember approvals</span>
           </div>
-          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <div class="btn-group">
             <button class="btn" id="permClear">Clear saved approvals</button>
           </div>
         </section>
@@ -510,13 +779,13 @@
     <!-- PIN Modal -->
     <div class="modal" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
       <div class="modal-card">
-        <div class="label" id="pinTitle">PIN auth</div>
+        <div class="card-title" id="pinTitle">PIN Authentication</div>
         <div class="pin-code" id="pinCode">------</div>
-        <div class="muted" id="pinCountdown">PIN inactive.</div>
-        <div class="pin-bar" aria-hidden="true" style="margin:10px 0 16px;">
+        <div class="pin-countdown" id="pinCountdown">PIN inactive.</div>
+        <div class="pin-bar" aria-hidden="true">
           <div id="pinBarFill" class="pin-bar-fill"></div>
         </div>
-        <button class="btn danger" id="pinClose">End PIN</button>
+        <button class="btn danger" id="pinClose" style="width:100%;">End PIN</button>
       </div>
     </div>
 
@@ -577,7 +846,6 @@
         try {
           $("brainApiKey").disabled = locked;
           $("braveSearchApiKey").disabled = locked;
-          // Keep action buttons enabled so a tap can trigger biometric unlock on-demand.
         } catch (_) {}
       }
 
@@ -598,7 +866,6 @@
         return pendingSettingsUnlock;
       }
 
-      // Called by Kotlin after biometric completes.
       window.onSettingsUnlockResult = function(payload) {
         try {
           if (window.__resolveSettingsUnlock) {
@@ -633,7 +900,6 @@
       }
 
       async function guardedOpenSettings() {
-        // Enforce biometric gate for Settings. Cache is handled on Android side (30s).
         if (getSettingsUnlockRemainingMs() <= 0) {
           const r = await requestSettingsUnlock();
           if (!r || !r.ok) {
@@ -651,8 +917,6 @@
 
       async function ensureSettingsUnlocked() {
         if (getSettingsUnlockRemainingMs() > 0) return true;
-        // Preserve any user-edited secret fields across re-auth. Otherwise, if unlock expires
-        // right before tapping Save, we would clobber the typed key by reloading the old value.
         const brainBefore = $("brainApiKey").value;
         const braveBefore = $("braveSearchApiKey").value;
         const r = await requestSettingsUnlock();
@@ -661,7 +925,6 @@
           return false;
         }
         setSettingsUiLocked(false);
-        // Only repopulate from storage if the field is still empty (i.e., user wasn't editing it).
         if (!brainBefore && !braveBefore) {
           refreshSecretsFromBridge();
         }
@@ -672,7 +935,6 @@
       // Markdown renderer (minimal)
       // ==============================
       function renderMarkdown(text) {
-        // Escape HTML
         let h = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
         // Fenced code blocks
@@ -692,12 +954,12 @@
         // Blockquote lines
         h = h.replace(/(^|\n)&gt; (.+)/g, "$1<blockquote>$2</blockquote>");
 
-        // Paragraphs: double newlines
+        // Paragraphs
         h = h.replace(/\n\n+/g, "</p><p>");
         h = "<p>" + h + "</p>";
         h = h.replace(/<p><\/p>/g, "");
 
-        // Single newlines -> <br> (but not inside <pre>)
+        // Single newlines -> <br> (not inside <pre>)
         const parts = h.split(/(<pre[\s\S]*?<\/pre>)/g);
         for (let i = 0; i < parts.length; i++) {
           if (!parts[i].startsWith("<pre")) {
@@ -723,7 +985,6 @@
       let chatSessionId = "";
 
       function genSessionId() {
-        // Not cryptographic; just a stable per-conversation identifier for server-side context.
         return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
       }
 
@@ -777,6 +1038,16 @@
         return div;
       }
 
+      function addThinkingIndicator() {
+        if (chatWelcome.parentNode) chatWelcome.remove();
+        const div = document.createElement("div");
+        div.className = "msg assistant";
+        div.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        return div;
+      }
+
       async function syncConversationFromServer() {
         try {
           const res = await fetch(API + "/brain/messages?limit=300&session_id=" + encodeURIComponent(chatSessionId));
@@ -806,9 +1077,7 @@
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
       });
       chatSend.addEventListener("click", sendChat);
-      // Chat UI always uses Agent mode (tool-calling brain loop).
       restoreConversation();
-      // Best-effort rebuild from server-side session history (survives rotation/worker restart).
       syncConversationFromServer();
 
       async function sendChat() {
@@ -828,7 +1097,7 @@
       async function sendAgentChat(text) {
         streaming = true;
         chatSend.disabled = true;
-        const aDiv = addMsg("assistant", "_thinking..._");
+        const aDiv = addThinkingIndicator();
         try {
           async function readError(res, fallbackPrefix) {
             const raw = await res.text().catch(() => "");
@@ -868,8 +1137,6 @@
           if (!answer) {
             throw new Error("Agent timed out");
           }
-          // Strip any legacy memory update tags, but do not auto-persist them.
-          // Persistent memory writes must be explicit and permission-gated.
           const memRe = /<<MEMORY_UPDATE>>([\s\S]*?)<<END_MEMORY>>/g;
           const cleaned = (answer || "").replace(memRe, "").trim();
 
@@ -895,8 +1162,6 @@
       }
 
       async function waitForAgentReply(itemId) {
-        // Some tool calls (pip installs, large downloads) can legitimately take minutes.
-        // Keep the UI polling longer to avoid premature "Agent timed out".
         const deadline = Date.now() + 15 * 60 * 1000;
         let lastToolError = "";
         while (Date.now() < deadline) {
@@ -939,7 +1204,6 @@
       const brainSelect = $("brainVendorModel");
       const brainCustom = $("brainCustomFields");
 
-      // Map vendor+model from select to base_url
       function getSelectedPreset() {
         const opt = brainSelect.selectedOptions[0];
         if (!opt || !opt.dataset.vendor) return null;
@@ -963,7 +1227,6 @@
           const data = await res.json();
           $("brainKeyStatus").textContent = data.has_api_key ? "API key is set." : "No API key configured.";
 
-          // Try to match saved config to a preset
           const vendor = data.vendor || "";
           const model = data.model || "";
           let matched = false;
@@ -976,7 +1239,6 @@
             }
           }
           if (!matched && model) {
-            // Select "Custom" and populate fields
             for (const opt of brainSelect.options) {
               if (opt.value === "custom") { opt.selected = true; break; }
             }
@@ -1012,7 +1274,6 @@
         payload.api_key = apiKey;
 
         try {
-          // Prefer AndroidBridge to avoid extra consent prompts; Settings is already biometric-unlocked.
           try {
             if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBrainApiKeyPlain) {
               AndroidBridge.setBrainApiKeyPlain(apiKey);
@@ -1082,7 +1343,6 @@
       async function checkBraveSearchKey() {
         try {
           $("braveSearchKeyStatus").textContent = "Checking...";
-          // Prefer biometric-unlocked plaintext status to avoid extra permission prompts.
           try {
             if (getSettingsUnlockRemainingMs() > 0
                 && typeof AndroidBridge !== "undefined"
@@ -1111,7 +1371,6 @@
         if (!(await ensureSettingsUnlocked())) return;
         const key = $("braveSearchApiKey").value.trim();
         try {
-          // Prefer AndroidBridge to avoid extra consent prompts; Settings is already biometric-unlocked.
           try {
             if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBraveSearchApiKeyPlain) {
               AndroidBridge.setBraveSearchApiKeyPlain(key);
@@ -1139,7 +1398,6 @@
       $("braveSearchClear").addEventListener("click", async () => {
         if (!(await ensureSettingsUnlocked())) return;
         try {
-          // Prefer AndroidBridge to avoid extra consent prompts; Settings is already biometric-unlocked.
           try {
             if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBraveSearchApiKeyPlain) {
               AndroidBridge.setBraveSearchApiKeyPlain("");
