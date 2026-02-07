@@ -1058,6 +1058,13 @@
               If a cloud request uploads more than this, the UI/agent should confirm before sending.
             </div>
           </div>
+          <div class="field">
+            <label>Min transfer speed (KB/s)</label>
+            <input type="number" id="cloudMinKbps" min="0" max="50000" step="50" placeholder="0" />
+            <div class="muted" style="margin-top:4px;">
+              If set (>0), abort cloud requests when average upload/download rate drops below this.
+            </div>
+          </div>
           <div class="btn-group">
             <button class="btn primary" id="cloudPrefsSave">Save</button>
           </div>
@@ -2681,8 +2688,11 @@
           const data = await res.json().catch(() => ({}));
           const v = Number(data.auto_upload_no_confirm_mb);
           $("cloudAutoUploadMb").value = (isFinite(v) ? String(v) : "1.0");
+          const k = Number(data.min_transfer_kbps);
+          $("cloudMinKbps").value = (isFinite(k) ? String(k) : "0");
         } catch (_) {
           $("cloudAutoUploadMb").value = "1.0";
+          $("cloudMinKbps").value = "0";
         }
       }
 
@@ -2690,11 +2700,14 @@
         const raw = String($("cloudAutoUploadMb").value || "").trim();
         const v = parseFloat(raw);
         if (!isFinite(v) || v < 0) { showToast("Enter a valid number", 1600); return; }
+        const rawK = String($("cloudMinKbps").value || "").trim();
+        const k = parseFloat(rawK);
+        if (!isFinite(k) || k < 0) { showToast("Enter a valid number", 1600); return; }
         try {
           const res = await fetch(API + "/cloud/prefs", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ auto_upload_no_confirm_mb: v }),
+            body: JSON.stringify({ auto_upload_no_confirm_mb: v, min_transfer_kbps: k }),
           });
           if (!res.ok) throw 0;
           showToast("Cloud prefs saved", 1600);

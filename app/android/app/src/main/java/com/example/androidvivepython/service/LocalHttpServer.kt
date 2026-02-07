@@ -495,10 +495,12 @@ class LocalHttpServer(
             }
             uri == "/cloud/prefs" && session.method == Method.GET -> {
                 val autoMb = cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble()
+                val minKbps = cloudPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble()
                 return jsonResponse(
                     JSONObject()
                         .put("status", "ok")
                         .put("auto_upload_no_confirm_mb", autoMb)
+                        .put("min_transfer_kbps", minKbps)
                 )
             }
             uri == "/cloud/prefs" && session.method == Method.POST -> {
@@ -508,7 +510,15 @@ class LocalHttpServer(
                 val v = payload.optDouble("auto_upload_no_confirm_mb", cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble())
                 val clamped = v.coerceIn(0.0, 25.0)
                 cloudPrefs.edit().putFloat("auto_upload_no_confirm_mb", clamped.toFloat()).apply()
-                return jsonResponse(JSONObject().put("status", "ok").put("auto_upload_no_confirm_mb", clamped))
+                val mk = payload.optDouble("min_transfer_kbps", cloudPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble())
+                val mkClamped = mk.coerceIn(0.0, 50_000.0)
+                cloudPrefs.edit().putFloat("min_transfer_kbps", mkClamped.toFloat()).apply()
+                return jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("auto_upload_no_confirm_mb", clamped)
+                        .put("min_transfer_kbps", mkClamped)
+                )
             }
             (uri == "/pip/status" || uri == "/pip/status/") -> {
                 val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
@@ -3094,7 +3104,9 @@ class LocalHttpServer(
         // - We intentionally avoid a hard "overall request deadline" so large transfers can complete
         //   as long as they keep making steady progress.
         val timeoutS = payload.optDouble("timeout_s", 45.0).coerceIn(3.0, 120.0)
-        val minBytesPerS = payload.optDouble("min_bytes_per_s", 0.0).coerceIn(0.0, 50.0 * 1024.0 * 1024.0)
+        val minBytesPerSFromPrefs = cloudPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble() * 1024.0
+        val minBytesPerSFromReq = if (payload.has("min_bytes_per_s")) payload.optDouble("min_bytes_per_s", 0.0) else null
+        val minBytesPerS = (minBytesPerSFromReq ?: minBytesPerSFromPrefs).coerceIn(0.0, 50.0 * 1024.0 * 1024.0)
         val minRateGraceS = payload.optDouble("min_rate_grace_s", 3.0).coerceIn(0.0, 30.0)
         val maxResp = payload.optInt("max_response_bytes", 1024 * 1024).coerceIn(16 * 1024, 5 * 1024 * 1024)
 
