@@ -73,7 +73,7 @@ class BrainRuntime:
                 "Use the available tools as your execution substrate; iterate until the outcome is achieved or a hard limitation is reached. "
                 "If a capability is not exposed by tools (e.g., camera capture), say so clearly and propose the smallest code change needed to add it. "
                 "User consent is required for device/resource access: when a tool returns permission_required/permission_expired, "
-                "ask the user to approve the in-app prompt and then retry automatically. "
+                "ask the user to approve the in-app prompt and then retry automatically (approvals are remembered for the session). "
                 "NEVER ask the user for any permission_id; that is handled by the system. "
                 "Prefer device_api for device controls exposed by the Kotlin control plane. "
                 "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. "
@@ -1090,13 +1090,11 @@ class BrainRuntime:
                 # If a permission gate is hit, surface it immediately and stop.
                 if isinstance(result, dict) and str(result.get("status") or "") in {"permission_required", "permission_expired"}:
                     req = result.get("request") if isinstance(result.get("request"), dict) else {}
-                    req_id = str(req.get("id") or "")
                     tool = str(req.get("tool") or name or "unknown")
                     self._record_message(
                         "assistant",
-                        f"Permission required for tool '{tool}'. Approve it in the app UI and retry. request_id={req_id}. "
-                        f"If you are retrying a tool call that supports permission_id, pass permission_id={req_id}.",
-                        {"item_id": item.get("id")},
+                        f"Permission required for '{tool}'. Please approve the in-app prompt/notification to continue.",
+                        {"item_id": item.get("id"), "session_id": session_id},
                     )
                     self._emit_log("brain_response", {"item_id": item.get("id"), "text": "permission_required"})
                     return

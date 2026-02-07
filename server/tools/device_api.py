@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional
@@ -28,7 +29,29 @@ class DeviceApiTool:
     def set_identity(self, identity: str) -> None:
         self._identity = str(identity or "").strip() or "default"
 
+    def _wait_for_permission(self, permission_id: str, *, timeout_s: float = 45.0, poll_s: float = 0.8) -> str:
+        pid = str(permission_id or "").strip()
+        if not pid:
+            return "invalid"
+        deadline = time.time() + max(1.0, float(timeout_s or 45.0))
+        poll_s = max(0.2, min(float(poll_s or 0.8), 5.0))
+        while time.time() < deadline:
+            resp = self._request_json("GET", f"/permissions/{pid}", None)
+            body = resp.get("body") if isinstance(resp, dict) else None
+            if isinstance(body, dict):
+                status = str(body.get("status") or "").strip()
+                if status in {"approved", "denied", "used"}:
+                    return status
+            time.sleep(poll_s)
+        return "timeout"
+
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        # Prefer per-chat identity if provided so approvals can be remembered for the session.
+        # Fallback is install identity from env (shared across sessions).
+        identity = str(args.get("identity") or args.get("session_id") or "").strip()
+        if identity:
+            self.set_identity(identity)
+
         action = str(args.get("action") or "").strip()
         if not action:
             return {"status": "error", "error": "missing_action"}
@@ -51,7 +74,7 @@ class DeviceApiTool:
             detail = str(args.get("detail") or "").strip()
             if not detail:
                 detail = f"{action}: {json.dumps(payload, ensure_ascii=True)[:240]}"
-            # We intentionally do not block/wait here; the runtime/UI will ask the user to approve.
+            # Request permission (Kotlin will prompt). Block briefly to allow a one-tap approval flow.
             perm_tool, perm_capability, perm_scope = self._permission_profile_for_action(action)
             pid, req = self._get_or_request_permission(perm_tool, perm_capability, perm_scope, detail)
             if not pid:
@@ -67,8 +90,8 @@ class DeviceApiTool:
         a = (action or "").strip()
         if a.startswith("ssh.pin."):
             return "ssh_pin", "ssh.pin", "session"
-        # Default to long-lived approvals to avoid repeated prompts during agentic workflows.
-        return "device_api", "device_api", "persistent"
+        # Default to session scope: approve once per chat session, then no repeated prompts.
+        return "device_api", "device_api", "session"
 
     def _get_or_request_permission(self, tool: str, capability: str, scope: str, detail: str) -> tuple[str, Dict[str, Any]]:
         # If we already have an approved permission id, keep using it.
@@ -84,6 +107,12 @@ class DeviceApiTool:
             self._permission_ids[cache_key] = pid
             if self._is_approved(pid):
                 return pid, req
+            # Wait briefly for approval to avoid "permission hell" during agent loops.
+            status = self._wait_for_permission(pid, timeout_s=float(os.environ.get("KUGUTZ_PERMISSION_TIMEOUT_S", "45") or "45"))
+            if status == "approved":
+                return pid, {"id": pid, "status": "approved"}
+            if status == "denied":
+                return "", {"id": pid, "status": "denied", "tool": tool, "detail": detail, "scope": scope, "capability": capability}
         return "", req
 
     def _is_approved(self, permission_id: str) -> bool:

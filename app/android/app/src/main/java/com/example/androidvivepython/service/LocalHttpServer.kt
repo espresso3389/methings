@@ -1536,7 +1536,7 @@ class LocalHttpServer(
             "At the start of a session, read user-root docs: `AGENTS.md` and `TOOLS.md`. ",
             "For files: use filesystem tools under the user root (not shell `ls`/`cat`). ",
             "For execution: use run_python/run_pip/run_uv/run_curl only. ",
-            "Device/resource access requires explicit user approval; if permission_required, ask the user to approve in the app UI and then retry. ",
+            "Device/resource access requires explicit user approval; if permission_required, ask the user to approve in the app UI and then retry automatically (approvals are remembered for the session). ",
             "Keep responses concise: do the work first, then summarize and include relevant tool output snippets."
         ).joinToString("")
     }
