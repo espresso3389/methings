@@ -74,3 +74,21 @@ When dealing with USB Video Class (UVC) cameras on Android:
 - Use `device_api` USB/UVC actions (e.g. `usb.*`, `uvc.ptz.*`) rather than trying to install Python UVC bindings.
 
 Do not `pip install uvc` for camera control; that name is often unrelated and typically won't work on Android.
+
+## Vision (RGBA8888 + TFLite)
+
+Kugutz provides a minimal on-device vision pipeline:
+- Internal image format: `RGBA8888` bytes `[R,G,B,A]` per pixel.
+- Inference runs on Android via TFLite. Python is orchestration only.
+
+Use these `device_api` actions:
+- `vision.model.load` / `vision.model.unload`
+- `vision.image.load` (decode PNG/JPEG from user root into an in-memory RGBA frame)
+- `vision.frame.put` / `vision.frame.get` / `vision.frame.delete`
+- `vision.frame.save` (save RGBA to JPEG/PNG under user root)
+- `vision.run` (run TFLite on a frame; prefer passing `frame_id` to avoid resending pixels)
+
+Typical flow:
+1. `vision.model.load` with `{name, path, delegate: "none|nnapi|gpu", num_threads}`
+2. `vision.image.load` or `vision.frame.put`
+3. `vision.run` with `{model, frame_id}` (plus optional `normalize/mean/std`)
