@@ -43,6 +43,7 @@ Read the relevant doc when working in that domain:
 - `docs/vision.md` (RGBA8888 + TFLite)
 - `docs/usb.md` (USB/UVC control + streaming)
 - `docs/permissions.md` (permission scopes and identity)
+- `examples/README.md` (copy/paste golden paths)
 
 ## Permission Requests
 
