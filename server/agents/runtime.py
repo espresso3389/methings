@@ -518,6 +518,21 @@ class BrainRuntime:
             except Exception as ex:
                 with self._lock:
                     self._last_error = str(ex)
+                # Surface failures into the chat timeline so the UI isn't stuck "waiting forever".
+                # Avoid including any secrets; `str(ex)` should be safe (requests errors include URL/status).
+                try:
+                    sid = self._session_id_for_item(item)
+                    item_id = item.get("id")
+                    msg = str(ex) or "Unknown error"
+                    if "401" in msg and "Unauthorized" in msg:
+                        msg = "Unauthorized (401). Check your API key in Settings."
+                    self._record_message(
+                        "assistant",
+                        f"Error: {msg}",
+                        {"item_id": item_id, "session_id": sid, "error": "brain_item_failed"},
+                    )
+                except Exception:
+                    pass
                 self._emit_log("brain_item_failed", {"id": item.get("id"), "error": str(ex)})
             finally:
                 with self._lock:
