@@ -181,6 +181,21 @@ class BrainRuntime:
         t = (text or "").strip().lower()
         if not t:
             return False
+        # If the user explicitly requests a discussion without tools, respect it.
+        # This prevents the tool-policy "required" loop from forcing irrelevant tool calls.
+        if any(
+            k in t
+            for k in (
+                "no tools",
+                "do not use tools",
+                "don't use tools",
+                "without tools",
+                "no tool",
+                "tool-free",
+                "tools-free",
+            )
+        ) or (("ツール" in text) and any(k in text for k in ("使わない", "不要", "無し", "なし"))):
+            return False
         # "Remember ..." can be satisfied by session context (recent dialogue) without any device action.
         # Only require tools if the user explicitly asks to persist/save memory.
         if any(k in t for k in ("remember", "memorize", "覚えて")):
