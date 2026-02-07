@@ -3089,10 +3089,20 @@ class LocalHttpServer(
         val perm = ensureCloudPermission(session, payload, tool = tool, capability = cap, detail = detail)
         if (!perm.first) return perm.second!!
 
+        // Timeout semantics:
+        // - connectTimeout/readTimeout: stall detection only (if no bytes are transferred for this long).
+        // - We intentionally avoid a hard "overall request deadline" so large transfers can complete
+        //   as long as they keep making steady progress.
         val timeoutS = payload.optDouble("timeout_s", 45.0).coerceIn(3.0, 120.0)
+        val minBytesPerS = payload.optDouble("min_bytes_per_s", 0.0).coerceIn(0.0, 50.0 * 1024.0 * 1024.0)
+        val minRateGraceS = payload.optDouble("min_rate_grace_s", 3.0).coerceIn(0.0, 30.0)
         val maxResp = payload.optInt("max_response_bytes", 1024 * 1024).coerceIn(16 * 1024, 5 * 1024 * 1024)
 
         return try {
+            val startedAt = System.currentTimeMillis()
+            var bytesWritten = 0L
+            var bytesRead = 0L
+
             val urlObj = java.net.URL(urlExpanded)
             val conn = (urlObj.openConnection() as java.net.HttpURLConnection).apply {
                 requestMethod = method
@@ -3114,14 +3124,63 @@ class LocalHttpServer(
                 if (!contentType.isNullOrBlank() && conn.getRequestProperty("Content-Type").isNullOrBlank()) {
                     conn.setRequestProperty("Content-Type", contentType)
                 }
-                conn.outputStream.use { it.write(outBytes) }
+                // Chunked write enables progress accounting for large uploads.
+                conn.outputStream.use { os ->
+                    val bufSize = 64 * 1024
+                    var off = 0
+                    val n = outBytes.size
+                    while (off < n) {
+                        val len = minOf(bufSize, n - off)
+                        os.write(outBytes, off, len)
+                        off += len
+                        bytesWritten += len.toLong()
+
+                        if (minBytesPerS > 0.0) {
+                            val elapsedS = (System.currentTimeMillis() - startedAt).toDouble() / 1000.0
+                            if (elapsedS >= minRateGraceS && elapsedS > 0.0) {
+                                val rate = bytesWritten.toDouble() / elapsedS
+                                if (rate < minBytesPerS) {
+                                    throw java.net.SocketTimeoutException("upload_slow bytes_written=$bytesWritten rate_bps=$rate min_bps=$minBytesPerS")
+                                }
+                            }
+                        }
+                    }
+                    os.flush()
+                }
             }
 
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
-            val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
-            val truncated = bytes.size > maxResp
-            val slice = if (truncated) bytes.copyOfRange(0, maxResp) else bytes
+            val out = java.io.ByteArrayOutputStream(minOf(maxResp, 256 * 1024))
+            var truncated = false
+            stream?.use { inp ->
+                val buf = ByteArray(64 * 1024)
+                while (true) {
+                    val r = inp.read(buf)
+                    if (r <= 0) break
+                    bytesRead += r.toLong()
+                    if (out.size() + r > maxResp) {
+                        val keep = maxResp - out.size()
+                        if (keep > 0) {
+                            out.write(buf, 0, keep)
+                        }
+                        truncated = true
+                        break
+                    }
+                    out.write(buf, 0, r)
+
+                    if (minBytesPerS > 0.0) {
+                        val elapsedS = (System.currentTimeMillis() - startedAt).toDouble() / 1000.0
+                        if (elapsedS >= minRateGraceS && elapsedS > 0.0) {
+                            val rate = bytesRead.toDouble() / elapsedS
+                            if (rate < minBytesPerS) {
+                                throw java.net.SocketTimeoutException("download_slow bytes_read=$bytesRead rate_bps=$rate min_bps=$minBytesPerS")
+                            }
+                        }
+                    }
+                }
+            }
+            val slice = out.toByteArray()
             val ct = (conn.contentType ?: "").trim()
             val isJson = ct.lowercase().contains("application/json")
 
@@ -3130,7 +3189,9 @@ class LocalHttpServer(
                 .put("http_status", code)
                 .put("content_type", ct)
                 .put("truncated", truncated)
-                .put("bytes", bytes.size)
+                .put("bytes", bytesRead)
+                .put("upload_bytes", bytesWritten)
+                .put("elapsed_ms", System.currentTimeMillis() - startedAt)
                 .put("host", host)
                 .put("used_files", org.json.JSONArray(exp.usedFiles.toList()))
             if (isJson) {

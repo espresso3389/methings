@@ -20,7 +20,7 @@ class CloudRequestTool:
     def set_identity(self, identity: str) -> None:
         self._identity = str(identity or "").strip() or "default"
 
-    def _request_json(self, method: str, path: str, body: Dict[str, Any] | None) -> Dict[str, Any]:
+    def _request_json(self, method: str, path: str, body: Dict[str, Any] | None, *, timeout_s: float = 120.0) -> Dict[str, Any]:
         url = self.base_url + path
         data = None
         headers = {"Accept": "application/json"}
@@ -31,7 +31,7 @@ class CloudRequestTool:
             headers["X-Kugutz-Identity"] = self._identity
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(req, timeout=40) as resp:
+            with urllib.request.urlopen(req, timeout=float(timeout_s)) as resp:
                 raw = resp.read()
                 try:
                     parsed = json.loads(raw.decode("utf-8")) if raw else {}
@@ -59,6 +59,14 @@ class CloudRequestTool:
             return {"status": "error", "error": "invalid_request"}
 
         permission_id = str(payload.get("permission_id") or "").strip()
+        # Local server call timeout: must exceed the upstream request timeout, otherwise the tool
+        # can time out even if the upstream transfer is making progress.
+        req_timeout_s = payload.get("timeout_s", 45.0)
+        try:
+            req_timeout_s = float(req_timeout_s)
+        except Exception:
+            req_timeout_s = 45.0
+        tool_timeout_s = max(60.0, min(300.0, req_timeout_s + 60.0))
 
         def do(pid: str) -> Dict[str, Any]:
             p = dict(payload)
@@ -66,7 +74,7 @@ class CloudRequestTool:
                 p["identity"] = self._identity
             if pid:
                 p["permission_id"] = pid
-            return self._request_json("POST", "/cloud/request", p)
+            return self._request_json("POST", "/cloud/request", p, timeout_s=tool_timeout_s)
 
         r = do(permission_id)
         if r.get("status") != "ok":
