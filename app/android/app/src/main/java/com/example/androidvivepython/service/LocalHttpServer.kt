@@ -3325,6 +3325,7 @@ class LocalHttpServer(
             "User-root docs (`AGENTS.md`, `TOOLS.md`) are auto-injected into your context and reloaded if they change on disk; do not repeatedly read them via filesystem tools unless the user explicitly asks. ",
             "For files: use filesystem tools under the user root (not shell `ls`/`cat`). ",
             "For execution: use run_python/run_pip/run_curl only. ",
+            "For cloud calls: prefer the configured Brain provider (Settings -> Brain). If Brain is not configured or has no API key, ask the user to configure it, then retry. ",
             "Device/resource access requires explicit user approval; if permission_required, ask the user to approve in the app UI and then retry automatically (approvals are remembered for the session). ",
             "Keep responses concise: do the work first, then summarize and include relevant tool output snippets."
         ).joinToString("")

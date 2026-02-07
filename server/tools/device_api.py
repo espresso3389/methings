@@ -62,6 +62,9 @@ class DeviceApiTool:
         "shell.exec": {"method": "POST", "path": "/shell/exec", "permission": True},
         "brain.memory.get": {"method": "GET", "path": "/brain/memory", "permission": False},
         "brain.memory.set": {"method": "POST", "path": "/brain/memory", "permission": True},
+        # Non-sensitive configuration helpers (do not return secrets).
+        "brain.config.get": {"method": "GET", "path": "/brain/config", "permission": False},
+        "cloud.prefs.get": {"method": "GET", "path": "/cloud/prefs", "permission": False},
     }
 
     def __init__(self, base_url: str = "http://127.0.0.1:8765"):

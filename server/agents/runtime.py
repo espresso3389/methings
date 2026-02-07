@@ -1132,7 +1132,7 @@ class BrainRuntime:
         if not model or not provider_url or not key_name:
             self._record_message(
                 "assistant",
-                "Brain is not configured yet. Set provider_url, model, and api_key_credential via /brain/config.",
+                "Brain is not configured yet. Configure it in Settings -> Brain (recommended), or set provider_url, model, and api_key_credential via /brain/config.",
                 {"item_id": item.get("id")},
             )
             return
@@ -1141,7 +1141,7 @@ class BrainRuntime:
         if not api_key:
             self._record_message(
                 "assistant",
-                f"Missing API credential '{key_name}'. Set it in vault or provide env var, then continue.",
+                f"Missing API credential '{key_name}'. Configure it in Settings -> Brain (recommended), or set it in vault and retry.",
                 {"item_id": item.get("id")},
             )
             return
@@ -1458,7 +1458,7 @@ class BrainRuntime:
         if not model or not provider_url or not key_name:
             return {
                 "responses": [
-                    "Brain is not configured yet. Set provider_url, model, and api_key_credential via /brain/config."
+                    "Brain is not configured yet. Configure it in Settings -> Brain (recommended), or set provider_url, model, and api_key_credential via /brain/config."
                 ],
                 "actions": [],
             }
@@ -1467,7 +1467,7 @@ class BrainRuntime:
         if not api_key:
             return {
                 "responses": [
-                    f"Missing API credential '{key_name}'. Set it in vault or provide env var, then continue."
+                    f"Missing API credential '{key_name}'. Configure it in Settings -> Brain (recommended), or set it in vault and retry."
                 ],
                 "actions": [],
             }
