@@ -42,6 +42,10 @@ Used for allowlisted device control-plane actions (python/ssh/memory/shell.exec,
 Read the relevant doc when working in that domain:
 - `docs/vision.md` (RGBA8888 + TFLite)
 - `docs/usb.md` (USB/UVC control + streaming)
+- `docs/camera.md` (CameraX still capture + preview stream)
+- `docs/ble.md` (BLE scanning + GATT)
+- `docs/tts.md` (Android TextToSpeech)
+- `docs/stt.md` (Android SpeechRecognizer)
 - `docs/permissions.md` (permission scopes and identity)
 - `examples/README.md` (copy/paste golden paths)
 
