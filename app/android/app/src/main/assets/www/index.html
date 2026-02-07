@@ -451,6 +451,36 @@
           <p class="muted" id="pythonDetail">Emergency restart only.</p>
         </section>
 
+        <!-- Python Packages -->
+        <section class="card">
+          <div class="label">Python Packages</div>
+          <div class="muted" style="margin:4px 0 10px;">
+            Download wheels into an on-device cache, then install offline. Source builds are typically not supported on Android.
+          </div>
+          <div class="field">
+            <label>Package spec</label>
+            <input type="text" id="pipSpec" placeholder="e.g. pyusb requests==2.32.3" />
+          </div>
+          <div class="row" style="margin-top:8px;gap:14px;flex-wrap:wrap;">
+            <label><input type="checkbox" id="pipWithDeps" checked /> Include dependencies</label>
+            <label><input type="checkbox" id="pipOnlyBinary" checked /> Wheels only</label>
+          </div>
+          <div class="field" style="margin-top:10px;">
+            <label>Index URL (optional)</label>
+            <input type="url" id="pipIndexUrl" placeholder="https://pypi.org/simple" />
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn" id="pipDownload">Download wheels</button>
+            <button class="btn primary" id="pipInstallOffline">Install (offline)</button>
+            <button class="btn" id="pipInstallNet">Install (network)</button>
+          </div>
+          <pre id="pipStatus" class="muted" style="margin-top:10px;white-space:pre-wrap;"></pre>
+          <pre id="pipOutput"
+               style="margin-top:10px;white-space:pre-wrap;font-family:'Menlo','Consolas',monospace;
+                      font-size:12px;background:var(--bg);border:1px solid #d4c9b5;border-radius:10px;
+                      padding:10px 12px;max-height:220px;overflow:auto;"></pre>
+        </section>
+
         <!-- UI Maintenance -->
         <section class="card">
           <div class="row">
@@ -1282,6 +1312,106 @@
         throw new Error("permission timeout");
       }
 
+      // ==============================
+      // Pip helpers
+      // ==============================
+      async function refreshPipStatus() {
+        try {
+          const res = await fetch(API + "/pip/status");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          const lines = [];
+          if (data.abi) lines.push("ABI: " + data.abi);
+          if (data.wheelhouse_bundled) lines.push("Bundled wheels: " + data.wheelhouse_bundled);
+          if (data.wheelhouse_user) lines.push("User wheel cache: " + data.wheelhouse_user);
+          if (data.pip_find_links) lines.push("PIP_FIND_LINKS: " + data.pip_find_links);
+          $("pipStatus").textContent = lines.join("\n");
+        } catch (_) {
+          $("pipStatus").textContent = "pip status unavailable.";
+        }
+      }
+
+      function getPipSpec() {
+        return String($("pipSpec").value || "").trim();
+      }
+
+      function setPipOutput(text) {
+        $("pipOutput").textContent = text || "";
+      }
+
+      async function runPip(endpoint, payload, detail) {
+        const permission_id = await requestPermission("pip", detail);
+        payload = Object.assign({}, payload, { permission_id });
+        const res = await fetch(API + endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        const code = data.code;
+        const out = data.output || (data.error ? ("error: " + data.error) : "");
+        setPipOutput((typeof code === "number" ? ("exit=" + code + "\n\n") : "") + out);
+        if (!res.ok) throw new Error("pip failed");
+        return data;
+      }
+
+      $("pipDownload").addEventListener("click", async () => {
+        const spec = getPipSpec();
+        if (!spec) { showToast("Enter a package spec", 1800); return; }
+        setPipOutput("Downloading wheels...\n");
+        try {
+          const with_deps = !!$("pipWithDeps").checked;
+          const only_binary = !!$("pipOnlyBinary").checked;
+          const index_url = String($("pipIndexUrl").value || "").trim();
+          await runPip(
+            "/pip/download",
+            { spec, with_deps, only_binary, index_url: (index_url || undefined) },
+            "Download wheels: " + spec
+          );
+          await refreshPipStatus();
+          showToast("Download complete", 1600);
+        } catch (_) {
+          showToast("Download failed", 2000);
+        }
+      });
+
+      $("pipInstallOffline").addEventListener("click", async () => {
+        const spec = getPipSpec();
+        if (!spec) { showToast("Enter a package spec", 1800); return; }
+        setPipOutput("Installing (offline)...\n");
+        try {
+          const with_deps = !!$("pipWithDeps").checked;
+          const only_binary = !!$("pipOnlyBinary").checked;
+          await runPip(
+            "/pip/install",
+            { spec, allow_network: false, no_deps: !with_deps, only_binary },
+            "Install (offline): " + spec
+          );
+          showToast("Install complete", 1600);
+        } catch (_) {
+          showToast("Install failed", 2000);
+        }
+      });
+
+      $("pipInstallNet").addEventListener("click", async () => {
+        const spec = getPipSpec();
+        if (!spec) { showToast("Enter a package spec", 1800); return; }
+        setPipOutput("Installing (network)...\n");
+        try {
+          const with_deps = !!$("pipWithDeps").checked;
+          const only_binary = !!$("pipOnlyBinary").checked;
+          const index_url = String($("pipIndexUrl").value || "").trim();
+          await runPip(
+            "/pip/install",
+            { spec, allow_network: true, no_deps: !with_deps, only_binary, index_url: (index_url || undefined) },
+            "Install (network): " + spec
+          );
+          showToast("Install complete", 1600);
+        } catch (_) {
+          showToast("Install failed", 2000);
+        }
+      });
+
       $("permRemember").addEventListener("change", async () => {
         const enabled = !!$("permRemember").checked;
         permissionsRemember = enabled;
@@ -1420,6 +1550,7 @@
       };
 
       loadPermissionPrefs();
+      refreshPipStatus();
       refreshPython();
       refreshSsh();
       refreshPin();
