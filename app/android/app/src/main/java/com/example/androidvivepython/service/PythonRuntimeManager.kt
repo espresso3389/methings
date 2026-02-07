@@ -273,6 +273,7 @@ class PythonRuntimeManager(private val context: Context) {
                         "--no-deps",
                         "--upgrade",
                         "pyusb",
+                        "pyuvc",
                         "opencv-python",
                     )
                 )
@@ -304,6 +305,7 @@ class PythonRuntimeManager(private val context: Context) {
         // Bump when changing which bundled wheels we expect to be installed at worker start.
         return listOf(
             "pyusb",
+            "pyuvc",
             "opencv-python",
         ).joinToString(",")
     }

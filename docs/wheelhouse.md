@@ -80,6 +80,10 @@ as real packages on any index (example in this repo: `opencv-python`).
 For standard ecosystem packages (`pyusb`, `pyuvc`, `opencv-python`), prefer shipping
 real wheels for those names rather than a facade.
 
+Note:
+- `pyuvc` is currently not on PyPI; Kugutz ships a small facade wheel so `pip install pyuvc`
+  resolves offline from the bundled wheelhouse.
+
 Facade wheel builder:
 - `scripts/build_facade_wheels.py`
 - outputs to `app/android/app/src/main/assets/wheels/common/`
