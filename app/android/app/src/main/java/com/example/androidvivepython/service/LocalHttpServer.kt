@@ -6,6 +6,7 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
+import android.hardware.usb.UsbConstants
 import android.os.Build
 import android.app.PendingIntent
 import android.util.Log
@@ -534,6 +535,15 @@ class LocalHttpServer(
                     jsonError(Response.Status.INTERNAL_ERROR, "usb_bulk_transfer_handler_failed")
                 }
             }
+            (uri == "/usb/iso_transfer" || uri == "/usb/iso_transfer/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUsbIsoTransfer(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "USB iso_transfer handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "usb_iso_transfer_handler_failed")
+                }
+            }
             uri == "/ssh/status" -> {
                 val status = sshdManager.status()
                 jsonResponse(
@@ -925,6 +935,111 @@ class LocalHttpServer(
             if (n < 0) return jsonError(Response.Status.INTERNAL_ERROR, "bulk_transfer_failed")
             return jsonResponse(JSONObject().put("status", "ok").put("transferred", n))
         }
+    }
+
+    private fun handleUsbIsoTransfer(payload: JSONObject): Response {
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+
+        val epAddr = payload.optInt("endpoint_address", -1)
+        if (epAddr < 0) return jsonError(Response.Status.BAD_REQUEST, "endpoint_address_required")
+
+        val interfaceId = payload.optInt("interface_id", -1)
+        val altSetting = if (payload.has("alt_setting")) payload.optInt("alt_setting", -1) else null
+        val packetSize = payload.optInt("packet_size", 1024).coerceIn(1, 1024 * 1024)
+        val numPackets = payload.optInt("num_packets", 32).coerceIn(1, 1024)
+        val timeout = payload.optInt("timeout_ms", 800).coerceIn(1, 60000)
+
+        // Choose an interface/alt setting to match the endpoint.
+        val candidates = (0 until dev.interfaceCount).map { dev.getInterface(it) }
+        val chosen = candidates.firstOrNull { intf ->
+            if (interfaceId >= 0 && intf.id != interfaceId) return@firstOrNull false
+            if (altSetting != null && altSetting >= 0 && intf.alternateSetting != altSetting) return@firstOrNull false
+            for (e in 0 until intf.endpointCount) {
+                val ep = intf.getEndpoint(e)
+                if (ep.address == epAddr) return@firstOrNull true
+            }
+            false
+        } ?: return jsonError(Response.Status.NOT_FOUND, "interface_or_endpoint_not_found")
+
+        // Require that the endpoint is ISO.
+        val isoEp = (0 until chosen.endpointCount).map { chosen.getEndpoint(it) }.firstOrNull { it.address == epAddr }
+            ?: return jsonError(Response.Status.NOT_FOUND, "endpoint_not_found")
+        if (isoEp.type != UsbConstants.USB_ENDPOINT_XFER_ISOC) {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "endpoint_not_isochronous",
+                JSONObject()
+                    .put("endpoint_type", isoEp.type)
+                    .put("expected", UsbConstants.USB_ENDPOINT_XFER_ISOC)
+            )
+        }
+
+        // Claim + switch alternate setting.
+        val force = payload.optBoolean("force", true)
+        val claimed = conn.claimInterface(chosen, force)
+        if (!claimed) {
+            return jsonError(Response.Status.INTERNAL_ERROR, "claim_interface_failed")
+        }
+        runCatching { conn.setInterface(chosen) }
+
+        UsbIsoBridge.ensureLoaded()
+        val fd = conn.fileDescriptor
+        if (fd < 0) return jsonError(Response.Status.INTERNAL_ERROR, "file_descriptor_unavailable")
+
+        val blob: ByteArray = try {
+            UsbIsoBridge.isochIn(fd, epAddr, packetSize, numPackets, timeout)
+                ?: return jsonError(Response.Status.INTERNAL_ERROR, "iso_transfer_failed")
+        } catch (ex: Exception) {
+            Log.e(TAG, "isochIn failed", ex)
+            return jsonError(Response.Status.INTERNAL_ERROR, "iso_transfer_exception")
+        }
+
+        // Parse KISO blob.
+        if (blob.size < 12) return jsonError(Response.Status.INTERNAL_ERROR, "iso_blob_too_small")
+        fun u32le(off: Int): Long {
+            return (blob[off].toLong() and 0xFF) or
+                ((blob[off + 1].toLong() and 0xFF) shl 8) or
+                ((blob[off + 2].toLong() and 0xFF) shl 16) or
+                ((blob[off + 3].toLong() and 0xFF) shl 24)
+        }
+        fun i32le(off: Int): Int {
+            return (u32le(off).toInt())
+        }
+
+        val magic = u32le(0).toInt()
+        if (magic != 0x4F53494B) return jsonError(Response.Status.INTERNAL_ERROR, "iso_bad_magic")
+        val nPk = u32le(4).toInt().coerceIn(0, 1024)
+        val payloadLen = u32le(8).toInt().coerceIn(0, 32 * 1024 * 1024)
+        val metaLen = 12 + nPk * 8
+        if (blob.size < metaLen) return jsonError(Response.Status.INTERNAL_ERROR, "iso_blob_meta_truncated")
+        val expectedTotal = metaLen + payloadLen
+        if (blob.size < expectedTotal) return jsonError(Response.Status.INTERNAL_ERROR, "iso_blob_payload_truncated")
+
+        val packets = org.json.JSONArray()
+        var metaOff = 12
+        for (i in 0 until nPk) {
+            val st = i32le(metaOff)
+            val al = i32le(metaOff + 4)
+            packets.put(JSONObject().put("status", st).put("actual_length", al))
+            metaOff += 8
+        }
+        val payloadBytes = blob.copyOfRange(metaLen, metaLen + payloadLen)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("handle", handle)
+                .put("interface_id", chosen.id)
+                .put("alt_setting", chosen.alternateSetting)
+                .put("endpoint_address", epAddr)
+                .put("packet_size", packetSize)
+                .put("num_packets", nPk)
+                .put("payload_length", payloadLen)
+                .put("packets", packets)
+                .put("data_b64", android.util.Base64.encodeToString(payloadBytes, android.util.Base64.NO_WRAP))
+        )
     }
 
     private fun findUsbDevice(name: String, vendorId: Int, productId: Int): UsbDevice? {

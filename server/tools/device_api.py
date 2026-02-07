@@ -25,6 +25,7 @@ class DeviceApiTool:
         "usb.claim_interface": {"method": "POST", "path": "/usb/claim_interface", "permission": True},
         "usb.release_interface": {"method": "POST", "path": "/usb/release_interface", "permission": True},
         "usb.bulk_transfer": {"method": "POST", "path": "/usb/bulk_transfer", "permission": True},
+        "usb.iso_transfer": {"method": "POST", "path": "/usb/iso_transfer", "permission": True},
         "shell.exec": {"method": "POST", "path": "/shell/exec", "permission": True},
         "brain.memory.get": {"method": "GET", "path": "/brain/memory", "permission": False},
         "brain.memory.set": {"method": "POST", "path": "/brain/memory", "permission": True},
