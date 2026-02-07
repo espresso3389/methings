@@ -362,7 +362,7 @@ class LocalHttpServer(
             uri == "/builtins/stt" && session.method == Method.POST -> {
                 return jsonError(Response.Status.NOT_IMPLEMENTED, "not_implemented", JSONObject().put("feature", "stt"))
             }
-            (uri == "/brain/status" || uri == "/brain/messages") && session.method == Method.GET -> {
+            (uri == "/brain/status" || uri == "/brain/messages" || uri == "/brain/sessions") && session.method == Method.GET -> {
                 if (runtimeManager.getStatus() != "ok") {
                     runtimeManager.startWorker()
                     waitForPythonHealth(5000)
@@ -678,7 +678,7 @@ class LocalHttpServer(
         val cmd = payload.optString("cmd")
         val args = payload.optString("args", "")
         val cwd = payload.optString("cwd", "")
-        if (cmd != "python" && cmd != "pip" && cmd != "uv" && cmd != "curl") {
+        if (cmd != "python" && cmd != "pip" && cmd != "curl") {
             return jsonError(Response.Status.FORBIDDEN, "command_not_allowed")
         }
 
@@ -712,7 +712,6 @@ class LocalHttpServer(
         val argList = if (args.isBlank()) emptyList() else args.split(Regex("\\s+"))
         val command = when (cmd) {
             "pip" -> listOf(pythonExe.absolutePath, "-m", "pip") + argList
-            "uv" -> listOf(pythonExe.absolutePath, "-m", "uv") + argList
             else -> listOf(pythonExe.absolutePath) + argList
         }
 
@@ -747,16 +746,7 @@ class LocalHttpServer(
                 return Pair(code, output)
             }
 
-            var result = runPythonCommand(command)
-            val uvMissingPattern = Regex("No module named ['\\\"]?uv['\\\"]?")
-            if (cmd == "uv" && result.first != 0 && uvMissingPattern.containsMatchIn(result.second)) {
-                val install = runPythonCommand(listOf(pythonExe.absolutePath, "-m", "pip", "install", "uv"))
-                result = if (install.first == 0) {
-                    runPythonCommand(command)
-                } else {
-                    Pair(result.first, result.second + "\nuv bootstrap failed:\n" + install.second)
-                }
-            }
+            val result = runPythonCommand(command)
             jsonResponse(
                 JSONObject()
                     .put("status", "ok")
@@ -1095,7 +1085,7 @@ class LocalHttpServer(
         if (!isPermissionApproved(permissionId, consume = true)) {
             val req = permissionStore.create(
                 tool = "network",
-                detail = "DuckDuckGo search: " + q.take(200),
+                detail = "Search: " + q.take(200),
                 // Searching is typically iterative; don't re-prompt for every query.
                 scope = "session",
                 identity = identity,
@@ -1532,10 +1522,11 @@ class LocalHttpServer(
             "Your goal is to produce the user's requested outcome (artifact/state change), not to narrate steps. ",
             "You MUST use function tools for any real action (no pretending). ",
             "If you can satisfy a request by writing code/scripts, do it and execute them via tools. ",
+            "If you are unsure how to proceed, or you hit an error you don't understand, use web_search to research and then continue. ",
             "If a needed device capability is not exposed by tools, say so and propose the smallest code change to add it. ",
             "At the start of a session, read user-root docs: `AGENTS.md` and `TOOLS.md`. ",
             "For files: use filesystem tools under the user root (not shell `ls`/`cat`). ",
-            "For execution: use run_python/run_pip/run_uv/run_curl only. ",
+            "For execution: use run_python/run_pip/run_curl only. ",
             "Device/resource access requires explicit user approval; if permission_required, ask the user to approve in the app UI and then retry automatically (approvals are remembered for the session). ",
             "Keep responses concise: do the work first, then summarize and include relevant tool output snippets."
         ).joinToString("")

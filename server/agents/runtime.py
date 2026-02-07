@@ -64,6 +64,10 @@ class BrainRuntime:
             # If empty, runtime uses a provider-based default mapping, e.g.:
             # openai_api_key -> OPENAI_API_KEY
             "api_key_env": "",
+            # Filesystem access scope for built-in file tools:
+            # - "user": restrict to user root only (default)
+            # - "app": allow access anywhere under the app's private files dir
+            "fs_scope": "user",
             "system_prompt": (
                 "You are Kugutz Brain running on an Android device. "
                 "Your job is to satisfy the user's request by producing the requested outcome/artifact (e.g. a photo, a file, a running service), "
@@ -71,13 +75,14 @@ class BrainRuntime:
                 "When the user asks for any real device/file/state action, you MUST use tools to do the work (no pretending). "
                 "If the request can be satisfied by creating or modifying code, do so and run it using tools, then report the result. "
                 "Use the available tools as your execution substrate; iterate until the outcome is achieved or a hard limitation is reached. "
+                "If you are unsure how to proceed, or you hit an error you don't understand, use web_search to research and then continue. "
                 "If a capability is not exposed by tools (e.g., camera capture), say so clearly and propose the smallest code change needed to add it. "
                 "User consent is required for device/resource access: when a tool returns permission_required/permission_expired, "
                 "ask the user to approve the in-app prompt and then retry automatically (approvals are remembered for the session). "
                 "NEVER ask the user for any permission_id; that is handled by the system. "
                 "Prefer device_api for device controls exposed by the Kotlin control plane. "
                 "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. "
-                "For execution, use run_python/run_pip/run_uv/run_curl. "
+                "For execution, use run_python/run_pip/run_curl. "
                 "Keep responses concise: do the work, then summarize the result and include only relevant tool output snippets. "
                 "Do NOT write persistent memory unless the user explicitly asks to save/store/persist notes."
             ),
@@ -87,6 +92,13 @@ class BrainRuntime:
             "max_tool_rounds": 12,
             "idle_sleep_ms": 800,
         }
+
+    def _fs_root_dir(self) -> Path:
+        scope = str(self._config.get("fs_scope") or "user").strip().lower()
+        if scope == "app":
+            # user_dir is "<app_files>/user"; allow reading/writing elsewhere under "<app_files>".
+            return self._user_dir.parent.resolve()
+        return self._user_dir.resolve()
 
     def _needs_tool_for_text(self, text: str) -> bool:
         # Keep this conservative: only require tools when the user is clearly asking
@@ -161,11 +173,11 @@ class BrainRuntime:
     def _resolve_user_path(self, rel_path: str) -> Path | None:
         raw = (rel_path or "").strip()
         target = Path(raw) if raw else Path(".")
+        root = self._fs_root_dir()
         if not target.is_absolute():
-            target = (self._user_dir / target).resolve()
+            target = (root / target).resolve()
         else:
             target = target.resolve()
-        root = self._user_dir.resolve()
         if not str(target).startswith(str(root)):
             return None
         return target
@@ -477,6 +489,14 @@ class BrainRuntime:
                 continue
             out.append(msg)
         return list(reversed(out))
+
+    def list_sessions(self, limit: int = 50) -> List[Dict]:
+        try:
+            if hasattr(self._storage, "list_chat_sessions"):
+                return self._storage.list_chat_sessions(limit=limit)
+        except Exception:
+            pass
+        return []
 
     def status(self) -> Dict:
         with self._lock:
@@ -822,20 +842,6 @@ class BrainRuntime:
             },
             {
                 "type": "function",
-                "name": "run_uv",
-                "description": "Run uv locally (equivalent to: uv <args>) within the user directory.",
-                "parameters": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "args": {"type": "string"},
-                        "cwd": {"type": "string"},
-                    },
-                    "required": ["args", "cwd"],
-                },
-            },
-            {
-                "type": "function",
                 "name": "run_curl",
                 "description": "Run curl locally (equivalent to: curl <args>) within the user directory.",
                 "parameters": {
@@ -851,13 +857,14 @@ class BrainRuntime:
             {
                 "type": "function",
                 "name": "web_search",
-                "description": "Search the web via DuckDuckGo (permission-gated). Returns a small set of results.",
+                "description": "Search the web (permission-gated). Provider defaults to auto (Brave if configured, else DuckDuckGo Instant Answer).",
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
                         "query": {"type": "string"},
                         "max_results": {"type": "integer"},
+                        "provider": {"type": "string"},
                     },
                     "required": ["query", "max_results"],
                 },
@@ -1044,7 +1051,7 @@ class BrainRuntime:
                             "role": "user",
                             "content": (
                                 "Tool policy is REQUIRED for this request. "
-                                "You MUST call one or more tools (device_api, run_python/run_pip/run_uv/run_curl, "
+                                "You MUST call one or more tools (device_api, run_python/run_pip/run_curl, "
                                 "filesystem tools, write_file, sleep) to perform the action(s), "
                                 "then summarize after tool outputs are provided. "
                                 "Do not claim you executed anything without tool output."
@@ -1296,10 +1303,17 @@ class BrainRuntime:
         planner_prompt = (
             "Return strict JSON object with keys responses (string[]) and actions (object[]). "
             "Action objects: "
-            "{type:'shell_exec', cmd:'python|pip|uv|curl', args:'...', cwd:'/subdir'} OR "
+            "{type:'shell_exec', cmd:'python|pip|curl', args:'...', cwd:'/subdir'} OR "
+            "{type:'filesystem', op:'list_dir|read_file|mkdir|move_path|delete_path', ...} OR "
             "{type:'write_file', path:'relative/path.py', content:'...'} OR "
-            "{type:'tool_invoke', tool:'filesystem|shell|device_api', args:{...}, request_id:'optional', detail:'optional'} OR "
+            "{type:'tool_invoke', tool:'device_api', args:{...}, detail:'optional'} OR "
             "{type:'sleep', seconds:1}. "
+            "Filesystem action shapes: "
+            "- list_dir: {type:'filesystem', op:'list_dir', path:'relative/or/absolute', show_hidden:false, limit:200} "
+            "- read_file: {type:'filesystem', op:'read_file', path:'relative/or/absolute', max_bytes:262144} "
+            "- mkdir: {type:'filesystem', op:'mkdir', path:'relative/or/absolute', parents:true} "
+            "- move_path: {type:'filesystem', op:'move_path', src:'...', dst:'...', overwrite:false} "
+            "- delete_path: {type:'filesystem', op:'delete_path', path:'...', recursive:false}. "
             "For device actions, use tool='device_api' and args shape: "
             "{action:'python.status|python.restart|ssh.status|ssh.config|ssh.pin.status|ssh.pin.start|ssh.pin.stop|brain.memory.get|brain.memory.set', payload:{...}, detail:'...'}."
             "If user asks to check status, include at least one device_api status action. "
@@ -1479,14 +1493,6 @@ class BrainRuntime:
                 "cwd": str(args.get("cwd") or ""),
             }
             return self._execute_action(item, action)
-        if name == "run_uv":
-            action = {
-                "type": "shell_exec",
-                "cmd": "uv",
-                "args": str(args.get("args") or ""),
-                "cwd": str(args.get("cwd") or ""),
-            }
-            return self._execute_action(item, action)
         if name == "run_curl":
             action = {
                 "type": "shell_exec",
@@ -1504,6 +1510,7 @@ class BrainRuntime:
             except Exception:
                 max_results = 5
             max_results = max(1, min(max_results, 10))
+            provider = str(args.get("provider") or "").strip()
             capability = "web.search"
             permission_id = self._capability_permissions.get(capability, "")
 
@@ -1516,6 +1523,7 @@ class BrainRuntime:
                     json={
                         "query": query,
                         "max_results": max_results,
+                        "provider": provider,
                         "permission_id": (pid or ""),
                         "identity": self._active_identity,
                     },
@@ -1618,7 +1626,7 @@ class BrainRuntime:
             cmd = str(action.get("cmd") or "")
             args = str(action.get("args") or "")
             cwd = str(action.get("cwd") or "")
-            if cmd not in {"python", "pip", "uv", "curl"}:
+            if cmd not in {"python", "pip", "curl"}:
                 result = {"status": "error", "error": "command_not_allowed"}
             else:
                 result = self._shell_exec(cmd, args, cwd)

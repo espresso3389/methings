@@ -50,7 +50,7 @@ Build an Android 14+ app that provides a Python development environment with:
 - Add concise comments only when logic is non-obvious.
 - Keep security prompts minimal but explicit.
 - No silent elevation or background actions.
-- For Python tooling, use uv/venv (avoid system pip).
+- On-device Python tooling: use venv + pip (avoid system pip). Host-side app development must use uv.
 - WSL usage is allowed but only when the user explicitly opts in for that session.
 
 ## Security & Permissions
@@ -73,6 +73,9 @@ Build an Android 14+ app that provides a Python development environment with:
 - Minimal control panel in WebView (Python worker, SSHD, PIN auth, Wi-Fi IP, Reset UI).
 - UI assets are served from `files/www` and can be reset from the UI.
 - No chat/terminal/shell UI at the moment (to be reconsidered later).
+
+## Debugging
+- Developer notes for debugging agent actions and chat transcripts: `docs/DEBUGGING.md`.
 
 ## Repo Notes
 - `third_party/libuvc` may appear as persistent local/untracked workspace noise. Ignore it during normal commit/push unless you are intentionally updating that component.

@@ -17,8 +17,19 @@ Use these instead of shell commands like `ls`/`cat`.
 
 - `run_python(args, cwd)`
 - `run_pip(args, cwd)`
-- `run_uv(args, cwd)`
 - `run_curl(args, cwd)`
+
+Notes:
+- `python -` (stdin) is not supported (no interactive stdin). Use `python -c "..."` or write a script file and run it.
+
+## Web Search Tool (Permission-Gated)
+
+- `web_search(query, max_results, provider)`
+
+Notes:
+- DuckDuckGo is not a full web-search API here; it is the Instant Answer API and can be weak for non-English queries.
+- Prefer `provider="auto"` (default) which uses Brave Search API if configured, else DuckDuckGo.
+- If you need better non-English search, use `provider="brave"` and store `brave_search_api_key` in vault.
 
 ## Kotlin Control Plane Tool
 
@@ -54,5 +65,4 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 
 - `permission_required`: user needs to approve on device UI, then retry.
 - `path_outside_user_dir`: use paths under the user root only.
-- `command_not_allowed`: only `python|pip|uv|curl` are permitted in execution tools.
-
+- `command_not_allowed`: only `python|pip|curl` are permitted in execution tools.

@@ -67,7 +67,7 @@ class DeviceApiTool:
 
         if action == "shell.exec":
             cmd = str(payload.get("cmd") or "")
-            if cmd not in {"python", "pip", "uv", "curl"}:
+            if cmd not in {"python", "pip", "curl"}:
                 return {"status": "error", "error": "command_not_allowed"}
 
         if spec["permission"]:

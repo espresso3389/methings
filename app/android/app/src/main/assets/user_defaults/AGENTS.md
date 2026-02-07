@@ -6,16 +6,18 @@ This file documents how the on-device AI agent should operate. It is referenced 
 
 - If you need to change device state, access hardware, or touch files, you MUST use tools. Do not pretend.
 - If a tool returns `permission_required` or `permission_expired`, tell the user to approve in the app UI, then retry.
+- If you are unsure how to proceed, use `web_search` to research and then continue.
 - Keep responses concise and include relevant snippets from tool output when helpful.
 
 ## Filesystem
 
 - The agent filesystem tools are restricted to the user root directory (this folder).
+- Developer option: set brain config `fs_scope="app"` to allow filesystem tools to access the whole app private files dir (includes `protected/`, `server/`, etc). Use with care.
 - Do not try to run `ls`, `pwd`, `cat` via a shell. Use filesystem tools.
 
 ## Execution
 
-- Only use the allowlisted execution tools: `run_python`, `run_pip`, `run_uv`, `run_curl`.
+- Only use the allowlisted execution tools: `run_python`, `run_pip`, `run_curl`.
 - Do not request a generic shell for arbitrary commands.
 
 ## Device Permissions (Camera/Mic/GPS/BLE/USB)
@@ -44,4 +46,3 @@ Practical flow:
 - Persistent memory is stored in `MEMORY.md` in the user root.
 - Only update `MEMORY.md` if the user explicitly asks you to remember/save/store/persist something.
 - Use the memory tools to read/write it; do not modify it implicitly.
-

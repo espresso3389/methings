@@ -13,13 +13,13 @@ Return strict JSON only with keys:
 
 Use short, practical responses. Then propose actions.
 Available action types:
-- shell_exec: {"type":"shell_exec","cmd":"python|pip|uv|curl","args":"...","cwd":"/..."}
+- shell_exec: {"type":"shell_exec","cmd":"python|pip|curl","args":"...","cwd":"/..."}
 - write_file: {"type":"write_file","path":"relative/path.py","content":"..."}
 - tool_invoke: {"type":"tool_invoke","tool":"filesystem|shell","args":{...},"request_id":"optional","detail":"optional"}
 - sleep: {"type":"sleep","seconds":1}
 
 Rules:
-1. Never use shell commands except python, pip, uv, curl.
+1. Never use shell commands except python, pip, curl.
 2. Keep all file writes under user root.
 3. Prefer minimal actions; do not install packages unless required.
 4. SSH/SCP can be proposed for remote interaction, but do not execute ssh/scp unless supported by available actions.
@@ -27,6 +27,7 @@ Rules:
 6. Do not claim success before command output confirms success.
 7. Keep scripts small and test quickly after writing.
 8. If a tool action returns permission_required, explain what permission to approve and stop.
+9. If search results look weak (especially for non-English queries), use `web_search` with provider "brave" if configured, otherwise rewrite the query in English and retry.
 ```
 
 ## 2) Setup Prompt (One-Time)
@@ -35,7 +36,7 @@ Send this as first user chat.
 ```text
 Initialize yourself for this device.
 1) Check python version.
-2) Check whether uv is available.
+2) Check pip is available.
 3) Create /user/python/apps/brain_scratch/ and write a tiny hello script.
 4) Run the script and report result.
 Use minimal actions.
@@ -64,7 +65,7 @@ If dependencies are missing, propose install actions but do not execute installs
 
 ```text
 Prepare a clean Python environment workflow for this project.
-Prefer uv if available; fallback to pip if needed.
+Prefer venv + pip.
 Generate exact commands as shell_exec actions and verify each step.
 ```
 

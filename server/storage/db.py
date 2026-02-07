@@ -212,6 +212,21 @@ class Storage:
             rows = [dict(r) for r in cur.fetchall()]
         return list(reversed(rows))
 
+    def list_chat_sessions(self, limit: int = 50) -> List[Dict]:
+        limit = max(1, min(int(limit or 50), 200))
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT session_id, COUNT(*) AS count, MAX(created_at) AS last_created_at
+                FROM chat_messages
+                GROUP BY session_id
+                ORDER BY last_created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+
     def get_setting(self, key: str) -> Optional[str]:
         with self._connect() as conn:
             cur = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))

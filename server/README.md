@@ -97,7 +97,6 @@ Returns recent brain messages (assistant/tool records).
 Allowed `cmd` values:
 - `python`
 - `pip`
-- `uv`
 - `curl`
 
 Example body:

@@ -286,7 +286,7 @@ def _run_curl_args(args: list[str], workdir: Path) -> int:
 
 
 def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
-    if cmd not in {"python", "pip", "uv", "curl"}:
+    if cmd not in {"python", "pip", "curl"}:
         return {"status": "error", "error": "command_not_allowed"}
 
     workdir = _resolve_cwd(cwd)
@@ -297,6 +297,15 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
         try:
             if cmd == "pip":
+                # pip build isolation uses temp directories; ensure they point to app-writable paths.
+                tmp_dir = (workdir / ".tmp").resolve()
+                cache_dir = (workdir / ".cache" / "pip").resolve()
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                os.environ["TMPDIR"] = str(tmp_dir)
+                os.environ["TMP"] = str(tmp_dir)
+                os.environ["TEMP"] = str(tmp_dir)
+                os.environ["PIP_CACHE_DIR"] = str(cache_dir)
                 try:
                     from pip._internal.cli.main import main as pip_main
                 except Exception:
@@ -308,29 +317,6 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
                     except Exception:
                         from pip._internal import main as pip_main  # type: ignore
                 code = int(pip_main(args) or 0)
-            elif cmd == "uv":
-                uv_cmd = [sys.executable, "-m", "uv", *args]
-                uv_proc = subprocess.run(uv_cmd, cwd=str(workdir), capture_output=True, text=True)
-                uv_output = (uv_proc.stdout or "") + (uv_proc.stderr or "")
-                if uv_proc.returncode != 0 and re.search(r"No module named ['\"]?uv['\"]?", uv_output):
-                    install_proc = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "uv"],
-                        cwd=str(workdir),
-                        capture_output=True,
-                        text=True,
-                    )
-                    if install_proc.returncode == 0:
-                        uv_proc = subprocess.run(uv_cmd, cwd=str(workdir), capture_output=True, text=True)
-                    else:
-                        if install_proc.stdout:
-                            print(install_proc.stdout, end="")
-                        if install_proc.stderr:
-                            print(install_proc.stderr, end="")
-                if uv_proc.stdout:
-                    print(uv_proc.stdout, end="")
-                if uv_proc.stderr:
-                    print(uv_proc.stderr, end="")
-                code = int(uv_proc.returncode)
             elif cmd == "curl":
                 code = _run_curl_args(args, workdir)
             else:
@@ -338,6 +324,8 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
                     raise RuntimeError("interactive_not_supported")
                 if args[0] in {"-V", "--version"}:
                     print(sys.version)
+                elif args[0] == "-":
+                    raise RuntimeError("stdin_not_supported (use: python -c \"...\" or run a script file)")
                 elif args[0] == "-c":
                     if len(args) < 2:
                         raise RuntimeError("missing_code")
@@ -444,6 +432,14 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 self._send_json({"messages": BRAIN_RUNTIME.list_messages_for_session(session_id=session_id, limit=limit)})
             else:
                 self._send_json({"messages": BRAIN_RUNTIME.list_messages(limit=limit)})
+            return
+        if parsed.path == "/brain/sessions":
+            query = parse_qs(parsed.query or "")
+            try:
+                limit = int((query.get("limit") or ["50"])[0])
+            except Exception:
+                limit = 50
+            self._send_json({"sessions": BRAIN_RUNTIME.list_sessions(limit=limit)})
             return
         if parsed.path.startswith("/vault/credentials/"):
             name = parsed.path.removeprefix("/vault/credentials/").strip()
