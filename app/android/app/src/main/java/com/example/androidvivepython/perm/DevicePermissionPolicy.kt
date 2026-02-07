@@ -17,8 +17,12 @@ object DevicePermissionPolicy {
                 val d = detail.lowercase()
                 return when {
                     d.contains("camera") -> Required(listOf(Manifest.permission.CAMERA), "Camera")
-                    d.contains("mic") || d.contains("stt") || d.contains("tts") ->
+                    d.contains("mic") || d.contains("stt") ->
                         Required(listOf(Manifest.permission.RECORD_AUDIO), "Microphone")
+                    d.contains("tts") ->
+                        // TextToSpeech does not require RECORD_AUDIO. (Some engines may use network;
+                        // INTERNET is already granted via manifest.)
+                        Required(emptyList(), "Text-to-speech")
                     d.contains("gps") || d.contains("location") ->
                         Required(
                             listOf(
@@ -40,8 +44,10 @@ object DevicePermissionPolicy {
         return when {
             t == "device.camera2" || t.startsWith("device.camera") ->
                 Required(listOf(Manifest.permission.CAMERA), "Camera")
-            t == "device.mic" || t.startsWith("device.audio") || t.contains(".stt") || t.contains(".tts") ->
+            t == "device.mic" || t.startsWith("device.audio") || t.contains(".stt") ->
                 Required(listOf(Manifest.permission.RECORD_AUDIO), "Microphone")
+            t == "device.tts" || t.contains(".tts") ->
+                Required(emptyList(), "Text-to-speech")
             t == "device.gps" || t.startsWith("device.location") ->
                 Required(
                     listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
@@ -69,4 +75,3 @@ object DevicePermissionPolicy {
         }
     }
 }
-

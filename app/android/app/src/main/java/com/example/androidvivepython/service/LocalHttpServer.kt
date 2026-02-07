@@ -10,6 +10,7 @@ import android.hardware.usb.UsbConstants
 import android.os.Build
 import android.app.PendingIntent
 import android.util.Log
+import androidx.lifecycle.LifecycleOwner
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
 import java.io.File
@@ -31,12 +32,17 @@ import jp.espresso3389.kugutz.perm.SshKeyStore
 import jp.espresso3389.kugutz.perm.SshKeyPolicy
 import jp.espresso3389.kugutz.perm.InstallIdentity
 import jp.espresso3389.kugutz.perm.PermissionPrefs
+import jp.espresso3389.kugutz.device.BleManager
+import jp.espresso3389.kugutz.device.CameraXManager
+import jp.espresso3389.kugutz.device.SttManager
+import jp.espresso3389.kugutz.device.TtsManager
 import jp.espresso3389.kugutz.vision.VisionFrameStore
 import jp.espresso3389.kugutz.vision.VisionImageIo
 import jp.espresso3389.kugutz.vision.TfliteModelManager
 
 class LocalHttpServer(
     private val context: Context,
+    private val lifecycleOwner: LifecycleOwner,
     private val runtimeManager: PythonRuntimeManager,
     private val sshdManager: SshdManager,
     private val sshPinManager: SshPinManager,
@@ -63,6 +69,10 @@ class LocalHttpServer(
     private val USB_PERMISSION_ACTION = "jp.espresso3389.kugutz.USB_PERMISSION"
     private val visionFrames = VisionFrameStore()
     private val tflite = TfliteModelManager(context)
+    private val camera = CameraXManager(context, lifecycleOwner)
+    private val ble = BleManager(context)
+    private val tts = TtsManager(context)
+    private val stt = SttManager(context)
 
     fun startServer(): Boolean {
         return try {
@@ -647,6 +657,206 @@ class LocalHttpServer(
                     Log.e(TAG, "vision run handler failed", ex)
                     jsonError(Response.Status.INTERNAL_ERROR, "vision_run_failed")
                 }
+            }
+            (uri == "/camera/list" || uri == "/camera/list/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.camera", capability = "camera", detail = "List cameras")
+                if (!ok.first) return ok.second!!
+                val out = JSONObject(camera.listCameras())
+                if (out.has("cameras")) {
+                    out.put("cameras", org.json.JSONArray(out.getString("cameras")))
+                }
+                return jsonResponse(out)
+            }
+            (uri == "/camera/status" || uri == "/camera/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.camera", capability = "camera", detail = "Camera status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(camera.status()))
+            }
+            (uri == "/camera/preview/start" || uri == "/camera/preview/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.camera", capability = "camera", detail = "Start camera preview stream")
+                if (!ok.first) return ok.second!!
+                val lens = payload.optString("lens", "back")
+                val w = payload.optInt("width", 640)
+                val h = payload.optInt("height", 480)
+                val fps = payload.optInt("fps", 5)
+                val q = payload.optInt("jpeg_quality", 70)
+                return jsonResponse(JSONObject(camera.startPreview(lens, w, h, fps, q)))
+            }
+            (uri == "/camera/preview/stop" || uri == "/camera/preview/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.camera", capability = "camera", detail = "Stop camera preview stream")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(camera.stopPreview()))
+            }
+            (uri == "/camera/capture" || uri == "/camera/capture/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.camera", capability = "camera", detail = "Capture still image")
+                if (!ok.first) return ok.second!!
+                val outPath = payload.optString("path", "captures/capture_${System.currentTimeMillis()}.jpg")
+                val lens = payload.optString("lens", "back")
+                val file = userPath(outPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                return jsonResponse(JSONObject(camera.captureStill(file, lens)))
+            }
+            (uri == "/ble/status" || uri == "/ble/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.ble", capability = "ble", detail = "Bluetooth status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(ble.status()))
+            }
+            (uri == "/ble/scan/start" || uri == "/ble/scan/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "Start BLE scan")
+                if (!ok.first) return ok.second!!
+                val lowLatency = payload.optBoolean("low_latency", true)
+                val resp = JSONObject(ble.scanStart(lowLatency)).put("ws_path", "/ws/ble/events")
+                return jsonResponse(resp)
+            }
+            (uri == "/ble/scan/stop" || uri == "/ble/scan/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "Stop BLE scan")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(ble.scanStop()))
+            }
+            (uri == "/ble/connect" || uri == "/ble/connect/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "Connect BLE device")
+                if (!ok.first) return ok.second!!
+                val address = payload.optString("address", "")
+                val auto = payload.optBoolean("auto_connect", false)
+                val resp = JSONObject(ble.connect(address, auto)).put("ws_path", "/ws/ble/events")
+                return jsonResponse(resp)
+            }
+            (uri == "/ble/disconnect" || uri == "/ble/disconnect/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "Disconnect BLE device")
+                if (!ok.first) return ok.second!!
+                val address = payload.optString("address", "")
+                return jsonResponse(JSONObject(ble.disconnect(address)))
+            }
+            (uri == "/ble/gatt/services" || uri == "/ble/gatt/services/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "List BLE GATT services")
+                if (!ok.first) return ok.second!!
+                val address = payload.optString("address", "")
+                val m = ble.services(address)
+                // servicesJson is encoded as string to keep kotlin->json conversion simple.
+                val out = JSONObject(m)
+                if (out.has("services")) {
+                    out.put("services", org.json.JSONArray(out.getString("services")))
+                }
+                return jsonResponse(out)
+            }
+            (uri == "/ble/gatt/read" || uri == "/ble/gatt/read/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "Read BLE characteristic")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(
+                    JSONObject(
+                        ble.read(
+                            payload.optString("address", ""),
+                            payload.optString("service_uuid", ""),
+                            payload.optString("char_uuid", "")
+                        )
+                    )
+                )
+            }
+            (uri == "/ble/gatt/write" || uri == "/ble/gatt/write/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "Write BLE characteristic")
+                if (!ok.first) return ok.second!!
+                val b64 = payload.optString("value_b64", "")
+                val bytes = runCatching { android.util.Base64.decode(b64, android.util.Base64.DEFAULT) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_value_b64")
+                val withResp = payload.optBoolean("with_response", true)
+                return jsonResponse(
+                    JSONObject(
+                        ble.write(
+                            payload.optString("address", ""),
+                            payload.optString("service_uuid", ""),
+                            payload.optString("char_uuid", ""),
+                            bytes,
+                            withResp
+                        )
+                    )
+                )
+            }
+            (uri == "/ble/gatt/notify/start" || uri == "/ble/gatt/notify/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "Subscribe BLE notifications")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(
+                    JSONObject(
+                        ble.notifyStart(
+                            payload.optString("address", ""),
+                            payload.optString("service_uuid", ""),
+                            payload.optString("char_uuid", "")
+                        )
+                    )
+                )
+            }
+            (uri == "/ble/gatt/notify/stop" || uri == "/ble/gatt/notify/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ble", capability = "ble", detail = "Unsubscribe BLE notifications")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(
+                    JSONObject(
+                        ble.notifyStop(
+                            payload.optString("address", ""),
+                            payload.optString("service_uuid", ""),
+                            payload.optString("char_uuid", "")
+                        )
+                    )
+                )
+            }
+            (uri == "/tts/init" || uri == "/tts/init/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.tts", capability = "tts", detail = "Initialize TTS")
+                if (!ok.first) return ok.second!!
+                val engine = payload.optString("engine", "").trim().ifBlank { null }
+                return jsonResponse(JSONObject(tts.init(engine)))
+            }
+            (uri == "/tts/voices" || uri == "/tts/voices/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.tts", capability = "tts", detail = "List TTS voices")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(tts.listVoices()))
+            }
+            (uri == "/tts/speak" || uri == "/tts/speak/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.tts", capability = "tts", detail = "Speak text")
+                if (!ok.first) return ok.second!!
+                val text = payload.optString("text", "")
+                val voice = payload.optString("voice", "").trim().ifBlank { null }
+                val locale = payload.optString("locale", "").trim().ifBlank { null }
+                val rate = if (payload.has("rate")) payload.optDouble("rate", 1.0).toFloat() else null
+                val pitch = if (payload.has("pitch")) payload.optDouble("pitch", 1.0).toFloat() else null
+                return jsonResponse(JSONObject(tts.speak(text, voice, locale, rate, pitch)))
+            }
+            (uri == "/tts/stop" || uri == "/tts/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.tts", capability = "tts", detail = "Stop TTS")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(tts.stop()))
+            }
+            (uri == "/stt/status" || uri == "/stt/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.mic", capability = "stt", detail = "Speech recognizer status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(stt.status()))
+            }
+            (uri == "/stt/start" || uri == "/stt/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Start speech recognition")
+                if (!ok.first) return ok.second!!
+                val locale = payload.optString("locale", "").trim().ifBlank { null }
+                val partial = payload.optBoolean("partial", true)
+                val maxResults = payload.optInt("max_results", 5)
+                val resp = JSONObject(stt.start(locale, partial, maxResults)).put("ws_path", "/ws/stt/events")
+                return jsonResponse(resp)
+            }
+            (uri == "/stt/stop" || uri == "/stt/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Stop speech recognition")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(stt.stop()))
             }
             uri == "/ssh/status" -> {
                 val status = sshdManager.status()
@@ -1402,42 +1612,90 @@ class LocalHttpServer(
     override fun openWebSocket(handshake: IHTTPSession): NanoWSD.WebSocket {
         val uri = handshake.uri ?: "/"
         val prefix = "/ws/usb/stream/"
-        if (!uri.startsWith(prefix)) {
+        if (uri.startsWith(prefix)) {
+            val streamId = uri.removePrefix(prefix).trim()
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {
-                    runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "unknown_ws_path", false) }
+                    val st = usbStreams[streamId]
+                    if (st == null) {
+                        runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "stream_not_found", false) }
+                        return
+                    }
+                    st.wsClients.add(this)
                 }
-                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {}
-                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
+
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    usbStreams[streamId]?.wsClients?.remove(this)
+                }
+
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {
+                    // Ignore; this is a server->client stream.
+                }
+
                 override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
-                override fun onException(exception: java.io.IOException?) {}
+
+                override fun onException(exception: java.io.IOException?) {
+                    usbStreams[streamId]?.wsClients?.remove(this)
+                }
             }
         }
 
-        val streamId = uri.removePrefix(prefix).trim()
+        if (uri == "/ws/ble/events") {
+            return object : NanoWSD.WebSocket(handshake) {
+                override fun onOpen() {
+                    ble.addWsClient(this)
+                }
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    ble.removeWsClient(this)
+                }
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+                override fun onException(exception: java.io.IOException?) {
+                    ble.removeWsClient(this)
+                }
+            }
+        }
+
+        if (uri == "/ws/stt/events") {
+            return object : NanoWSD.WebSocket(handshake) {
+                override fun onOpen() {
+                    stt.addWsClient(this)
+                }
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    stt.removeWsClient(this)
+                }
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+                override fun onException(exception: java.io.IOException?) {
+                    stt.removeWsClient(this)
+                }
+            }
+        }
+
+        if (uri == "/ws/camera/preview") {
+            return object : NanoWSD.WebSocket(handshake) {
+                override fun onOpen() {
+                    camera.addWsClient(this)
+                }
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    camera.removeWsClient(this)
+                }
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+                override fun onException(exception: java.io.IOException?) {
+                    camera.removeWsClient(this)
+                }
+            }
+        }
+
         return object : NanoWSD.WebSocket(handshake) {
             override fun onOpen() {
-                val st = usbStreams[streamId]
-                if (st == null) {
-                    runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "stream_not_found", false) }
-                    return
-                }
-                st.wsClients.add(this)
+                runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "unknown_ws_path", false) }
             }
-
-            override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
-                usbStreams[streamId]?.wsClients?.remove(this)
-            }
-
-            override fun onMessage(message: NanoWSD.WebSocketFrame?) {
-                // Ignore; this is a server->client stream.
-            }
-
+            override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {}
+            override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
             override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
-
-            override fun onException(exception: java.io.IOException?) {
-                usbStreams[streamId]?.wsClients?.remove(this)
-            }
+            override fun onException(exception: java.io.IOException?) {}
         }
     }
 
@@ -1788,6 +2046,58 @@ class LocalHttpServer(
         if (!isPermissionApproved(permissionId, consume = true)) {
             val req = permissionStore.create(
                 tool = "pip",
+                detail = detail.take(240),
+                scope = scope,
+                identity = identity,
+                capability = capability
+            )
+            sendPermissionPrompt(req.id, req.tool, req.detail, false)
+            val requestJson = JSONObject()
+                .put("id", req.id)
+                .put("status", req.status)
+                .put("tool", req.tool)
+                .put("detail", req.detail)
+                .put("scope", req.scope)
+                .put("created_at", req.createdAt)
+                .put("identity", req.identity)
+                .put("capability", req.capability)
+            val out = JSONObject()
+                .put("status", "permission_required")
+                .put("request", requestJson)
+            return Pair(false, newFixedLengthResponse(Response.Status.FORBIDDEN, "application/json", out.toString()))
+        }
+
+        return Pair(true, null)
+    }
+
+    private fun ensureDevicePermission(
+        session: IHTTPSession,
+        payload: JSONObject,
+        tool: String,
+        capability: String,
+        detail: String
+    ): Pair<Boolean, Response?> {
+        val headerIdentity = (session.headers["x-kugutz-identity"] ?: "").trim()
+        val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
+        var permissionId = payload.optString("permission_id", "").trim()
+
+        val scope = if (permissionPrefs.rememberApprovals()) "persistent" else "session"
+
+        if (!isPermissionApproved(permissionId, consume = true) && identity.isNotBlank()) {
+            val reusable = permissionStore.findReusableApproved(
+                tool = tool,
+                scope = scope,
+                identity = identity,
+                capability = capability
+            )
+            if (reusable != null) {
+                permissionId = reusable.id
+            }
+        }
+
+        if (!isPermissionApproved(permissionId, consume = true)) {
+            val req = permissionStore.create(
+                tool = tool,
                 detail = detail.take(240),
                 scope = scope,
                 identity = identity,

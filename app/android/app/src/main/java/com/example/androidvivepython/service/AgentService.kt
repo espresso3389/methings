@@ -4,19 +4,18 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
-import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.LifecycleService
 import jp.espresso3389.kugutz.ui.MainActivity
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
-class AgentService : Service() {
+class AgentService : LifecycleService() {
     private lateinit var runtimeManager: PythonRuntimeManager
     private var localServer: LocalHttpServer? = null
     private var vaultServer: KeystoreVaultServer? = null
@@ -57,6 +56,7 @@ class AgentService : Service() {
         startSshAuthMonitor()
         localServer = LocalHttpServer(
             this,
+            this,
             runtimeManager,
             sshdManager!!,
             sshPinManager!!,
@@ -96,10 +96,6 @@ class AgentService : Service() {
             else -> {}
         }
         return START_STICKY
-    }
-
-    override fun onBind(intent: Intent?): IBinder? {
-        return null
     }
 
     override fun onDestroy() {

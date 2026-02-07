@@ -17,6 +17,28 @@ class DeviceApiTool:
         "ssh.pin.status": {"method": "GET", "path": "/ssh/pin/status", "permission": False},
         "ssh.pin.start": {"method": "POST", "path": "/ssh/pin/start", "permission": True},
         "ssh.pin.stop": {"method": "POST", "path": "/ssh/pin/stop", "permission": True},
+        "camera.list": {"method": "GET", "path": "/camera/list", "permission": True},
+        "camera.status": {"method": "GET", "path": "/camera/status", "permission": True},
+        "camera.preview.start": {"method": "POST", "path": "/camera/preview/start", "permission": True},
+        "camera.preview.stop": {"method": "POST", "path": "/camera/preview/stop", "permission": True},
+        "camera.capture": {"method": "POST", "path": "/camera/capture", "permission": True},
+        "ble.status": {"method": "GET", "path": "/ble/status", "permission": True},
+        "ble.scan.start": {"method": "POST", "path": "/ble/scan/start", "permission": True},
+        "ble.scan.stop": {"method": "POST", "path": "/ble/scan/stop", "permission": True},
+        "ble.connect": {"method": "POST", "path": "/ble/connect", "permission": True},
+        "ble.disconnect": {"method": "POST", "path": "/ble/disconnect", "permission": True},
+        "ble.gatt.services": {"method": "POST", "path": "/ble/gatt/services", "permission": True},
+        "ble.gatt.read": {"method": "POST", "path": "/ble/gatt/read", "permission": True},
+        "ble.gatt.write": {"method": "POST", "path": "/ble/gatt/write", "permission": True},
+        "ble.gatt.notify.start": {"method": "POST", "path": "/ble/gatt/notify/start", "permission": True},
+        "ble.gatt.notify.stop": {"method": "POST", "path": "/ble/gatt/notify/stop", "permission": True},
+        "tts.init": {"method": "POST", "path": "/tts/init", "permission": True},
+        "tts.voices": {"method": "GET", "path": "/tts/voices", "permission": True},
+        "tts.speak": {"method": "POST", "path": "/tts/speak", "permission": True},
+        "tts.stop": {"method": "POST", "path": "/tts/stop", "permission": True},
+        "stt.status": {"method": "GET", "path": "/stt/status", "permission": True},
+        "stt.start": {"method": "POST", "path": "/stt/start", "permission": True},
+        "stt.stop": {"method": "POST", "path": "/stt/stop", "permission": True},
         "usb.list": {"method": "GET", "path": "/usb/list", "permission": True},
         "usb.open": {"method": "POST", "path": "/usb/open", "permission": True},
         "usb.close": {"method": "POST", "path": "/usb/close", "permission": True},
@@ -326,6 +348,14 @@ class DeviceApiTool:
         a = (action or "").strip()
         if a.startswith("ssh.pin."):
             return "ssh_pin", "ssh.pin", "session"
+        if a.startswith("camera."):
+            return "device.camera", "camera", "session"
+        if a.startswith("ble."):
+            return "device.ble", "ble", "session"
+        if a.startswith("tts."):
+            return "device.tts", "tts", "session"
+        if a.startswith("stt."):
+            return "device.mic", "stt", "session"
         if a.startswith("usb."):
             return "device.usb", "usb", "session"
         if a.startswith("vision."):
