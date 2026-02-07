@@ -20,6 +20,11 @@ Build an Android 14+ app that provides a Python development environment with:
 - All sensitive actions must be audit-logged.
 - Everything should run offline except explicit cloud calls.
 
+## Agent Behavior (Product Goal)
+- Outcome first: the agent should deliver the requested artifact/state change (e.g., a photo, a file, a running service), not a tutorial.
+- Tool-driven: if the user asks to do something, the agent should use tools and/or write+run code to actually do it (no pretending).
+- Minimal questions: only ask the user when consent is required or when a requested capability is not available yet.
+
 ## Suggested Architecture
 - Android app (Kotlin), minimal native wrapper
   - WebView/Chromium UI (custom shell)
