@@ -32,15 +32,20 @@ class AssetExtractor(private val context: Context) {
     fun extractWheelhouseForCurrentAbi(): File? {
         return try {
             val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: return null
-            val targetDir = File(context.filesDir, "wheelhouse/$abi")
-            targetDir.mkdirs()
+            val rootDir = File(context.filesDir, "wheelhouse/$abi")
+            val bundledDir = File(rootDir, "bundled")
+            // Keep user-downloaded wheels across app updates. Only reset bundled wheels.
+            if (bundledDir.exists()) {
+                bundledDir.deleteRecursively()
+            }
+            bundledDir.mkdirs()
             var copiedAny = false
 
             // Common wheels (pure-Python facades).
             val commonPath = "wheels/common"
             val commonEntries = context.assets.list(commonPath)
             if (commonEntries != null && commonEntries.isNotEmpty()) {
-                copyAssetDir(commonPath, targetDir)
+                copyAssetDir(commonPath, bundledDir)
                 copiedAny = true
             }
 
@@ -48,7 +53,7 @@ class AssetExtractor(private val context: Context) {
             val abiPath = "wheels/$abi"
             val abiEntries = context.assets.list(abiPath)
             if (abiEntries != null && abiEntries.isNotEmpty()) {
-                copyAssetDir(abiPath, targetDir)
+                copyAssetDir(abiPath, bundledDir)
                 copiedAny = true
             }
 
@@ -56,7 +61,7 @@ class AssetExtractor(private val context: Context) {
                 // Nothing packaged for this ABI (and no common wheels).
                 return null
             }
-            targetDir
+            bundledDir
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to extract wheelhouse", ex)
             null

@@ -106,12 +106,24 @@ At runtime this is extracted to:
 
 - `<filesDir>/wheelhouse/<abi>/`
 
-Both `wheels/common/` and `wheels/<abi>/` are extracted into the same target directory.
+Bundled wheels from the APK are extracted into:
+
+- `<filesDir>/wheelhouse/<abi>/bundled/`
+
+User-downloaded wheels (cache) are stored in:
+
+- `<filesDir>/wheelhouse/<abi>/user/`
+
+Bundled extraction resets only the `bundled/` directory on app update; the `user/` cache is preserved.
 
 and exported via env vars for both SSH sessions and `shell_exec`:
 
-- `PIP_FIND_LINKS=<filesDir>/wheelhouse/<abi>`
-- `KUGUTZ_WHEELHOUSE=<filesDir>/wheelhouse/<abi>`
+- `PIP_FIND_LINKS="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
+- `KUGUTZ_WHEELHOUSE="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
+
+In current implementation these env vars contain a whitespace-separated list of directories:
+
+- `.../wheelhouse/<abi>/bundled .../wheelhouse/<abi>/user`
 
 Note: in this repo the wheelhouse contents are generally treated as build artifacts and are gitignored.
 The Android build runs `scripts/build_facade_wheels.py` to generate small facade wheels before packaging.

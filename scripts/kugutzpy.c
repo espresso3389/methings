@@ -189,7 +189,7 @@ int main(int argc, char **argv) {
 
     /* Wheelhouse: allow pip to resolve prebuilt wheels shipped with the app.
      *
-     * The Android side sets KUGUTZ_WHEELHOUSE to a directory containing wheels
+     * The Android side sets KUGUTZ_WHEELHOUSE to one or more directories containing wheels
      * (e.g. an opencv-python shim wheel + its real payload).
      *
      * Don't override if already set by the caller. */

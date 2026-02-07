@@ -412,6 +412,37 @@ class LocalHttpServer(
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 return handleWebSearch(session, payload)
             }
+            (uri == "/pip/download" || uri == "/pip/download/") -> {
+                if (session.method != Method.POST) {
+                    return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
+                }
+                val body = postBody ?: ""
+                val payload = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                return handlePipDownload(session, payload)
+            }
+            (uri == "/pip/install" || uri == "/pip/install/") -> {
+                if (session.method != Method.POST) {
+                    return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
+                }
+                val body = postBody ?: ""
+                val payload = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                return handlePipInstall(session, payload)
+            }
+            (uri == "/pip/status" || uri == "/pip/status/") -> {
+                val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
+                return jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("abi", android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+                        .put("python_home", File(context.filesDir, "pyenv").absolutePath)
+                        .put("wheelhouse_root", wheelhouse?.root?.absolutePath ?: "")
+                        .put("wheelhouse_bundled", wheelhouse?.bundled?.absolutePath ?: "")
+                        .put("wheelhouse_user", wheelhouse?.user?.absolutePath ?: "")
+                        .put("pip_find_links", wheelhouse?.findLinksEnvValue() ?: "")
+                )
+            }
             uri == "/ssh/status" -> {
                 val status = sshdManager.status()
                 jsonResponse(
@@ -651,8 +682,7 @@ class LocalHttpServer(
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
         val pyenvDir = File(context.filesDir, "pyenv")
         val serverDir = File(context.filesDir, "server")
-        val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "arm64-v8a"
-        val wheelhouseDir = File(context.filesDir, "wheelhouse/$abi").takeIf { it.exists() && it.isDirectory }
+        val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
         return try {
             fun runPythonCommand(cmdline: List<String>): Pair<Int, String> {
                 val pb = ProcessBuilder(cmdline)
@@ -661,9 +691,10 @@ class LocalHttpServer(
                 pb.environment()["KUGUTZ_PYENV"] = pyenvDir.absolutePath
                 pb.environment()["KUGUTZ_NATIVELIB"] = nativeLibDir
                 pb.environment()["KUGUTZ_IDENTITY"] = installIdentity.get()
-                if (wheelhouseDir != null) {
-                    pb.environment()["KUGUTZ_WHEELHOUSE"] = wheelhouseDir.absolutePath
-                    pb.environment()["PIP_FIND_LINKS"] = wheelhouseDir.absolutePath
+                pb.environment()["HOME"] = userHome.absolutePath
+                if (wheelhouse != null) {
+                    pb.environment()["KUGUTZ_WHEELHOUSE"] = wheelhouse.findLinksEnvValue()
+                    pb.environment()["PIP_FIND_LINKS"] = wheelhouse.findLinksEnvValue()
                 }
                 pb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
                 pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
@@ -697,6 +728,308 @@ class LocalHttpServer(
             )
         } catch (ex: Exception) {
             jsonError(Response.Status.INTERNAL_ERROR, "exec_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun ensurePipPermission(
+        session: IHTTPSession,
+        payload: JSONObject,
+        capability: String,
+        detail: String
+    ): Pair<Boolean, Response?> {
+        val headerIdentity = (session.headers["x-kugutz-identity"] ?: "").trim()
+        val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
+        var permissionId = payload.optString("permission_id", "").trim()
+
+        val scope = if (permissionPrefs.rememberApprovals()) "persistent" else "session"
+
+        if (!isPermissionApproved(permissionId, consume = true) && identity.isNotBlank()) {
+            val reusable = permissionStore.findReusableApproved(
+                tool = "pip",
+                scope = scope,
+                identity = identity,
+                capability = capability
+            )
+            if (reusable != null) {
+                permissionId = reusable.id
+            }
+        }
+
+        if (!isPermissionApproved(permissionId, consume = true)) {
+            val req = permissionStore.create(
+                tool = "pip",
+                detail = detail.take(240),
+                scope = scope,
+                identity = identity,
+                capability = capability
+            )
+            sendPermissionPrompt(req.id, req.tool, req.detail, false)
+            val requestJson = JSONObject()
+                .put("id", req.id)
+                .put("status", req.status)
+                .put("tool", req.tool)
+                .put("detail", req.detail)
+                .put("scope", req.scope)
+                .put("created_at", req.createdAt)
+                .put("identity", req.identity)
+                .put("capability", req.capability)
+            val out = JSONObject()
+                .put("status", "permission_required")
+                .put("request", requestJson)
+            return Pair(false, newFixedLengthResponse(Response.Status.FORBIDDEN, "application/json", out.toString()))
+        }
+
+        return Pair(true, null)
+    }
+
+    private fun handlePipDownload(session: IHTTPSession, payload: JSONObject): Response {
+        val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
+            ?: return jsonError(Response.Status.INTERNAL_ERROR, "wheelhouse_unavailable")
+
+        val pkgsJson = payload.optJSONArray("packages")
+        val pkgs = mutableListOf<String>()
+        if (pkgsJson != null) {
+            for (i in 0 until pkgsJson.length()) {
+                val p = pkgsJson.optString(i, "").trim()
+                if (p.isNotBlank()) pkgs.add(p)
+            }
+        } else {
+            val spec = payload.optString("spec", "").trim()
+            if (spec.isNotBlank()) pkgs.addAll(spec.split(Regex("\\s+")).map { it.trim() }.filter { it.isNotBlank() })
+        }
+        if (pkgs.isEmpty()) {
+            return jsonError(Response.Status.BAD_REQUEST, "packages_required")
+        }
+
+        val withDeps = payload.optBoolean("with_deps", true)
+        val onlyBinary = payload.optBoolean("only_binary", true)
+        val indexUrl = payload.optString("index_url", "").trim()
+        val extraIndexUrls = payload.optJSONArray("extra_index_urls")
+        val trustedHosts = payload.optJSONArray("trusted_hosts")
+
+        val detail = "pip download (to wheelhouse): " + pkgs.joinToString(" ").take(180)
+        val perm = ensurePipPermission(session, payload, capability = "pip.download", detail = detail)
+        if (!perm.first) return perm.second!!
+
+        val pythonExe = resolvePythonBinary() ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_missing")
+        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+        val pyenvDir = File(context.filesDir, "pyenv")
+        val serverDir = File(context.filesDir, "server")
+        val userHome = File(context.filesDir, "user")
+
+        val args = mutableListOf(
+            pythonExe.absolutePath,
+            "-m",
+            "pip",
+            "download",
+            "--disable-pip-version-check",
+            "--no-input",
+            "--dest",
+            wheelhouse.user.absolutePath
+        )
+        if (!withDeps) {
+            args.add("--no-deps")
+        }
+        if (onlyBinary) {
+            args.add("--only-binary=:all:")
+            args.add("--prefer-binary")
+        }
+        if (indexUrl.isNotBlank()) {
+            args.add("--index-url")
+            args.add(indexUrl)
+        }
+        if (extraIndexUrls != null) {
+            for (i in 0 until extraIndexUrls.length()) {
+                val u = extraIndexUrls.optString(i, "").trim()
+                if (u.isNotBlank()) {
+                    args.add("--extra-index-url")
+                    args.add(u)
+                }
+            }
+        }
+        if (trustedHosts != null) {
+            for (i in 0 until trustedHosts.length()) {
+                val h = trustedHosts.optString(i, "").trim()
+                if (h.isNotBlank()) {
+                    args.add("--trusted-host")
+                    args.add(h)
+                }
+            }
+        }
+        args.addAll(pkgs)
+
+        return try {
+            val pb = ProcessBuilder(args)
+            pb.redirectErrorStream(true)
+            pb.environment()["HOME"] = userHome.absolutePath
+            pb.environment()["KUGUTZ_PYENV"] = pyenvDir.absolutePath
+            pb.environment()["KUGUTZ_NATIVELIB"] = nativeLibDir
+            pb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
+            pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
+            pb.environment()["PYTHONPATH"] = listOf(
+                serverDir.absolutePath,
+                "${pyenvDir.absolutePath}/site-packages",
+                "${pyenvDir.absolutePath}/modules",
+                "${pyenvDir.absolutePath}/stdlib.zip"
+            ).joinToString(":")
+            pb.environment()["KUGUTZ_WHEELHOUSE"] = wheelhouse.findLinksEnvValue()
+            pb.environment()["PIP_FIND_LINKS"] = wheelhouse.findLinksEnvValue()
+
+            val managedCa = File(context.filesDir, "protected/ca/cacert.pem")
+            val fallbackCertifi = File(pyenvDir, "site-packages/certifi/cacert.pem")
+            val caFile = when {
+                managedCa.exists() && managedCa.length() > 0 -> managedCa
+                fallbackCertifi.exists() -> fallbackCertifi
+                else -> null
+            }
+            if (caFile != null) {
+                pb.environment()["SSL_CERT_FILE"] = caFile.absolutePath
+                pb.environment()["PIP_CERT"] = caFile.absolutePath
+                pb.environment()["REQUESTS_CA_BUNDLE"] = caFile.absolutePath
+            }
+
+            val proc = pb.start()
+            val output = proc.inputStream.bufferedReader().readText()
+            val code = proc.waitFor()
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("code", code)
+                    .put("output", output)
+                    .put("dest", wheelhouse.user.absolutePath)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "pip_download_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handlePipInstall(session: IHTTPSession, payload: JSONObject): Response {
+        val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
+            ?: return jsonError(Response.Status.INTERNAL_ERROR, "wheelhouse_unavailable")
+
+        val pkgsJson = payload.optJSONArray("packages")
+        val pkgs = mutableListOf<String>()
+        if (pkgsJson != null) {
+            for (i in 0 until pkgsJson.length()) {
+                val p = pkgsJson.optString(i, "").trim()
+                if (p.isNotBlank()) pkgs.add(p)
+            }
+        } else {
+            val spec = payload.optString("spec", "").trim()
+            if (spec.isNotBlank()) pkgs.addAll(spec.split(Regex("\\s+")).map { it.trim() }.filter { it.isNotBlank() })
+        }
+        if (pkgs.isEmpty()) {
+            return jsonError(Response.Status.BAD_REQUEST, "packages_required")
+        }
+
+        val allowNetwork = payload.optBoolean("allow_network", false)
+        val onlyBinary = payload.optBoolean("only_binary", true)
+        val upgrade = payload.optBoolean("upgrade", true)
+        val noDeps = payload.optBoolean("no_deps", false)
+        val indexUrl = payload.optString("index_url", "").trim()
+        val extraIndexUrls = payload.optJSONArray("extra_index_urls")
+        val trustedHosts = payload.optJSONArray("trusted_hosts")
+
+        val mode = if (allowNetwork) "network" else "offline"
+        val detail = "pip install ($mode): " + pkgs.joinToString(" ").take(180)
+        val permCap = if (allowNetwork) "pip.install.network" else "pip.install.offline"
+        val perm = ensurePipPermission(session, payload, capability = permCap, detail = detail)
+        if (!perm.first) return perm.second!!
+
+        val pythonExe = resolvePythonBinary() ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_missing")
+        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+        val pyenvDir = File(context.filesDir, "pyenv")
+        val serverDir = File(context.filesDir, "server")
+        val userHome = File(context.filesDir, "user")
+
+        val args = mutableListOf(
+            pythonExe.absolutePath,
+            "-m",
+            "pip",
+            "install",
+            "--disable-pip-version-check",
+            "--no-input"
+        )
+        if (!allowNetwork) {
+            args.add("--no-index")
+        }
+        args.addAll(wheelhouse.findLinksArgs())
+        if (onlyBinary) {
+            args.add("--only-binary=:all:")
+            args.add("--prefer-binary")
+        }
+        if (upgrade) {
+            args.add("--upgrade")
+        }
+        if (noDeps) {
+            args.add("--no-deps")
+        }
+        if (allowNetwork && indexUrl.isNotBlank()) {
+            args.add("--index-url")
+            args.add(indexUrl)
+        }
+        if (allowNetwork && extraIndexUrls != null) {
+            for (i in 0 until extraIndexUrls.length()) {
+                val u = extraIndexUrls.optString(i, "").trim()
+                if (u.isNotBlank()) {
+                    args.add("--extra-index-url")
+                    args.add(u)
+                }
+            }
+        }
+        if (allowNetwork && trustedHosts != null) {
+            for (i in 0 until trustedHosts.length()) {
+                val h = trustedHosts.optString(i, "").trim()
+                if (h.isNotBlank()) {
+                    args.add("--trusted-host")
+                    args.add(h)
+                }
+            }
+        }
+        args.addAll(pkgs)
+
+        return try {
+            val pb = ProcessBuilder(args)
+            pb.redirectErrorStream(true)
+            pb.environment()["HOME"] = userHome.absolutePath
+            pb.environment()["KUGUTZ_PYENV"] = pyenvDir.absolutePath
+            pb.environment()["KUGUTZ_NATIVELIB"] = nativeLibDir
+            pb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
+            pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
+            pb.environment()["PYTHONPATH"] = listOf(
+                serverDir.absolutePath,
+                "${pyenvDir.absolutePath}/site-packages",
+                "${pyenvDir.absolutePath}/modules",
+                "${pyenvDir.absolutePath}/stdlib.zip"
+            ).joinToString(":")
+            pb.environment()["KUGUTZ_WHEELHOUSE"] = wheelhouse.findLinksEnvValue()
+            pb.environment()["PIP_FIND_LINKS"] = wheelhouse.findLinksEnvValue()
+
+            val managedCa = File(context.filesDir, "protected/ca/cacert.pem")
+            val fallbackCertifi = File(pyenvDir, "site-packages/certifi/cacert.pem")
+            val caFile = when {
+                managedCa.exists() && managedCa.length() > 0 -> managedCa
+                fallbackCertifi.exists() -> fallbackCertifi
+                else -> null
+            }
+            if (caFile != null) {
+                pb.environment()["SSL_CERT_FILE"] = caFile.absolutePath
+                pb.environment()["PIP_CERT"] = caFile.absolutePath
+                pb.environment()["REQUESTS_CA_BUNDLE"] = caFile.absolutePath
+            }
+
+            val proc = pb.start()
+            val output = proc.inputStream.bufferedReader().readText()
+            val code = proc.waitFor()
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("code", code)
+                    .put("output", output)
+                    .put("mode", mode)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "pip_install_failed", JSONObject().put("detail", ex.message ?: ""))
         }
     }
 

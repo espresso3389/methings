@@ -33,18 +33,19 @@ Wheels are bundled under:
   - ABI-specific wheels (and/or Python-version-specific wheels)
 
 At app/runtime install, we extract to app-private storage:
-- `<filesDir>/wheelhouse/<abi>/`
+- `<filesDir>/wheelhouse/<abi>/bundled/` (extracted from APK assets)
+- `<filesDir>/wheelhouse/<abi>/user/` (user-managed wheel cache; preserved across app updates)
 
 The app sets pip discovery variables for subprocesses and SSH sessions:
-- `KUGUTZ_WHEELHOUSE=<filesDir>/wheelhouse/<abi>`
-- `PIP_FIND_LINKS=<filesDir>/wheelhouse/<abi>`
+- `KUGUTZ_WHEELHOUSE="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
+- `PIP_FIND_LINKS="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
 
 This makes pip able to resolve bundled wheels without internet access.
 
 ## Recommended Pip Modes
 1. Offline install from our wheelhouse only:
 ```bash
-pip install --no-index --find-links "$KUGUTZ_WHEELHOUSE" <package>
+pip install --no-index <package>
 ```
 
 2. When network is allowed, prefer binary wheels to avoid sdists:
@@ -83,8 +84,13 @@ Facade wheel builder:
 - `scripts/build_facade_wheels.py`
 - outputs to `app/android/app/src/main/assets/wheels/common/`
 
+## Local Pip APIs
+The Kotlin control plane provides helper endpoints for managing wheels and installing packages:
+- `GET /pip/status`
+- `POST /pip/download` (downloads wheels to the user wheel cache; permission-gated)
+- `POST /pip/install` (offline by default; can optionally use network; permission-gated)
+
 ## Current Implementation Pointers
 - Wheelhouse extraction: `app/android/app/src/main/java/.../service/AssetExtractor.kt`
 - Runtime bootstrap install: `app/android/app/src/main/java/.../service/PythonRuntimeInstaller.kt`
 - Env propagation for SSH: `app/android/app/src/main/java/.../service/SshdManager.kt`
-

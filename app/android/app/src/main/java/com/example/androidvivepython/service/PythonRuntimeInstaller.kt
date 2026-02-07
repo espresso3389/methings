@@ -78,9 +78,8 @@ class PythonRuntimeInstaller(private val context: Context) {
             val stored = prefs.getLong(KEY_FACADE_VERSION, -1L)
             if (stored == currentVersion) return
 
-            val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: return
-            val wheelhouseDir = File(context.filesDir, "wheelhouse/$abi")
-            if (!wheelhouseDir.exists() || !wheelhouseDir.isDirectory) return
+            val wheelhouse = WheelhousePaths.forCurrentAbi(context) ?: return
+            wheelhouse.ensureDirs()
 
             val nativeLibDir = context.applicationInfo.nativeLibraryDir
             val pyenvDir = File(context.filesDir, "pyenv")
@@ -96,8 +95,7 @@ class PythonRuntimeInstaller(private val context: Context) {
                 "--disable-pip-version-check",
                 "--no-input",
                 "--no-index",
-                "--find-links",
-                wheelhouseDir.absolutePath,
+                *wheelhouse.findLinksArgs().toTypedArray(),
                 "--no-deps",
                 "--upgrade",
                 "libusb",
@@ -118,8 +116,8 @@ class PythonRuntimeInstaller(private val context: Context) {
                 "${pyenvDir.absolutePath}/modules",
                 "${pyenvDir.absolutePath}/stdlib.zip"
             ).joinToString(":")
-            pb.environment()["KUGUTZ_WHEELHOUSE"] = wheelhouseDir.absolutePath
-            pb.environment()["PIP_FIND_LINKS"] = wheelhouseDir.absolutePath
+            pb.environment()["KUGUTZ_WHEELHOUSE"] = wheelhouse.findLinksEnvValue()
+            pb.environment()["PIP_FIND_LINKS"] = wheelhouse.findLinksEnvValue()
 
             // Prefer the managed CA bundle (app-private, refreshable) over certifi's baked-in file.
             val managedCa = File(context.filesDir, "protected/ca/cacert.pem")
@@ -154,15 +152,14 @@ class PythonRuntimeInstaller(private val context: Context) {
             if (currentVersion == -1L) return
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val stored = prefs.getLong(KEY_WHEELHOUSE_VERSION, -1L)
-            val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: return
-            val targetDir = File(context.filesDir, "wheelhouse/$abi")
-            val needs = stored != currentVersion || !targetDir.exists() || (targetDir.list()?.isEmpty() != false)
+            val wheelhouse = WheelhousePaths.forCurrentAbi(context) ?: return
+            val needs = stored != currentVersion ||
+                !wheelhouse.bundled.exists() ||
+                (wheelhouse.bundled.list()?.isEmpty() != false)
             if (!needs) return
 
-            if (targetDir.exists()) {
-                targetDir.deleteRecursively()
-            }
             extractor.extractWheelhouseForCurrentAbi()
+            wheelhouse.ensureDirs()
             prefs.edit().putLong(KEY_WHEELHOUSE_VERSION, currentVersion).apply()
         } catch (ex: Exception) {
             Log.w(TAG, "Failed to install wheelhouse", ex)
