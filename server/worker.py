@@ -27,6 +27,11 @@ USER_DIR = BASE_DIR / "user"
 USER_DIR.mkdir(parents=True, exist_ok=True)
 DATA_DIR = BASE_DIR / "protected"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
+PYENV_DIR = BASE_DIR / "pyenv"
+if PYENV_DIR.exists():
+    # Some tools (notably pip build isolation) may spawn Python subprocesses using sys.executable.
+    # Our embedded launcher expects KUGUTZ_PYENV to locate the runtime.
+    os.environ.setdefault("KUGUTZ_PYENV", str(PYENV_DIR))
 
 STORAGE = Storage(DATA_DIR / "app.db")
 TOOL_ROUTER = ToolRouter(DATA_DIR)
@@ -297,6 +302,14 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
     with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
         try:
             if cmd == "pip":
+                # Avoid attempting source builds on-device by default (no compiler toolchain).
+                # Users can override by explicitly passing --no-binary/--only-binary themselves.
+                if args and args[0] == "install":
+                    has_only_binary = any(a.startswith("--only-binary") for a in args)
+                    has_no_binary = any(a.startswith("--no-binary") for a in args)
+                    if not has_only_binary and not has_no_binary:
+                        args = ["install", "--only-binary=:all:"] + args[1:]
+
                 # pip build isolation uses temp directories; ensure they point to app-writable paths.
                 tmp_dir = (workdir / ".tmp").resolve()
                 cache_dir = (workdir / ".cache" / "pip").resolve()
@@ -306,6 +319,18 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
                 os.environ["TMP"] = str(tmp_dir)
                 os.environ["TEMP"] = str(tmp_dir)
                 os.environ["PIP_CACHE_DIR"] = str(cache_dir)
+                os.environ.setdefault("PIP_DISABLE_PIP_VERSION_CHECK", "1")
+
+                # pip spawns subprocesses (PEP 517 build isolation). In embedded Python,
+                # sys.executable may be empty, which makes pip fail with Errno 13 on ''.
+                if not getattr(sys, "executable", ""):
+                    cand = (os.environ.get("KUGUTZ_PYTHON_EXE") or "").strip()
+                    if not cand:
+                        nat = (os.environ.get("KUGUTZ_NATIVELIB") or "").strip()
+                        if nat:
+                            cand = str(Path(nat) / "libkugutzpy.so")
+                    if cand and Path(cand).exists():
+                        sys.executable = cand
                 try:
                     from pip._internal.cli.main import main as pip_main
                 except Exception:

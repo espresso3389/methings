@@ -61,6 +61,11 @@ class PythonRuntimeManager(private val context: Context) {
         try {
             // Stable identity improves permission reuse across restarts and matches Android-style "one-time grant".
             android.system.Os.setenv("KUGUTZ_IDENTITY", installIdentity.get(), true)
+            // Help embedded Python (and pip subprocesses) find the executable entrypoint.
+            android.system.Os.setenv("KUGUTZ_NATIVELIB", nativeLibDir, true)
+            android.system.Os.setenv("KUGUTZ_PYTHON_EXE", File(nativeLibDir, "libkugutzpy.so").absolutePath, true)
+            // Required for Python subprocesses spawned via sys.executable (pip build isolation, etc).
+            android.system.Os.setenv("KUGUTZ_PYENV", pythonHome.absolutePath, true)
         } catch (_: Throwable) {
             // Best-effort; some devices/ROMs may restrict setenv.
         }
