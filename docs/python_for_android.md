@@ -99,16 +99,22 @@ Extracts the p4a Python runtime from APK assets to `<filesDir>/pyenv/`. Ensures 
 To keep `pip` dependency resolution working for packages that require Android-native wheels (e.g. `opencv-python`),
 the app can ship a local "wheelhouse" inside APK assets:
 
-- `app/android/app/src/main/assets/wheels/<abi>/*.whl`
+- `app/android/app/src/main/assets/wheels/common/*.whl` (pure-Python / universal wheels)
+- `app/android/app/src/main/assets/wheels/<abi>/*.whl` (ABI-specific wheels)
 
 At runtime this is extracted to:
 
 - `<filesDir>/wheelhouse/<abi>/`
 
+Both `wheels/common/` and `wheels/<abi>/` are extracted into the same target directory.
+
 and exported via env vars for both SSH sessions and `shell_exec`:
 
 - `PIP_FIND_LINKS=<filesDir>/wheelhouse/<abi>`
 - `KUGUTZ_WHEELHOUSE=<filesDir>/wheelhouse/<abi>`
+
+Note: in this repo the wheelhouse contents are generally treated as build artifacts and are gitignored.
+The Android build runs `scripts/build_facade_wheels.py` to generate small facade wheels before packaging.
 
 ## Technical Challenges
 
