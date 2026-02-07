@@ -15,6 +15,14 @@ class DeviceApiTool:
         "ssh.pin.status": {"method": "GET", "path": "/ssh/pin/status", "permission": False},
         "ssh.pin.start": {"method": "POST", "path": "/ssh/pin/start", "permission": True},
         "ssh.pin.stop": {"method": "POST", "path": "/ssh/pin/stop", "permission": True},
+        "usb.list": {"method": "GET", "path": "/usb/list", "permission": True},
+        "usb.open": {"method": "POST", "path": "/usb/open", "permission": True},
+        "usb.close": {"method": "POST", "path": "/usb/close", "permission": True},
+        "usb.control_transfer": {"method": "POST", "path": "/usb/control_transfer", "permission": True},
+        "usb.raw_descriptors": {"method": "POST", "path": "/usb/raw_descriptors", "permission": True},
+        "usb.claim_interface": {"method": "POST", "path": "/usb/claim_interface", "permission": True},
+        "usb.release_interface": {"method": "POST", "path": "/usb/release_interface", "permission": True},
+        "usb.bulk_transfer": {"method": "POST", "path": "/usb/bulk_transfer", "permission": True},
         "shell.exec": {"method": "POST", "path": "/shell/exec", "permission": True},
         "brain.memory.get": {"method": "GET", "path": "/brain/memory", "permission": False},
         "brain.memory.set": {"method": "POST", "path": "/brain/memory", "permission": True},
@@ -90,6 +98,8 @@ class DeviceApiTool:
         a = (action or "").strip()
         if a.startswith("ssh.pin."):
             return "ssh_pin", "ssh.pin", "session"
+        if a.startswith("usb."):
+            return "device.usb", "usb", "session"
         # Default to session scope: approve once per chat session, then no repeated prompts.
         return "device_api", "device_api", "session"
 

@@ -1,6 +1,13 @@
 package jp.espresso3389.kugutz.service
 
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbDeviceConnection
+import android.hardware.usb.UsbManager
+import android.os.Build
+import android.app.PendingIntent
 import android.util.Log
 import fi.iki.elonen.NanoHTTPD
 import java.io.File
@@ -8,6 +15,9 @@ import java.io.FileInputStream
 import java.io.InputStream
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import jp.espresso3389.kugutz.perm.PermissionStoreFacade
 import jp.espresso3389.kugutz.perm.CredentialStore
@@ -33,6 +43,14 @@ class LocalHttpServer(
     private val deviceGrantStore = jp.espresso3389.kugutz.perm.DeviceGrantStoreFacade(context)
     private val agentTasks = java.util.concurrent.ConcurrentHashMap<String, AgentTask>()
     private val lastPermissionPromptAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val usbConnections = ConcurrentHashMap<String, UsbDeviceConnection>()
+    private val usbDevicesByHandle = ConcurrentHashMap<String, UsbDevice>()
+
+    private val usbManager: UsbManager by lazy {
+        context.getSystemService(Context.USB_SERVICE) as UsbManager
+    }
+
+    private val USB_PERMISSION_ACTION = "jp.espresso3389.kugutz.USB_PERMISSION"
 
     fun startServer(): Boolean {
         return try {
@@ -450,6 +468,72 @@ class LocalHttpServer(
                         .put("pip_find_links", wheelhouse?.findLinksEnvValue() ?: "")
                 )
             }
+            (uri == "/usb/list" || uri == "/usb/list/") && session.method == Method.GET -> {
+                return handleUsbList()
+            }
+            (uri == "/usb/open" || uri == "/usb/open/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUsbOpen(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "USB open handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "usb_open_handler_failed")
+                }
+            }
+            (uri == "/usb/close" || uri == "/usb/close/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUsbClose(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "USB close handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "usb_close_handler_failed")
+                }
+            }
+            (uri == "/usb/control_transfer" || uri == "/usb/control_transfer/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUsbControlTransfer(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "USB control_transfer handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "usb_control_transfer_handler_failed")
+                }
+            }
+            (uri == "/usb/raw_descriptors" || uri == "/usb/raw_descriptors/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUsbRawDescriptors(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "USB raw_descriptors handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "usb_raw_descriptors_handler_failed")
+                }
+            }
+            (uri == "/usb/claim_interface" || uri == "/usb/claim_interface/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUsbClaimInterface(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "USB claim_interface handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "usb_claim_interface_handler_failed")
+                }
+            }
+            (uri == "/usb/release_interface" || uri == "/usb/release_interface/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUsbReleaseInterface(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "USB release_interface handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "usb_release_interface_handler_failed")
+                }
+            }
+            (uri == "/usb/bulk_transfer" || uri == "/usb/bulk_transfer/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUsbBulkTransfer(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "USB bulk_transfer handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "usb_bulk_transfer_handler_failed")
+                }
+            }
             uri == "/ssh/status" -> {
                 val status = sshdManager.status()
                 jsonResponse(
@@ -647,6 +731,305 @@ class LocalHttpServer(
             }
             else -> notFound()
         }
+    }
+
+    private fun handleUsbList(): Response {
+        val list = usbManager.deviceList
+        val arr = org.json.JSONArray()
+        list.values.forEach { dev ->
+            arr.put(usbDeviceToJson(dev))
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("count", arr.length())
+                .put("devices", arr)
+        )
+    }
+
+    private fun handleUsbOpen(payload: JSONObject): Response {
+        val name = payload.optString("name", "").trim()
+        val vid = payload.optInt("vendor_id", -1)
+        val pid = payload.optInt("product_id", -1)
+        val timeoutMs = payload.optLong("permission_timeout_ms", 20000L).coerceIn(1000L, 60000L)
+
+        val dev = findUsbDevice(name, vid, pid)
+            ?: return jsonError(Response.Status.NOT_FOUND, "usb_device_not_found")
+
+        if (!ensureUsbPermission(dev, timeoutMs)) {
+            return jsonError(
+                Response.Status.FORBIDDEN,
+                "usb_permission_required",
+                JSONObject()
+                    .put("name", dev.deviceName)
+                    .put("vendor_id", dev.vendorId)
+                    .put("product_id", dev.productId)
+            )
+        }
+
+        val conn = usbManager.openDevice(dev)
+            ?: return jsonError(Response.Status.INTERNAL_ERROR, "usb_open_failed")
+
+        val handle = java.util.UUID.randomUUID().toString()
+        usbConnections[handle] = conn
+        usbDevicesByHandle[handle] = dev
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("handle", handle)
+                .put("device", usbDeviceToJson(dev))
+        )
+    }
+
+    private fun handleUsbClose(payload: JSONObject): Response {
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections.remove(handle)
+        usbDevicesByHandle.remove(handle)
+        try {
+            conn?.close()
+        } catch (_: Exception) {
+        }
+        return jsonResponse(JSONObject().put("status", "ok").put("closed", conn != null))
+    }
+
+    private fun handleUsbControlTransfer(payload: JSONObject): Response {
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+
+        val requestType = payload.optInt("request_type", -1)
+        val request = payload.optInt("request", -1)
+        val value = payload.optInt("value", 0)
+        val index = payload.optInt("index", 0)
+        val timeout = payload.optInt("timeout_ms", 2000).coerceIn(0, 60000)
+        if (requestType < 0 || request < 0) return jsonError(Response.Status.BAD_REQUEST, "request_type_and_request_required")
+
+        val directionIn = (requestType and 0x80) != 0
+        val b64 = payload.optString("data_b64", "")
+        val length = payload.optInt("length", if (directionIn) 256 else 0).coerceIn(0, 16384)
+
+        val buf: ByteArray? = if (directionIn) {
+            ByteArray(length)
+        } else {
+            if (b64.isNotBlank()) android.util.Base64.decode(b64, android.util.Base64.DEFAULT) else ByteArray(0)
+        }
+
+        val transferred = conn.controlTransfer(
+            requestType,
+            request,
+            value,
+            index,
+            buf,
+            if (directionIn) length else (buf?.size ?: 0),
+            timeout
+        )
+
+        if (transferred < 0) {
+            return jsonError(Response.Status.INTERNAL_ERROR, "control_transfer_failed")
+        }
+
+        val out = JSONObject()
+            .put("status", "ok")
+            .put("transferred", transferred)
+
+        if (directionIn && buf != null) {
+            val slice = buf.copyOfRange(0, transferred.coerceIn(0, buf.size))
+            out.put("data_b64", android.util.Base64.encodeToString(slice, android.util.Base64.NO_WRAP))
+        }
+        return jsonResponse(out)
+    }
+
+    private fun handleUsbRawDescriptors(payload: JSONObject): Response {
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val raw = conn.rawDescriptors
+            ?: return jsonError(Response.Status.INTERNAL_ERROR, "raw_descriptors_unavailable")
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("data_b64", android.util.Base64.encodeToString(raw, android.util.Base64.NO_WRAP))
+                .put("length", raw.size)
+        )
+    }
+
+    private fun handleUsbClaimInterface(payload: JSONObject): Response {
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+        val id = payload.optInt("interface_id", -1)
+        if (id < 0) return jsonError(Response.Status.BAD_REQUEST, "interface_id_required")
+        val force = payload.optBoolean("force", true)
+        val intf = (0 until dev.interfaceCount).map { dev.getInterface(it) }.firstOrNull { it.id == id }
+            ?: return jsonError(Response.Status.NOT_FOUND, "interface_not_found")
+        val ok = conn.claimInterface(intf, force)
+        return jsonResponse(JSONObject().put("status", "ok").put("claimed", ok).put("interface_id", id))
+    }
+
+    private fun handleUsbReleaseInterface(payload: JSONObject): Response {
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+        val id = payload.optInt("interface_id", -1)
+        if (id < 0) return jsonError(Response.Status.BAD_REQUEST, "interface_id_required")
+        val intf = (0 until dev.interfaceCount).map { dev.getInterface(it) }.firstOrNull { it.id == id }
+            ?: return jsonError(Response.Status.NOT_FOUND, "interface_not_found")
+        runCatching { conn.releaseInterface(intf) }
+        return jsonResponse(JSONObject().put("status", "ok").put("interface_id", id))
+    }
+
+    private fun handleUsbBulkTransfer(payload: JSONObject): Response {
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+        val epAddr = payload.optInt("endpoint_address", -1)
+        if (epAddr < 0) return jsonError(Response.Status.BAD_REQUEST, "endpoint_address_required")
+        val timeout = payload.optInt("timeout_ms", 2000).coerceIn(0, 60000)
+
+        // Find the endpoint by address across all interfaces.
+        var foundEp: android.hardware.usb.UsbEndpoint? = null
+        for (i in 0 until dev.interfaceCount) {
+            val intf = dev.getInterface(i)
+            for (e in 0 until intf.endpointCount) {
+                val ep = intf.getEndpoint(e)
+                if (ep.address == epAddr) {
+                    foundEp = ep
+                    break
+                }
+            }
+            if (foundEp != null) break
+        }
+        val ep = foundEp ?: return jsonError(Response.Status.NOT_FOUND, "endpoint_not_found")
+
+        val directionIn = (epAddr and 0x80) != 0
+        if (directionIn) {
+            val length = payload.optInt("length", 512).coerceIn(0, 1024 * 1024)
+            val buf = ByteArray(length)
+            val n = conn.bulkTransfer(ep, buf, buf.size, timeout)
+            if (n < 0) return jsonError(Response.Status.INTERNAL_ERROR, "bulk_transfer_failed")
+            val slice = buf.copyOfRange(0, n.coerceIn(0, buf.size))
+            return jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("transferred", n)
+                    .put("data_b64", android.util.Base64.encodeToString(slice, android.util.Base64.NO_WRAP))
+            )
+        } else {
+            val b64 = payload.optString("data_b64", "")
+            val data = if (b64.isNotBlank()) android.util.Base64.decode(b64, android.util.Base64.DEFAULT) else ByteArray(0)
+            val n = conn.bulkTransfer(ep, data, data.size, timeout)
+            if (n < 0) return jsonError(Response.Status.INTERNAL_ERROR, "bulk_transfer_failed")
+            return jsonResponse(JSONObject().put("status", "ok").put("transferred", n))
+        }
+    }
+
+    private fun findUsbDevice(name: String, vendorId: Int, productId: Int): UsbDevice? {
+        val list = usbManager.deviceList.values
+        if (name.isNotBlank()) {
+            return list.firstOrNull { it.deviceName == name }
+        }
+        if (vendorId >= 0 && productId >= 0) {
+            return list.firstOrNull { it.vendorId == vendorId && it.productId == productId }
+        }
+        return null
+    }
+
+    private fun ensureUsbPermission(device: UsbDevice, timeoutMs: Long): Boolean {
+        if (usbManager.hasPermission(device)) return true
+
+        val latch = CountDownLatch(1)
+        val ok = java.util.concurrent.atomic.AtomicBoolean(false)
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                if (intent?.action != USB_PERMISSION_ACTION) return
+                val dev = if (Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                }
+                if (dev?.deviceName != device.deviceName) return
+                ok.set(intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false))
+                latch.countDown()
+            }
+        }
+
+        val pi = PendingIntent.getBroadcast(
+            context,
+            device.deviceName.hashCode(),
+            Intent(USB_PERMISSION_ACTION).setPackage(context.packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+
+        try {
+            val filter = IntentFilter(USB_PERMISSION_ACTION)
+            if (Build.VERSION.SDK_INT >= 33) {
+                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                context.registerReceiver(receiver, filter)
+            }
+            usbManager.requestPermission(device, pi)
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (ex: Exception) {
+            Log.w(TAG, "USB permission request failed", ex)
+        } finally {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (_: Exception) {
+            }
+        }
+        return ok.get() && usbManager.hasPermission(device)
+    }
+
+    private fun usbDeviceToJson(dev: UsbDevice): JSONObject {
+        val o = JSONObject()
+            .put("name", dev.deviceName)
+            .put("vendor_id", dev.vendorId)
+            .put("product_id", dev.productId)
+            .put("device_class", dev.deviceClass)
+            .put("device_subclass", dev.deviceSubclass)
+            .put("device_protocol", dev.deviceProtocol)
+            .put("interface_count", dev.interfaceCount)
+
+        val ifArr = org.json.JSONArray()
+        for (i in 0 until dev.interfaceCount) {
+            val intf = dev.getInterface(i)
+            val eps = org.json.JSONArray()
+            for (e in 0 until intf.endpointCount) {
+                val ep = intf.getEndpoint(e)
+                eps.put(
+                    JSONObject()
+                        .put("address", ep.address)
+                        .put("attributes", ep.attributes)
+                        .put("direction", ep.direction)
+                        .put("max_packet_size", ep.maxPacketSize)
+                        .put("number", ep.endpointNumber)
+                        .put("interval", ep.interval)
+                        .put("type", ep.type)
+                )
+            }
+            ifArr.put(
+                JSONObject()
+                    .put("id", intf.id)
+                    .put("interface_class", intf.interfaceClass)
+                    .put("interface_subclass", intf.interfaceSubclass)
+                    .put("interface_protocol", intf.interfaceProtocol)
+                    .put("endpoint_count", intf.endpointCount)
+                    .put("endpoints", eps)
+            )
+        }
+        o.put("interfaces", ifArr)
+
+        // Strings may throw without permission; keep best-effort.
+        runCatching { o.put("manufacturer_name", dev.manufacturerName ?: "") }
+        runCatching { o.put("product_name", dev.productName ?: "") }
+        runCatching { o.put("serial_number", dev.serialNumber ?: "") }
+        return o
     }
 
     private fun serveUiFile(path: String): Response {
