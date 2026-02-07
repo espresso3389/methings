@@ -375,10 +375,16 @@ class LocalHttpServer(
                 )
                 proxied ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
             }
-            (uri == "/brain/start" || uri == "/brain/stop" || uri == "/brain/inbox/chat" || uri == "/brain/inbox/event") && session.method == Method.POST -> {
+            (uri == "/brain/start" || uri == "/brain/stop" || uri == "/brain/inbox/chat" || uri == "/brain/inbox/event" || uri == "/brain/debug/comment") && session.method == Method.POST -> {
                 if (runtimeManager.getStatus() != "ok") {
                     runtimeManager.startWorker()
                     waitForPythonHealth(5000)
+                }
+                if (uri == "/brain/debug/comment") {
+                    val ip = (session.remoteIpAddress ?: "").trim()
+                    if (ip.isNotEmpty() && ip != "127.0.0.1" && ip != "::1") {
+                        return jsonError(Response.Status.FORBIDDEN, "debug_local_only")
+                    }
                 }
                 val body = (postBody ?: "").ifBlank { "{}" }
                 val proxied = proxyWorkerRequest(

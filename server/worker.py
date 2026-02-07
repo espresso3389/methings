@@ -558,6 +558,20 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(BRAIN_RUNTIME.enqueue_event(name=name, payload=body))
             return
+        if parsed.path == "/brain/debug/comment":
+            # Debug-only: insert a message into a given session without enqueuing agent work.
+            sid = str((payload or {}).get("session_id") or "default").strip() or "default"
+            role = str((payload or {}).get("role") or "assistant").strip() or "assistant"
+            text = str((payload or {}).get("text") or "")
+            meta = (payload or {}).get("meta")
+            if not isinstance(meta, dict):
+                meta = {}
+            # Keep roles constrained; avoid confusing the dialogue builder.
+            if role not in {"assistant", "user", "tool"}:
+                self._send_json({"error": "invalid_role"}, status=400)
+                return
+            self._send_json(BRAIN_RUNTIME.debug_post_comment(session_id=sid, role=role, text=text, meta=meta))
+            return
         if parsed.path.startswith("/vault/credentials/"):
             name = parsed.path.removeprefix("/vault/credentials/").strip()
             if not name:

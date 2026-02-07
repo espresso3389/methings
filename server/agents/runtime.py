@@ -421,6 +421,29 @@ class BrainRuntime:
         self._emit_log("brain_inbox_event", {"id": item["id"], "name": item["name"]})
         return item
 
+    def debug_post_comment(
+        self,
+        *,
+        session_id: str,
+        role: str,
+        text: str,
+        meta: Optional[Dict] = None,
+    ) -> Dict:
+        """
+        Debug helper: insert a message directly into the chat timeline for a given session.
+
+        This does NOT enqueue agent work. It only records a message for UI/debugging/instruction.
+        """
+        sid = str(session_id or "default").strip() or "default"
+        r = str(role or "assistant").strip() or "assistant"
+        t = str(text or "")
+        m = dict(meta or {})
+        m.setdefault("session_id", sid)
+        m.setdefault("debug", True)
+        m.setdefault("source", "debug_post_comment")
+        self._record_message(r, t, m)
+        return {"status": "ok", "session_id": sid, "role": r, "text": t, "meta": m}
+
     def list_messages(self, limit: int = 50) -> List[Dict]:
         limit = max(1, min(int(limit or 50), 200))
         # Prefer persistent storage when available so UI can restore after WebView/activity recreation
