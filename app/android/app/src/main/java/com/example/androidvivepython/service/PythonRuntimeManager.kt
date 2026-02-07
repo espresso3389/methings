@@ -274,6 +274,7 @@ class PythonRuntimeManager(private val context: Context) {
                         "--upgrade",
                         "pyusb",
                         "pyuvc",
+                        "pupil-labs-uvc",
                         "opencv-python",
                     )
                 )
@@ -306,6 +307,7 @@ class PythonRuntimeManager(private val context: Context) {
         return listOf(
             "pyusb",
             "pyuvc",
+            "pupil-labs-uvc",
             "opencv-python",
         ).joinToString(",")
     }

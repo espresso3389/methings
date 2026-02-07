@@ -83,6 +83,8 @@ real wheels for those names rather than a facade.
 Note:
 - `pyuvc` is currently not on PyPI; Kugutz ships a small facade wheel so `pip install pyuvc`
   resolves offline from the bundled wheelhouse.
+- `pupil-labs-uvc` is a common distribution name for libuvc bindings; Kugutz also ships a facade
+  wheel so `pip install pupil-labs-uvc` resolves offline from the bundled wheelhouse.
 
 Facade wheel builder:
 - `scripts/build_facade_wheels.py`

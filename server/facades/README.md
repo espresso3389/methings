@@ -17,4 +17,5 @@ Notes:
 - `pyusb` is bundled as an upstream wheel (not a facade).
 - OpenCV is shipped as an `opencv-python` facade distribution so normal `pip` deps can resolve.
 - This facade does not provide real `cv2` bindings; `import cv2` raises a clear `ImportError`.
-- `pyuvc` is shipped as a small facade with `pyuvc.load()` to load the app-bundled `libuvc.so`.
+- `pupil-labs-uvc` is shipped as a small facade that provides `pyuvc.load()` to load the app-bundled `libuvc.so`.
+- `pyuvc` is a compatibility alias facade (same `pyuvc.load()` helper).
