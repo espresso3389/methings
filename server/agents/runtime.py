@@ -675,7 +675,13 @@ class BrainRuntime:
                 for text in responses:
                     if not isinstance(text, str):
                         continue
-                    self._record_message("assistant", text, {"item_id": item.get("id")})
+                    # Include session_id so session-scoped polling (`/brain/messages?session_id=...`)
+                    # can see the assistant reply.
+                    self._record_message(
+                        "assistant",
+                        text,
+                        {"item_id": item.get("id"), "session_id": self._session_id_for_item(item)},
+                    )
                     self._emit_log("brain_response", {"item_id": item.get("id"), "text": text[:300]})
 
             if not isinstance(actions, list):
