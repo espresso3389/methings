@@ -142,6 +142,9 @@ Body forms:
 
 This uses the Brain config (model + base_url + api_key) and uploads a local image via a data URL:
 
+Note: `brain.base_url` for OpenAI is typically `https://api.openai.com/v1` (already includes `/v1`), so use:
+- `${config:brain.base_url}/responses` (not `${config:brain.base_url}/v1/responses`)
+
 ```json
 {
   "method": "POST",
