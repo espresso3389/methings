@@ -67,3 +67,9 @@ Practical flow:
   - If local tooling is insufficient and you have a cloud multimodal path, request explicit permission before uploading any user media to a cloud provider.
   - Ask only once per session: remember the user's answer in-session so you do not repeatedly ask.
   - If the media is large (rule of thumb: > 5 MB), confirm again right before uploading and mention the approximate size.
+
+## Cloud Provider Selection (Default)
+
+- Prefer the configured Brain provider (Settings -> Brain). Do not ask the user "which cloud service" unless Brain is not configured.
+- Use `device_api` action `brain.config.get` to read `{vendor, base_url, model, has_api_key}`.
+- If `has_api_key=false`, ask the user to configure the Brain API key and retry.

@@ -121,11 +121,48 @@ The agent should craft the request template; the Kotlin broker expands placehold
 Endpoint:
 - `POST /cloud/request`
 
+### Which Cloud Service To Use (Default Rule)
+
+Prefer the configured Brain provider (Settings -> Brain):
+- Call `device_api` action `brain.config.get` to see `{vendor, base_url, model, has_api_key}` (never returns the key).
+- If `has_api_key=false`, ask the user to configure the Brain API key and retry.
+
 Template placeholders (expanded server-side, never echoed back):
 - `${vault:<name>}`: credential stored in vault (via `/vault/credentials/<name>`)
 - `${config:brain.api_key|brain.base_url|brain.model|brain.vendor}`: brain config values
 - `${file:<rel_path>:base64}`: base64 of a user-root file (e.g. `captures/latest.jpg`)
 - `${file:<rel_path>:text}`: UTF-8 decode of a user-root file
+
+### OpenAI Vision Example (Responses API)
+
+This uses the Brain config (model + base_url + api_key) and uploads a local image via a data URL:
+
+```json
+{
+  "method": "POST",
+  "url": "${config:brain.base_url}/responses",
+  "headers": {
+    "Authorization": "Bearer ${config:brain.api_key}",
+    "Content-Type": "application/json"
+  },
+  "json": {
+    "model": "${config:brain.model}",
+    "input": [
+      {
+        "role": "user",
+        "content": [
+          { "type": "input_text", "text": "Describe this photo." },
+          {
+            "type": "input_image",
+            "image_url": "data:image/jpeg;base64,${file:captures/latest.jpg:base64}"
+          }
+        ]
+      }
+    ]
+  },
+  "timeout_s": 90
+}
+```
 
 Large uploads:
 - If total upload bytes exceed ~5MB, `/cloud/request` returns `error=confirm_large_required`.
@@ -134,6 +171,7 @@ Large uploads:
 Cloud prefs:
 - `GET /cloud/prefs` and `POST /cloud/prefs`
   - `auto_upload_no_confirm_mb` (default ~1.0): payloads <= this size do not require an extra "confirm_large" step.
+  - `min_transfer_kbps` (default 0): if >0, cloud requests abort when average transfer rate drops below this.
 
 ### Python Helper
 
