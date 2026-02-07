@@ -1,39 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="200" height="200">
-  <!-- Control bar -->
-  <line x1="30" y1="16" x2="70" y2="16" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="432" height="432">
+  <!--
+    Kugutz icon — abstract marionette cross with threads.
+    White mark on transparent background (adaptive icon foreground).
+    Safe zone: inner 72×72 centered (18..90).
+  -->
 
-  <!-- Strings -->
-  <line x1="36" y1="16" x2="42" y2="30" stroke="#333" stroke-width="1.2"/>
-  <line x1="64" y1="16" x2="58" y2="30" stroke="#333" stroke-width="1.2"/>
-  <line x1="33" y1="16" x2="30" y2="53.5" stroke="#333" stroke-width="1.2"/>
-  <line x1="67" y1="16" x2="70" y2="53.5" stroke="#333" stroke-width="1.2"/>
+  <!-- Control cross bar (horizontal) -->
+  <line x1="33" y1="32" x2="75" y2="32" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/>
 
-  <!-- Head -->
-  <circle cx="50" cy="34" r="10" fill="#333"/>
+  <!-- Control cross bar (vertical grip) -->
+  <line x1="54" y1="24" x2="54" y2="40" stroke="#fff" stroke-width="4.5" stroke-linecap="round"/>
 
-  <!-- AI eye -->
-  <circle cx="50" cy="33" r="4.5" fill="none" stroke="white" stroke-width="1.4"/>
-  <circle cx="50" cy="33" r="1.5" fill="white"/>
+  <!-- Thread left outer -->
+  <line x1="37" y1="32" x2="40" y2="72" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/>
 
-  <!-- Neck -->
-  <rect x="47" y="44" width="6" height="2" fill="#333"/>
+  <!-- Thread right outer -->
+  <line x1="71" y1="32" x2="68" y2="72" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/>
 
-  <!-- Body -->
-  <path d="M36 46 L64 46 L60 66 L40 66 Z" fill="#333" stroke="#333" stroke-width="1.5" stroke-linejoin="round"/>
+  <!-- Thread left inner -->
+  <line x1="47" y1="32" x2="48" y2="78" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
 
-  <!-- Arms -->
-  <line x1="36" y1="49" x2="24" y2="58" stroke="#333" stroke-width="3.5" stroke-linecap="round"/>
-  <line x1="64" y1="49" x2="76" y2="58" stroke="#333" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- Thread right inner -->
+  <line x1="61" y1="32" x2="60" y2="78" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.5"/>
 
-  <!-- Joint dots -->
-  <circle cx="30" cy="53.5" r="2" fill="#333"/>
-  <circle cx="70" cy="53.5" r="2" fill="#333"/>
-
-  <!-- Legs -->
-  <line x1="44" y1="66" x2="38" y2="80" stroke="#333" stroke-width="3.5" stroke-linecap="round"/>
-  <line x1="56" y1="66" x2="62" y2="80" stroke="#333" stroke-width="3.5" stroke-linecap="round"/>
-
-  <!-- Feet -->
-  <line x1="38" y1="80" x2="32" y2="82" stroke="#333" stroke-width="3" stroke-linecap="round"/>
-  <line x1="62" y1="80" x2="68" y2="82" stroke="#333" stroke-width="3" stroke-linecap="round"/>
+  <!-- Small dot at cross center -->
+  <circle cx="54" cy="32" r="2.5" fill="#fff"/>
 </svg>
