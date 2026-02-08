@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Dict
@@ -83,8 +84,29 @@ class CloudRequestTool:
         body = r.get("body")
 
         if http_status == 403 and isinstance(body, dict) and body.get("status") == "permission_required":
-            # Don't block waiting for user approval inside the tool call; return immediately so the
-            # agent can ask the user to approve and then retry.
-            return body
+            # Wait indefinitely for user approval (no timeout). The UI prompt is shown by Kotlin.
+            # Once approved, retry the same request with permission_id.
+            req = body.get("request") if isinstance(body.get("request"), dict) else {}
+            pid = str(req.get("id") or "").strip()
+            if not pid:
+                return body
+
+            while True:
+                st = self._request_json("GET", f"/permissions/{pid}", None, timeout_s=12.0)
+                if st.get("status") != "ok":
+                    # Temporary failure; keep waiting.
+                    time.sleep(1.0)
+                    continue
+                perm = st.get("body") if isinstance(st.get("body"), dict) else {}
+                status = str(perm.get("status") or "")
+                if status == "approved":
+                    r2 = do(pid)
+                    if r2.get("status") != "ok":
+                        return r2
+                    b2 = r2.get("body")
+                    return b2 if isinstance(b2, dict) else {"status": "error", "error": "invalid_response", "body": b2}
+                if status in {"denied", "expired", "used"}:
+                    return {"status": "error", "error": "permission_not_approved", "permission": perm}
+                time.sleep(1.0)
 
         return body if isinstance(body, dict) else {"status": "error", "error": "invalid_response"}
