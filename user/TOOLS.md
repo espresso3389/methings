@@ -95,6 +95,7 @@ To fetch the image onto your dev machine, use the local file endpoint (permissio
 ## Docs Index
 
 Read the relevant doc when working in that domain:
+- `docs/api_reference.md` (local HTTP APIs + device_api action map)
 - `docs/vision.md` (RGBA8888 + TFLite)
 - `docs/usb.md` (USB/UVC control + streaming)
 - `docs/uvc.md` (UVC MJPEG capture + PTZ)

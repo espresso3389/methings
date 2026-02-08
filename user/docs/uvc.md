@@ -20,7 +20,10 @@ Response (success):
 - Selected stream info: `vs_interface`, `format_index`, `frame_index`, `width`, `height`, `interval_100ns`
 
 Usage notes:
-- The stream negotiation uses UVC VS PROBE/COMMIT and reads isochronous packets until a full JPEG frame is assembled.
+- The stream negotiation uses UVC VS PROBE/COMMIT and then reads UVC payloads until a full JPEG frame is assembled.
+- The implementation supports both endpoint types:
+  - `transfer_mode=iso`: isochronous IN endpoint (parsed via the KISO bridge)
+  - `transfer_mode=bulk`: bulk IN endpoint (read via `bulkTransfer`)
 - To show the image inline in chat, include a line: `rel_path: <rel_path>`
 
 ## PTZ (Pan/Tilt)
@@ -33,4 +36,3 @@ Actions:
 
 These use UVC CameraTerminal controls over `usb.control_transfer` and work best for devices that implement
 `CT_PANTILT_ABSOLUTE_CONTROL` (selector `0x0D`).
-

@@ -1990,25 +1990,34 @@ class LocalHttpServer(
         val vsInterface = bestFrame.vsInterface
         val interval = pickBestInterval(bestFrame, fpsReq)
 
-        // Choose an isochronous IN endpoint on the VS interface with the largest packet size.
+        // Choose a streaming IN endpoint on the VS interface.
+        // Many UVC webcams expose ISO IN, but some (including Insta360 Link) expose only BULK IN.
         data class EpPick(val intf: UsbInterface, val ep: UsbEndpoint)
-        var pick: EpPick? = null
+        var isoPick: EpPick? = null
+        var bulkPick: EpPick? = null
         for (i in 0 until dev.interfaceCount) {
             val intf = dev.getInterface(i)
             if (intf.id != vsInterface) continue
             if (intf.interfaceClass != 0x0E || intf.interfaceSubclass != 0x02) continue
             for (e in 0 until intf.endpointCount) {
                 val ep = intf.getEndpoint(e)
-                val isIso = ep.type == UsbConstants.USB_ENDPOINT_XFER_ISOC
                 val isIn = (ep.address and 0x80) != 0
-                if (!isIso || !isIn) continue
-                val cur = pick
-                if (cur == null || ep.maxPacketSize > cur.ep.maxPacketSize) {
-                    pick = EpPick(intf, ep)
+                if (!isIn) continue
+                if (ep.type == UsbConstants.USB_ENDPOINT_XFER_ISOC) {
+                    val cur = isoPick
+                    if (cur == null || ep.maxPacketSize > cur.ep.maxPacketSize) {
+                        isoPick = EpPick(intf, ep)
+                    }
+                } else if (ep.type == UsbConstants.USB_ENDPOINT_XFER_BULK) {
+                    val cur = bulkPick
+                    if (cur == null || ep.maxPacketSize > cur.ep.maxPacketSize) {
+                        bulkPick = EpPick(intf, ep)
+                    }
                 }
             }
         }
-        val chosen = pick ?: return jsonError(Response.Status.INTERNAL_ERROR, "uvc_iso_endpoint_not_found")
+        val chosen = isoPick ?: bulkPick ?: return jsonError(Response.Status.INTERNAL_ERROR, "uvc_stream_endpoint_not_found")
+        val transferMode = if (chosen.ep.type == UsbConstants.USB_ENDPOINT_XFER_ISOC) "iso" else "bulk"
 
         // Claim + select alternate setting.
         val claimed = conn.claimInterface(chosen.intf, true)
@@ -2066,16 +2075,7 @@ class LocalHttpServer(
         }
         if (ctrlOut(0x02, commitData) < 0) return jsonError(Response.Status.INTERNAL_ERROR, "uvc_commit_set_failed")
 
-        // Capture a single MJPEG frame by parsing UVC payload headers from isochronous packets.
-        UsbIsoBridge.ensureLoaded()
-        val fd = conn.fileDescriptor
-        if (fd < 0) return jsonError(Response.Status.INTERNAL_ERROR, "file_descriptor_unavailable")
-
         val epAddr = chosen.ep.address
-        val packetSize = chosen.ep.maxPacketSize.coerceAtLeast(256)
-        val numPackets = payload.optInt("num_packets", 48).coerceIn(8, 512)
-        val isoTimeout = payload.optInt("iso_timeout_ms", 260).coerceIn(20, 6000)
-
         val deadline = System.currentTimeMillis() + timeoutMs
         val frame = java.io.ByteArrayOutputStream(1024 * 256)
         var started = false
@@ -2091,113 +2091,139 @@ class LocalHttpServer(
             return -1
         }
 
-        while (System.currentTimeMillis() < deadline) {
-            val blob: ByteArray = try {
-                UsbIsoBridge.isochIn(fd, epAddr, packetSize, numPackets, isoTimeout) ?: break
-            } catch (_: Exception) {
-                break
+        fun tryFinalizeAndWrite(): Response? {
+            if (!(started && frame.size() >= 4)) return null
+            val bytes = frame.toByteArray()
+            val soi = findSoi(bytes, 0, bytes.size)
+            if (soi < 0) return null
+            val final = if (soi > 0) bytes.copyOfRange(soi, bytes.size) else bytes
+            return try {
+                java.io.FileOutputStream(outFile).use { it.write(final) }
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("rel_path", relPath)
+                        .put("bytes", final.size)
+                        .put("transfer_mode", transferMode)
+                        .put("vs_interface", vsInterface)
+                        .put("format_index", bestFrame.formatIndex)
+                        .put("frame_index", bestFrame.frameIndex)
+                        .put("width", bestFrame.width)
+                        .put("height", bestFrame.height)
+                        .put("interval_100ns", interval)
+                        .put("endpoint_address", epAddr)
+                        .put("endpoint_type", chosen.ep.type)
+                        .put("interface_id", chosen.intf.id)
+                        .put("alt_setting", chosen.intf.alternateSetting)
+                )
+            } catch (ex: Exception) {
+                jsonError(Response.Status.INTERNAL_ERROR, "write_failed", JSONObject().put("detail", ex.message ?: ""))
             }
-            if (blob.size < 12) continue
+        }
 
-            fun u32le(off: Int): Int {
-                return (blob[off].toInt() and 0xFF) or
-                    ((blob[off + 1].toInt() and 0xFF) shl 8) or
-                    ((blob[off + 2].toInt() and 0xFF) shl 16) or
-                    ((blob[off + 3].toInt() and 0xFF) shl 24)
+        fun processUvcPayload(buf: ByteArray, off: Int, len: Int): Response? {
+            if (len < 4) return null
+            val hlen = buf[off].toInt() and 0xFF
+            if (hlen < 2 || hlen > len) return null
+            val info = buf[off + 1].toInt() and 0xFF
+            val fid = info and 0x01
+            val eof = (info and 0x02) != 0
+            val err = (info and 0x40) != 0
+            val payloadOff = off + hlen
+            val payloadCount = len - hlen
+            if (err || payloadCount <= 0) return null
+
+            if (lastFid >= 0 && fid != lastFid && frame.size() > 0 && !eof) {
+                frame.reset()
+                started = false
             }
-            val magic = u32le(0)
-            if (magic != 0x4F53494B) continue // "KISO"
-            val nPk = u32le(4).coerceIn(0, 1024)
-            val payloadLen = u32le(8).coerceIn(0, 64 * 1024 * 1024)
-            val metaLen = 12 + nPk * 8
-            if (blob.size < metaLen) continue
-            if (blob.size < metaLen + payloadLen) continue
+            lastFid = fid
 
-            var metaOff = 12
-            var dataOff = metaLen
-            for (pi in 0 until nPk) {
-                val st = u32le(metaOff)
-                val al = u32le(metaOff + 4).coerceIn(0, payloadLen)
-                metaOff += 8
-                if (al <= 0) continue
-                if (dataOff + al > metaLen + payloadLen) break
-                if (st != 0) {
-                    dataOff += al
-                    continue
+            if (!started) {
+                val soi = findSoi(buf, payloadOff, payloadCount)
+                if (soi >= 0) {
+                    started = true
+                    frame.write(buf, soi, payloadOff + payloadCount - soi)
                 }
+            } else {
+                frame.write(buf, payloadOff, payloadCount)
+            }
 
-                // UVC payload header.
-                val hlen = blob[dataOff].toInt() and 0xFF
-                if (hlen < 2 || hlen > al) {
-                    dataOff += al
-                    continue
-                }
-                val info = blob[dataOff + 1].toInt() and 0xFF
-                val fid = info and 0x01
-                val eof = (info and 0x02) != 0
-                val err = (info and 0x40) != 0
-                val payloadOff = dataOff + hlen
-                val payloadCount = al - hlen
-                if (err || payloadCount <= 0) {
-                    dataOff += al
-                    continue
-                }
+            if (frame.size() > maxFrameBytes) {
+                frame.reset()
+                started = false
+            }
 
-                if (lastFid >= 0 && fid != lastFid && frame.size() > 0 && !eof) {
-                    // Frame boundary without EOF (best-effort).
-                    frame.reset()
-                    started = false
-                }
-                lastFid = fid
+            if (eof) {
+                val r = tryFinalizeAndWrite()
+                if (r != null) return r
+                // If EOF but invalid JPEG so far, reset and continue.
+                frame.reset()
+                started = false
+            }
+            return null
+        }
 
-                if (!started) {
-                    val soi = findSoi(blob, payloadOff, payloadCount)
-                    if (soi >= 0) {
-                        started = true
-                        frame.write(blob, soi, payloadOff + payloadCount - soi)
+        if (transferMode == "iso") {
+            // Isochronous path: parse KISO blob and feed individual packets as UVC payloads.
+            UsbIsoBridge.ensureLoaded()
+            val fd = conn.fileDescriptor
+            if (fd < 0) return jsonError(Response.Status.INTERNAL_ERROR, "file_descriptor_unavailable")
+            val packetSize = chosen.ep.maxPacketSize.coerceAtLeast(256)
+            val numPackets = payload.optInt("num_packets", 48).coerceIn(8, 512)
+            val isoTimeout = payload.optInt("iso_timeout_ms", 260).coerceIn(20, 6000)
+
+            while (System.currentTimeMillis() < deadline) {
+                val blob: ByteArray = try {
+                    UsbIsoBridge.isochIn(fd, epAddr, packetSize, numPackets, isoTimeout) ?: break
+                } catch (_: Exception) {
+                    break
+                }
+                if (blob.size < 12) continue
+
+                fun u32le(off: Int): Int {
+                    return (blob[off].toInt() and 0xFF) or
+                        ((blob[off + 1].toInt() and 0xFF) shl 8) or
+                        ((blob[off + 2].toInt() and 0xFF) shl 16) or
+                        ((blob[off + 3].toInt() and 0xFF) shl 24)
+                }
+                val magic = u32le(0)
+                if (magic != 0x4F53494B) continue // "KISO"
+                val nPk = u32le(4).coerceIn(0, 1024)
+                val payloadLen = u32le(8).coerceIn(0, 64 * 1024 * 1024)
+                val metaLen = 12 + nPk * 8
+                if (blob.size < metaLen) continue
+                if (blob.size < metaLen + payloadLen) continue
+
+                var metaOff = 12
+                var dataOff = metaLen
+                for (pi in 0 until nPk) {
+                    val st = u32le(metaOff)
+                    val al = u32le(metaOff + 4).coerceIn(0, payloadLen)
+                    metaOff += 8
+                    if (al <= 0) continue
+                    if (dataOff + al > metaLen + payloadLen) break
+                    if (st == 0) {
+                        val r = processUvcPayload(blob, dataOff, al)
+                        if (r != null) return r
                     }
-                } else {
-                    frame.write(blob, payloadOff, payloadCount)
+                    dataOff += al
                 }
-
-                if (frame.size() > maxFrameBytes) {
-                    frame.reset()
-                    started = false
+            }
+        } else {
+            // Bulk path: read from the bulk IN endpoint and feed each bulkTransfer chunk as a UVC payload.
+            val bulkTimeout = payload.optInt("bulk_timeout_ms", 240).coerceIn(20, 6000)
+            val bulkChunk = payload.optInt("bulk_chunk_size", 64 * 1024).coerceIn(1024, 1024 * 1024)
+            val buf = ByteArray(bulkChunk)
+            while (System.currentTimeMillis() < deadline) {
+                val n = try {
+                    conn.bulkTransfer(chosen.ep, buf, buf.size, bulkTimeout)
+                } catch (_: Exception) {
+                    -1
                 }
-
-                if (eof && started && frame.size() >= 4) {
-                    val bytes = frame.toByteArray()
-                    // Best-effort sanity check: look for JPEG SOI.
-                    val soi = findSoi(bytes, 0, bytes.size)
-                    if (soi >= 0) {
-                        val final = if (soi > 0) bytes.copyOfRange(soi, bytes.size) else bytes
-                        try {
-                            java.io.FileOutputStream(outFile).use { it.write(final) }
-                            return jsonResponse(
-                                JSONObject()
-                                    .put("status", "ok")
-                                    .put("rel_path", relPath)
-                                    .put("bytes", final.size)
-                                    .put("vs_interface", vsInterface)
-                                    .put("format_index", bestFrame.formatIndex)
-                                    .put("frame_index", bestFrame.frameIndex)
-                                    .put("width", bestFrame.width)
-                                    .put("height", bestFrame.height)
-                                    .put("interval_100ns", interval)
-                                    .put("endpoint_address", epAddr)
-                                    .put("interface_id", chosen.intf.id)
-                                    .put("alt_setting", chosen.intf.alternateSetting)
-                            )
-                        } catch (ex: Exception) {
-                            return jsonError(Response.Status.INTERNAL_ERROR, "write_failed", JSONObject().put("detail", ex.message ?: ""))
-                        }
-                    } else {
-                        frame.reset()
-                        started = false
-                    }
-                }
-
-                dataOff += al
+                if (n <= 0) continue
+                val r = processUvcPayload(buf, 0, n.coerceIn(0, buf.size))
+                if (r != null) return r
             }
         }
 
