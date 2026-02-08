@@ -166,9 +166,10 @@ class BrainRuntime:
                 "Do NOT write persistent memory unless the user explicitly asks to save/store/persist notes."
             ),
             "temperature": 0.2,
-            "max_actions": 6,
+            # Some tasks need a burst of tool calls (e.g. capture -> analyze -> postprocess).
+            "max_actions": 10,
             # Max tool-loop rounds for providers that support responses-style tool calling.
-            "max_tool_rounds": 12,
+            "max_tool_rounds": 18,
             "idle_sleep_ms": 800,
         }
 
@@ -1379,6 +1380,69 @@ class BrainRuntime:
 
         # If we reach here, we exhausted max_rounds without a final assistant message.
         # Avoid leaving the UI stuck waiting.
+        #
+        # Some models keep calling tools even after the task is effectively complete, then hit the
+        # round cap. As a last-chance recovery, force a "finalization only" completion with tools
+        # disabled so the user gets a useful response instead of a generic retry message.
+        try:
+            final_prompt = (
+                (system_prompt or "").strip()
+                + "\n\nFINALIZATION:\n"
+                + "- Do NOT call any tools.\n"
+                + "- Produce the best possible final answer now.\n"
+                + "- If you still need information from the user, ask ONE concrete question.\n"
+            ).strip()
+            final_body: Dict[str, Any] = {
+                "model": model,
+                "tools": [],
+                "input": pending_input,
+                "instructions": final_prompt,
+                "tool_choice": "none",
+            }
+            if previous_response_id:
+                final_body["previous_response_id"] = previous_response_id
+            try:
+                final_resp = requests.post(
+                    provider_url,
+                    headers=headers,
+                    data=json.dumps(final_body),
+                    timeout=40,
+                )
+                final_resp.raise_for_status()
+            except Exception:
+                # Fallback for gateways/providers that don't support tool_choice.
+                final_body2 = dict(final_body)
+                final_body2.pop("tool_choice", None)
+                final_resp = requests.post(
+                    provider_url,
+                    headers=headers,
+                    data=json.dumps(final_body2),
+                    timeout=40,
+                )
+                final_resp.raise_for_status()
+
+            final_payload = final_resp.json()
+            final_output_items = final_payload.get("output") or []
+            final_texts: List[str] = []
+            for out in final_output_items:
+                if not isinstance(out, dict) or out.get("type") != "message":
+                    continue
+                parts: List[str] = []
+                for part in out.get("content") or []:
+                    if isinstance(part, dict) and part.get("type") == "output_text":
+                        t = str(part.get("text") or "").strip()
+                        if t:
+                            parts.append(t)
+                if parts:
+                    final_texts.append("\n".join(parts))
+            if final_texts:
+                for text in final_texts:
+                    self._record_message("assistant", text, {"item_id": item.get("id"), "session_id": session_id})
+                    self._emit_log("brain_response", {"item_id": item.get("id"), "text": text[:300]})
+                return
+        except Exception:
+            pass
+
         summary = ""
         if last_tool_summaries:
             # Keep it short so we don't spam the UI. This is for debugging.
