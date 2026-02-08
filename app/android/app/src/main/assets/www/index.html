@@ -1463,6 +1463,7 @@
                   open();
                 });
                 img.addEventListener("error", () => { hint.textContent = "Preview failed"; });
+                img.addEventListener("load", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
                 body.appendChild(img);
                 hint.textContent = "Image (tap to zoom)";
               } else if (kind === "video") {
@@ -1471,6 +1472,7 @@
                 v.playsInline = true;
                 v.preload = "metadata";
                 v.src = src;
+                v.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
                 body.appendChild(v);
                 hint.textContent = "Video";
               } else if (kind === "audio") {
@@ -1478,6 +1480,7 @@
                 a.controls = true;
                 a.preload = "metadata";
                 a.src = src;
+                a.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
                 body.appendChild(a);
                 hint.textContent = "Audio";
               } else {
@@ -1489,7 +1492,10 @@
           })();
         }
 
-        if (wrap.childNodes.length) msgDiv.appendChild(wrap);
+        if (wrap.childNodes.length) {
+          msgDiv.appendChild(wrap);
+          try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {}
+        }
       }
 
       // ==============================
@@ -1675,6 +1681,7 @@
       let streaming = false;
       let chatSessionId = "";
       let lastServerTs = 0;
+      let stickToBottom = true;
 
       function genSessionId() {
         return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
@@ -1731,6 +1738,17 @@
         }
       }
 
+      function scrollToBottomSoon() {
+        if (!chatMessages) return;
+        requestAnimationFrame(() => {
+          try { chatMessages.scrollTop = chatMessages.scrollHeight; } catch (_) {}
+        });
+      }
+
+      chatMessages.addEventListener("scroll", () => {
+        stickToBottom = isNearBottom(chatMessages, 140);
+      }, { passive: true });
+
       function addMsg(role, content, meta) {
         if (chatWelcome.parentNode) chatWelcome.remove();
         const shouldScroll = isNearBottom(chatMessages, 140);
@@ -1754,7 +1772,7 @@
           div.textContent = content;
         }
         chatMessages.appendChild(div);
-        if (shouldScroll || isDebug) chatMessages.scrollTop = chatMessages.scrollHeight;
+        if (shouldScroll || isDebug || stickToBottom) scrollToBottomSoon();
         return div;
       }
 
@@ -1810,7 +1828,7 @@
         div.className = "msg assistant";
         div.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
         chatMessages.appendChild(div);
-        if (shouldScroll) chatMessages.scrollTop = chatMessages.scrollHeight;
+        if (shouldScroll || stickToBottom) scrollToBottomSoon();
         return div;
       }
 
@@ -1950,6 +1968,7 @@
         const text = chatInput.value.trim();
         const hasAtt = pendingAttachments.length > 0;
         if (!text && !hasAtt) return;
+        stickToBottom = true;
 
         // Render a local echo immediately with file chips info; actual upload happens before agent call.
         chatInput.value = "";
