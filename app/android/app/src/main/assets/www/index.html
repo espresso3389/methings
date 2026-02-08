@@ -87,6 +87,16 @@
         color: var(--ink-secondary);
         transition: background var(--transition), border-color var(--transition), color var(--transition);
       }
+      .icon-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+        filter: saturate(0.2);
+      }
+      .icon-btn:disabled:hover {
+        background: var(--surface);
+        border-color: var(--border);
+        color: var(--ink-secondary);
+      }
       .icon-btn svg,
       .send-btn svg,
       .attach-icon-btn svg {
@@ -487,7 +497,7 @@
         color: rgba(226,232,240,0.95);
         font-size: 13px;
       }
-      .settings-locked .card { opacity: 0.6; }
+      /* Do not dim the entire settings UI; only disabled controls should look disabled. */
 
       .card {
         background: var(--bg-raised);
@@ -567,18 +577,51 @@
       }
       .btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
       .btn:active { transform: scale(0.97); }
+      .btn:disabled {
+        cursor: not-allowed;
+        opacity: 1;
+        filter: none;
+        background: rgba(255,255,255,0.06);
+        border-color: rgba(161,161,170,0.20);
+        color: rgba(226,232,240,0.55);
+      }
+      .btn:disabled:hover {
+        background: rgba(255,255,255,0.06);
+        border-color: rgba(161,161,170,0.20);
+        color: rgba(226,232,240,0.55);
+      }
+      .btn:disabled:active { transform: none; }
       .btn.primary {
         background: var(--accent);
         color: #fff;
         border-color: var(--accent);
       }
       .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+      .btn.primary:disabled {
+        background: rgba(99,102,241,0.35);
+        border-color: rgba(99,102,241,0.2);
+        color: rgba(226,232,240,0.8);
+        opacity: 1;
+        filter: none;
+      }
+      .btn.primary:disabled:hover {
+        background: rgba(99,102,241,0.35);
+        border-color: rgba(99,102,241,0.2);
+        color: rgba(226,232,240,0.8);
+      }
       .btn.danger {
         background: var(--red);
         color: #fff;
         border-color: var(--red);
       }
       .btn.danger:hover { background: #dc2626; border-color: #dc2626; }
+      .btn.danger:disabled {
+        background: rgba(239,68,68,0.32);
+        border-color: rgba(239,68,68,0.18);
+        color: rgba(254,226,226,0.85);
+        opacity: 1;
+        filter: none;
+      }
       .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 
       .muted { color: var(--ink-muted); font-size: 13px; word-break: break-word; overflow-wrap: anywhere; }
@@ -688,6 +731,13 @@
       .field select:focus,
       .field input:focus { border-color: var(--border-focus); }
       .field input::placeholder { color: var(--ink-muted); }
+      .field select:disabled,
+      .field input:disabled {
+        opacity: 0.65;
+        filter: saturate(0.25);
+        cursor: not-allowed;
+        background: rgba(255,255,255,0.04);
+      }
 
       /* Toggle switch */
       .toggle-row {
@@ -724,6 +774,11 @@
       }
       .toggle input:checked + .slider { background: var(--accent); border-color: var(--accent); }
       .toggle input:checked + .slider::before { transform: translateX(20px); background: #fff; }
+      .toggle input:disabled + .slider {
+        opacity: 0.55;
+        cursor: not-allowed;
+        filter: saturate(0.2);
+      }
 
       /* Checkbox row */
       .check-row {
@@ -739,6 +794,10 @@
         height: 16px;
         accent-color: var(--accent);
         flex-shrink: 0;
+      }
+      .check-row input[type="checkbox"]:disabled {
+        opacity: 0.55;
+        filter: saturate(0.2);
       }
 
       /* Textarea (memory editor) */
@@ -761,6 +820,12 @@
       }
       .memory-textarea::placeholder { color: var(--ink-muted); }
       .memory-textarea:focus { border-color: var(--border-focus); }
+      .memory-textarea:disabled {
+        opacity: 0.65;
+        filter: saturate(0.25);
+        cursor: not-allowed;
+        background: rgba(255,255,255,0.04);
+      }
 
       /* Pre output */
       .output-pre {
