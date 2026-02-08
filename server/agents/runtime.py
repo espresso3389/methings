@@ -1869,7 +1869,12 @@ class BrainRuntime:
         if name == "cloud_request":
             req = args.get("request")
             if not isinstance(req, dict):
-                return {"status": "error", "error": "invalid_request"}
+                # Ergonomic fallback: many models try to pass the request fields at the top-level
+                # (method/url/headers/json/body...). Accept that shape as well.
+                if isinstance(args, dict) and any(k in args for k in ("url", "method", "headers", "json", "body", "body_base64")):
+                    req = args
+                else:
+                    return {"status": "error", "error": "invalid_request"}
             # Route via _execute_action so the tool invocation + result is audit-logged into the
             # session timeline (role=tool), same as device_api/run_* helpers.
             action = {
