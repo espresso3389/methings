@@ -490,12 +490,51 @@
         gap: 12px;
       }
       .locked-banner {
+        position: fixed;
+        left: 16px;
+        right: 16px;
+        bottom: 18px;
+        z-index: 60;
+        box-sizing: border-box;
         padding: 10px 12px;
         border-radius: var(--radius-md);
-        border: 1px solid rgba(129,140,248,0.35);
-        background: rgba(99,102,241,0.16);
-        color: rgba(226,232,240,0.95);
+        border: 1px solid rgba(245,158,11,0.45);
+        background: var(--amber-soft);
+        color: var(--ink);
         font-size: 13px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+      }
+      .locked-banner .lb-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+      .locked-banner .lb-ico {
+        width: 28px;
+        height: 28px;
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        background: rgba(245,158,11,0.12);
+        border: 1px solid rgba(245,158,11,0.35);
+        color: var(--amber);
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+      .locked-banner .lb-ico svg { width: 16px; height: 16px; }
+      .locked-banner .lb-title {
+        font-weight: 800;
+        letter-spacing: 0.2px;
+        margin-bottom: 2px;
+      }
+      .locked-banner .lb-sub { color: var(--ink-secondary); }
+      @media (min-width: 640px) {
+        .locked-banner {
+          width: min(560px, calc(100% - 32px));
+          left: 50%;
+          right: auto;
+          transform: translateX(-50%);
+        }
       }
       /* Do not dim the entire settings UI; only disabled controls should look disabled. */
 
@@ -967,7 +1006,19 @@
       </div>
       <div class="settings-scroll">
         <div id="settingsLockedBanner" class="locked-banner" style="display:none;">
-          Settings are locked. Tap Unlock (top-right) to edit/view secrets.
+          <div class="lb-row">
+            <div class="lb-ico" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 16v-4"></path>
+                <path d="M12 8h.01"></path>
+              </svg>
+            </div>
+            <div>
+              <div class="lb-title">Settings Locked</div>
+              <div class="lb-sub">Tap the lock icon (top-right) to unlock and view/edit secrets.</div>
+            </div>
+          </div>
         </div>
         <!-- Brain Config -->
         <section class="card">
