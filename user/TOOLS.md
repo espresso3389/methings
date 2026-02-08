@@ -138,6 +138,10 @@ Body forms:
 - `body`: either a raw string body, or a JSON object/array (treated like `json`)
 - `body_base64`: raw bytes as base64 (use with `content_type`)
 
+File base64 modes:
+- `${file:<rel_path>:base64}`: base64, with automatic image downscale (if enabled).
+- `${file:<rel_path>:base64_raw}`: base64 of original bytes (no downscale).
+
 ### OpenAI Vision Example (Responses API)
 
 This uses the Brain config (model + base_url + api_key) and uploads a local image via a data URL:
@@ -180,6 +184,9 @@ Cloud prefs:
 - `GET /cloud/prefs` and `POST /cloud/prefs`
   - `auto_upload_no_confirm_mb` (default ~1.0): payloads <= this size do not require an extra "confirm_large" step.
   - `min_transfer_kbps` (default 0): if >0, cloud requests abort when average transfer rate drops below this.
+  - `image_resize_enabled` (default true): if true, `${file:...:base64}` will downscale common image types before upload.
+  - `image_resize_max_dim_px` (default 512): max width/height for resized uploads.
+  - `image_resize_jpeg_quality` (default 70): JPEG quality for resized uploads.
 
 ### Python Helper
 

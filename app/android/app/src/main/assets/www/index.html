@@ -1065,6 +1065,25 @@
               If set (>0), abort cloud requests when average upload/download rate drops below this.
             </div>
           </div>
+          <div class="field">
+            <label style="display:flex; align-items:center; gap:10px;">
+              <input type="checkbox" id="cloudImgResizeEnabled" />
+              <span>Resize images before upload</span>
+            </label>
+            <div class="muted" style="margin-top:4px;">
+              Reduces upload size for vision requests (helps avoid extra confirmations).
+            </div>
+          </div>
+          <div class="field" style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div>
+              <label>Max image dim (px)</label>
+              <input type="number" id="cloudImgMaxDim" min="64" max="4096" step="64" placeholder="512" />
+            </div>
+            <div>
+              <label>JPEG quality</label>
+              <input type="number" id="cloudImgJpegQ" min="30" max="95" step="1" placeholder="70" />
+            </div>
+          </div>
           <div class="btn-group">
             <button class="btn primary" id="cloudPrefsSave">Save</button>
           </div>
@@ -2690,9 +2709,17 @@
           $("cloudAutoUploadMb").value = (isFinite(v) ? String(v) : "1.0");
           const k = Number(data.min_transfer_kbps);
           $("cloudMinKbps").value = (isFinite(k) ? String(k) : "0");
+          $("cloudImgResizeEnabled").checked = !!data.image_resize_enabled;
+          const md = Number(data.image_resize_max_dim_px);
+          $("cloudImgMaxDim").value = (isFinite(md) ? String(md) : "512");
+          const q = Number(data.image_resize_jpeg_quality);
+          $("cloudImgJpegQ").value = (isFinite(q) ? String(q) : "70");
         } catch (_) {
           $("cloudAutoUploadMb").value = "1.0";
           $("cloudMinKbps").value = "0";
+          $("cloudImgResizeEnabled").checked = true;
+          $("cloudImgMaxDim").value = "512";
+          $("cloudImgJpegQ").value = "70";
         }
       }
 
@@ -2703,11 +2730,22 @@
         const rawK = String($("cloudMinKbps").value || "").trim();
         const k = parseFloat(rawK);
         if (!isFinite(k) || k < 0) { showToast("Enter a valid number", 1600); return; }
+        const enabled = !!$("cloudImgResizeEnabled").checked;
+        const md = parseInt(String($("cloudImgMaxDim").value || "").trim() || "512", 10);
+        if (!Number.isFinite(md) || md < 64) { showToast("Enter a valid max dim", 1600); return; }
+        const q = parseInt(String($("cloudImgJpegQ").value || "").trim() || "70", 10);
+        if (!Number.isFinite(q) || q < 30) { showToast("Enter a valid JPEG quality", 1600); return; }
         try {
           const res = await fetch(API + "/cloud/prefs", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ auto_upload_no_confirm_mb: v, min_transfer_kbps: k }),
+            body: JSON.stringify({
+              auto_upload_no_confirm_mb: v,
+              min_transfer_kbps: k,
+              image_resize_enabled: enabled,
+              image_resize_max_dim_px: md,
+              image_resize_jpeg_quality: q,
+            }),
           });
           if (!res.ok) throw 0;
           showToast("Cloud prefs saved", 1600);

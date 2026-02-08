@@ -42,6 +42,9 @@ import jp.espresso3389.kugutz.vision.VisionFrameStore
 import jp.espresso3389.kugutz.vision.VisionImageIo
 import jp.espresso3389.kugutz.vision.TfliteModelManager
 import android.util.Base64
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import java.io.ByteArrayOutputStream
 
 class LocalHttpServer(
     private val context: Context,
@@ -496,11 +499,17 @@ class LocalHttpServer(
             uri == "/cloud/prefs" && session.method == Method.GET -> {
                 val autoMb = cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble()
                 val minKbps = cloudPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble()
+                val imgResizeEnabled = cloudPrefs.getBoolean("image_resize_enabled", true)
+                val imgMaxDim = cloudPrefs.getInt("image_resize_max_dim_px", 512)
+                val imgJpegQ = cloudPrefs.getInt("image_resize_jpeg_quality", 70)
                 return jsonResponse(
                     JSONObject()
                         .put("status", "ok")
                         .put("auto_upload_no_confirm_mb", autoMb)
                         .put("min_transfer_kbps", minKbps)
+                        .put("image_resize_enabled", imgResizeEnabled)
+                        .put("image_resize_max_dim_px", imgMaxDim)
+                        .put("image_resize_jpeg_quality", imgJpegQ)
                 )
             }
             uri == "/cloud/prefs" && session.method == Method.POST -> {
@@ -509,15 +518,28 @@ class LocalHttpServer(
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 val v = payload.optDouble("auto_upload_no_confirm_mb", cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble())
                 val clamped = v.coerceIn(0.0, 25.0)
-                cloudPrefs.edit().putFloat("auto_upload_no_confirm_mb", clamped.toFloat()).apply()
                 val mk = payload.optDouble("min_transfer_kbps", cloudPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble())
                 val mkClamped = mk.coerceIn(0.0, 50_000.0)
-                cloudPrefs.edit().putFloat("min_transfer_kbps", mkClamped.toFloat()).apply()
+                val imgEnabled = if (payload.has("image_resize_enabled")) payload.optBoolean("image_resize_enabled", true) else cloudPrefs.getBoolean("image_resize_enabled", true)
+                val imgMaxDimRaw = if (payload.has("image_resize_max_dim_px")) payload.optInt("image_resize_max_dim_px", 512) else cloudPrefs.getInt("image_resize_max_dim_px", 512)
+                val imgJpegQRaw = if (payload.has("image_resize_jpeg_quality")) payload.optInt("image_resize_jpeg_quality", 70) else cloudPrefs.getInt("image_resize_jpeg_quality", 70)
+                val imgMaxDim = imgMaxDimRaw.coerceIn(64, 4096)
+                val imgJpegQ = imgJpegQRaw.coerceIn(30, 95)
+                cloudPrefs.edit()
+                    .putFloat("auto_upload_no_confirm_mb", clamped.toFloat())
+                    .putFloat("min_transfer_kbps", mkClamped.toFloat())
+                    .putBoolean("image_resize_enabled", imgEnabled)
+                    .putInt("image_resize_max_dim_px", imgMaxDim)
+                    .putInt("image_resize_jpeg_quality", imgJpegQ)
+                    .apply()
                 return jsonResponse(
                     JSONObject()
                         .put("status", "ok")
                         .put("auto_upload_no_confirm_mb", clamped)
                         .put("min_transfer_kbps", mkClamped)
+                        .put("image_resize_enabled", imgEnabled)
+                        .put("image_resize_max_dim_px", imgMaxDim)
+                        .put("image_resize_jpeg_quality", imgJpegQ)
                 )
             }
             (uri == "/pip/status" || uri == "/pip/status/") -> {
@@ -2898,10 +2920,29 @@ class LocalHttpServer(
                 if (!f.exists() || !f.isFile) return@replace ""
                 exp.usedFiles.add(rel)
                 return@replace try {
-                    val bytes = f.readBytes()
+                    val bytes: ByteArray = when (mode) {
+                        "text" -> f.readBytes()
+                        "base64_raw" -> f.readBytes()
+                        else -> {
+                            // Default: base64. For common image types, downscale/compress to reduce upload size.
+                            val ext = f.name.substringAfterLast('.', "").lowercase()
+                            val isImg = ext in setOf("jpg", "jpeg", "png", "webp")
+                            val enabled = cloudPrefs.getBoolean("image_resize_enabled", true)
+                            if (mode == "base64" && enabled && isImg) {
+                                downscaleImageToJpeg(
+                                    f,
+                                    maxDimPx = cloudPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096),
+                                    jpegQuality = cloudPrefs.getInt("image_resize_jpeg_quality", 70).coerceIn(30, 95)
+                                ) ?: f.readBytes()
+                            } else {
+                                f.readBytes()
+                            }
+                        }
+                    }
                     exp.uploadBytes += bytes.size.toLong()
                     when (mode) {
                         "text" -> bytes.toString(Charsets.UTF_8)
+                        "base64_raw" -> Base64.encodeToString(bytes, Base64.NO_WRAP)
                         else -> Base64.encodeToString(bytes, Base64.NO_WRAP)
                     }
                 } catch (_: Exception) {
@@ -2909,6 +2950,52 @@ class LocalHttpServer(
                 }
             }
             m.value
+        }
+    }
+
+    private fun downscaleImageToJpeg(src: File, maxDimPx: Int, jpegQuality: Int): ByteArray? {
+        // Best-effort: decode + downscale + JPEG encode. Returns null on failure.
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(src.absolutePath, bounds)
+        val w0 = bounds.outWidth
+        val h0 = bounds.outHeight
+        if (w0 <= 0 || h0 <= 0) return null
+
+        val targetMax = maxDimPx.coerceIn(64, 4096)
+        var sample = 1
+        // Use power-of-two sampling first to keep memory low.
+        while ((w0 / sample) > targetMax * 2 || (h0 / sample) > targetMax * 2) {
+            sample *= 2
+        }
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+        val bmp = BitmapFactory.decodeFile(src.absolutePath, opts) ?: return null
+        val w1 = bmp.width
+        val h1 = bmp.height
+        if (w1 <= 0 || h1 <= 0) {
+            bmp.recycle()
+            return null
+        }
+        val scale = minOf(1.0, targetMax.toDouble() / maxOf(w1, h1).toDouble())
+        val outBmp = if (scale < 1.0) {
+            val tw = maxOf(1, (w1 * scale).toInt())
+            val th = maxOf(1, (h1 * scale).toInt())
+            val scaled = Bitmap.createScaledBitmap(bmp, tw, th, true)
+            if (scaled != bmp) bmp.recycle()
+            scaled
+        } else {
+            bmp
+        }
+        return try {
+            val baos = ByteArrayOutputStream()
+            outBmp.compress(Bitmap.CompressFormat.JPEG, jpegQuality.coerceIn(30, 95), baos)
+            baos.toByteArray()
+        } catch (_: Exception) {
+            null
+        } finally {
+            outBmp.recycle()
         }
     }
 
