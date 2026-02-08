@@ -464,8 +464,10 @@ def _tool_invoke_impl(
     request_id: Optional[str] = None,
     detail: str = "",
 ) -> Dict:
-    # device_api performs its own permission flow via Kotlin /permissions/*.
-    if tool_name == "device_api":
+    # Some tools perform their own permission flow in the Kotlin control plane.
+    # - device_api: device capabilities are gated by Kotlin /permissions/*
+    # - cloud_request: cloud uploads are gated by Kotlin /cloud/request (cloud.media_upload)
+    if tool_name in {"device_api", "cloud_request"}:
         result = TOOL_ROUTER.invoke(tool_name, args)
         _emit_log("tool_invoked", {"tool": tool_name, "result": result})
         return result
