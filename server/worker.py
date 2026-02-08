@@ -31,8 +31,8 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 PYENV_DIR = BASE_DIR / "pyenv"
 if PYENV_DIR.exists():
     # Some tools (notably pip build isolation) may spawn Python subprocesses using sys.executable.
-    # Our embedded launcher expects KUGUTZ_PYENV to locate the runtime.
-    os.environ.setdefault("KUGUTZ_PYENV", str(PYENV_DIR))
+    # Our embedded launcher expects METHINGS_PYENV to locate the runtime.
+    os.environ.setdefault("METHINGS_PYENV", str(PYENV_DIR))
 
 STORAGE = Storage(DATA_DIR / "app.db")
 TOOL_ROUTER = ToolRouter(DATA_DIR)
@@ -47,7 +47,7 @@ def _patch_ctypes_find_library():
     That can throw a hard JVM exception and break pure-Python packages like `pyusb`.
 
     Prefer the app's native library directory (exported by Kotlin as
-    `$KUGUTZ_NATIVELIB`) and fall back to the original implementation.
+    `$METHINGS_NATIVELIB`) and fall back to the original implementation.
     """
 
     orig = ctypes.util.find_library
@@ -64,7 +64,7 @@ def _patch_ctypes_find_library():
         return None
 
     def patched(name: str):  # type: ignore[no-untyped-def]
-        nlib = (os.environ.get("KUGUTZ_NATIVELIB") or "").strip()
+        nlib = (os.environ.get("METHINGS_NATIVELIB") or "").strip()
         if nlib:
             candidates: list[str] = []
             if name:
@@ -392,11 +392,11 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
                 # pip spawns subprocesses (PEP 517 build isolation). In embedded Python,
                 # sys.executable may be empty, which makes pip fail with Errno 13 on ''.
                 if not getattr(sys, "executable", ""):
-                    cand = (os.environ.get("KUGUTZ_PYTHON_EXE") or "").strip()
+                    cand = (os.environ.get("METHINGS_PYTHON_EXE") or "").strip()
                     if not cand:
-                        nat = (os.environ.get("KUGUTZ_NATIVELIB") or "").strip()
+                        nat = (os.environ.get("METHINGS_NATIVELIB") or "").strip()
                         if nat:
-                            cand = str(Path(nat) / "libkugutzpy.so")
+                            cand = str(Path(nat) / "libmethingspy.so")
                     if cand and Path(cand).exists():
                         sys.executable = cand
                 try:
@@ -503,7 +503,7 @@ BRAIN_RUNTIME = BrainRuntime(
 
 
 class WorkerHandler(BaseHTTPRequestHandler):
-    server_version = "KugutzWorker/0.2"
+    server_version = "MethingsWorker/0.2"
 
     def do_GET(self):
         parsed = urlparse(self.path)

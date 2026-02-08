@@ -116,7 +116,7 @@ class MainActivity : AppCompatActivity() {
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
                 android.util.Log.d(
-                    "KugutzWeb",
+                    "MethingsWeb",
                     "console: ${message.message()} @${message.lineNumber()} ${message.sourceId()}"
                 )
                 return true
@@ -188,7 +188,7 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
-                android.util.Log.d("KugutzWeb", "page finished: $url")
+                android.util.Log.d("MethingsWeb", "page finished: $url")
                 view.evaluateJavascript("console.log('methings page loaded: ' + location.href)", null)
             }
 

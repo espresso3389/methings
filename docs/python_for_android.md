@@ -32,10 +32,10 @@ Dropbear SSH (port 2222, nativeLibDir)
   |  3. Prepends shell function preamble to commands
   |
   v
-/system/bin/sh -c "python3(){ .../libkugutzpy.so \"$@\"; }; ... ; <user command>"
+/system/bin/sh -c "python3(){ .../libmethingspy.so \"$@\"; }; ... ; <user command>"
   |
   v
-libkugutzpy.so (nativeLibDir, correct SELinux context)
+libmethingspy.so (nativeLibDir, correct SELinux context)
   |  - dlopen("libpython3.11.so")
   |  - dlsym("Py_BytesMain")
   |  - Auto-detects pyenv, sets PYTHONHOME/PYTHONPATH/SSL certs
@@ -47,16 +47,16 @@ Python 3.11.5 (p4a runtime in <filesDir>/pyenv/)
 
 ## Key Components
 
-### libkugutzpy.so (`scripts/kugutzpy.c`)
+### libmethingspy.so (`scripts/methingspy.c`)
 
 A standalone Python launcher compiled as a native library (named `lib*.so` to satisfy Android's APK packaging constraint). It:
 
 - Uses `dlopen`/`dlsym` to load `libpython3.11.so` and call `Py_BytesMain`
-- Auto-detects the pyenv directory from `KUGUTZ_PYENV`, `$HOME/../pyenv`, or `/proc/self/exe`
+- Auto-detects the pyenv directory from `METHINGS_PYENV`, `$HOME/../pyenv`, or `/proc/self/exe`
 - Sets `PYTHONHOME`, `PYTHONPATH`, `LD_LIBRARY_PATH`, `SSL_CERT_FILE`, `PIP_CERT`
 - Detects when invoked as `pip`/`pip3` (via `argv[0]` basename) and automatically injects `-m pip` arguments
 
-Build: `scripts/build_kugutzpy_android.sh`
+Build: `scripts/build_methingspy_android.sh`
 
 ### Dropbear Modifications (`third_party/dropbear/src/svr-chansession.c`)
 
@@ -64,17 +64,17 @@ Two modifications to `execchild()`:
 
 **1. Environment variable passthrough**: Dropbear calls `clearenv()` before setting up the child session environment, which wipes all inherited env vars. We save methings-specific variables with `m_strdup()` before `clearenv()` and restore them via `addnewvar()` after:
 
-- `PATH`, `KUGUTZ_HOME`, `KUGUTZ_PYENV`, `KUGUTZ_NATIVELIB`
+- `PATH`, `METHINGS_HOME`, `METHINGS_PYENV`, `METHINGS_NATIVELIB`
 - `LD_LIBRARY_PATH`, `PYTHONHOME`, `PYTHONPATH`
 - `SSL_CERT_FILE`, `PIP_CERT`
 
 **2. Shell function injection**: Since we can't create executables named `python3` in any writable location (see SELinux section below), we prepend shell function definitions to every command:
 
 ```c
-snprintf(kugutz_preamble, plen,
-    "python3(){ %s/libkugutzpy.so \"$@\"; }; "
+snprintf(methings_preamble, plen,
+    "python3(){ %s/libmethingspy.so \"$@\"; }; "
     "python(){ python3 \"$@\"; }; "
-    "pip(){ %s/libkugutzpy.so -m pip \"$@\"; }; "
+    "pip(){ %s/libmethingspy.so -m pip \"$@\"; }; "
     "pip3(){ pip \"$@\"; }; ",
     nlib, nlib);
 ```
@@ -85,7 +85,7 @@ This applies to both non-interactive commands (`ssh host "cmd"`) and the inline 
 
 Sets all Python-related environment variables on the Dropbear `ProcessBuilder`, which Dropbear then passes through to child sessions:
 
-- `KUGUTZ_PYENV`, `KUGUTZ_NATIVELIB`, `LD_LIBRARY_PATH`
+- `METHINGS_PYENV`, `METHINGS_NATIVELIB`, `LD_LIBRARY_PATH`
 - `PYTHONHOME`, `PYTHONPATH`
 - `SSL_CERT_FILE`, `PIP_CERT` (pointing to `certifi/cacert.pem`)
 - `PATH` includes `nativeLibraryDir`
@@ -119,7 +119,7 @@ Bundled extraction resets only the `bundled/` directory on app update; the `user
 and exported via env vars for both SSH sessions and `shell_exec`:
 
 - `PIP_FIND_LINKS="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
-- `KUGUTZ_WHEELHOUSE="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
+- `METHINGS_WHEELHOUSE="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
 
 In current implementation these env vars contain a whitespace-separated list of directories:
 
@@ -137,15 +137,15 @@ Android SELinux policy assigns `app_data_file` context to all files in the app's
 Only files in `nativeLibraryDir` (`/data/app/.../<pkg>-.../lib/<abi>/`) have the correct SELinux context (`apk_data_file`) to execute.
 
 **Failed approaches:**
-- Copying `libkugutzpy.so` to `files/bin/python3` - blocked by `app_data_file`
+- Copying `libmethingspy.so` to `files/bin/python3` - blocked by `app_data_file`
 - Shell wrapper scripts in `files/bin/` - also blocked
-- Symlinks from `files/bin/python3` to `nativeLibDir/libkugutzpy.so` - SELinux blocks traversal across contexts
+- Symlinks from `files/bin/python3` to `nativeLibDir/libmethingspy.so` - SELinux blocks traversal across contexts
 
 **Working solution:** Shell function injection in Dropbear, mapping command names to the native library binary directly in `nativeLibraryDir`.
 
 ### Android lib*.so Naming Constraint
 
-Android's `PackageManager` only extracts native libraries matching the pattern `lib*.so` from the APK into `nativeLibraryDir`. Files with other names are silently ignored. This is why the Python launcher is named `libkugutzpy.so` rather than `python3`.
+Android's `PackageManager` only extracts native libraries matching the pattern `lib*.so` from the APK into `nativeLibraryDir`. Files with other names are silently ignored. This is why the Python launcher is named `libmethingspy.so` rather than `python3`.
 
 ### Dropbear clearenv() Wipes Inherited Environment
 
@@ -190,7 +190,7 @@ Packages requiring C compilation (e.g., `pyyaml`) fail because pip's build isola
 
 ```bash
 # Build standalone Python launcher
-./scripts/build_kugutzpy_android.sh
+./scripts/build_methingspy_android.sh
 
 # Build Dropbear with methings patches
 ./scripts/build_dropbear.sh
@@ -199,4 +199,4 @@ Packages requiring C compilation (e.g., `pyyaml`) fail because pip's build isola
 cd app/android && ./gradlew clean assembleDebug
 ```
 
-The Gradle build (`preBuild`) automatically runs all native build scripts including `build_kugutzpy_android.sh` and `build_dropbear.sh`.
+The Gradle build (`preBuild`) automatically runs all native build scripts including `build_methingspy_android.sh` and `build_dropbear.sh`.

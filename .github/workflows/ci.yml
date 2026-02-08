@@ -74,7 +74,7 @@ jobs:
           SDK_DIR: ${{ env.ANDROID_SDK_ROOT }}
           NDK_DIR: ${{ env.ANDROID_SDK_ROOT }}/ndk/29.0.14206865
           ARCH: arm64-v8a
-          DIST_NAME: kugutz_ci
+          DIST_NAME: methings_ci
           ANDROID_API: 34
           REQUIREMENTS: python3,fastapi==0.99.1,starlette==0.27.0,pydantic==1.10.13,typing-extensions,anyio==3.7.1,sniffio,uvicorn==0.23.2,click,h11,requests,charset-normalizer,idna,urllib3,certifi
         run: |

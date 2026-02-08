@@ -37,7 +37,7 @@ At app/runtime install, we extract to app-private storage:
 - `<filesDir>/wheelhouse/<abi>/user/` (user-managed wheel cache; preserved across app updates)
 
 The app sets pip discovery variables for subprocesses and SSH sessions:
-- `KUGUTZ_WHEELHOUSE="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
+- `METHINGS_WHEELHOUSE="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
 - `PIP_FIND_LINKS="<filesDir>/wheelhouse/<abi>/bundled <filesDir>/wheelhouse/<abi>/user"`
 
 This makes pip able to resolve bundled wheels without internet access.

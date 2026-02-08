@@ -22,7 +22,7 @@ def load() -> ctypes.CDLL:
     This is a facade helper; it does not provide Python `cv2` bindings.
     """
     probes = ["libopencv_java4.so"]
-    nlib = os.environ.get("KUGUTZ_NATIVELIB")
+    nlib = os.environ.get("METHINGS_NATIVELIB")
     if nlib:
         probes.append(os.path.join(nlib, "libopencv_java4.so"))
     return _try_cdll(probes)  # type: ignore[return-value]

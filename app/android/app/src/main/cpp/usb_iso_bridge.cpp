@@ -167,17 +167,4 @@ Java_jp_espresso3389_methings_service_UsbIsoBridge_isochIn(
     return j_out;
 }
 
-// Back-compat symbol for the old package name.
-extern "C" JNIEXPORT jbyteArray JNICALL
-Java_jp_espresso3389_kugutz_service_UsbIsoBridge_isochIn(
-    JNIEnv *env,
-    jclass cls,
-    jint fd,
-    jint endpoint_address,
-    jint packet_size,
-    jint num_packets,
-    jint timeout_ms) {
-    return Java_jp_espresso3389_methings_service_UsbIsoBridge_isochIn(
-        env, cls, fd, endpoint_address, packet_size, num_packets, timeout_ms
-    );
-}
+// methings-only JNI exports.

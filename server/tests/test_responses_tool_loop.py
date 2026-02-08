@@ -94,7 +94,7 @@ class ResponsesToolLoopTest(unittest.TestCase):
         original_post = rt.requests.post
         rt.requests.post = fake_post
         try:
-            user_dir = Path("/tmp/kugutz-test-user")
+            user_dir = Path("/tmp/methings-test-user")
             user_dir.mkdir(parents=True, exist_ok=True)
             brain = rt.BrainRuntime(
                 user_dir=user_dir,
@@ -187,7 +187,7 @@ class ResponsesToolLoopTest(unittest.TestCase):
         original_post = rt.requests.post
         rt.requests.post = fake_post
         try:
-            user_dir = Path("/tmp/kugutz-test-user-truncate")
+            user_dir = Path("/tmp/methings-test-user-truncate")
             user_dir.mkdir(parents=True, exist_ok=True)
 
             big = ("A" * 50000) + "\n" + ("B" * 50000) + "\n"
@@ -298,7 +298,7 @@ class ResponsesToolLoopTest(unittest.TestCase):
         original_post = rt.requests.post
         rt.requests.post = fake_post
         try:
-            user_dir = Path("/tmp/kugutz-test-user")
+            user_dir = Path("/tmp/methings-test-user")
             user_dir.mkdir(parents=True, exist_ok=True)
             brain = rt.BrainRuntime(
                 user_dir=user_dir,

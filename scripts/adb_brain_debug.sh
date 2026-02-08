@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Debug methings Brain via adb port-forward.
+# Debug methings via adb port-forward.
 #
 # Usage:
 #   scripts/adb_brain_debug.sh [serial]
 #
 # Env:
 #   METHINGS_LOCAL_PORT=18765   Local forwarded port
-#   KUGUTZ_LOCAL_PORT=18765     Back-compat
+#   METHINGS_LOCAL_PORT=18765     Back-compat
 
-LOCAL_PORT="${METHINGS_LOCAL_PORT:-${KUGUTZ_LOCAL_PORT:-18765}}"
+LOCAL_PORT="${METHINGS_LOCAL_PORT:-${METHINGS_LOCAL_PORT:-18765}}"
 
 pick_serial() {
   local s

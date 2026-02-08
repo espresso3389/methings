@@ -474,11 +474,11 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
                 # pip spawns subprocesses (PEP 517 build isolation). In embedded Python,
                 # sys.executable may be empty, which makes pip fail with Errno 13 on ''.
                 if not getattr(sys, "executable", ""):
-                    cand = (os.environ.get("KUGUTZ_PYTHON_EXE") or "").strip()
+                    cand = (os.environ.get("METHINGS_PYTHON_EXE") or "").strip()
                     if not cand:
-                        nat = (os.environ.get("KUGUTZ_NATIVELIB") or "").strip()
+                        nat = (os.environ.get("METHINGS_NATIVELIB") or "").strip()
                         if nat:
-                            cand = str(Path(nat) / "libkugutzpy.so")
+                            cand = str(Path(nat) / "libmethingspy.so")
                     if cand and Path(cand).exists():
                         sys.executable = cand
                 try:

@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 
 
 BASE_URL = "http://127.0.0.1:8765"
-_IDENTITY = (os.environ.get("KUGUTZ_IDENTITY") or os.environ.get("KUGUTZ_SESSION_ID") or "").strip() or "default"
+_IDENTITY = (os.environ.get("METHINGS_IDENTITY") or os.environ.get("METHINGS_SESSION_ID") or "").strip() or "default"
 
 
 def set_identity(identity: str) -> None:
@@ -29,7 +29,7 @@ def _request_json(
     if identity:
         # Back-compat: accept either header name server-side; send both client-side.
         headers["X-Methings-Identity"] = identity
-        headers["X-Kugutz-Identity"] = identity
+        headers["X-Methings-Identity"] = identity
     req = urllib.request.Request(BASE_URL + path, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:

@@ -43,7 +43,7 @@ def _wheel_metadata(dist_name: str, version: str) -> bytes:
         "Metadata-Version: 2.1",
         f"Name: {dist_name}",
         f"Version: {version}",
-        "Summary: Kugutz Android facade package (native .so bundled by app).",
+        "Summary: Methings Android facade package (native .so bundled by app).",
         "",
     ]
     return ("\n".join(lines)).encode("utf-8")
@@ -52,7 +52,7 @@ def _wheel_metadata(dist_name: str, version: str) -> bytes:
 def _wheel_wheel_file() -> bytes:
     lines = [
         "Wheel-Version: 1.0",
-        "Generator: kugutz/scripts/build_facade_wheels.py",
+        "Generator: methings/scripts/build_facade_wheels.py",
         "Root-Is-Purelib: true",
         "Tag: py3-none-any",
         "",
@@ -125,7 +125,7 @@ def main() -> int:
         out_dir = Path(sys.argv[2]).resolve()
 
     opencv_version = (
-        os.environ.get("KUGUTZ_FACADE_OPENCV_PYTHON_VERSION", "").strip() or "4.12.0.88+kugutz1"
+        os.environ.get("METHINGS_FACADE_OPENCV_PYTHON_VERSION", "").strip() or "4.12.0.88+methings1"
     )
 
     pkgs = [

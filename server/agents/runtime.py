@@ -146,7 +146,7 @@ class BrainRuntime:
             # - "app": allow access anywhere under the app's private files dir
             "fs_scope": "user",
             "system_prompt": (
-                "You are methings Brain running on an Android device. "
+                "You are \"methings\" running on an Android device. "
                 "Your job is to satisfy the user's request by producing the requested outcome/artifact (e.g. a photo, a file, a running service), "
                 "not by explaining how to do it. "
                 "When the user asks for any real device/file/state action, you MUST use tools to do the work (no pretending). "
@@ -2051,7 +2051,7 @@ class BrainRuntime:
                 headers = {}
                 if self._active_identity:
                     headers["X-Methings-Identity"] = self._active_identity
-                    headers["X-Kugutz-Identity"] = self._active_identity
+                    headers["X-Methings-Identity"] = self._active_identity
                 resp = requests.post(
                     "http://127.0.0.1:8765/web/search",
                     json={

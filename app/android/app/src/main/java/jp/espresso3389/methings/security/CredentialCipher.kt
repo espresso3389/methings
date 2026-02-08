@@ -57,7 +57,7 @@ class CredentialCipher(context: Context) {
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val KEY_ALIAS = "kugutz_credential_key"
+        private const val KEY_ALIAS = "methings_credential_key"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val PREFS = "credential_cipher"
         private const val PREFS_READY = "ready"

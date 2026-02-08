@@ -109,7 +109,7 @@ Read the relevant doc when working in that domain:
 ## Source Code Fallback
 
 methings is open source. If the docs are insufficient, inspect the repo as the ultimate API reference:
-`https://github.com/espresso3389/kugutz`
+`https://github.com/espresso3389/methings`
 
 ## Permission Requests
 
@@ -218,7 +218,7 @@ The server provides `device_permissions.py`:
 ```python
 import device_permissions as dp
 
-dp.set_identity("my_session_123")  # optional; uses env KUGUTZ_IDENTITY / KUGUTZ_SESSION_ID if set
+dp.set_identity("my_session_123")  # optional; uses env METHINGS_IDENTITY / METHINGS_SESSION_ID if set
 dp.ensure_device("camera2", detail="capture a photo", scope="session")
 ```
 

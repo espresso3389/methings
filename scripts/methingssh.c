@@ -387,7 +387,7 @@ static int cmd_python_or_pip(const char *cmd, const char *raw_args, const char *
 }
 
 int main() {
-    const char *root_env = getenv("KUGUTZ_HOME");
+    const char *root_env = getenv("METHINGS_HOME");
     char root[PATH_MAX];
     if (!root_env || root_env[0] == '\0') {
         if (!getcwd(root, sizeof(root))) {

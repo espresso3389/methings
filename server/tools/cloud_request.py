@@ -16,7 +16,7 @@ class CloudRequestTool:
 
     def __init__(self, base_url: str = "http://127.0.0.1:8765"):
         self.base_url = base_url.rstrip("/")
-        self._identity = (os.environ.get("KUGUTZ_IDENTITY") or os.environ.get("KUGUTZ_SESSION_ID") or "").strip() or "default"
+        self._identity = (os.environ.get("METHINGS_IDENTITY") or os.environ.get("METHINGS_SESSION_ID") or "").strip() or "default"
 
     def set_identity(self, identity: str) -> None:
         self._identity = str(identity or "").strip() or "default"
@@ -31,7 +31,7 @@ class CloudRequestTool:
         if self._identity:
             # Back-compat: accept either header name server-side; send both client-side.
             headers["X-Methings-Identity"] = self._identity
-            headers["X-Kugutz-Identity"] = self._identity
+            headers["X-Methings-Identity"] = self._identity
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
             with urllib.request.urlopen(req, timeout=float(timeout_s)) as resp:

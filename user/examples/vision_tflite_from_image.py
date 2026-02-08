@@ -4,7 +4,7 @@ import json
 import urllib.request
 
 
-BASE = os.environ.get("KUGUTZ_DEVICE_API", "http://127.0.0.1:8765").rstrip("/")
+BASE = os.environ.get("METHINGS_DEVICE_API", "http://127.0.0.1:8765").rstrip("/")
 
 
 def post(path: str, payload: dict) -> dict:
@@ -22,18 +22,18 @@ def main() -> int:
     # Put these files under the user root on device:
     # - models/model.tflite
     # - images/input.jpg
-    model_path = os.environ.get("KUGUTZ_MODEL_PATH", "models/model.tflite")
-    image_path = os.environ.get("KUGUTZ_IMAGE_PATH", "images/input.jpg")
+    model_path = os.environ.get("METHINGS_MODEL_PATH", "models/model.tflite")
+    image_path = os.environ.get("METHINGS_IMAGE_PATH", "images/input.jpg")
 
     # You must supply a permission_id from the app permission broker.
     # The agent normally gets one automatically via device_api, but direct HTTP needs it explicitly.
-    permission_id = os.environ.get("KUGUTZ_VISION_PERMISSION_ID", "").strip()
+    permission_id = os.environ.get("METHINGS_VISION_PERMISSION_ID", "").strip()
     if not permission_id:
-        raise SystemExit("Set KUGUTZ_VISION_PERMISSION_ID (approved device.vision permission)")
+        raise SystemExit("Set METHINGS_VISION_PERMISSION_ID (approved device.vision permission)")
 
-    model_name = os.environ.get("KUGUTZ_MODEL_NAME", "model").strip() or "model"
-    delegate = os.environ.get("KUGUTZ_DELEGATE", "nnapi")
-    num_threads = int(os.environ.get("KUGUTZ_THREADS", "2"))
+    model_name = os.environ.get("METHINGS_MODEL_NAME", "model").strip() or "model"
+    delegate = os.environ.get("METHINGS_DELEGATE", "nnapi")
+    num_threads = int(os.environ.get("METHINGS_THREADS", "2"))
 
     print("Loading model...")
     info = post(

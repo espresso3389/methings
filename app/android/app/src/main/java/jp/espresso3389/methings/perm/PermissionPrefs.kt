@@ -12,7 +12,7 @@ class PermissionPrefs(private val context: Context) {
     }
 
     companion object {
-        private const val PREFS = "kugutz_permission_prefs"
+        private const val PREFS = "methings_permission_prefs"
         private const val KEY_REMEMBER_APPROVALS = "remember_approvals"
     }
 }

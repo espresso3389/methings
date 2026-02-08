@@ -16,7 +16,7 @@ if [[ -z "$NDK_DIR" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC="$ROOT_DIR/scripts/kugutzpy.c"
+SRC="$ROOT_DIR/scripts/methingspy.c"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/app/android/app/src/main/jniLibs}"
 API="${ANDROID_API:-21}"
 # Keep the app lean: for now we only support modern Android devices (arm64).
@@ -46,7 +46,7 @@ abi_to_triple() {
 
 for ABI in $ABIS; do
   triple="$(abi_to_triple "$ABI")"
-  out="$OUT_DIR/$ABI/libkugutzpy.so"
+  out="$OUT_DIR/$ABI/libmethingspy.so"
   mkdir -p "$OUT_DIR/$ABI"
   "$TOOLCHAIN/bin/${triple}${API}-clang" \
     -fPIE -pie -O2 -s \

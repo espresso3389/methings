@@ -19,7 +19,7 @@ class PermissionBroker(private val context: Context) {
     }
 
     fun requestConsent(tool: String, detail: String, forceBiometric: Boolean, onResult: (Boolean) -> Unit) {
-        android.util.Log.d("KugutzPerm", "requestConsent tool=$tool detail=$detail")
+        android.util.Log.d("MethingsPerm", "requestConsent tool=$tool detail=$detail")
         if (tool != "ssh_pin") {
             postNotification(tool, detail)
         }

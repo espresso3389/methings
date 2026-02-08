@@ -44,7 +44,7 @@ calling `ctypes.util.find_library()` (triggered by `pyusb`'s libusb backend).
 
 Mitigation:
 
-- The worker patches `ctypes.util.find_library()` to prefer `$KUGUTZ_NATIVELIB`
+- The worker patches `ctypes.util.find_library()` to prefer `$METHINGS_NATIVELIB`
   and avoid any Kivy/JNI lookup.
 - `libusb` is packaged under multiple common names (`libusb1.0.so`,
   `libusb-1.0.so`, `libusb.so`) so ecosystem code can find it.

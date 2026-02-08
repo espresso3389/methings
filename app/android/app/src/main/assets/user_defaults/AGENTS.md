@@ -63,7 +63,7 @@ Practical flow:
 ## Identity
 
 - Prefer a runtime-provided identity:
-  - `KUGUTZ_IDENTITY` or `KUGUTZ_SESSION_ID` env var.
+  - `METHINGS_IDENTITY` or `METHINGS_SESSION_ID` env var.
 - If missing, set one once per program/session before requesting device permissions.
 
 ## Persistent Memory (`MEMORY.md`)

@@ -37,7 +37,7 @@ def main() -> int:
     parser.add_argument("--user", default="methings")
     args = parser.parse_args()
 
-    with tempfile.TemporaryDirectory(prefix="kugutz_known_hosts_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="methings_known_hosts_") as tmp:
         known_hosts = Path(tmp) / "known_hosts"
         known_hosts.write_text("", encoding="utf-8")
 

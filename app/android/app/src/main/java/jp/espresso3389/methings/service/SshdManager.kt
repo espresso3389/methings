@@ -29,7 +29,7 @@ class SshdManager(private val context: Context) {
         val dropbear = resolveBinary("libdropbear.so", File(binDir, "dropbear"))
         val dropbearkey = resolveBinary("libdropbearkey.so", File(binDir, "dropbearkey"))
         // Keep on-device shell binary name stable across app renames, but allow a new name too.
-        // We prefer "methingssh" when present; otherwise we fall back to the historical "kugutzsh".
+        // We prefer "methingssh" when present; otherwise we fall back to the historical "methingssh".
         val shellBin = ensureShellBinary(File(binDir, "methingssh"))
         if (dropbear == null) {
             Log.w(TAG, "Dropbear binary missing")
@@ -116,16 +116,16 @@ class SshdManager(private val context: Context) {
             val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
             val pb = ProcessBuilder(args)
             pb.environment()["HOME"] = userHome.absolutePath
-            pb.environment()["KUGUTZ_HOME"] = userHome.absolutePath
-            pb.environment()["KUGUTZ_IDENTITY"] = installIdentity.get()
+            pb.environment()["METHINGS_HOME"] = userHome.absolutePath
+            pb.environment()["METHINGS_IDENTITY"] = installIdentity.get()
             if (shellBin != null) {
-                pb.environment()["KUGUTZ_SHELL"] = shellBin.absolutePath
+                pb.environment()["METHINGS_SHELL"] = shellBin.absolutePath
             }
             pb.environment()["USER"] = "methings"
             pb.environment()["DROPBEAR_PIN_FILE"] = pinFile.absolutePath
             // Python/pip environment for SSH sessions
-            pb.environment()["KUGUTZ_PYENV"] = pyenvDir.absolutePath
-            pb.environment()["KUGUTZ_NATIVELIB"] = nativeLibDir
+            pb.environment()["METHINGS_PYENV"] = pyenvDir.absolutePath
+            pb.environment()["METHINGS_NATIVELIB"] = nativeLibDir
             pb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
             pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
             pb.environment()["PYTHONPATH"] = listOf(
@@ -135,7 +135,7 @@ class SshdManager(private val context: Context) {
                 "${pyenvDir.absolutePath}/stdlib.zip"
             ).joinToString(":")
             if (wheelhouse != null) {
-                pb.environment()["KUGUTZ_WHEELHOUSE"] = wheelhouse.findLinksEnvValue()
+                pb.environment()["METHINGS_WHEELHOUSE"] = wheelhouse.findLinksEnvValue()
                 // Let pip resolve prebuilt wheels packaged with the app (e.g. opencv-python wheels).
                 pb.environment()["PIP_FIND_LINKS"] = wheelhouse.findLinksEnvValue()
             }
@@ -152,7 +152,7 @@ class SshdManager(private val context: Context) {
                 pb.environment()["PIP_CERT"] = caFile.absolutePath
                 pb.environment()["REQUESTS_CA_BUNDLE"] = caFile.absolutePath
             }
-            // Add nativeLibDir to PATH so python3/pip are accessible via libkugutzpy.so
+            // Add nativeLibDir to PATH so python3/pip are accessible via libmethingspy.so
             val existingPath = pb.environment()["PATH"] ?: "/usr/bin:/bin"
             pb.environment()["PATH"] = "${binDir.absolutePath}:$nativeLibDir:$existingPath"
             if (authMode == AUTH_MODE_NOTIFICATION) {
@@ -431,13 +431,13 @@ class SshdManager(private val context: Context) {
             File(nativeDir, "libmethingssh.so").exists() -> File(nativeDir, "libmethingssh.so")
             // Back-compat: old name (kept so we don't need to rebuild every dependent artifact
             // when changing app branding).
-            File(nativeDir, "libkugutzsh.so").exists() -> File(nativeDir, "libkugutzsh.so")
+            File(nativeDir, "libmethingssh.so").exists() -> File(nativeDir, "libmethingssh.so")
             else -> File(nativeDir, "libmethingssh.so")
         }
         if (!nativeFile.exists()) {
             if (target.exists()) return target
             // Back-compat: old extracted shell name.
-            val oldTarget = File(target.parentFile, "kugutzsh")
+            val oldTarget = File(target.parentFile, "methingssh")
             return if (oldTarget.exists()) oldTarget else null
         }
         return try {

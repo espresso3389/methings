@@ -105,7 +105,7 @@ val buildUsbLibs by tasks.registering(Exec::class) {
     commandLine(
         "bash",
         "-lc",
-        "./scripts/build_dropbear.sh && ./scripts/build_libusb_android.sh && ./scripts/build_libuvc_android.sh && ./scripts/build_kugutzsh_android.sh && ./scripts/build_kugutzpy_android.sh"
+        "./scripts/build_dropbear.sh && ./scripts/build_libusb_android.sh && ./scripts/build_libuvc_android.sh && ./scripts/build_methingssh_android.sh && ./scripts/build_methingspy_android.sh"
     )
 }
 

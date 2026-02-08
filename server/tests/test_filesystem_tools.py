@@ -26,7 +26,7 @@ class FilesystemToolsTest(unittest.TestCase):
 
         from agents import runtime as rt
 
-        user_dir = Path("/tmp/kugutz-fs-test-user")
+        user_dir = Path("/tmp/methings-fs-test-user")
         (user_dir / "sub").mkdir(parents=True, exist_ok=True)
         (user_dir / "hello.txt").write_text("hello\n", encoding="utf-8")
 

@@ -267,8 +267,7 @@ static jint PythonBridge_stop_impl() {
     return 0;
 }
 
-// Export both the old and new package symbols. This makes appId/package renames
-// safe without requiring an immediate native rebuild for every downstream APK.
+// methings-only JNI exports.
 extern "C" JNIEXPORT jint JNICALL
 Java_jp_espresso3389_methings_service_PythonBridge_start(
         JNIEnv *env,
@@ -281,25 +280,7 @@ Java_jp_espresso3389_methings_service_PythonBridge_start(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_jp_espresso3389_kugutz_service_PythonBridge_start(
-        JNIEnv *env,
-        jobject thiz,
-        jstring pythonHome,
-        jstring serverDir,
-        jstring keyFile,
-        jstring nativeLibDir) {
-    return PythonBridge_start_impl(env, thiz, pythonHome, serverDir, keyFile, nativeLibDir);
-}
-
-extern "C" JNIEXPORT jint JNICALL
 Java_jp_espresso3389_methings_service_PythonBridge_stop(
-        JNIEnv * /* env */,
-        jobject /* this */) {
-    return PythonBridge_stop_impl();
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_jp_espresso3389_kugutz_service_PythonBridge_stop(
         JNIEnv * /* env */,
         jobject /* this */) {
     return PythonBridge_stop_impl();

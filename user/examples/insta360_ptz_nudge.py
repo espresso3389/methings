@@ -4,7 +4,7 @@ import os
 import urllib.request
 
 
-BASE = os.environ.get("KUGUTZ_DEVICE_API", "http://127.0.0.1:8765").rstrip("/")
+BASE = os.environ.get("METHINGS_DEVICE_API", "http://127.0.0.1:8765").rstrip("/")
 
 
 def post(path: str, payload: dict) -> dict:
@@ -20,16 +20,16 @@ def post(path: str, payload: dict) -> dict:
 
 def main() -> int:
     # You must supply a permission_id from the app permission broker.
-    permission_id = os.environ.get("KUGUTZ_USB_PERMISSION_ID", "").strip()
+    permission_id = os.environ.get("METHINGS_USB_PERMISSION_ID", "").strip()
     if not permission_id:
-        raise SystemExit("Set KUGUTZ_USB_PERMISSION_ID (approved device.usb permission)")
+        raise SystemExit("Set METHINGS_USB_PERMISSION_ID (approved device.usb permission)")
 
     # Insta360 Link VID/PID (from earlier observations).
-    vid = int(os.environ.get("KUGUTZ_VID", "0x2e1a"), 0)
-    pid = int(os.environ.get("KUGUTZ_PID", "0x4c01"), 0)
+    vid = int(os.environ.get("METHINGS_VID", "0x2e1a"), 0)
+    pid = int(os.environ.get("METHINGS_PID", "0x4c01"), 0)
 
-    pan = float(os.environ.get("KUGUTZ_PAN", "0.2"))   # -1..+1
-    tilt = float(os.environ.get("KUGUTZ_TILT", "0.0")) # -1..+1
+    pan = float(os.environ.get("METHINGS_PAN", "0.2"))   # -1..+1
+    tilt = float(os.environ.get("METHINGS_TILT", "0.0")) # -1..+1
 
     opened = post(
         "/usb/open",

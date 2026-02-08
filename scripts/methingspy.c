@@ -1,16 +1,16 @@
 /*
- * kugutzpy - Standalone Python launcher for Android app sandbox.
+ * methingspy - Standalone Python launcher for Android app sandbox.
  *
  * This binary dlopen's libpython3.11.so and invokes Py_BytesMain,
  * giving a fully-functional python3 CLI within SSH sessions and
  * from the Kotlin control-plane ProcessBuilder.
  *
  * Environment setup:
- *   KUGUTZ_PYENV  - path to pyenv directory (auto-detected if unset)
- *   KUGUTZ_NATIVELIB - path to native lib directory (auto-detected if unset)
+ *   METHINGS_PYENV  - path to pyenv directory (auto-detected if unset)
+ *   METHINGS_NATIVELIB - path to native lib directory (auto-detected if unset)
  *
  * Build:
- *   See scripts/build_kugutzpy_android.sh
+ *   See scripts/build_methingspy_android.sh
  */
 #include <dlfcn.h>
 #include <limits.h>
@@ -22,9 +22,9 @@
 typedef int (*Py_BytesMain_t)(int, char **);
 
 /* Resolve the pyenv directory.
- * Priority: KUGUTZ_PYENV > $HOME/../pyenv > /proc/self/exe heuristic. */
+ * Priority: METHINGS_PYENV > $HOME/../pyenv > /proc/self/exe heuristic. */
 static int resolve_pyenv(char *out, size_t out_len) {
-    const char *env = getenv("KUGUTZ_PYENV");
+    const char *env = getenv("METHINGS_PYENV");
     if (env && env[0]) {
         snprintf(out, out_len, "%s", env);
         return 0;
@@ -43,8 +43,8 @@ static int resolve_pyenv(char *out, size_t out_len) {
             }
         }
     }
-    /* Derive from KUGUTZ_HOME (same logic) */
-    const char *khome = getenv("KUGUTZ_HOME");
+    /* Derive from METHINGS_HOME (same logic) */
+    const char *khome = getenv("METHINGS_HOME");
     if (khome && khome[0]) {
         char tmp[PATH_MAX];
         snprintf(tmp, sizeof(tmp), "%s", khome);
@@ -84,7 +84,7 @@ static int resolve_pyenv(char *out, size_t out_len) {
 
 /* Resolve the native library directory containing libpython3.11.so. */
 static int resolve_nativelib(char *out, size_t out_len) {
-    const char *env = getenv("KUGUTZ_NATIVELIB");
+    const char *env = getenv("METHINGS_NATIVELIB");
     if (env && env[0]) {
         snprintf(out, out_len, "%s", env);
         return 0;
@@ -96,7 +96,7 @@ static int resolve_nativelib(char *out, size_t out_len) {
     ssize_t n = readlink("/proc/self/exe", self, sizeof(self) - 1);
     if (n > 0) {
         self[n] = '\0';
-        /* If this binary is libkugutzpy.so in nativeLibDir, it's the same dir */
+        /* If this binary is libmethingspy.so in nativeLibDir, it's the same dir */
         char *slash = strrchr(self, '/');
         if (slash) {
             *slash = '\0';
@@ -118,7 +118,7 @@ int main(int argc, char **argv) {
     char tmp[PATH_MAX * 4];
 
     if (resolve_pyenv(pyenv, sizeof(pyenv)) != 0) {
-        fprintf(stderr, "kugutzpy: cannot find pyenv directory. Set KUGUTZ_PYENV.\n");
+        fprintf(stderr, "methingspy: cannot find pyenv directory. Set METHINGS_PYENV.\n");
         return 1;
     }
 
@@ -156,8 +156,8 @@ int main(int argc, char **argv) {
         char cert_path[PATH_MAX];
         int set = 0;
 
-        /* Try managed path derived from KUGUTZ_HOME/HOME (<filesDir>/user). */
-        const char *khome = getenv("KUGUTZ_HOME");
+        /* Try managed path derived from METHINGS_HOME/HOME (<filesDir>/user). */
+        const char *khome = getenv("METHINGS_HOME");
         if (!khome || !khome[0]) {
             khome = getenv("HOME");
         }
@@ -189,12 +189,12 @@ int main(int argc, char **argv) {
 
     /* Wheelhouse: allow pip to resolve prebuilt wheels shipped with the app.
      *
-     * The Android side sets KUGUTZ_WHEELHOUSE to one or more directories containing wheels
+     * The Android side sets METHINGS_WHEELHOUSE to one or more directories containing wheels
      * (e.g. an opencv-python shim wheel + its real payload).
      *
      * Don't override if already set by the caller. */
     {
-        const char *wheelhouse = getenv("KUGUTZ_WHEELHOUSE");
+        const char *wheelhouse = getenv("METHINGS_WHEELHOUSE");
         if (wheelhouse && wheelhouse[0]) {
             setenv("PIP_FIND_LINKS", wheelhouse, 0);
         }
@@ -224,13 +224,13 @@ int main(int argc, char **argv) {
     /* Load libpython */
     void *handle = dlopen("libpython3.11.so", RTLD_NOW | RTLD_GLOBAL);
     if (!handle) {
-        fprintf(stderr, "kugutzpy: cannot load libpython3.11.so: %s\n", dlerror());
+        fprintf(stderr, "methingspy: cannot load libpython3.11.so: %s\n", dlerror());
         return 1;
     }
 
     Py_BytesMain_t py_main = (Py_BytesMain_t)dlsym(handle, "Py_BytesMain");
     if (!py_main) {
-        fprintf(stderr, "kugutzpy: Py_BytesMain not found: %s\n", dlerror());
+        fprintf(stderr, "methingspy: Py_BytesMain not found: %s\n", dlerror());
         dlclose(handle);
         return 1;
     }
@@ -240,7 +240,7 @@ int main(int argc, char **argv) {
         int new_argc = argc + 2;
         char **new_argv = malloc(sizeof(char *) * (new_argc + 1));
         if (!new_argv) {
-            fprintf(stderr, "kugutzpy: malloc failed\n");
+            fprintf(stderr, "methingspy: malloc failed\n");
             return 1;
         }
         new_argv[0] = "python3";

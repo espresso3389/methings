@@ -21,7 +21,7 @@ class InstallIdentity(private val context: Context) {
     }
 
     companion object {
-        private const val PREFS = "kugutz_install"
+        private const val PREFS = "methings_install"
         private const val KEY_IDENTITY = "identity"
     }
 }

@@ -7,7 +7,7 @@ import struct
 import urllib.request
 
 
-BASE = os.environ.get("KUGUTZ_DEVICE_API", "http://127.0.0.1:8765").rstrip("/")
+BASE = os.environ.get("METHINGS_DEVICE_API", "http://127.0.0.1:8765").rstrip("/")
 
 
 def post(path: str, payload: dict) -> dict:
@@ -33,17 +33,17 @@ def recv_exact(sock: socket.socket, n: int) -> bytes:
 
 def main() -> int:
     # You must supply a permission_id from the app permission broker.
-    permission_id = os.environ.get("KUGUTZ_USB_PERMISSION_ID", "").strip()
+    permission_id = os.environ.get("METHINGS_USB_PERMISSION_ID", "").strip()
     if not permission_id:
-        raise SystemExit("Set KUGUTZ_USB_PERMISSION_ID (approved device.usb permission)")
+        raise SystemExit("Set METHINGS_USB_PERMISSION_ID (approved device.usb permission)")
 
     # Target device selector.
-    vid = int(os.environ.get("KUGUTZ_VID", "0"), 0)
-    pid = int(os.environ.get("KUGUTZ_PID", "0"), 0)
+    vid = int(os.environ.get("METHINGS_VID", "0"), 0)
+    pid = int(os.environ.get("METHINGS_PID", "0"), 0)
     if vid <= 0 or pid <= 0:
-        raise SystemExit("Set KUGUTZ_VID and KUGUTZ_PID (e.g. 0x2e1a / 0x4c01)")
+        raise SystemExit("Set METHINGS_VID and METHINGS_PID (e.g. 0x2e1a / 0x4c01)")
 
-    ep_addr = int(os.environ.get("KUGUTZ_EP", "0x81"), 0)
+    ep_addr = int(os.environ.get("METHINGS_EP", "0x81"), 0)
 
     print("Opening device...")
     opened = post(

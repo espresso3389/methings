@@ -348,7 +348,7 @@ class PythonRuntimeInstaller(private val context: Context) {
     }
 
     /**
-     * Ensure the bin/ directory exists for other tools (dropbear, kugutzsh).
+     * Ensure the bin/ directory exists for other tools (dropbear, methingssh).
      * python3/pip commands are handled by dropbear shell function injection
      * (avoids SELinux app_data_file execution restrictions).
      */

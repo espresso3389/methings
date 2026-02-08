@@ -193,7 +193,7 @@ class LocalHttpServer(
                 val detail = payload.optString("detail", "")
                 val requestedScope = payload.optString("scope", "once")
                 val headerIdentity =
-                    ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
+                    ((session.headers["x-methings-identity"] ?: session.headers["x-methings-identity"]) ?: "").trim()
                 val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
                 val capabilityFromTool = if (tool.startsWith("device.")) tool.removePrefix("device.").trim() else ""
                 val capability = payload.optString("capability", "").trim().ifBlank { capabilityFromTool }
@@ -1269,7 +1269,7 @@ class LocalHttpServer(
             // agent/UI read uploaded user files without re-prompting for device.files.
             try {
                 val headerIdentity =
-                    ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
+                    ((session.headers["x-methings-identity"] ?: session.headers["x-methings-identity"]) ?: "").trim()
                 val identity = (parms["identity"]?.firstOrNull() ?: "").trim()
                     .ifBlank { headerIdentity }
                     .ifBlank { installIdentity.get() }
@@ -2827,7 +2827,7 @@ class LocalHttpServer(
         }
 
         // Always proxy to the embedded Python worker.
-        // Executing the CLI binary directly (ProcessBuilder + libkugutzpy.so) can crash when
+        // Executing the CLI binary directly (ProcessBuilder + libmethingspy.so) can crash when
         // Android/JNI integration modules (pyjnius) are imported without a proper JVM context.
         if (runtimeManager.getStatus() != "ok") {
             runtimeManager.startWorker()
@@ -2847,7 +2847,7 @@ class LocalHttpServer(
         detail: String
     ): Pair<Boolean, Response?> {
         val headerIdentity =
-            ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
+            ((session.headers["x-methings-identity"] ?: session.headers["x-methings-identity"]) ?: "").trim()
         val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
         var permissionId = payload.optString("permission_id", "").trim()
 
@@ -2900,7 +2900,7 @@ class LocalHttpServer(
         detail: String
     ): Pair<Boolean, Response?> {
         val headerIdentity =
-            ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
+            ((session.headers["x-methings-identity"] ?: session.headers["x-methings-identity"]) ?: "").trim()
         val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
         var permissionId = payload.optString("permission_id", "").trim()
 
@@ -3113,7 +3113,7 @@ class LocalHttpServer(
         }
         val maxResults = payload.optInt("max_results", payload.optInt("limit", 5)).coerceIn(1, 10)
         val headerIdentity =
-            ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
+            ((session.headers["x-methings-identity"] ?: session.headers["x-methings-identity"]) ?: "").trim()
         val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
         var permissionId = payload.optString("permission_id", "")
 
@@ -3652,7 +3652,7 @@ class LocalHttpServer(
         detail: String
     ): Pair<Boolean, Response?> {
         val headerIdentity =
-            ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
+            ((session.headers["x-methings-identity"] ?: session.headers["x-methings-identity"]) ?: "").trim()
         val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
         var permissionId = payload.optString("permission_id", "").trim()
 
@@ -3934,7 +3934,7 @@ class LocalHttpServer(
     private fun resolvePythonBinary(): File? {
         // Prefer native lib (has correct SELinux context for execution)
         val nativeDir = context.applicationInfo.nativeLibraryDir
-        val nativePython = File(nativeDir, "libkugutzpy.so")
+        val nativePython = File(nativeDir, "libmethingspy.so")
         if (nativePython.exists()) {
             return nativePython
         }
@@ -4021,7 +4021,7 @@ class LocalHttpServer(
         return listOf(
             "You are a senior Android device programming professional (systems-level engineer). ",
             "You are expected to already know Android/USB/BLE/Camera/GPS basics and practical debugging techniques. ",
-            "You are methings Brain running on an Android device. ",
+            "You are \"methings\" running on an Android device. ",
             "Your goal is to produce the user's requested outcome (artifact/state change), not to narrate steps. ",
             "You MUST use function tools for any real action (no pretending). ",
             "If you can satisfy a request by writing code/scripts, do it and execute them via tools. ",
