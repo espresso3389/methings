@@ -108,10 +108,10 @@ After the user approves, the app records a device grant for `(identity, capabili
 
 If you need to upload user media (image/audio/video) to a cloud AI provider for analysis, request explicit permission once per session first (and do not repeatedly ask). Use a non-device tool name like `cloud.media_upload`:
 
-- `POST /permissions/request` with:
-  - `tool`: `cloud.media_upload`
-  - `detail`: e.g. `Upload image to cloud model for analysis`
-  - `scope`: `session`
+Do not call `/permissions/request` directly for cloud uploads.
+Instead, call `cloud_request` (or `POST /cloud/request`) and let the broker enforce the permission gate:
+- If permission is missing, `/cloud/request` returns `status=permission_required` with `request.id`.
+- Ask the user to approve the in-app prompt, then retry the same `/cloud/request` with `"permission_id": "<request.id>"`.
 
 ## Cloud Request Tool (HTTP Broker)
 
@@ -175,6 +175,9 @@ Note: `brain.base_url` for OpenAI is typically `https://api.openai.com/v1` (alre
   "timeout_s": 90
 }
 ```
+
+If this returns `status=permission_required`, retry the same request with:
+- `"permission_id": "<request.id>"`
 
 Large uploads:
 - If total upload bytes exceed ~5MB, `/cloud/request` returns `error=confirm_large_required`.

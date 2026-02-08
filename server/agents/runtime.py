@@ -1583,6 +1583,8 @@ class BrainRuntime:
             "Common camera actions include: camera.list, camera.status, camera.preview.start, camera.preview.stop, camera.capture. "
             "Common vision actions include: vision.model.load, vision.image.load, vision.run. "
             "For cloud calls, use tool='cloud_request' and args shape: {request:{url,method,headers,json/body,...}}. "
+            "Do NOT use shell_exec(curl) to call /cloud/request or /permissions/*; use cloud_request so requests are validated/audit-logged and placeholders are expanded safely. "
+            "If cloud_request returns permission_required, ask the user to approve, then retry the same cloud_request with permission_id=request.id. "
             "If user asks to check status, include at least one device_api status action. "
             "If user asks to change device state, include one device_api mutating action with minimal payload. "
             "Example output for status request: "
