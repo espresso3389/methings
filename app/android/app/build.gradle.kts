@@ -5,12 +5,12 @@ plugins {
 }
 
 android {
-    namespace = "jp.espresso3389.kugutz"
+    namespace = "jp.espresso3389.methings"
     compileSdk = 34
     ndkVersion = "29.0.14206865"
 
     defaultConfig {
-        applicationId = "jp.espresso3389.kugutz"
+        applicationId = "jp.espresso3389.methings"
         minSdk = 26
         targetSdk = 34
         versionCode = 1

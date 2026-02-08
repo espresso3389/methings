@@ -20,7 +20,7 @@ fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_HTML="${ROOT_DIR}/app/android/app/src/main/assets/www/index.html"
-PKG="jp.espresso3389.kugutz"
+PKG="jp.espresso3389.methings"
 
 if [[ ! -f "${SRC_HTML}" ]]; then
   echo "Missing ${SRC_HTML}" >&2
@@ -31,12 +31,12 @@ TS="$(date +%s)"
 
 # NOTE: On some Android builds, `run-as <pkg> sh -c ...` is blocked by SELinux even for debuggable apps.
 # Use only simple executables with `run-as` (cp/cat) and stage files in /data/local/tmp.
-TMP_HTML="/data/local/tmp/kugutz.index.html"
-TMP_VER="/data/local/tmp/kugutz.www.version"
+TMP_HTML="/data/local/tmp/methings.index.html"
+TMP_VER="/data/local/tmp/methings.www.version"
 
 "${ADB[@]}" push "${SRC_HTML}" "${TMP_HTML}" >/dev/null
-printf '%s\n' "${TS}" > /tmp/kugutz.www.version
-"${ADB[@]}" push /tmp/kugutz.www.version "${TMP_VER}" >/dev/null
+printf '%s\n' "${TS}" > /tmp/methings.www.version
+"${ADB[@]}" push /tmp/methings.www.version "${TMP_VER}" >/dev/null
 
 # Copy into app-private files/www (relative to app data dir).
 "${ADB[@]}" shell run-as "${PKG}" mkdir -p files/www >/dev/null 2>&1 || true

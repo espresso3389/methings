@@ -44,9 +44,9 @@ Manual equivalent:
 ```bash
 adb -s <serial> push app/android/app/src/main/assets/www/index.html /data/local/tmp/kugutz.index.html
 date +%s > /tmp/kugutz.www.version && adb -s <serial> push /tmp/kugutz.www.version /data/local/tmp/kugutz.www.version
-adb -s <serial> shell run-as jp.espresso3389.kugutz mkdir -p files/www
-adb -s <serial> shell run-as jp.espresso3389.kugutz cp /data/local/tmp/kugutz.index.html files/www/index.html
-adb -s <serial> shell run-as jp.espresso3389.kugutz cp /data/local/tmp/kugutz.www.version files/www/.version
+adb -s <serial> shell run-as jp.espresso3389.methings mkdir -p files/www
+adb -s <serial> shell run-as jp.espresso3389.methings cp /data/local/tmp/methings.index.html files/www/index.html
+adb -s <serial> shell run-as jp.espresso3389.methings cp /data/local/tmp/methings.www.version files/www/.version
 adb -s <serial> forward tcp:18765 tcp:8765
 curl -X POST http://127.0.0.1:18765/ui/reload -H 'Content-Type: application/json' -d '{}'
 ```
@@ -113,9 +113,9 @@ curl -N 'http://127.0.0.1:18765/logs/stream'
 Android blocks `adb shell ls /data/data/...` without root. For debug builds you can use `run-as`:
 
 ```bash
-adb -s <serial> shell run-as jp.espresso3389.kugutz ls -la files
-adb -s <serial> shell run-as jp.espresso3389.kugutz ls -la files/protected
-adb -s <serial> shell run-as jp.espresso3389.kugutz ls -la files/user
+adb -s <serial> shell run-as jp.espresso3389.methings ls -la files
+adb -s <serial> shell run-as jp.espresso3389.methings ls -la files/protected
+adb -s <serial> shell run-as jp.espresso3389.methings ls -la files/user
 ```
 
 Important files:

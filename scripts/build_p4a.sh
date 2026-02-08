@@ -33,7 +33,7 @@ run_p4a() {
   --bootstrap=service_only \
   --private "$WORK_DIR" \
   --dist_name "$DIST_NAME" \
-  --package jp.espresso3389.kugutz
+  --package jp.espresso3389.methings
 }
 
 run_p4a "$REQUIREMENTS"
