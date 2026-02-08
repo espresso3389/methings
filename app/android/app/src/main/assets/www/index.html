@@ -867,13 +867,13 @@
     </div>
 
     <!-- ===== Settings Page ===== -->
-    <div id="settingsPage" class="page">
-      <div class="topbar">
-        <button class="icon-btn secondary" id="backToChatBtn" title="Back" aria-label="Back"></button>
-        <div class="title">Settings</div>
-        <div style="width:38px;"></div>
-      </div>
-      <div class="settings-scroll">
+	    <div id="settingsPage" class="page">
+	      <div class="topbar">
+	        <button class="icon-btn secondary" id="backToChatBtn" title="Back" aria-label="Back"></button>
+	        <div class="title">Settings</div>
+	        <div style="width:38px;"></div>
+	      </div>
+	      <div class="settings-scroll">
         <!-- Brain Config -->
         <section class="card">
           <div class="card-header">
@@ -1153,17 +1153,29 @@
         $(pageId).classList.add("active");
       }
       function handleHash() {
-        const h = location.hash.replace("#", "") || "chat";
-        if (h === "settings") {
-          guardedOpenSettings();
-        } else {
-          navigateTo("chatPage");
+        try {
+          const h = location.hash.replace("#", "") || "chat";
+          if (h === "settings") {
+            // Route-only. Keep it minimal; opening settings should not require unlock.
+            openSettings();
+          } else {
+            navigateTo("chatPage");
+          }
+        } catch (_) {
+          // Fail-safe: never brick navigation due to JS errors.
+          try { navigateTo("chatPage"); } catch (_) {}
         }
       }
       window.addEventListener("hashchange", handleHash);
       handleHash();
 
       $("openSettingsBtn").addEventListener("click", () => {
+        // Open immediately (more robust than relying purely on hashchange timing).
+        try {
+          openSettings();
+        } catch (_) {
+          try { showToast("Failed to open settings", 1600); } catch (_) {}
+        }
         location.hash = "settings";
       });
       $("backToChatBtn").addEventListener("click", () => {
@@ -1250,20 +1262,10 @@
         } catch (_) {}
       }
 
-      async function guardedOpenSettings() {
-        if (getSettingsUnlockRemainingMs() <= 0) {
-          const r = await requestSettingsUnlock();
-          if (!r || !r.ok) {
-            showToast("Settings locked", 1600);
-            location.hash = "chat";
-            return;
-          }
-        }
+      function openSettings() {
+        // Keep this minimal and robust. Heavy/permission-gated settings loaders run on demand.
         navigateTo("settingsPage");
         refreshSecretsFromBridge();
-        if (typeof loadMemory === "function") loadMemory();
-        if (typeof checkBraveSearchKey === "function") checkBraveSearchKey();
-        if (typeof loadBrainConfig === "function") loadBrainConfig();
       }
 
       async function ensureSettingsUnlocked() {
