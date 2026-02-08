@@ -99,6 +99,16 @@
       .icon-btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
       .icon-btn.secondary { background: transparent; border-color: transparent; }
       .icon-btn.secondary:hover { background: var(--surface); }
+      .icon-btn.unlock {
+        border-color: transparent;
+        background: var(--accent);
+        color: #fff;
+      }
+      .icon-btn.unlock:hover {
+        border-color: transparent;
+        filter: brightness(1.06);
+      }
+      .icon-btn.unlock:active { filter: brightness(0.96); }
       .sr-only {
         position: absolute;
         width: 1px;
@@ -469,6 +479,15 @@
         flex-direction: column;
         gap: 12px;
       }
+      .locked-banner {
+        padding: 10px 12px;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(129,140,248,0.35);
+        background: rgba(99,102,241,0.16);
+        color: rgba(226,232,240,0.95);
+        font-size: 13px;
+      }
+      .settings-locked .card { opacity: 0.6; }
 
       .card {
         background: var(--bg-raised);
@@ -867,13 +886,24 @@
     </div>
 
     <!-- ===== Settings Page ===== -->
-	    <div id="settingsPage" class="page">
-	      <div class="topbar">
-	        <button class="icon-btn secondary" id="backToChatBtn" title="Back" aria-label="Back"></button>
-	        <div class="title">Settings</div>
-	        <div style="width:38px;"></div>
-	      </div>
-	      <div class="settings-scroll">
+    <div id="settingsPage" class="page">
+      <div class="topbar">
+        <button class="icon-btn secondary" id="backToChatBtn" title="Back" aria-label="Back"></button>
+        <div class="title">Settings</div>
+        <button class="icon-btn unlock" id="unlockSettingsBtn" title="Unlock" aria-label="Unlock">
+          <!-- Fallback icon (JS overwrites this too, but we keep it to avoid an empty button on failures). -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 2l-2 2m-7.5 7.5a4.5 4.5 0 1 1 0-6.36 4.5 4.5 0 0 1 0 6.36Z"/>
+            <path d="M15 7l3 3"/>
+            <path d="M12.5 9.5l3 3"/>
+            <path d="M8 14l-6 6v2h2l6-6"/>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-scroll">
+        <div id="settingsLockedBanner" class="locked-banner" style="display:none;">
+          Settings are locked. Tap Unlock (top-right) to edit/view secrets.
+        </div>
         <!-- Brain Config -->
         <section class="card">
           <div class="card-header">
@@ -908,8 +938,8 @@
             </div>
           </div>
           <div class="field">
-            <label>API Key (plaintext)</label>
-            <input type="text" id="brainApiKey" placeholder="(locked)" />
+            <label>API Key</label>
+            <input type="text" id="brainApiKey" placeholder="" autocomplete="off" autocapitalize="none" spellcheck="false" />
             <div class="muted" id="brainKeyStatus" style="margin-top:4px;"></div>
           </div>
           <div class="btn-group">
@@ -927,8 +957,8 @@
             Default provider is DuckDuckGo. Brave Search is used only when an API key is configured here.
           </div>
           <div class="field">
-            <label>Brave Search API Key (plaintext)</label>
-            <input type="text" id="braveSearchApiKey" placeholder="(locked)" />
+            <label>Brave Search API Key</label>
+            <input type="text" id="braveSearchApiKey" placeholder="" autocomplete="off" autocapitalize="none" spellcheck="false" />
             <div class="muted" id="braveSearchKeyStatus" style="margin-top:4px;">Status unknown.</div>
           </div>
           <div class="btn-group">
@@ -1121,6 +1151,7 @@
 
       const ICON = {
         settings: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.05-1.59a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.42.98a7.23 7.23 0 0 0-1.63-.94l-.37-2.6A.5.5 0 0 0 13.8 2h-3.6a.5.5 0 0 0-.49.42l-.37 2.6c-.58.23-1.12.54-1.63.94l-2.42-.98a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.05 1.59c-.04.31-.06.63-.06.94s.02.63.06.94l-2.05 1.59a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.42-.98c.5.39 1.05.7 1.63.94l.37 2.6a.5.5 0 0 0 .49.42h3.6a.5.5 0 0 0 .49-.42l.37-2.6c.58-.23 1.12-.54 1.63-.94l2.42.98a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.05-1.59ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>',
+        key: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.5 7.5a4.5 4.5 0 1 1 0-6.36 4.5 4.5 0 0 1 0 6.36Z"/><path d="M15 7l3 3"/><path d="M12.5 9.5l3 3"/><path d="M8 14l-6 6v2h2l6-6"/></svg>',
         attach: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.49-8.48"/></svg>',
         mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4"/><path d="M8 23h8"/></svg>',
         stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
@@ -1132,6 +1163,7 @@
 
       // Set static button icons (record button is handled by setRecordUi()).
       try { $("openSettingsBtn").innerHTML = ICON.settings; } catch (_) {}
+      try { $("unlockSettingsBtn").innerHTML = ICON.key; } catch (_) {}
       try { $("chatUploadBtn").innerHTML = ICON.attach; } catch (_) {}
       try { $("chatSend").innerHTML = ICON.send; } catch (_) {}
       try { $("backToChatBtn").innerHTML = ICON.back; } catch (_) {}
@@ -1195,8 +1227,30 @@
 
       function setSettingsUiLocked(locked) {
         try {
-          $("brainApiKey").disabled = locked;
-          $("braveSearchApiKey").disabled = locked;
+          // Lock down all settings interactions until explicitly unlocked.
+          const root = $("settingsPage");
+          root.classList.toggle("settings-locked", !!locked);
+          try { $("settingsLockedBanner").style.display = locked ? "block" : "none"; } catch (_) {}
+          const elems = root.querySelectorAll("input,select,textarea,button");
+          for (const el of elems) {
+            const id = String(el.id || "");
+            if (id === "backToChatBtn" || id === "unlockSettingsBtn") continue;
+            el.disabled = !!locked;
+          }
+
+          // Hide raw secrets when locked (do not show placeholders like '(locked)' either).
+          $("brainApiKey").value = "";
+          $("brainApiKey").placeholder = locked ? "Tap Unlock to view/edit" : "";
+          $("braveSearchApiKey").value = "";
+          $("braveSearchApiKey").placeholder = locked ? "Tap Unlock to view/edit" : "";
+
+          if (locked) {
+            // Avoid leaking whether keys exist while locked.
+            try { $("brainKeyStatus").textContent = ""; } catch (_) {}
+            try { $("braveSearchKeyStatus").textContent = ""; } catch (_) {}
+          }
+
+          $("unlockSettingsBtn").style.opacity = locked ? "1" : "0.6";
         } catch (_) {}
       }
 
@@ -1230,10 +1284,6 @@
         const locked = getSettingsUnlockRemainingMs() <= 0;
         setSettingsUiLocked(locked);
         if (locked) {
-          $("brainApiKey").value = "";
-          $("brainApiKey").placeholder = "(locked)";
-          $("braveSearchApiKey").value = "";
-          $("braveSearchApiKey").placeholder = "(locked)";
           return;
         }
         function currentBrainKeyContext() {
@@ -1265,8 +1315,20 @@
       function openSettings() {
         // Keep this minimal and robust. Heavy/permission-gated settings loaders run on demand.
         navigateTo("settingsPage");
+        // Immediately lock down the page even if bridge calls fail or are slow.
+        setSettingsUiLocked(true);
         refreshSecretsFromBridge();
       }
+
+      $("unlockSettingsBtn").addEventListener("click", async () => {
+        const r = await requestSettingsUnlock();
+        if (!r || !r.ok) {
+          showToast("Unlock failed", 1400);
+          return;
+        }
+        refreshSecretsFromBridge();
+        showToast("Unlocked", 1200);
+      });
 
       async function ensureSettingsUnlocked() {
         if (getSettingsUnlockRemainingMs() > 0) return true;
