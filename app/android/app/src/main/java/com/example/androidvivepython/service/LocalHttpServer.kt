@@ -179,6 +179,12 @@ class LocalHttpServer(
                 val version = if (versionFile.exists()) versionFile.readText().trim() else ""
                 textResponse(version)
             }
+            uri == "/ui/reload" && session.method == Method.POST -> {
+                // Dev helper: hot-reload WebView UI after adb pushing files into files/www.
+                // This avoids a full APK rebuild during UI iteration.
+                context.sendBroadcast(android.content.Intent(ACTION_UI_RELOAD))
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
             uri == "/permissions/request" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val tool = payload.optString("tool", "unknown")
@@ -4627,6 +4633,7 @@ Policies:
 """
         const val ACTION_PERMISSION_PROMPT = "jp.espresso3389.kugutz.action.PERMISSION_PROMPT"
         const val ACTION_PERMISSION_RESOLVED = "jp.espresso3389.kugutz.action.PERMISSION_RESOLVED"
+        const val ACTION_UI_RELOAD = "jp.espresso3389.kugutz.action.UI_RELOAD"
         const val EXTRA_PERMISSION_ID = "permission_id"
         const val EXTRA_PERMISSION_TOOL = "permission_tool"
         const val EXTRA_PERMISSION_DETAIL = "permission_detail"

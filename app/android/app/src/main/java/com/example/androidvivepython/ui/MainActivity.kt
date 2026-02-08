@@ -83,6 +83,12 @@ class MainActivity : AppCompatActivity() {
             handlePermissionPrompt(id, tool, detail, forceBio)
         }
     }
+    private val uiReloadReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != LocalHttpServer.ACTION_UI_RELOAD) return
+            reloadUi()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -237,15 +243,22 @@ class MainActivity : AppCompatActivity() {
                 IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT),
                 Context.RECEIVER_NOT_EXPORTED
             )
+            registerReceiver(
+                uiReloadReceiver,
+                IntentFilter(LocalHttpServer.ACTION_UI_RELOAD),
+                Context.RECEIVER_NOT_EXPORTED
+            )
         } else {
             registerReceiver(pythonHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
+            registerReceiver(uiReloadReceiver, IntentFilter(LocalHttpServer.ACTION_UI_RELOAD))
         }
     }
 
     override fun onStop() {
         unregisterReceiver(pythonHealthReceiver)
         unregisterReceiver(permissionPromptReceiver)
+        unregisterReceiver(uiReloadReceiver)
         super.onStop()
     }
 

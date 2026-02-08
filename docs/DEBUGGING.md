@@ -23,6 +23,38 @@ adb -s <serial> forward tcp:18765 tcp:8765
 
 After this, access the APIs at `http://127.0.0.1:18765`.
 
+## Hot Reload Web UI (No APK Rebuild)
+
+During UI iteration, you can update the on-device WebView assets in-place without rebuilding/installing.
+
+Workflow:
+1. Edit the UI in-repo: `app/android/app/src/main/assets/www/index.html`
+2. Push it into the app private directory (`files/www`) via `adb shell run-as`
+3. Trigger a WebView reload via the local API `POST /ui/reload`
+
+Helper script:
+
+```bash
+# Optionally pass a device serial (recommended)
+scripts/ui_hot_reload.sh <serial>
+```
+
+Manual equivalent:
+
+```bash
+adb -s <serial> push app/android/app/src/main/assets/www/index.html /data/local/tmp/kugutz.index.html
+date +%s > /tmp/kugutz.www.version && adb -s <serial> push /tmp/kugutz.www.version /data/local/tmp/kugutz.www.version
+adb -s <serial> shell run-as jp.espresso3389.kugutz mkdir -p files/www
+adb -s <serial> shell run-as jp.espresso3389.kugutz cp /data/local/tmp/kugutz.index.html files/www/index.html
+adb -s <serial> shell run-as jp.espresso3389.kugutz cp /data/local/tmp/kugutz.www.version files/www/.version
+adb -s <serial> forward tcp:18765 tcp:8765
+curl -X POST http://127.0.0.1:18765/ui/reload -H 'Content-Type: application/json' -d '{}'
+```
+
+Notes:
+- This changes the *device* UI only. To make changes permanent, also commit them in the repo and later rebuild/install normally.
+- `Reset UI` in the app settings overwrites `files/www` from the APK assets.
+
 ## See The Actual Chat Transcript
 
 `/brain/messages` is session-scoped. First discover which sessions exist:
