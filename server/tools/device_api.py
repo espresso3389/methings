@@ -105,6 +105,13 @@ class DeviceApiTool:
         return "timeout"
 
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            return self._run(args)
+        except Exception as ex:
+            # Never let exceptions bubble into the agent loop; surface as a normal tool error.
+            return {"status": "error", "error": "device_api_exception", "detail": str(ex)}
+
+    def _run(self, args: Dict[str, Any]) -> Dict[str, Any]:
         # Prefer per-chat identity if provided so approvals can be remembered for the session.
         # Fallback is install identity from env (shared across sessions).
         identity = str(args.get("identity") or args.get("session_id") or "").strip()
@@ -256,8 +263,15 @@ class DeviceApiTool:
             }
 
         if action == "uvc.ptz.set_abs":
-            pan_abs = int(payload.get("pan_abs"))
-            tilt_abs = int(payload.get("tilt_abs"))
+            if "pan_abs" not in payload or payload.get("pan_abs") is None:
+                return {"status": "error", "error": "missing_pan_abs"}
+            if "tilt_abs" not in payload or payload.get("tilt_abs") is None:
+                return {"status": "error", "error": "missing_tilt_abs"}
+            try:
+                pan_abs = int(payload.get("pan_abs"))
+                tilt_abs = int(payload.get("tilt_abs"))
+            except Exception:
+                return {"status": "error", "error": "invalid_pan_tilt"}
             data = struct.pack("<ii", pan_abs, tilt_abs)
             resp = ctrl_out(set_cur, data)
             return {"status": "ok", "rc": self._extract_rc(resp), "detail": resp}

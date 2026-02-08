@@ -40,3 +40,7 @@ Actions:
 
 These use UVC CameraTerminal controls over `usb.control_transfer` and work best for devices that implement
 `CT_PANTILT_ABSOLUTE_CONTROL` (selector `0x0D`).
+
+Notes:
+- `uvc.ptz.set_abs` requires `pan_abs` and `tilt_abs` integers in the payload. If missing, the tool returns
+  `missing_pan_abs` / `missing_tilt_abs` instead of crashing the agent loop.
