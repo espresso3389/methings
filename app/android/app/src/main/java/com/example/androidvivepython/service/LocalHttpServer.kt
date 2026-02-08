@@ -2074,6 +2074,19 @@ class LocalHttpServer(
             probe
         }
         if (ctrlOut(0x02, commitData) < 0) return jsonError(Response.Status.INTERNAL_ERROR, "uvc_commit_set_failed")
+        val (_, commitCur) = ctrlIn(0x02, commitData.size)
+
+        fun u32leFrom(arr: ByteArray, off: Int): Long? {
+            if (off < 0 || off + 4 > arr.size) return null
+            return (arr[off].toLong() and 0xFF) or
+                ((arr[off + 1].toLong() and 0xFF) shl 8) or
+                ((arr[off + 2].toLong() and 0xFF) shl 16) or
+                ((arr[off + 3].toLong() and 0xFF) shl 24)
+        }
+        // UVC VS Probe/Commit control (UVC 1.1+): dwMaxPayloadTransferSize at offset 22.
+        // Use COMMIT if available; fallback to PROBE.
+        val maxPayloadFromCommit = u32leFrom(commitCur, 22) ?: u32leFrom(probeCur, 22)
+        val negotiatedMaxPayloadTransferSize = (maxPayloadFromCommit ?: 0L).coerceAtLeast(0L)
 
         val epAddr = chosen.ep.address
         val deadline = System.currentTimeMillis() + timeoutMs
@@ -2091,12 +2104,36 @@ class LocalHttpServer(
             return -1
         }
 
-        fun tryFinalizeAndWrite(): Response? {
+        fun findEoi(bytes: ByteArray): Int {
+            // JPEG EOI marker.
+            for (i in bytes.size - 2 downTo 0) {
+                if ((bytes[i].toInt() and 0xFF) == 0xFF && (bytes[i + 1].toInt() and 0xFF) == 0xD9) return i
+            }
+            return -1
+        }
+
+        fun tryFinalizeAndWrite(allowAppendEoi: Boolean): Response? {
             if (!(started && frame.size() >= 4)) return null
             val bytes = frame.toByteArray()
             val soi = findSoi(bytes, 0, bytes.size)
             if (soi < 0) return null
-            val final = if (soi > 0) bytes.copyOfRange(soi, bytes.size) else bytes
+            val eoi = findEoi(bytes)
+            val hasEoi = eoi >= 0 && eoi + 2 <= bytes.size
+            val sliced = if (soi > 0) bytes.copyOfRange(soi, bytes.size) else bytes
+            val final = if (hasEoi) {
+                // Cut exactly at EOI.
+                val cut = (eoi + 2 - soi).coerceIn(2, sliced.size)
+                sliced.copyOfRange(0, cut)
+            } else if (allowAppendEoi) {
+                // Some MJPEG sources omit EOI; appending makes many viewers accept it.
+                val out = ByteArray(sliced.size + 2)
+                java.lang.System.arraycopy(sliced, 0, out, 0, sliced.size)
+                out[out.size - 2] = 0xFF.toByte()
+                out[out.size - 1] = 0xD9.toByte()
+                out
+            } else {
+                return null
+            }
             return try {
                 java.io.FileOutputStream(outFile).use { it.write(final) }
                 jsonResponse(
@@ -2105,6 +2142,8 @@ class LocalHttpServer(
                         .put("rel_path", relPath)
                         .put("bytes", final.size)
                         .put("transfer_mode", transferMode)
+                        .put("jpeg_has_eoi", hasEoi)
+                        .put("jpeg_eoi_appended", (!hasEoi && allowAppendEoi))
                         .put("vs_interface", vsInterface)
                         .put("format_index", bestFrame.formatIndex)
                         .put("frame_index", bestFrame.frameIndex)
@@ -2155,11 +2194,10 @@ class LocalHttpServer(
             }
 
             if (eof) {
-                val r = tryFinalizeAndWrite()
+                // Prefer writing a complete JPEG (EOI present). If missing EOI, append it as a fallback.
+                val r = tryFinalizeAndWrite(false) ?: tryFinalizeAndWrite(true)
                 if (r != null) return r
-                // If EOF but invalid JPEG so far, reset and continue.
-                frame.reset()
-                started = false
+                // If we still can't finalize, keep collecting until timeout or a new frame boundary.
             }
             return null
         }
@@ -2213,8 +2251,14 @@ class LocalHttpServer(
         } else {
             // Bulk path: read from the bulk IN endpoint and feed each bulkTransfer chunk as a UVC payload.
             val bulkTimeout = payload.optInt("bulk_timeout_ms", 240).coerceIn(20, 6000)
-            val bulkChunk = payload.optInt("bulk_chunk_size", 64 * 1024).coerceIn(1024, 1024 * 1024)
-            val buf = ByteArray(bulkChunk)
+            // For UVC bulk streaming, a single bulkTransfer() may return multiple UVC payload transfers
+            // concatenated. Use negotiated dwMaxPayloadTransferSize when available to split.
+            val negotiated = negotiatedMaxPayloadTransferSize.toInt().coerceIn(0, 1024 * 1024)
+            val payloadSize = payload.optInt("bulk_payload_bytes", if (negotiated > 0) negotiated else chosen.ep.maxPacketSize).coerceIn(256, 1024 * 1024)
+            val readSize = payload.optInt("bulk_read_size", (payloadSize * 4).coerceIn(1024, 256 * 1024)).coerceIn(1024, 1024 * 1024)
+            val buf = ByteArray(readSize)
+            val q: java.util.ArrayDeque<ByteArray> = java.util.ArrayDeque()
+            var qBytes = 0
             while (System.currentTimeMillis() < deadline) {
                 val n = try {
                     conn.bulkTransfer(chosen.ep, buf, buf.size, bulkTimeout)
@@ -2222,8 +2266,32 @@ class LocalHttpServer(
                     -1
                 }
                 if (n <= 0) continue
-                val r = processUvcPayload(buf, 0, n.coerceIn(0, buf.size))
-                if (r != null) return r
+                val chunk = ByteArray(n.coerceIn(0, buf.size))
+                java.lang.System.arraycopy(buf, 0, chunk, 0, chunk.size)
+                q.addLast(chunk)
+                qBytes += chunk.size
+
+                while (qBytes >= payloadSize) {
+                    val payloadBuf = ByteArray(payloadSize)
+                    var off = 0
+                    while (off < payloadSize && q.isNotEmpty()) {
+                        val head = q.peekFirst()
+                        val take = kotlin.math.min(payloadSize - off, head.size)
+                        java.lang.System.arraycopy(head, 0, payloadBuf, off, take)
+                        off += take
+                        if (take == head.size) {
+                            q.removeFirst()
+                        } else {
+                            val rest = ByteArray(head.size - take)
+                            java.lang.System.arraycopy(head, take, rest, 0, rest.size)
+                            q.removeFirst()
+                            q.addFirst(rest)
+                        }
+                    }
+                    qBytes -= payloadSize
+                    val r = processUvcPayload(payloadBuf, 0, payloadBuf.size)
+                    if (r != null) return r
+                }
             }
         }
 

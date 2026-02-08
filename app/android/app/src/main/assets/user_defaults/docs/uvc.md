@@ -18,12 +18,16 @@ Response (success):
 - `status=ok`
 - `rel_path`: saved JPEG path under user root
 - Selected stream info: `vs_interface`, `format_index`, `frame_index`, `width`, `height`, `interval_100ns`
+- Additional fields:
+  - `transfer_mode`: `iso` or `bulk`
+  - `jpeg_has_eoi`: whether the JPEG EOI marker was present in the captured frame
+  - `jpeg_eoi_appended`: true if the capture appended an EOI marker as a compatibility fallback
 
 Usage notes:
 - The stream negotiation uses UVC VS PROBE/COMMIT and then reads UVC payloads until a full JPEG frame is assembled.
 - The implementation supports both endpoint types:
   - `transfer_mode=iso`: isochronous IN endpoint (parsed via the KISO bridge)
-  - `transfer_mode=bulk`: bulk IN endpoint (read via `bulkTransfer`)
+  - `transfer_mode=bulk`: bulk IN endpoint (read via `bulkTransfer`, split using negotiated `dwMaxPayloadTransferSize` when available)
 - To show the image inline in chat, include a line: `rel_path: <rel_path>`
 
 ## PTZ (Pan/Tilt)
