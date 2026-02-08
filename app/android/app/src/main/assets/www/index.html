@@ -1245,9 +1245,35 @@
       // ==============================
       // Router
       // ==============================
+      let settingsLockWatcherTimer = null;
+      let lastSettingsLocked = null;
+      function stopSettingsLockWatcher() {
+        try { if (settingsLockWatcherTimer) clearInterval(settingsLockWatcherTimer); } catch (_) {}
+        settingsLockWatcherTimer = null;
+        lastSettingsLocked = null;
+      }
+      function syncSettingsLockUiOnce() {
+        try {
+          const locked = isSettingsUiLocked();
+          if (lastSettingsLocked === null || locked !== lastSettingsLocked) {
+            setSettingsUiLocked(locked);
+            // Only populate secrets on explicit unlock flow; do not auto-fetch on timer ticks.
+            lastSettingsLocked = locked;
+          }
+        } catch (_) {}
+      }
+      function startSettingsLockWatcher() {
+        if (settingsLockWatcherTimer) return;
+        // Update quickly enough that auto-lock feels immediate, but avoid busy looping.
+        settingsLockWatcherTimer = setInterval(syncSettingsLockUiOnce, 400);
+        syncSettingsLockUiOnce();
+      }
+
       function navigateTo(pageId) {
         document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
         $(pageId).classList.add("active");
+        if (pageId === "settingsPage") startSettingsLockWatcher();
+        else stopSettingsLockWatcher();
       }
       function handleHash() {
         try {
@@ -1403,6 +1429,8 @@
         navigateTo("settingsPage");
         // Immediately lock down the page even if bridge calls fail or are slow.
         setSettingsUiLocked(true);
+        // Ensure the toggle/icon reflects the actual current state quickly.
+        syncSettingsLockUiOnce();
         refreshSecretsFromBridge();
       }
 
