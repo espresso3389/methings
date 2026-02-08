@@ -80,6 +80,7 @@ class DeviceApiTool:
             "camera.preview.start": 25.0,
             "camera.preview.stop": 25.0,
             "vision.run": 75.0,
+            "usb.open": 60.0,
             "usb.stream.start": 25.0,
             "usb.stream.stop": 25.0,
             "uvc.mjpeg.capture": 45.0,

@@ -575,7 +575,7 @@ class LocalHttpServer(
             (uri == "/usb/open" || uri == "/usb/open/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbOpen(payload)
+                    handleUsbOpen(session, payload)
                 } catch (ex: Exception) {
                     Log.e(TAG, "USB open handler failed", ex)
                     jsonError(Response.Status.INTERNAL_ERROR, "usb_open_handler_failed")
@@ -1284,14 +1284,23 @@ class LocalHttpServer(
         )
     }
 
-    private fun handleUsbOpen(payload: JSONObject): Response {
+    private fun handleUsbOpen(session: IHTTPSession, payload: JSONObject): Response {
         val name = payload.optString("name", "").trim()
         val vid = payload.optInt("vendor_id", -1)
         val pid = payload.optInt("product_id", -1)
-        val timeoutMs = payload.optLong("permission_timeout_ms", 20000L).coerceIn(1000L, 60000L)
+        val timeoutMs = payload.optLong("permission_timeout_ms", 0L)
 
         val dev = findUsbDevice(name, vid, pid)
             ?: return jsonError(Response.Status.NOT_FOUND, "usb_device_not_found")
+
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "USB access: vid=${dev.vendorId} pid=${dev.productId} name=${dev.deviceName}"
+        )
+        if (!perm.first) return perm.second!!
 
         if (!ensureUsbPermission(dev, timeoutMs)) {
             return jsonError(
@@ -2597,7 +2606,11 @@ class LocalHttpServer(
                 context.registerReceiver(receiver, filter)
             }
             usbManager.requestPermission(device, pi)
-            latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            if (timeoutMs <= 0L) {
+                latch.await()
+            } else {
+                latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+            }
         } catch (ex: Exception) {
             Log.w(TAG, "USB permission request failed", ex)
         } finally {

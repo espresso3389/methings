@@ -7,6 +7,7 @@ import android.content.IntentFilter
 import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
+import android.app.PendingIntent
 import android.net.Uri
 import android.widget.FrameLayout
 import android.widget.Toast
@@ -15,6 +16,8 @@ import android.webkit.WebChromeClient
 import android.webkit.ValueCallback
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.appcompat.app.AppCompatActivity
@@ -25,6 +28,8 @@ import jp.espresso3389.kugutz.ui.WebAppBridge
 import jp.espresso3389.kugutz.perm.DevicePermissionPolicy
 import org.kivy.android.PythonActivity
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.CountDownLatch
 
 class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
@@ -270,6 +275,103 @@ class MainActivity : AppCompatActivity() {
         webView.post { webView.evaluateJavascript(js, null) }
     }
 
+    private fun extractUsbHint(detail: String): Triple<String?, Int?, Int?> {
+        // Heuristic parse from the permission detail text. DeviceApiTool typically embeds JSON like:
+        // usb.open: {"name":"...","vendor_id":1234,"product_id":5678}
+        val s = detail ?: ""
+        fun mInt(key: String): Int? {
+            val r = Regex("\"" + Regex.escape(key) + "\"\\s*:\\s*(\\d+)")
+            val m = r.find(s) ?: return null
+            return try { m.groupValues[1].toInt() } catch (_: Exception) { null }
+        }
+        fun mStr(key: String): String? {
+            val r = Regex("\"" + Regex.escape(key) + "\"\\s*:\\s*\"([^\"]+)\"")
+            val m = r.find(s) ?: return null
+            return m.groupValues[1]
+        }
+        val name = mStr("name")?.trim()?.ifBlank { null }
+        val vid = mInt("vendor_id")
+        val pid = mInt("product_id")
+        return Triple(name, vid, pid)
+    }
+
+    private fun findUsbDeviceByHint(name: String?, vendorId: Int?, productId: Int?): UsbDevice? {
+        val usb = getSystemService(UsbManager::class.java)
+        val list = usb.deviceList.values
+        if (!name.isNullOrBlank()) {
+            return list.firstOrNull { it.deviceName == name }
+        }
+        if (vendorId != null && productId != null && vendorId >= 0 && productId >= 0) {
+            return list.firstOrNull { it.vendorId == vendorId && it.productId == productId }
+        }
+        return null
+    }
+
+    private fun ensureUsbPermissionAsync(device: UsbDevice, cb: (Boolean) -> Unit) {
+        val usb = getSystemService(UsbManager::class.java)
+        if (usb.hasPermission(device)) {
+            cb(true)
+            return
+        }
+
+        val action = "jp.espresso3389.kugutz.USB_PERMISSION_UI"
+        val latch = CountDownLatch(1)
+        val ok = AtomicReference<Boolean?>(null)
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action != action) return
+                val dev = if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                }
+                if (dev?.deviceName != device.deviceName) return
+                val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                ok.set(granted)
+                latch.countDown()
+            }
+        }
+
+        try {
+            val filter = IntentFilter(action)
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                registerReceiver(receiver, filter)
+            }
+            val pi = PendingIntent.getBroadcast(
+                this,
+                device.deviceName.hashCode(),
+                Intent(action).setPackage(packageName),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            )
+            usb.requestPermission(device, pi)
+        } catch (_: Exception) {
+            try {
+                unregisterReceiver(receiver)
+            } catch (_: Exception) {}
+            cb(false)
+            return
+        }
+
+        Thread {
+            try {
+                // Do not time out user interaction; just avoid leaking the receiver forever.
+                // If this hits, treat as denied.
+                latch.await(10, TimeUnit.MINUTES)
+            } catch (_: Exception) {
+            } finally {
+                try {
+                    unregisterReceiver(receiver)
+                } catch (_: Exception) {}
+            }
+            val granted = ok.get() == true && usb.hasPermission(device)
+            runOnUiThread { cb(granted) }
+        }.start()
+    }
+
     private fun handlePermissionPrompt(id: String, tool: String, detail: String, forceBiometric: Boolean) {
         val broker = jp.espresso3389.kugutz.perm.PermissionBroker(this)
         broker.requestConsent(tool, detail, forceBiometric) { approved ->
@@ -278,31 +380,56 @@ class MainActivity : AppCompatActivity() {
                 return@requestConsent
             }
 
-            val required = DevicePermissionPolicy.requiredFor(tool, detail)
-            val perms = required?.androidPermissions ?: emptyList()
-            if (perms.isEmpty()) {
-                postPermissionDecision(id, approved = true)
+            fun continueWithAndroidPermsAndPost() {
+                val required = DevicePermissionPolicy.requiredFor(tool, detail)
+                val perms = required?.androidPermissions ?: emptyList()
+                if (perms.isEmpty()) {
+                    postPermissionDecision(id, approved = true)
+                    return
+                }
+
+                // Request Android runtime permissions. If denied, we deny the tool request as well.
+                // Avoid overlapping requests: if one is already in-flight, fail closed.
+                if (pendingAndroidPermRequestId.get() != null) {
+                    postPermissionDecision(id, approved = false)
+                    return
+                }
+
+                val missing = perms.filter { p ->
+                    ActivityCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED
+                }
+                if (missing.isEmpty()) {
+                    postPermissionDecision(id, approved = true)
+                    return
+                }
+
+                pendingAndroidPermRequestId.set(id)
+                pendingAndroidPermAction.set { ok -> postPermissionDecision(id, approved = ok) }
+                androidPermLauncher.launch(missing.toTypedArray())
+            }
+
+            // Special-case: for USB tools, complete the Android OS USB permission dialog before
+            // approving the in-app tool request, so the Python agent can auto-resume reliably.
+            if (tool == "device.usb") {
+                val (name, vid, pid) = extractUsbHint(detail)
+                val dev = findUsbDeviceByHint(name, vid, pid)
+                if (dev == null) {
+                    // No device hint; approve the tool request and let the tool call request USB later.
+                    continueWithAndroidPermsAndPost()
+                    return@requestConsent
+                }
+                ensureUsbPermissionAsync(dev) { granted ->
+                    if (!granted) {
+                        Toast.makeText(this, "USB permission denied", Toast.LENGTH_SHORT).show()
+                        postPermissionDecision(id, approved = false)
+                    } else {
+                        continueWithAndroidPermsAndPost()
+                    }
+                }
                 return@requestConsent
             }
 
-            // Request Android runtime permissions. If denied, we deny the tool request as well.
-            // Avoid overlapping requests: if one is already in-flight, fail closed.
-            if (pendingAndroidPermRequestId.get() != null) {
-                postPermissionDecision(id, approved = false)
-                return@requestConsent
-            }
-
-            val missing = perms.filter { p ->
-                ActivityCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED
-            }
-            if (missing.isEmpty()) {
-                postPermissionDecision(id, approved = true)
-                return@requestConsent
-            }
-
-            pendingAndroidPermRequestId.set(id)
-            pendingAndroidPermAction.set { ok -> postPermissionDecision(id, approved = ok) }
-            androidPermLauncher.launch(missing.toTypedArray())
+            continueWithAndroidPermsAndPost()
         }
     }
 
