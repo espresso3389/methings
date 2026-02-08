@@ -1326,13 +1326,16 @@
           const b = $("unlockSettingsBtn");
           b.style.opacity = "1";
           if (locked) {
-            b.title = "Unlock";
-            b.setAttribute("aria-label", "Unlock");
-            b.innerHTML = ICON.unlock;
-          } else {
-            b.title = "Lock";
-            b.setAttribute("aria-label", "Lock");
+            // State indicator: show "locked" icon while locked.
+            // Action hint is conveyed via title/aria-label.
+            b.title = "Locked (tap to unlock)";
+            b.setAttribute("aria-label", "Locked. Tap to unlock");
             b.innerHTML = ICON.lock;
+          } else {
+            // State indicator: show "unlocked" icon while unlocked.
+            b.title = "Unlocked (tap to lock)";
+            b.setAttribute("aria-label", "Unlocked. Tap to lock");
+            b.innerHTML = ICON.unlock;
           }
         } catch (_) {}
       }
