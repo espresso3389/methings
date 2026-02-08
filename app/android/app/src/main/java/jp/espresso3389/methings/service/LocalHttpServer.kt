@@ -52,6 +52,7 @@ import android.graphics.BitmapFactory
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.Locale
+import jp.espresso3389.methings.device.UsbPermissionWaiter
 
 class LocalHttpServer(
     private val context: Context,
@@ -1429,6 +1430,13 @@ class LocalHttpServer(
                     .put("name", dev.deviceName)
                     .put("vendor_id", dev.vendorId)
                     .put("product_id", dev.productId)
+                    .put(
+                        "hint",
+                        "Android USB permission is required. The system 'Allow access to USB device' dialog must be accepted. " +
+                            "If no dialog appears, bring the app to foreground and retry (Android may auto-deny requests from background). " +
+                            "If it still auto-denies with no dialog, Android may have saved a default 'deny' for this USB device: " +
+                            "open the app settings and clear defaults, then replug the device and retry."
+                    )
             )
         }
 
@@ -2692,53 +2700,26 @@ class LocalHttpServer(
     private fun ensureUsbPermission(device: UsbDevice, timeoutMs: Long): Boolean {
         if (usbManager.hasPermission(device)) return true
 
-        val latch = CountDownLatch(1)
-        val ok = java.util.concurrent.atomic.AtomicBoolean(false)
-        val receiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                if (intent?.action != USB_PERMISSION_ACTION) return
-                val dev = if (Build.VERSION.SDK_INT >= 33) {
-                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                }
-                if (dev?.deviceName != device.deviceName) return
-                ok.set(intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false))
-                latch.countDown()
-            }
-        }
-
-        val pi = PendingIntent.getBroadcast(
-            context,
-            device.deviceName.hashCode(),
-            Intent(USB_PERMISSION_ACTION).setPackage(context.packageName),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
-
+        val name = device.deviceName
+        UsbPermissionWaiter.begin(name)
         try {
-            val filter = IntentFilter(USB_PERMISSION_ACTION)
-            if (Build.VERSION.SDK_INT >= 33) {
-                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION")
-                context.registerReceiver(receiver, filter)
+            // Initiate the OS permission request from an Activity context.
+            val intent = Intent(context, jp.espresso3389.methings.ui.UsbPermissionActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(jp.espresso3389.methings.ui.UsbPermissionActivity.EXTRA_DEVICE_NAME, name)
             }
-            usbManager.requestPermission(device, pi)
-            if (timeoutMs <= 0L) {
-                latch.await()
-            } else {
-                latch.await(timeoutMs, TimeUnit.MILLISECONDS)
-            }
+            Log.i(TAG, "Requesting USB permission (activity): name=$name vid=${device.vendorId} pid=${device.productId}")
+            context.startActivity(intent)
         } catch (ex: Exception) {
-            Log.w(TAG, "USB permission request failed", ex)
-        } finally {
-            try {
-                context.unregisterReceiver(receiver)
-            } catch (_: Exception) {
-            }
+            Log.w(TAG, "USB permission activity launch failed", ex)
         }
-        return ok.get() && usbManager.hasPermission(device)
+
+        val granted = UsbPermissionWaiter.await(name, timeoutMs)
+        UsbPermissionWaiter.clear(name)
+
+        val has = runCatching { usbManager.hasPermission(device) }.getOrDefault(false)
+        Log.i(TAG, "USB permission result: name=$name granted=$granted hasPermission=$has")
+        return granted && has
     }
 
     private fun usbDeviceToJson(dev: UsbDevice): JSONObject {

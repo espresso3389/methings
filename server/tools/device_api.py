@@ -480,6 +480,17 @@ class DeviceApiTool:
                 parsed = json.loads(raw) if raw else {}
             except Exception:
                 parsed = {"raw": raw}
+            # Provide a clear hint for OS-level USB permission failures. This is not the app's
+            # tool-permission broker; the user must accept Android's USB dialog (and the request
+            # may be auto-denied if the app isn't in the foreground).
+            if isinstance(parsed, dict) and parsed.get("error") == "usb_permission_required":
+                parsed.setdefault(
+                    "hint",
+                    "Android USB permission is required. Accept the system 'Allow access to USB device' dialog. "
+                    "If no dialog appears, bring methings to the foreground and retry (background requests can be auto-denied). "
+                    "If it still auto-denies with no dialog, Android may have saved a default 'deny' for this USB device: "
+                    "open app settings and clear defaults, then replug the device and retry.",
+                )
             return {"status": "http_error", "http_status": int(ex.code), "body": parsed}
         except Exception as ex:
             return {"status": "error", "error": str(ex)}

@@ -9,6 +9,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.app.PendingIntent
 import android.net.Uri
+import android.provider.Settings
 import android.widget.FrameLayout
 import android.widget.Toast
 import android.webkit.PermissionRequest
@@ -21,6 +22,9 @@ import android.hardware.usb.UsbManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
+import jp.espresso3389.methings.device.UsbPermissionResultReceiver
+import jp.espresso3389.methings.device.UsbPermissionWaiter
 import jp.espresso3389.methings.service.AgentService
 import jp.espresso3389.methings.service.PythonRuntimeManager
 import jp.espresso3389.methings.service.LocalHttpServer
@@ -339,62 +343,56 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val action = "jp.espresso3389.methings.USB_PERMISSION_UI"
-        val latch = CountDownLatch(1)
-        val ok = AtomicReference<Boolean?>(null)
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                if (intent?.action != action) return
-                val dev = if (android.os.Build.VERSION.SDK_INT >= 33) {
-                    intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                }
-                if (dev?.deviceName != device.deviceName) return
-                val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                ok.set(granted)
-                latch.countDown()
-            }
-        }
-
+        val name = device.deviceName
+        UsbPermissionWaiter.begin(name)
         try {
-            val filter = IntentFilter(action)
-            if (android.os.Build.VERSION.SDK_INT >= 33) {
-                registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                @Suppress("DEPRECATION")
-                registerReceiver(receiver, filter)
-            }
             val pi = PendingIntent.getBroadcast(
                 this,
-                device.deviceName.hashCode(),
-                Intent(action).setPackage(packageName),
+                name.hashCode(),
+                Intent(this, UsbPermissionResultReceiver::class.java).apply {
+                    action = UsbPermissionResultReceiver.USB_PERMISSION_ACTION
+                    setPackage(packageName)
+                },
+                // Must be mutable: the platform attaches extras (UsbDevice, granted flag).
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             )
             usb.requestPermission(device, pi)
         } catch (_: Exception) {
-            try {
-                unregisterReceiver(receiver)
-            } catch (_: Exception) {}
+            UsbPermissionWaiter.clear(name)
             cb(false)
             return
         }
 
         Thread {
-            try {
-                // Do not time out user interaction; just avoid leaking the receiver forever.
-                // If this hits, treat as denied.
-                latch.await(10, TimeUnit.MINUTES)
-            } catch (_: Exception) {
-            } finally {
-                try {
-                    unregisterReceiver(receiver)
-                } catch (_: Exception) {}
-            }
-            val granted = ok.get() == true && usb.hasPermission(device)
-            runOnUiThread { cb(granted) }
+            // Do not time out user interaction. If the platform never responds, keep waiting.
+            val granted = UsbPermissionWaiter.await(name, timeoutMs = 0L)
+            UsbPermissionWaiter.clear(name)
+            val ok = granted && usb.hasPermission(device)
+            runOnUiThread { cb(ok) }
         }.start()
+    }
+
+    private fun showUsbPermissionHelpDialog(device: UsbDevice) {
+        AlertDialog.Builder(this)
+            .setTitle("USB permission required")
+            .setMessage(
+                "Android denied USB access without showing the OS dialog.\n\n" +
+                    "Try:\n" +
+                    "1) Unplug and replug the USB device.\n" +
+                    "2) Open app settings and clear any USB/default associations, then retry.\n\n" +
+                    "Device: ${device.deviceName} (vid=${device.vendorId} pid=${device.productId})"
+            )
+            .setPositiveButton("Open app settings") { _, _ ->
+                runCatching {
+                    startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                            data = Uri.parse("package:$packageName")
+                        }
+                    )
+                }
+            }
+            .setNegativeButton("OK", null)
+            .show()
     }
 
     private fun handlePermissionPrompt(id: String, tool: String, detail: String, forceBiometric: Boolean) {
@@ -445,7 +443,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 ensureUsbPermissionAsync(dev) { granted ->
                     if (!granted) {
-                        Toast.makeText(this, "USB permission denied", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "USB permission denied by Android OS", Toast.LENGTH_SHORT).show()
+                        showUsbPermissionHelpDialog(dev)
                         postPermissionDecision(id, approved = false)
                     } else {
                         continueWithAndroidPermsAndPost()
