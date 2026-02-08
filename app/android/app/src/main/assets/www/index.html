@@ -1029,7 +1029,6 @@
           <div class="btn-group">
             <button class="btn primary" id="braveSearchSave">Save</button>
             <button class="btn" id="braveSearchClear">Clear</button>
-            <button class="btn" id="braveSearchCheck">Check</button>
           </div>
         </section>
 
@@ -1396,6 +1395,7 @@
             $("braveSearchApiKey").placeholder = "";
           }
         } catch (_) {}
+        try { refreshBraveSearchKeyStatus(); } catch (_) {}
       }
 
       function openSettings() {
@@ -2654,33 +2654,19 @@
       // ==============================
       // Web Search Keys
       // ==============================
-      async function checkBraveSearchKey() {
+      function refreshBraveSearchKeyStatus() {
         try {
-          $("braveSearchKeyStatus").textContent = "Checking...";
-          try {
-            if (getSettingsUnlockRemainingMs() > 0
-                && typeof AndroidBridge !== "undefined"
-                && AndroidBridge.getBraveSearchApiKeyPlain) {
-              const k = (AndroidBridge.getBraveSearchApiKeyPlain() || "").trim();
-              $("braveSearchKeyStatus").textContent = k ? "API key is set." : "No API key configured.";
-              return;
-            }
-          } catch (_) {}
-          const permission_id = await requestPermission("credentials", "Check Brave Search API key status");
-          const res = await fetch(API + "/vault/credentials/has", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ name: "brave_search_api_key", permission_id }),
-          });
-          if (!res.ok) throw 0;
-          const data = await res.json();
-          $("braveSearchKeyStatus").textContent = data.present ? "API key is set." : "No API key configured.";
+          if (isSettingsUiLocked()) {
+            $("braveSearchKeyStatus").textContent = "";
+            return;
+          }
+          const k = String($("braveSearchApiKey").value || "").trim();
+          $("braveSearchKeyStatus").textContent = k ? "API key is set." : "No API key configured.";
         } catch (_) {
-          $("braveSearchKeyStatus").textContent = "Failed to check status.";
+          try { $("braveSearchKeyStatus").textContent = ""; } catch (_) {}
         }
       }
 
-      $("braveSearchCheck").addEventListener("click", checkBraveSearchKey);
       $("braveSearchSave").addEventListener("click", async () => {
         if (!(await ensureSettingsUnlocked())) return;
         const key = $("braveSearchApiKey").value.trim();
@@ -2690,7 +2676,7 @@
               AndroidBridge.setBraveSearchApiKeyPlain(key);
               refreshSecretsFromBridge();
               showToast("Brave key saved");
-              await checkBraveSearchKey();
+              refreshBraveSearchKeyStatus();
               return;
             }
           } catch (_) {}
@@ -2703,7 +2689,7 @@
           });
           if (!res.ok) throw 0;
           showToast("Brave key saved");
-          await checkBraveSearchKey();
+          refreshBraveSearchKeyStatus();
         } catch (_) {
           showToast("Failed to save key");
         }
@@ -2717,7 +2703,7 @@
               AndroidBridge.setBraveSearchApiKeyPlain("");
               refreshSecretsFromBridge();
               showToast("Brave key cleared");
-              await checkBraveSearchKey();
+              refreshBraveSearchKeyStatus();
               return;
             }
           } catch (_) {}
@@ -2730,7 +2716,7 @@
           });
           if (!res.ok) throw 0;
           showToast("Brave key cleared");
-          await checkBraveSearchKey();
+          refreshBraveSearchKeyStatus();
         } catch (_) {
           showToast("Failed to clear key");
         }
