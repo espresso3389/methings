@@ -1881,7 +1881,10 @@
         if (!itemId) return null;
         try {
           const esc = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape : (s) => String(s).replace(/"/g, '\\"');
-          return chatMessages.querySelector('.msg.' + role + '[data-item-id="' + esc(String(itemId)) + '"]');
+          // There can be multiple bubbles with the same item_id (e.g., permission required + approved).
+          // Always target the most recent one so "working" dots attach to the right bubble.
+          const nodes = chatMessages.querySelectorAll('.msg.' + role + '[data-item-id="' + esc(String(itemId)) + '"]');
+          return (nodes && nodes.length) ? nodes[nodes.length - 1] : null;
         } catch (_) {
           return null;
         }
