@@ -24,3 +24,13 @@ Simple localhost smoke test for the Python service. Run after `python server/app
 - Host-side app development uses uv.
 - `build_p4a.sh` needs internet access to download build dependencies.
 - Native libs from the dist are copied into `app/android/app/src/main/jniLibs/<arch>/`.
+
+## sync_p4a_dist.sh
+Copies (syncs) an already-built python-for-android dist into the repo without rebuilding.
+
+Use this if `jniLibs/` got out of sync (e.g. after a clean) and the app fails at runtime with:
+`dlopen failed: library "libpython3.11.so" not found`.
+
+The script copies:
+- `.../dists/<DIST_NAME>/_python_bundle__<ARCH>/_python_bundle/*` -> `app/android/app/src/main/assets/pyenv/`
+- `.../dists/<DIST_NAME>/libs/<ARCH>/*` -> `app/android/app/src/main/jniLibs/<ARCH>/`

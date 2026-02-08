@@ -75,6 +75,14 @@ If a UVC camera is connected over USB (e.g. Insta360 Link), capture a single MJP
 
 Then include `rel_path: captures/uvc_latest.jpg` in your assistant message to preview it inline.
 
+USB permissions:
+
+- Approving `device.usb` in-app is necessary but not sufficient.
+- Android also requires an OS-level per-device USB permission. If a USB call fails with `error=usb_permission_required`, you must:
+  - Bring methings to the foreground and retry.
+  - Accept Android's system "Allow access to USB device" dialog.
+  - If the OS dialog never appears and it keeps auto-denying, clear defaults/USB associations in app settings, replug, and retry.
+
 ### Show Media Inline In Chat (Required)
 
 The WebView chat UI auto-renders media previews when a message contains one or more lines like:

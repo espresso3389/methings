@@ -88,12 +88,54 @@ val syncUserDefaults by tasks.registering(Copy::class) {
     }
 }
 
+val verifyPythonRuntime by tasks.registering {
+    val arch = "arm64-v8a"
+    val jniLibsDir = projectDir.resolve("src/main/jniLibs/$arch")
+    val assetsPyenvDir = projectDir.resolve("src/main/assets/pyenv")
+
+    doLast {
+        val requiredLibs = listOf(
+            "libpython3.11.so",
+            "libssl1.1.so",
+            "libcrypto1.1.so",
+            "libffi.so",
+            "libsqlite3.so",
+            "libmain.so",
+        )
+        val missingLibs = requiredLibs.filter { !jniLibsDir.resolve(it).exists() }
+        val missingStdlib = !assetsPyenvDir.resolve("stdlib.zip").exists()
+
+        if (missingLibs.isNotEmpty() || missingStdlib) {
+            throw GradleException(
+                buildString {
+                    appendLine("Embedded Python runtime is missing from the Android project.")
+                    if (missingLibs.isNotEmpty()) {
+                        appendLine("Missing native libs under ${jniLibsDir}:")
+                        missingLibs.forEach { appendLine("- $it") }
+                    }
+                    if (missingStdlib) {
+                        appendLine("Missing assets under ${assetsPyenvDir}:")
+                        appendLine("- stdlib.zip")
+                    }
+                    appendLine()
+                    appendLine("Fix:")
+                    appendLine("- If you already built a python-for-android dist, sync it:")
+                    appendLine("  ./scripts/sync_p4a_dist.sh (DIST_NAME=methings ARCH=$arch)")
+                    appendLine("- Otherwise build the dist (requires internet):")
+                    appendLine("  SDK_DIR=... NDK_DIR=... ./scripts/build_p4a.sh (DIST_NAME=methings ARCH=$arch)")
+                }
+            )
+        }
+    }
+}
+
 val buildUsbLibs by tasks.registering(Exec::class) {
     val repoRoot = rootProject.projectDir.parentFile.parentFile
-    val ndkDir = android.ndkDirectory?.absolutePath
-        ?: System.getenv("ANDROID_NDK_ROOT")
-        ?: System.getenv("ANDROID_NDK_HOME")
-        ?: System.getenv("NDK_DIR")
+    val ndkDir =
+        System.getenv("NDK_DIR")
+            ?: System.getenv("ANDROID_NDK_ROOT")
+            ?: System.getenv("ANDROID_NDK_HOME")
+            ?: android.ndkDirectory.absolutePath
     if (ndkDir.isNullOrBlank()) {
         throw GradleException(
             "NDK_DIR is required to build libusb/libuvc. " +
@@ -123,7 +165,7 @@ val fetchOpenCvAndroidSdk by tasks.registering(Exec::class) {
 }
 
 tasks.named("preBuild") {
-    dependsOn(syncServerAssets, syncUserDefaults, buildUsbLibs, buildFacadeWheels, fetchOpenCvAndroidSdk)
+    dependsOn(syncServerAssets, syncUserDefaults, verifyPythonRuntime, buildUsbLibs, buildFacadeWheels, fetchOpenCvAndroidSdk)
 }
 
 dependencies {
