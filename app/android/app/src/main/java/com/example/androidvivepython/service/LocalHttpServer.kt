@@ -3052,8 +3052,9 @@ class LocalHttpServer(
 
         // Cloud calls are "ask once per session" regardless of remember-approvals UI.
         val scope = "session"
+        val consume = scope == "once"
 
-        if (!isPermissionApproved(permissionId, consume = true) && identity.isNotBlank()) {
+        if (!isPermissionApproved(permissionId, consume = consume) && identity.isNotBlank()) {
             val reusable = permissionStore.findReusableApproved(
                 tool = tool,
                 scope = scope,
@@ -3065,7 +3066,7 @@ class LocalHttpServer(
             }
         }
 
-        if (!isPermissionApproved(permissionId, consume = true)) {
+        if (!isPermissionApproved(permissionId, consume = consume)) {
             val req = permissionStore.create(
                 tool = tool,
                 detail = detail.take(240),
