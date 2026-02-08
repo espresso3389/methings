@@ -43,6 +43,20 @@ printf '%s\n' "${TS}" > /tmp/kugutz.www.version
 "${ADB[@]}" shell run-as "${PKG}" cp "${TMP_HTML}" files/www/index.html
 "${ADB[@]}" shell run-as "${PKG}" cp "${TMP_VER}" files/www/.version
 
+# Wait until the device reflects the new version (avoids reloading too early).
+want_ver="${TS}"
+for _ in $(seq 1 40); do
+  have_ver="$("${ADB[@]}" shell run-as "${PKG}" cat files/www/.version 2>/dev/null | tr -d '\r' | head -n 1 || true)"
+  if [[ "${have_ver}" == "${want_ver}" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+have_ver="$("${ADB[@]}" shell run-as "${PKG}" cat files/www/.version 2>/dev/null | tr -d '\r' | head -n 1 || true)"
+if [[ "${have_ver}" != "${want_ver}" ]]; then
+  echo "Warning: UI version not updated yet (have=${have_ver:-?} want=${want_ver}). Reloading anyway." >&2
+fi
+
 # Ensure port forward exists, then trigger reload.
 "${ADB[@]}" forward tcp:18765 tcp:8765 >/dev/null 2>&1 || true
 
