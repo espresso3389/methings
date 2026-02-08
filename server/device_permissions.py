@@ -110,11 +110,17 @@ def ensure_device(
     detail: str = "",
     scope: str = "persistent",
     timeout_s: float = 60.0,
+    wait_for_approval: bool = False,
     identity: str = "",
 ) -> str:
     """
-    Convenience wrapper for requesting and waiting on a device permission.
-    Returns the approved permission_id or raises PermissionError.
+    Convenience wrapper for requesting a device permission.
+
+    Default behavior is *non-blocking* to avoid agent deadlocks/timeouts while waiting for the user.
+    - If already approved, returns the permission_id.
+    - If pending/denied/etc, raises PermissionError immediately.
+
+    If you want to block (e.g. in a human-run script), pass wait_for_approval=True.
     """
     cap = str(capability or "").strip()
     if not cap:
@@ -122,7 +128,10 @@ def ensure_device(
     tool = f"device.{cap}"
     req = request(tool=tool, detail=detail, scope=scope, identity=(identity or _IDENTITY).strip())
     pid = str(req.get("id"))
-    final = wait(pid, timeout_s=timeout_s)
+    if wait_for_approval:
+        final = wait(pid, timeout_s=timeout_s)
+    else:
+        final = get(pid)
     if final.get("status") != "approved":
         raise PermissionError(f"{tool} not approved: {final}")
     return pid

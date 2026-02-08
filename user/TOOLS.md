@@ -199,6 +199,10 @@ dp.set_identity("my_session_123")  # optional; uses env KUGUTZ_IDENTITY / KUGUTZ
 dp.ensure_device("camera2", detail="capture a photo", scope="session")
 ```
 
+Notes:
+- `dp.ensure_device(...)` is **non-blocking by default**. If permission is pending, it raises `PermissionError` immediately so the agent can ask the user to approve in the UI.
+- For human-run scripts that want to wait, pass `wait_for_approval=True` (optionally adjust `timeout_s`).
+
 ## Common Errors
 
 - `permission_required`: user needs to approve on device UI, then retry.

@@ -151,13 +151,25 @@ class CameraXManager(
     ): Map<String, Any> {
         // CameraX ImageCapture can be flaky on some devices when invoked from a foreground service.
         // Use Camera2 for still capture to maximize compatibility.
-        return captureStillCamera2(
+        fun once(): Map<String, Any> = captureStillCamera2(
             outFile,
             lens = lens,
             timeoutMs = timeoutMs,
             jpegQuality = jpegQuality,
             exposureCompensation = exposureCompensation,
         )
+
+        val r1 = once()
+        val status = (r1["status"] as? String) ?: ""
+        val error = (r1["error"] as? String) ?: ""
+        val detail = (r1["detail"] as? String) ?: ""
+        if (status == "error" && error == "capture_failed" && detail.contains("Failed to submit capture request", ignoreCase = true)) {
+            // Observed transient on some devices; retry once with a fresh camera session.
+            Log.w(TAG, "camera2.capture transient submit failure; retrying once: $detail")
+            Thread.sleep(250)
+            return once()
+        }
+        return r1
     }
 
     @SuppressLint("MissingPermission")
