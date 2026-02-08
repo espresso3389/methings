@@ -21,6 +21,8 @@ Common patterns:
 ### System / Services
 - `python.status` -> `GET /python/status`
 - `python.restart` -> `POST /python/restart`
+- `screen.status` -> `GET /screen/status`
+- `screen.keep_on` -> `POST /screen/keep_on`
 - `ssh.status` -> `GET /ssh/status`
 - `ssh.config` -> `POST /ssh/config`
 - `ssh.pin.status` -> `GET /ssh/pin/status`
@@ -84,4 +86,3 @@ Common patterns:
     - `image_resize_enabled`, `image_resize_max_dim_px`, `image_resize_jpeg_quality`
   - Large payload confirm thresholds:
     - `auto_upload_no_confirm_mb` (alias: `allow_auto_upload_payload_size_less_than_mb`)
-

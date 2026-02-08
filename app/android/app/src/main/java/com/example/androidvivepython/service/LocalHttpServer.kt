@@ -10,6 +10,7 @@ import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.hardware.usb.UsbConstants
 import android.os.Build
+import android.os.PowerManager
 import android.app.PendingIntent
 import android.util.Log
 import androidx.lifecycle.LifecycleOwner
@@ -28,6 +29,8 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 import jp.espresso3389.kugutz.perm.PermissionStoreFacade
@@ -74,6 +77,10 @@ class LocalHttpServer(
         context.getSystemService(Context.USB_SERVICE) as UsbManager
     }
 
+    private val powerManager: PowerManager by lazy {
+        context.getSystemService(PowerManager::class.java)
+    }
+
     private val USB_PERMISSION_ACTION = "jp.espresso3389.kugutz.USB_PERMISSION"
     private val visionFrames = VisionFrameStore()
     private val tflite = TfliteModelManager(context)
@@ -81,6 +88,11 @@ class LocalHttpServer(
     private val ble = BleManager(context)
     private val tts = TtsManager(context)
     private val stt = SttManager(context)
+
+    @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
+    @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
+    private val screenScheduler = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var screenReleaseFuture: ScheduledFuture<*>? = null
 
     fun startServer(): Boolean {
         return try {
@@ -98,6 +110,14 @@ class LocalHttpServer(
             stop()
         } catch (_: Exception) {
             // ignore
+        }
+        try {
+            setKeepScreenOn(false, timeoutS = 0)
+        } catch (_: Exception) {
+        }
+        try {
+            screenScheduler.shutdownNow()
+        } catch (_: Exception) {
         }
     }
 
@@ -555,6 +575,15 @@ class LocalHttpServer(
                         .put("image_resize_max_dim_px", imgMaxDim)
                         .put("image_resize_jpeg_quality", imgJpegQ)
                 )
+            }
+            (uri == "/screen/status" || uri == "/screen/status/") && session.method == Method.GET -> {
+                return handleScreenStatus()
+            }
+            (uri == "/screen/keep_on" || uri == "/screen/keep_on/") && session.method == Method.POST -> {
+                val body = (postBody ?: "").ifBlank { "{}" }
+                val payload = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                return handleScreenKeepOn(session, payload)
             }
             (uri == "/pip/status" || uri == "/pip/status/") -> {
                 val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
@@ -1282,6 +1311,86 @@ class LocalHttpServer(
                 .put("count", arr.length())
                 .put("devices", arr)
         )
+    }
+
+    private fun setKeepScreenOn(enabled: Boolean, timeoutS: Long) {
+        if (!enabled) {
+            keepScreenOnExpiresAtMs = 0L
+            try {
+                screenReleaseFuture?.cancel(false)
+            } catch (_: Exception) {
+            }
+            screenReleaseFuture = null
+            val wl = keepScreenOnWakeLock
+            keepScreenOnWakeLock = null
+            try {
+                if (wl != null && wl.isHeld) wl.release()
+            } catch (_: Exception) {
+            }
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        keepScreenOnExpiresAtMs = if (timeoutS > 0) now + timeoutS * 1000L else 0L
+
+        // Release any prior timer.
+        try {
+            screenReleaseFuture?.cancel(false)
+        } catch (_: Exception) {
+        }
+        screenReleaseFuture = null
+
+        var wl = keepScreenOnWakeLock
+        if (wl == null) {
+            @Suppress("DEPRECATION")
+            val flags = PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP
+            wl = powerManager.newWakeLock(flags, "kugutz:keep_screen_on")
+            wl.setReferenceCounted(false)
+            keepScreenOnWakeLock = wl
+        }
+
+        val wln = wl
+        if (wln != null) {
+            try {
+                if (!wln.isHeld) wln.acquire()
+            } catch (_: Exception) {
+            }
+        }
+
+        if (timeoutS > 0) {
+            screenReleaseFuture = screenScheduler.schedule(
+                { setKeepScreenOn(false, timeoutS = 0) },
+                timeoutS,
+                TimeUnit.SECONDS
+            )
+        }
+    }
+
+    private fun handleScreenStatus(): Response {
+        val wl = keepScreenOnWakeLock
+        val held = try { wl?.isHeld == true } catch (_: Exception) { false }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("keep_screen_on", held)
+                .put("expires_at", keepScreenOnExpiresAtMs)
+        )
+    }
+
+    private fun handleScreenKeepOn(session: IHTTPSession, payload: JSONObject): Response {
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.screen",
+            capability = "screen",
+            detail = "Keep screen on"
+        )
+        if (!perm.first) return perm.second!!
+
+        val enabled = payload.optBoolean("enabled", true)
+        val timeoutS = payload.optLong("timeout_s", 0L).coerceIn(0L, 24 * 60 * 60L)
+        setKeepScreenOn(enabled, timeoutS = timeoutS)
+        return handleScreenStatus()
     }
 
     private fun handleUsbOpen(session: IHTTPSession, payload: JSONObject): Response {

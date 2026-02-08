@@ -12,6 +12,8 @@ class DeviceApiTool:
     _ACTIONS: Dict[str, Dict[str, Any]] = {
         "python.status": {"method": "GET", "path": "/python/status", "permission": False},
         "python.restart": {"method": "POST", "path": "/python/restart", "permission": True},
+        "screen.status": {"method": "GET", "path": "/screen/status", "permission": False},
+        "screen.keep_on": {"method": "POST", "path": "/screen/keep_on", "permission": True},
         "ssh.status": {"method": "GET", "path": "/ssh/status", "permission": False},
         "ssh.config": {"method": "POST", "path": "/ssh/config", "permission": True},
         "ssh.pin.status": {"method": "GET", "path": "/ssh/pin/status", "permission": False},
@@ -84,6 +86,7 @@ class DeviceApiTool:
             "usb.stream.start": 25.0,
             "usb.stream.stop": 25.0,
             "uvc.mjpeg.capture": 45.0,
+            "screen.keep_on": 12.0,
         }
 
     def set_identity(self, identity: str) -> None:
@@ -388,6 +391,8 @@ class DeviceApiTool:
 
     def _permission_profile_for_action(self, action: str) -> tuple[str, str, str]:
         a = (action or "").strip()
+        if a.startswith("screen."):
+            return "device.screen", "screen", "session"
         if a.startswith("ssh.pin."):
             return "ssh_pin", "ssh.pin", "session"
         if a.startswith("camera."):
