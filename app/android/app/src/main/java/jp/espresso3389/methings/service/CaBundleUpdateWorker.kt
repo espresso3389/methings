@@ -30,8 +30,8 @@ class CaBundleUpdateWorker(
     }
 
     companion object {
-        private const val UNIQUE_PERIODIC = "kugutz.ca_bundle.periodic"
-        private const val UNIQUE_STARTUP = "kugutz.ca_bundle.startup"
+        private const val UNIQUE_PERIODIC = "methings.ca_bundle.periodic"
+        private const val UNIQUE_STARTUP = "methings.ca_bundle.startup"
         private const val KEY_FORCE = "force"
 
         fun schedule(context: Context) {
@@ -54,4 +54,3 @@ class CaBundleUpdateWorker(
         }
     }
 }
-

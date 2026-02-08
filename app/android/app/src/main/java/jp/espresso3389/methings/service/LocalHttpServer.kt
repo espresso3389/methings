@@ -192,7 +192,8 @@ class LocalHttpServer(
                 val tool = payload.optString("tool", "unknown")
                 val detail = payload.optString("detail", "")
                 val requestedScope = payload.optString("scope", "once")
-                val headerIdentity = (session.headers["x-kugutz-identity"] ?: "").trim()
+                val headerIdentity =
+                    ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
                 val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
                 val capabilityFromTool = if (tool.startsWith("device.")) tool.removePrefix("device.").trim() else ""
                 val capability = payload.optString("capability", "").trim().ifBlank { capabilityFromTool }
@@ -1267,7 +1268,8 @@ class LocalHttpServer(
             // Upload is an explicit user action (file picker + send). Treat it as consent to let the
             // agent/UI read uploaded user files without re-prompting for device.files.
             try {
-                val headerIdentity = (session.headers["x-kugutz-identity"] ?: "").trim()
+                val headerIdentity =
+                    ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
                 val identity = (parms["identity"]?.firstOrNull() ?: "").trim()
                     .ifBlank { headerIdentity }
                     .ifBlank { installIdentity.get() }
@@ -1352,7 +1354,7 @@ class LocalHttpServer(
         if (wl == null) {
             @Suppress("DEPRECATION")
             val flags = PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP
-            wl = powerManager.newWakeLock(flags, "kugutz:keep_screen_on")
+            wl = powerManager.newWakeLock(flags, "methings:keep_screen_on")
             wl.setReferenceCounted(false)
             keepScreenOnWakeLock = wl
         }
@@ -2844,7 +2846,8 @@ class LocalHttpServer(
         capability: String,
         detail: String
     ): Pair<Boolean, Response?> {
-        val headerIdentity = (session.headers["x-kugutz-identity"] ?: "").trim()
+        val headerIdentity =
+            ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
         val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
         var permissionId = payload.optString("permission_id", "").trim()
 
@@ -2896,7 +2899,8 @@ class LocalHttpServer(
         capability: String,
         detail: String
     ): Pair<Boolean, Response?> {
-        val headerIdentity = (session.headers["x-kugutz-identity"] ?: "").trim()
+        val headerIdentity =
+            ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
         val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
         var permissionId = payload.optString("permission_id", "").trim()
 
@@ -3108,7 +3112,8 @@ class LocalHttpServer(
             return jsonError(Response.Status.BAD_REQUEST, "query_required")
         }
         val maxResults = payload.optInt("max_results", payload.optInt("limit", 5)).coerceIn(1, 10)
-        val headerIdentity = (session.headers["x-kugutz-identity"] ?: "").trim()
+        val headerIdentity =
+            ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
         val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
         var permissionId = payload.optString("permission_id", "")
 
@@ -3351,7 +3356,7 @@ class LocalHttpServer(
             val url = java.net.URL(
                 "https://api.duckduckgo.com/?" +
                     "q=" + java.net.URLEncoder.encode(q, "UTF-8") +
-                    "&format=json&no_html=1&skip_disambig=1&t=kugutz"
+                    "&format=json&no_html=1&skip_disambig=1&t=methings"
             )
             val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -3646,7 +3651,8 @@ class LocalHttpServer(
         capability: String,
         detail: String
     ): Pair<Boolean, Response?> {
-        val headerIdentity = (session.headers["x-kugutz-identity"] ?: "").trim()
+        val headerIdentity =
+            ((session.headers["x-methings-identity"] ?: session.headers["x-kugutz-identity"]) ?: "").trim()
         val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
         var permissionId = payload.optString("permission_id", "").trim()
 

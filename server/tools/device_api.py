@@ -465,6 +465,8 @@ class DeviceApiTool:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         if self._identity:
+            # Back-compat: accept either header name server-side; send both client-side.
+            headers["X-Methings-Identity"] = self._identity
             headers["X-Kugutz-Identity"] = self._identity
         req = urllib.request.Request(self.base_url + path, data=data, method=method, headers=headers)
         try:

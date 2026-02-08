@@ -11,11 +11,10 @@ Examples:
 - "Start SSHD": start the service and report status and connection details.
 
 ## Constraints
-- User consent is mandatory for device/resource access (Android permissions + Kugutz permission broker).
+- User consent is mandatory for device/resource access (Android permissions + methings permission broker).
 - Everything should run offline except explicit cloud calls.
 - Sensitive actions must be audit-logged.
 
 ## Implementation Notes
 - Prefer tool calls for real actions; write and run local code when that is the shortest path.
 - If a requested capability is not exposed by tools yet, the agent must say so and propose the smallest code change needed to add it.
-

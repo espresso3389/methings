@@ -1,6 +1,6 @@
 # Debugging Notes (App + Agent)
 
-This document collects practical debugging tips for Kugutz app/agent behavior.
+This document collects practical debugging tips for methings app/agent behavior.
 
 ## Quick Mental Model
 
@@ -42,8 +42,8 @@ scripts/ui_hot_reload.sh <serial>
 Manual equivalent:
 
 ```bash
-adb -s <serial> push app/android/app/src/main/assets/www/index.html /data/local/tmp/kugutz.index.html
-date +%s > /tmp/kugutz.www.version && adb -s <serial> push /tmp/kugutz.www.version /data/local/tmp/kugutz.www.version
+adb -s <serial> push app/android/app/src/main/assets/www/index.html /data/local/tmp/methings.index.html
+date +%s > /tmp/methings.www.version && adb -s <serial> push /tmp/methings.www.version /data/local/tmp/methings.www.version
 adb -s <serial> shell run-as jp.espresso3389.methings mkdir -p files/www
 adb -s <serial> shell run-as jp.espresso3389.methings cp /data/local/tmp/methings.index.html files/www/index.html
 adb -s <serial> shell run-as jp.espresso3389.methings cp /data/local/tmp/methings.www.version files/www/.version

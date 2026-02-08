@@ -27,6 +27,8 @@ def _request_json(
         data = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
     if identity:
+        # Back-compat: accept either header name server-side; send both client-side.
+        headers["X-Methings-Identity"] = identity
         headers["X-Kugutz-Identity"] = identity
     req = urllib.request.Request(BASE_URL + path, data=data, method=method, headers=headers)
     try:

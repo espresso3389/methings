@@ -1,6 +1,6 @@
 # Vision (RGBA8888 + TFLite)
 
-This document explains how to use Kugutz's minimal on-device vision stack.
+This document explains how to use methings's minimal on-device vision stack.
 
 ## Core Idea
 
@@ -49,4 +49,3 @@ All `vision.*` actions are permission-gated (`device.vision`) and are expected t
 - Prefer `frame_id` reuse to avoid sending large RGBA buffers repeatedly.
 - If a model expects UINT8 input, set `normalize=false` (or use a UINT8 model).
 - For camera/USB inputs, use `usb.stream.*` to move bytes efficiently, then convert to RGBA and store a frame (future: direct stream->vision ingestion).
-

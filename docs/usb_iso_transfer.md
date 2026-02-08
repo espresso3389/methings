@@ -1,7 +1,7 @@
 # USB Isochronous Transfer Support (Native Workaround)
 
 Android's public USB Host APIs do not support isochronous endpoints directly.
-Kugutz includes a native workaround that uses the `UsbDeviceConnection` file descriptor
+methings includes a native workaround that uses the `UsbDeviceConnection` file descriptor
 and Linux `usbfs` URB ioctls to perform an isochronous IN transfer.
 
 ## API
@@ -37,4 +37,3 @@ Python tool access:
   handling frame boundaries, and selecting the correct VideoStreaming alternate setting.
 - The transfer is performed entirely inside the app process; only the resulting bytes are returned
   to the Python/agent side via HTTP.
-

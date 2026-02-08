@@ -1,4 +1,4 @@
-"""Local HTTP service scaffold for Kugutz."""
+"""Local HTTP service scaffold for methings."""
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware

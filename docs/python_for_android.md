@@ -1,19 +1,19 @@
 # Python/Pip on SSH Sessions
 
-This document describes how `python3` and `pip` work within Kugutz SSH sessions on Android, and the technical challenges that were solved.
+This document describes how `python3` and `pip` work within methings SSH sessions on Android, and the technical challenges that were solved.
 
 ## Overview
 
 Users can SSH into the device and run Python directly:
 
 ```
-$ ssh kugutz@device -p 2222 "python3 --version"
+$ ssh methings@device -p 2222 "python3 --version"
 Python 3.11.5
 
-$ ssh kugutz@device -p 2222 "pip install rich"
+$ ssh methings@device -p 2222 "pip install rich"
 Successfully installed rich-14.3.2 ...
 
-$ ssh kugutz@device -p 2222 "python3 -c 'import json; print(json.dumps({\"ok\": True}))'"
+$ ssh methings@device -p 2222 "python3 -c 'import json; print(json.dumps({\"ok\": True}))'"
 {"ok": true}
 ```
 
@@ -62,7 +62,7 @@ Build: `scripts/build_kugutzpy_android.sh`
 
 Two modifications to `execchild()`:
 
-**1. Environment variable passthrough**: Dropbear calls `clearenv()` before setting up the child session environment, which wipes all inherited env vars. We save Kugutz-specific variables with `m_strdup()` before `clearenv()` and restore them via `addnewvar()` after:
+**1. Environment variable passthrough**: Dropbear calls `clearenv()` before setting up the child session environment, which wipes all inherited env vars. We save methings-specific variables with `m_strdup()` before `clearenv()` and restore them via `addnewvar()` after:
 
 - `PATH`, `KUGUTZ_HOME`, `KUGUTZ_PYENV`, `KUGUTZ_NATIVELIB`
 - `LD_LIBRARY_PATH`, `PYTHONHOME`, `PYTHONPATH`
@@ -192,7 +192,7 @@ Packages requiring C compilation (e.g., `pyyaml`) fail because pip's build isola
 # Build standalone Python launcher
 ./scripts/build_kugutzpy_android.sh
 
-# Build Dropbear with Kugutz patches
+# Build Dropbear with methings patches
 ./scripts/build_dropbear.sh
 
 # Full APK build (includes all native builds)

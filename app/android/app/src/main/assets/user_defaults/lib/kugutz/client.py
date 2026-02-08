@@ -10,6 +10,7 @@ class KugutzClient:
     Small Python-friendly client for the on-device Kotlin control plane (127.0.0.1:8765).
 
     Intended usage: run_python scripts and local tools can import this from <user_dir>/lib/kugutz.
+    New code can also use <user_dir>/lib/methings (wrapper).
     """
 
     def __init__(self, base_url: str = "http://127.0.0.1:8765", *, identity: Optional[str] = None):
@@ -30,6 +31,8 @@ class KugutzClient:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json; charset=utf-8"
         if self.identity:
+            # Send both headers for back-compat across app renames.
+            headers["X-Methings-Identity"] = self.identity
             headers["X-Kugutz-Identity"] = self.identity
         req = urllib.request.Request(self.base_url + path, data=data, method=method.upper(), headers=headers)
         try:
@@ -87,4 +90,3 @@ class KugutzClient:
             detail="UVC MJPEG capture",
             timeout_s=max(20.0, timeout_ms / 1000.0 + 10.0),
         )
-

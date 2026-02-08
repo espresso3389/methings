@@ -1,6 +1,6 @@
 # Permissions Model (Device + Files)
 
-Kugutz uses explicit user consent for device/resource access.
+methings uses explicit user consent for device/resource access.
 
 ## Key Concepts
 
@@ -26,4 +26,3 @@ Kugutz uses explicit user consent for device/resource access.
 
 - Agent filesystem tools are restricted to the user root directory.
 - Developer option: set brain config `fs_scope="app"` to allow tools to access the whole app private dir.
-

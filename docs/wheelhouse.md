@@ -71,7 +71,7 @@ Notes:
 - If you are shipping wheels for private/native integrations, prefer keeping them
   small and avoid bundling duplicate shared libraries that already exist in `jniLibs/`.
 - If a package depends on shared libs, ensure the runtime sets `LD_LIBRARY_PATH`
-  to the Android `nativeLibraryDir` (Kugutz does this for managed subprocesses).
+  to the Android `nativeLibraryDir` (methings does this for managed subprocesses).
 
 ## Facade Packages (When Needed)
 Facade wheels are only for names that pip needs to resolve but that do not exist
@@ -81,9 +81,9 @@ For standard ecosystem packages (`pyusb`, `pyuvc`, `opencv-python`), prefer ship
 real wheels for those names rather than a facade.
 
 Note:
-- `pyuvc` is currently not on PyPI; Kugutz ships a small facade wheel so `pip install pyuvc`
+- `pyuvc` is currently not on PyPI; methings ships a small facade wheel so `pip install pyuvc`
   resolves offline from the bundled wheelhouse.
-- `pupil-labs-uvc` is a common distribution name for libuvc bindings; Kugutz also ships a facade
+- `pupil-labs-uvc` is a common distribution name for libuvc bindings; methings also ships a facade
   wheel so `pip install pupil-labs-uvc` resolves offline from the bundled wheelhouse.
 
 Facade wheel builder:

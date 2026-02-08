@@ -1,6 +1,6 @@
 # Minimal Vision Framework (No OpenCV)
 
-Kugutz intentionally avoids bundling OpenCV for on-device vision.
+methings intentionally avoids bundling OpenCV for on-device vision.
 
 Goals:
 - Keep the image/signal pipeline small, understandable, and fast.
@@ -27,4 +27,3 @@ Notes:
 - Toolkit supports NV21/YV12 YUV formats for yuv->rgb.
 - UVC cameras often provide YUYV; if needed at high FPS, we should add a native SIMD converter
   (libyuv/NEON) rather than using scalar Kotlin loops.
-

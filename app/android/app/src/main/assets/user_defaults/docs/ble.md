@@ -1,6 +1,6 @@
 # BLE (Bluetooth Low Energy)
 
-Kugutz exposes BLE via the Kotlin control plane (`device_api` tool).
+methings exposes BLE via the Kotlin control plane (`device_api` tool).
 
 ## Events (WebSocket)
 
@@ -33,4 +33,3 @@ Messages are JSON strings like:
   - payload: `address`, `service_uuid`, `char_uuid`, `value_b64`, `with_response` (bool)
 - `ble.gatt.notify.start` / `ble.gatt.notify.stop` (POST)
   - payload: `address`, `service_uuid`, `char_uuid`
-

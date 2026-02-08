@@ -3,7 +3,7 @@ package jp.espresso3389.methings.vision
 import java.nio.ByteBuffer
 
 /**
- * Internal image/frame format for Kugutz vision pipeline.
+ * Internal image/frame format for methings vision pipeline.
  *
  * - Pixel format: RGBA8888
  * - Byte order: repeating [R, G, B, A] bytes
@@ -26,4 +26,3 @@ data class RgbaFrame(
         }
     }
 }
-

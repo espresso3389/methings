@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression test for SSH curl support on Kugutz device."""
+"""Regression test for SSH curl support on methings device."""
 
 import argparse
 import json
@@ -34,7 +34,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="192.168.23.44")
     parser.add_argument("--port", type=int, default=2222)
-    parser.add_argument("--user", default="kugutz")
+    parser.add_argument("--user", default="methings")
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="kugutz_known_hosts_") as tmp:

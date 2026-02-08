@@ -1,4 +1,4 @@
-# Kugutz Agent Rules (User Root)
+# methings Agent Rules (User Root)
 
 This file documents how the on-device AI agent should operate. It is referenced by the agent system prompt.
 

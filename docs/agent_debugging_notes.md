@@ -1,4 +1,4 @@
-# Agent/App Debugging Notes (Kugutz)
+# Agent/App Debugging Notes (methings)
 
 This document is a grab-bag of issues we've hit while running the embedded
 Python worker + agent on Android, and the quickest ways to reproduce / debug
@@ -72,4 +72,3 @@ Status:
 As of 2026-02, we intentionally target only `arm64-v8a` to reduce app size and
 keep the native dependency story simpler. Build scripts default to arm64 but
 can be overridden with `ABIS=...` when needed for development.
-

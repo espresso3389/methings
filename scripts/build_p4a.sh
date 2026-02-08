@@ -8,7 +8,7 @@ SDK_DIR=${SDK_DIR:-""}
 NDK_DIR=${NDK_DIR:-""}
 ARCH=${ARCH:-"arm64-v8a"}
 WORK_DIR=${WORK_DIR:-"/tmp/p4a_build_out"}
-DIST_NAME=${DIST_NAME:-"kugutz"}
+DIST_NAME=${DIST_NAME:-"methings"}
 REQUIREMENTS=${REQUIREMENTS:-"python3,fastapi==0.99.1,starlette==0.27.0,pydantic==1.10.13,typing-extensions,anyio==3.7.1,sniffio,uvicorn==0.23.2,click,h11,requests,charset-normalizer,idna,urllib3,certifi"}
 ANDROID_API=${ANDROID_API:-"34"}
 

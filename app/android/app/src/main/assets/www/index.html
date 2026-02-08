@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-    <title>methings</title>
+    <title>methings — it thinks, it does</title>
     <style>
       :root {
         color-scheme: dark;
@@ -843,7 +843,7 @@
     <!-- ===== Chat Page ===== -->
     <div id="chatPage" class="page active">
       <div class="topbar">
-        <div class="title">methings</div>
+        <div class="title">methings — it thinks, it does</div>
         <button class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings"></button>
       </div>
       <div class="chat-messages" id="chatMessages">
@@ -1702,8 +1702,8 @@
       const chatInput = $("chatInput");
       const chatSend = $("chatSend");
       const chatWelcome = $("chatWelcome");
-      const CHAT_STORAGE_PREFIX = "kugutz.chat.conversation.v1.";
-      const CHAT_SESSION_KEY = "kugutz.chat.session_id.v1";
+      const CHAT_STORAGE_PREFIX = "methings.chat.conversation.v1.";
+      const CHAT_SESSION_KEY = "methings.chat.session_id.v1";
       let conversation = [];
       let streaming = false;
       let chatSessionId = "";

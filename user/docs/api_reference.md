@@ -1,6 +1,6 @@
 # API Reference (Local Control Plane)
 
-Kugutz exposes a local HTTP control plane on `http://127.0.0.1:8765`.
+methings exposes a local HTTP control plane on `http://127.0.0.1:8765`.
 
 The agent should use the `device_api(action, payload, detail)` tool instead of calling these endpoints directly.
 

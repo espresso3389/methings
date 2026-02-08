@@ -13,7 +13,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-static const char *prompt = "kugutz> ";
+static const char *prompt = "methings> ";
 
 static void print_error(const char *msg) {
     if (msg) {
@@ -83,7 +83,7 @@ static int cmd_pwd(const char *cwd) {
 static int cmd_whoami() {
     const char *user = getenv("USER");
     if (!user || user[0] == '\0') {
-        user = "kugutz";
+        user = "methings";
     }
     printf("%s\n", user);
     return 0;

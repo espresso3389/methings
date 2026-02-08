@@ -22,7 +22,7 @@ driven with a UVC `SET_CUR` to selector `0x0D` (PanTilt Absolute):
 
 Zoom often works with selector `0x0C` (Zoom Relative) with a 3-byte payload.
 
-## How We Use It In Kugutz
+## How We Use It In methings
 
 We implement virtual `device_api` actions (client-side helper logic in `server/tools/device_api.py`)
 that call the Kotlin `/usb/control_transfer` endpoint:
@@ -38,4 +38,3 @@ These actions auto-guess:
 - `entity_id`: first UVC Camera Terminal ID (Input Terminal subtype `0x02`, `wTerminalType=0x0201`)
 
 The guess is derived by scanning `raw_descriptors` bytes (from `/usb/raw_descriptors`).
-

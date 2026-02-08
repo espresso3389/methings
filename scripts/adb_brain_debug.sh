@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Debug Kugutz Brain via adb port-forward.
+# Debug methings Brain via adb port-forward.
 #
 # Usage:
 #   scripts/adb_brain_debug.sh [serial]
 #
 # Env:
-#   KUGUTZ_LOCAL_PORT=18765   Local forwarded port
+#   METHINGS_LOCAL_PORT=18765   Local forwarded port
+#   KUGUTZ_LOCAL_PORT=18765     Back-compat
 
-LOCAL_PORT="${KUGUTZ_LOCAL_PORT:-18765}"
+LOCAL_PORT="${METHINGS_LOCAL_PORT:-${KUGUTZ_LOCAL_PORT:-18765}}"
 
 pick_serial() {
   local s
@@ -109,4 +110,3 @@ if [[ "$HAS_KEY" != "true" ]]; then
   echo
   echo "next: set Brain API key (UI: Settings -> Brain) then POST /brain/agent/bootstrap" >&2
 fi
-

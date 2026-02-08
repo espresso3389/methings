@@ -48,7 +48,7 @@ Below is a concise explanation of what we change and why.
      - Echo typed characters.
      - Handle backspace/delete.
      - Emit CRLF on Enter.
-   - **Impact:** The `kugutz>` prompt behaves more like a basic terminal even without PTY support.
+   - **Impact:** The `methings>` prompt behaves more like a basic terminal even without PTY support.
 
 7) **Per-connection no-auth prompt (notification allow/deny)**
    - **Files patched:** `src/svr-auth.c`

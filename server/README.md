@@ -1,4 +1,4 @@
-# Kugutz Local API
+# methings Local API
 
 This document describes the current on-device APIs.
 

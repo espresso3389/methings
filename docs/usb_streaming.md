@@ -1,7 +1,7 @@
 # USB Streaming Data Plane (TCP + WebSocket)
 
 HTTP+JSON (base64) is fine for control messages but adds latency/CPU for high-rate data.
-Kugutz provides a binary streaming data plane for USB reads:
+methings provides a binary streaming data plane for USB reads:
 
 - Local TCP stream for Python/agent consumption
 - Local WebSocket stream for WebView/UI preview
@@ -53,4 +53,3 @@ Each WS binary message is:
 
 - This is intentionally low-level. Protocol parsing (CDC serial framing, UVC payload headers, etc.) is done in Python/agent code.
 - Streams are localhost-only and tied to a previously opened USB handle.
-

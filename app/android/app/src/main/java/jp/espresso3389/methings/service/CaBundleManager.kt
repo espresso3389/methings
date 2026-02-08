@@ -71,7 +71,7 @@ class CaBundleManager(private val context: Context) {
                 connectTimeout = 12_000
                 readTimeout = 18_000
                 requestMethod = "GET"
-                setRequestProperty("User-Agent", "kugutz/0.1 (ca-bundle)")
+                setRequestProperty("User-Agent", "methings/0.1 (ca-bundle)")
                 if (meta.etag.isNotBlank()) {
                     setRequestProperty("If-None-Match", meta.etag)
                 }
@@ -182,7 +182,7 @@ class CaBundleManager(private val context: Context) {
 
     companion object {
         private const val TAG = "CaBundleManager"
-        private const val PREFS = "kugutz.ca_bundle"
+        private const val PREFS = "methings.ca_bundle"
         private const val KEY_AUTO_UPDATE_ENABLED = "auto_update_enabled"
         private const val KEY_LAST_OK_MS = "last_ok_ms"
         private const val KEY_MIN_UPDATE_INTERVAL_MS = "min_update_interval_ms"
@@ -194,4 +194,3 @@ class CaBundleManager(private val context: Context) {
         private const val DEFAULT_CA_BUNDLE_URL = "https://curl.se/ca/cacert.pem"
     }
 }
-

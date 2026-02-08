@@ -28,7 +28,9 @@ class SshdManager(private val context: Context) {
         val binDir = File(context.filesDir, "bin")
         val dropbear = resolveBinary("libdropbear.so", File(binDir, "dropbear"))
         val dropbearkey = resolveBinary("libdropbearkey.so", File(binDir, "dropbearkey"))
-        val shellBin = ensureShellBinary(File(binDir, "kugutzsh"))
+        // Keep on-device shell binary name stable across app renames, but allow a new name too.
+        // We prefer "methingssh" when present; otherwise we fall back to the historical "kugutzsh".
+        val shellBin = ensureShellBinary(File(binDir, "methingssh"))
         if (dropbear == null) {
             Log.w(TAG, "Dropbear binary missing")
             return false
@@ -38,7 +40,7 @@ class SshdManager(private val context: Context) {
             return false
         }
         if (shellBin == null) {
-            Log.w(TAG, "Kugutz shell binary missing")
+            Log.w(TAG, "methings shell binary missing")
         }
         val userHome = File(context.filesDir, "user")
         val sshDir = File(userHome, ".ssh")
@@ -119,7 +121,7 @@ class SshdManager(private val context: Context) {
             if (shellBin != null) {
                 pb.environment()["KUGUTZ_SHELL"] = shellBin.absolutePath
             }
-            pb.environment()["USER"] = "kugutz"
+            pb.environment()["USER"] = "methings"
             pb.environment()["DROPBEAR_PIN_FILE"] = pinFile.absolutePath
             // Python/pip environment for SSH sessions
             pb.environment()["KUGUTZ_PYENV"] = pyenvDir.absolutePath
@@ -425,9 +427,18 @@ class SshdManager(private val context: Context) {
 
     private fun ensureShellBinary(target: File): File? {
         val nativeDir = context.applicationInfo.nativeLibraryDir
-        val nativeFile = File(nativeDir, "libkugutzsh.so")
+        val nativeFile = when {
+            File(nativeDir, "libmethingssh.so").exists() -> File(nativeDir, "libmethingssh.so")
+            // Back-compat: old name (kept so we don't need to rebuild every dependent artifact
+            // when changing app branding).
+            File(nativeDir, "libkugutzsh.so").exists() -> File(nativeDir, "libkugutzsh.so")
+            else -> File(nativeDir, "libmethingssh.so")
+        }
         if (!nativeFile.exists()) {
-            return if (target.exists()) target else null
+            if (target.exists()) return target
+            // Back-compat: old extracted shell name.
+            val oldTarget = File(target.parentFile, "kugutzsh")
+            return if (oldTarget.exists()) oldTarget else null
         }
         return try {
             val needsRefresh = !target.exists() ||
@@ -446,7 +457,7 @@ class SshdManager(private val context: Context) {
             target.setExecutable(true, true)
             target
         } catch (ex: Exception) {
-            Log.e(TAG, "Failed to prepare kugutzsh binary", ex)
+            Log.e(TAG, "Failed to prepare methingssh binary", ex)
             null
         }
     }

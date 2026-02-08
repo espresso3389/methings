@@ -1,6 +1,6 @@
 # Vision API (Minimal, RGBA8888 + TFLite)
 
-This is the initial "small and intuitive" vision layer for Kugutz. It avoids OpenCV.
+This is the initial "small and intuitive" vision layer for methings. It avoids OpenCV.
 
 ## Internal Image Format
 
@@ -62,4 +62,3 @@ Python agent tool `device_api` supports:
 - `vision.frame.put`, `vision.frame.get`, `vision.frame.delete`, `vision.frame.save`
 - `vision.image.load`
 - `vision.run`
-

@@ -1,4 +1,4 @@
-# Kugutz Tools (User Root)
+# methings Tools (User Root)
 
 This file is a quick reference for the agent's tools and permission patterns.
 
@@ -108,7 +108,7 @@ Read the relevant doc when working in that domain:
 
 ## Source Code Fallback
 
-Kugutz is open source. If the docs are insufficient, inspect the repo as the ultimate API reference:
+methings is open source. If the docs are insufficient, inspect the repo as the ultimate API reference:
 `https://github.com/espresso3389/kugutz`
 
 ## Permission Requests
@@ -242,7 +242,7 @@ Do not `pip install uvc` for camera control; that name is often unrelated and ty
 
 ## Vision (RGBA8888 + TFLite)
 
-Kugutz provides a minimal on-device vision pipeline:
+methings provides a minimal on-device vision pipeline:
 - Internal image format: `RGBA8888` bytes `[R,G,B,A]` per pixel.
 - Inference runs on Android via TFLite. Python is orchestration only.
 

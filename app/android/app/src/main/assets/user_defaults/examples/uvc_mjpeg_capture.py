@@ -1,8 +1,8 @@
-from kugutz import KugutzClient
+from methings import MethingsClient
 
 
 def main():
-    k = KugutzClient()
+    k = MethingsClient()
 
     # 1) List USB devices (look for your webcam, then open it via device_api usb.open).
     # Note: this example assumes you already have a usb handle. Replace this.
@@ -26,4 +26,3 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

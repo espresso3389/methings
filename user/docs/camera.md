@@ -1,6 +1,6 @@
 # Camera (CameraX)
 
-Kugutz exposes camera access via the Kotlin control plane (`device_api` tool). Use this instead of trying to `pip install` camera bindings.
+methings exposes camera access via the Kotlin control plane (`device_api` tool). Use this instead of trying to `pip install` camera bindings.
 
 ## Actions
 
