@@ -134,9 +134,7 @@ static std::wstring to_wide(const std::string &value) {
     return converter.from_bytes(value);
 }
 
-extern "C"
-JNIEXPORT jint JNICALL
-Java_jp_espresso3389_kugutz_service_PythonBridge_start(
+static jint PythonBridge_start_impl(
         JNIEnv *env,
         jobject /* this */,
         jstring pythonHome,
@@ -262,13 +260,47 @@ Java_jp_espresso3389_kugutz_service_PythonBridge_start(
     return rc;
 }
 
-extern "C"
-JNIEXPORT jint JNICALL
-Java_jp_espresso3389_kugutz_service_PythonBridge_stop(
-        JNIEnv * /* env */,
-        jobject /* this */) {
+static jint PythonBridge_stop_impl() {
     if (g_Py_FinalizeEx) {
         return g_Py_FinalizeEx();
     }
     return 0;
+}
+
+// Export both the old and new package symbols. This makes appId/package renames
+// safe without requiring an immediate native rebuild for every downstream APK.
+extern "C" JNIEXPORT jint JNICALL
+Java_jp_espresso3389_methings_service_PythonBridge_start(
+        JNIEnv *env,
+        jobject thiz,
+        jstring pythonHome,
+        jstring serverDir,
+        jstring keyFile,
+        jstring nativeLibDir) {
+    return PythonBridge_start_impl(env, thiz, pythonHome, serverDir, keyFile, nativeLibDir);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_jp_espresso3389_kugutz_service_PythonBridge_start(
+        JNIEnv *env,
+        jobject thiz,
+        jstring pythonHome,
+        jstring serverDir,
+        jstring keyFile,
+        jstring nativeLibDir) {
+    return PythonBridge_start_impl(env, thiz, pythonHome, serverDir, keyFile, nativeLibDir);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_jp_espresso3389_methings_service_PythonBridge_stop(
+        JNIEnv * /* env */,
+        jobject /* this */) {
+    return PythonBridge_stop_impl();
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_jp_espresso3389_kugutz_service_PythonBridge_stop(
+        JNIEnv * /* env */,
+        jobject /* this */) {
+    return PythonBridge_stop_impl();
 }
