@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Methings" parent="Theme.AppCompat.Light.NoActionBar">
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/black</item>
+        <!-- Match the Web UI topbar background. See docs/UI_THEME_MAPPING.md for the CSS var name. -->
+        <item name="android:statusBarColor">@color/methings_system_bar</item>
+        <item name="android:navigationBarColor">@color/methings_navigation_bar</item>
+        <!-- White status bar icons/text on a dark background. -->
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>
