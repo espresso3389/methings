@@ -114,6 +114,14 @@ class SshdManager(private val context: Context) {
             val pyenvDir = File(context.filesDir, "pyenv")
             val serverDir = File(context.filesDir, "server")
             val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
+
+            // Ensure outbound ssh/scp from within the SSH session behaves reasonably even though
+            // Android app sandboxes usually don't expose a real devpts mount (no PTY). In that case,
+            // Dropbear's client tools need non-interactive defaults (host key auto-accept) and
+            // ssh should force remote PTY when possible (-t) so interactive logins work.
+            ensureSshClientWrappers(binDir, userHome)
+            val mkshEnv = ensureMkshEnvFile(userHome)
+
             val pb = ProcessBuilder(args)
             pb.environment()["HOME"] = userHome.absolutePath
             pb.environment()["METHINGS_HOME"] = userHome.absolutePath
@@ -126,6 +134,7 @@ class SshdManager(private val context: Context) {
             // Python/pip environment for SSH sessions
             pb.environment()["METHINGS_PYENV"] = pyenvDir.absolutePath
             pb.environment()["METHINGS_NATIVELIB"] = nativeLibDir
+            pb.environment()["METHINGS_BINDIR"] = binDir.absolutePath
             pb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
             pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
             pb.environment()["PYTHONPATH"] = listOf(
@@ -155,6 +164,8 @@ class SshdManager(private val context: Context) {
             // Add nativeLibDir to PATH so python3/pip are accessible via libmethingspy.so
             val existingPath = pb.environment()["PATH"] ?: "/usr/bin:/bin"
             pb.environment()["PATH"] = "${binDir.absolutePath}:$nativeLibDir:$existingPath"
+            // mksh reads $ENV for startup config in both interactive and non-interactive shells.
+            pb.environment()["ENV"] = mkshEnv.absolutePath
             if (authMode == AUTH_MODE_NOTIFICATION) {
                 pb.environment()["DROPBEAR_NOAUTH_PROMPT_DIR"] = noauthDir.absolutePath
                 pb.environment()["DROPBEAR_NOAUTH_PROMPT_TIMEOUT"] = "10"
@@ -460,6 +471,64 @@ class SshdManager(private val context: Context) {
             Log.e(TAG, "Failed to prepare methingssh binary", ex)
             null
         }
+    }
+
+    private fun ensureSshClientWrappers(binDir: File, userHome: File) {
+        // A small wrapper used by scp's `-S` option (it expects a program path, not args).
+        val wrapper = File(binDir, "methings-dbclient")
+        if (!wrapper.exists() || wrapper.length() == 0L) {
+            wrapper.parentFile?.mkdirs()
+            wrapper.writeText(
+                "#!/system/bin/sh\n" +
+                    "exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" -y \"${'$'}@\"\n"
+            )
+        }
+        wrapper.setExecutable(true, true)
+        wrapper.setReadable(true, true)
+        wrapper.setWritable(true, true)
+
+        // mksh startup file. We keep it in HOME so the path stays stable across updates.
+        val envFile = File(userHome, ".mkshrc")
+        val content =
+            "# methings mksh env (auto-generated)\n" +
+                "PS1='methings> '\n" +
+                // Override Android's built-in functions so they don't embed stale /data/app/... paths.
+                "ssh() {\n" +
+                "  want_t=1\n" +
+                "  want_y=1\n" +
+                "  for a in \"${'$'}@\"; do\n" +
+                "    case \"${'$'}a\" in\n" +
+                "      -t|-T) want_t=0;;\n" +
+                "      -y) want_y=0;;\n" +
+                "    esac\n" +
+                "  done\n" +
+                "  if [ \"${'$'}want_y\" -eq 1 ]; then set -- -y \"${'$'}@\"; fi\n" +
+                // Without a local PTY, dbclient won't auto-request a remote PTY. Force it so
+                // `ssh user@host` becomes usable for interactive sessions.
+                "  if [ \"${'$'}want_t\" -eq 1 ]; then set -- -t \"${'$'}@\"; fi\n" +
+                "  exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" \"${'$'}@\"\n" +
+                "}\n" +
+                "dbclient() { ssh \"${'$'}@\"; }\n" +
+                "scp() {\n" +
+                "  exec \"${'$'}METHINGS_NATIVELIB/libscp.so\" -S \"${'$'}METHINGS_BINDIR/methings-dbclient\" \"${'$'}@\"\n" +
+                "}\n"
+        val needsWrite = !envFile.exists() || envFile.readText() != content
+        if (needsWrite) {
+            envFile.writeText(content)
+        }
+        envFile.setReadable(true, true)
+        envFile.setWritable(true, true)
+        envFile.setExecutable(false, false)
+    }
+
+    private fun ensureMkshEnvFile(userHome: File): File {
+        // ensureSshClientWrappers() writes the file; return it for ProcessBuilder ENV=...
+        val envFile = File(userHome, ".mkshrc")
+        if (!envFile.exists()) {
+            envFile.parentFile?.mkdirs()
+            envFile.writeText("# methings mksh env\n")
+        }
+        return envFile
     }
 
     data class SshStatus(
