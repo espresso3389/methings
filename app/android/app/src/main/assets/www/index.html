@@ -1599,8 +1599,11 @@
       }
       function isLikelyAudioWebm(name) {
         const s = String(name || "").toLowerCase();
-        // Our recorder names files like: audio_recording_2026-02-09T00-54-59-123Z.webm
-        return s.includes("audio_recording_") || s.includes("/audio_recording_");
+        // Recorder filenames may use either "_" or "-" after "audio_recording".
+        // Examples:
+        // - audio_recording_2026-02-09T00-54-59-123Z.webm
+        // - audio_recording-2026-02-09T01-18-15-881Z.webm
+        return /(^|\\/)audio_recording[-_]/.test(s) || s.includes("/uploads/recordings/");
       }
       function kindFor(name) {
         const e = extOf(name);
