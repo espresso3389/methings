@@ -165,28 +165,16 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
-            set -eu
-
             echo "::group::Install APK"
             adb install apk/app-debug.apk
             echo "::endgroup::"
-
             echo "::group::Launch activity"
             adb shell am start -W -n jp.espresso3389.methings/.ui.MainActivity
             echo "::endgroup::"
-
             sleep 10
-
             echo "::group::Verify app process"
-            pid=$(adb shell pidof jp.espresso3389.methings || true)
-            if [ -z "$pid" ]; then
-              echo "::error::App process not found -- likely crashed on startup"
-              adb logcat -d -s AndroidRuntime:E
-              exit 1
-            fi
-            echo "App running with PID: $pid"
+            adb shell pidof jp.espresso3389.methings || { echo "::error::App process not found -- likely crashed on startup"; adb logcat -d -s AndroidRuntime:E; exit 1; }
             echo "::endgroup::"
-
             adb logcat -d > logcat.txt 2>&1 || true
 
       - name: Upload logcat
