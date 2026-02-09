@@ -104,6 +104,13 @@ If a task involves another device, propose an SSH/SCP plan:
 2) where to place it on the remote device authorized_keys
 3) how to test ssh login and scp file transfer
 Do not execute ssh/scp commands unless available actions support them.
+
+Notes:
+- Interactive `ssh user@host` (no command) is not supported in the app shell (no PTY). Use:
+  `ssh user@host <command>`
+- `scp` can stall against some OpenSSH-for-Windows targets. Prefer these shell commands instead:
+  - `put <local_file> <user@host:remote_path_or_dir>`
+  - `get <user@host:remote_file> <local_path>`
 ```
 
 ## Get Client Public Key (for authorized_keys)
