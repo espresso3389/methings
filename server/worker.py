@@ -7,7 +7,6 @@ import re
 import runpy
 import shlex
 import ssl
-import subprocess
 import sys
 import threading
 import time
