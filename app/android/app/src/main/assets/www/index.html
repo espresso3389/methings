@@ -978,6 +978,9 @@
       </div>
       <div class="chat-input-area">
         <div class="composer-attachments" id="composerAttachments"></div>
+        <div class="muted" id="recordingStatus" style="display:none;margin-top:-6px;margin-bottom:2px;">
+          Recording...
+        </div>
         <div class="chat-input-row">
           <div class="chat-left">
             <button class="icon-btn primary" id="chatUploadBtn" title="Attach file(s)" aria-label="Attach file(s)"></button>
@@ -2479,9 +2482,12 @@
         const uploadBtn = $("chatUploadBtn");
         const uploadInput = $("chatUploadInput");
         const recBtn = $("chatRecordBtn");
+        const recStatus = $("recordingStatus");
         let rStream = null;
         let rRec = null;
         let rChunks = [];
+        let recStartedAtMs = 0;
+        let recTimer = null;
         if (uploadBtn && uploadInput) {
           uploadBtn.addEventListener("click", () => uploadInput.click());
           uploadInput.addEventListener("change", () => {
@@ -2493,6 +2499,12 @@
 
         function setRecordUi(recording) {
           if (!recBtn) return;
+          try {
+            if (recStatus) {
+              recStatus.style.display = recording ? "block" : "none";
+              if (!recording) recStatus.textContent = "Recording...";
+            }
+          } catch (_) {}
           if (recording) {
             recBtn.classList.add("danger");
             recBtn.title = "Stop recording";
@@ -2508,6 +2520,24 @@
 
         if (recBtn) {
           setRecordUi(false);
+          function stopRecTimer() {
+            try { if (recTimer) clearInterval(recTimer); } catch (_) {}
+            recTimer = null;
+          }
+          function startRecTimer() {
+            stopRecTimer();
+            recStartedAtMs = Date.now();
+            recTimer = setInterval(() => {
+              try {
+                if (!recStatus) return;
+                const sec = Math.max(0, Math.floor((Date.now() - recStartedAtMs) / 1000));
+                const mm = String(Math.floor(sec / 60)).padStart(2, "0");
+                const ss = String(sec % 60).padStart(2, "0");
+                recStatus.textContent = "Recording " + mm + ":" + ss + " (tap stop to finish)";
+              } catch (_) {}
+            }, 250);
+          }
+
           async function getMicStreamWithFallback() {
             // Some Android builds/WebView versions intermittently throw NotReadableError
             // ("Could not start audio source") on the first attempt depending on routing.
@@ -2526,14 +2556,21 @@
             }
           }
           recBtn.addEventListener("click", async () => {
-            if (recordingBusy) return;
             // Toggle stop if active.
             if (rRec && rRec.state !== "inactive") {
-              try { rRec.stop(); } catch (_) {}
-              setRecordUi(false);
-              recordingBusy = false;
+              try { rRec.stop(); } catch (_) {
+                // Ensure we don't get stuck in "recording" UI if stop fails.
+                try { if (rStream) rStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+                rStream = null;
+                rRec = null;
+                rChunks = [];
+                stopRecTimer();
+                setRecordUi(false);
+              }
               return;
             }
+            // Only block if we're in the middle of starting recording.
+            if (recordingBusy) return;
             try {
               recordingBusy = true;
               // Recording is a user-initiated UI action; rely on WebView/OS microphone permission prompts.
@@ -2555,6 +2592,7 @@
                 rRec = null;
                 rChunks = [];
                 recordingBusy = false;
+                stopRecTimer();
                 setRecordUi(false);
                 try {
                   const ts = new Date().toISOString().replace(/[:.]/g, "-");
@@ -2562,11 +2600,15 @@
                 } catch (_) {}
               };
               rRec.start();
+              // Starting has finished; allow stop-tap immediately.
+              recordingBusy = false;
               setRecordUi(true);
+              startRecTimer();
               showToast("Recording... tap again to stop", 1400);
             } catch (e) {
               setRecordUi(false);
               recordingBusy = false;
+              stopRecTimer();
               let msg = "Record failed";
               try {
                 const n = (e && e.name) ? String(e.name) : "";
