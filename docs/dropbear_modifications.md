@@ -73,6 +73,14 @@ Below is a concise explanation of what we change and why.
    - **Files patched:** `localoptions.h`
    - **Why:** Reduces attack surface and avoids features that depend on broader OS integration.
 
+10) **Android shell command aliases (native lib wrappers)**
+   - **Files patched:** `src/svr-chansession.c`
+   - **Why:** Executing scripts from app-private storage can be blocked by `noexec`/SELinux constraints, and the app shell runs without a PTY. We inject a small shell preamble so common commands resolve to the packaged native binaries in `METHINGS_NATIVELIB`.
+   - **What it adds:**
+     - `ssh`/`dbclient` wrappers that default to auto-accepting host keys and fail fast for interactive sessions (no TTY).
+     - `scp` wrapper that points `-S` at the native `dbclient` wrapper.
+     - `put`/`get` commands as an `scp` alternative (ssh+cat or PowerShell+base64) for targets where the scp protocol stalls (notably some OpenSSH-for-Windows setups).
+
 ## Where the Patches Live
 
 All modifications live in the forked Dropbear submodule and are built by:

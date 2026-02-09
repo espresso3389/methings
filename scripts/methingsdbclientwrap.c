@@ -24,8 +24,9 @@ int main(int argc, char **argv) {
         snprintf(path, sizeof(path), "libdbclient.so");
     }
 
-    /* Build argv = [dbclient, -y, -o BatchMode=yes, original args...] */
-    char **nargv = (char **)calloc((size_t)argc + 5, sizeof(char *));
+    /* Build argv = [dbclient, -y, -o BatchMode=yes, -K 5, -I 20, original args...]
+     * -K/-I prevent "looks hung forever" on stalled connections. */
+    char **nargv = (char **)calloc((size_t)argc + 9, sizeof(char *));
     if (!nargv) {
         fprintf(stderr, "alloc failed\n");
         return 1;
@@ -35,10 +36,14 @@ int main(int argc, char **argv) {
     /* No TTY in the app shell, so don't ever block waiting for password input. */
     nargv[2] = (char *)"-o";
     nargv[3] = (char *)"BatchMode=yes";
+    nargv[4] = (char *)"-K";
+    nargv[5] = (char *)"5";
+    nargv[6] = (char *)"-I";
+    nargv[7] = (char *)"20";
     for (int i = 1; i < argc; i++) {
-        nargv[i + 3] = argv[i];
+        nargv[i + 7] = argv[i];
     }
-    nargv[argc + 3] = NULL;
+    nargv[argc + 7] = NULL;
 
     execv(path, nargv);
     fprintf(stderr, "%s: exec failed: %s\n", path, strerror(errno));
