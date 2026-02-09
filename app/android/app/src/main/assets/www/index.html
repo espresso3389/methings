@@ -1597,11 +1597,17 @@
         const i = n.lastIndexOf(".");
         return i >= 0 ? n.slice(i + 1) : "";
       }
+      function isLikelyAudioWebm(name) {
+        const s = String(name || "").toLowerCase();
+        // Our recorder names files like: audio_recording_2026-02-09T00-54-59-123Z.webm
+        return s.includes("audio_recording_") || s.includes("/audio_recording_");
+      }
       function kindFor(name) {
         const e = extOf(name);
         if (["png","jpg","jpeg","gif","webp","bmp","svg"].includes(e)) return "image";
-        if (["mp4","webm","mkv","mov","m4v","3gp"].includes(e)) return "video";
-        if (["mp3","wav","ogg","m4a","aac","flac","webm"].includes(e)) return "audio";
+        if (e === "webm") return isLikelyAudioWebm(name) ? "audio" : "video";
+        if (["mp4","mkv","mov","m4v","3gp"].includes(e)) return "video";
+        if (["mp3","wav","ogg","m4a","aac","flac"].includes(e)) return "audio";
         if (["txt","md","json","log","py","js","html","css"].includes(e)) return "text";
         return "bin";
       }
@@ -1614,7 +1620,7 @@
         if (["webp"].includes(e)) return "image/webp";
         if (["svg"].includes(e)) return "image/svg+xml";
         if (["mp4","m4v"].includes(e)) return "video/mp4";
-        if (["webm"].includes(e)) return "video/webm";
+        if (e === "webm") return isLikelyAudioWebm(p) ? "audio/webm" : "video/webm";
         if (["mov"].includes(e)) return "video/quicktime";
         if (["3gp"].includes(e)) return "video/3gpp";
         if (["mp3"].includes(e)) return "audio/mpeg";
