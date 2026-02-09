@@ -386,7 +386,45 @@ static int cmd_python_or_pip(const char *cmd, const char *raw_args, const char *
     return 0;
 }
 
-int main() {
+static int run_shell_command_with_node_preamble(const char *cmd) {
+    if (!cmd) {
+        return 2;
+    }
+    const char *nlib = getenv("METHINGS_NATIVELIB");
+    if (!nlib || nlib[0] == '\0') {
+        // Fallback: run as plain sh.
+        execl("/system/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        perror("exec sh");
+        return 127;
+    }
+
+    // Prefix node/bun helpers so npm lifecycle scripts can run `bun <script> || node <script>`
+    // even when the underlying /system/bin/sh doesn't source $ENV.
+    const char *preamble =
+        "node(){ "
+            "_nr=\"${METHINGS_NODE_ROOT:-$HOME/../node}\"; "
+            "LD_LIBRARY_PATH=\"$_nr/lib:${METHINGS_NATIVELIB}:${LD_LIBRARY_PATH:-}\" "
+            "\"${METHINGS_NATIVELIB}/libnode.so\" \"$@\"; "
+        "}; "
+        "bun(){ node \"$@\"; }; ";
+
+    size_t need = strlen(preamble) + strlen(cmd) + 1;
+    char *wrapped = (char *)malloc(need);
+    if (!wrapped) {
+        print_error("out of memory");
+        return 1;
+    }
+    snprintf(wrapped, need, "%s%s", preamble, cmd);
+    execl("/system/bin/sh", "sh", "-c", wrapped, (char *)NULL);
+    perror("exec sh");
+    free(wrapped);
+    return 127;
+}
+
+int main(int argc, char **argv) {
+    if (argc >= 3 && (strcmp(argv[1], "-c") == 0 || strcmp(argv[1], "-lc") == 0)) {
+        return run_shell_command_with_node_preamble(argv[2]);
+    }
     const char *root_env = getenv("METHINGS_HOME");
     char root[PATH_MAX];
     if (!root_env || root_env[0] == '\0') {
@@ -405,7 +443,7 @@ int main() {
 
     char line[1024];
     char line_raw[1024];
-    char *argv[64];
+    char *argsv[64];
 
     while (1) {
         fputs(prompt, stdout);
@@ -415,11 +453,11 @@ int main() {
         }
         strncpy(line_raw, line, sizeof(line_raw) - 1);
         line_raw[sizeof(line_raw) - 1] = '\0';
-        int argc = split_line(line, argv, 64);
-        if (argc == 0) {
+        int argcount = split_line(line, argsv, 64);
+        if (argcount == 0) {
             continue;
         }
-        const char *cmd = argv[0];
+        const char *cmd = argsv[0];
 
         if (strcmp(cmd, "exit") == 0) {
             break;
@@ -430,7 +468,7 @@ int main() {
         } else if (strcmp(cmd, "whoami") == 0) {
             cmd_whoami();
         } else if (strcmp(cmd, "ls") == 0) {
-            const char *arg = (argc > 1) ? argv[1] : ".";
+            const char *arg = (argcount > 1) ? argsv[1] : ".";
             char resolved[PATH_MAX];
             if (normalize_path(root, cwd, arg, resolved, sizeof(resolved)) != 0) {
                 print_error("invalid path");
@@ -438,36 +476,36 @@ int main() {
             }
             cmd_ls(resolved);
         } else if (strcmp(cmd, "cat") == 0) {
-            if (argc < 2) {
+            if (argcount < 2) {
                 print_error("missing file");
                 continue;
             }
             char resolved[PATH_MAX];
-            if (normalize_path(root, cwd, argv[1], resolved, sizeof(resolved)) != 0) {
+            if (normalize_path(root, cwd, argsv[1], resolved, sizeof(resolved)) != 0) {
                 print_error("invalid path");
                 continue;
             }
             cmd_cat(resolved);
         } else if (strcmp(cmd, "echo") == 0) {
-            cmd_echo(argv, argc);
+            cmd_echo(argsv, argcount);
         } else if (strcmp(cmd, "mkdir") == 0) {
-            if (argc < 2) {
+            if (argcount < 2) {
                 print_error("missing path");
                 continue;
             }
             char resolved[PATH_MAX];
-            if (normalize_path(root, cwd, argv[1], resolved, sizeof(resolved)) != 0) {
+            if (normalize_path(root, cwd, argsv[1], resolved, sizeof(resolved)) != 0) {
                 print_error("invalid path");
                 continue;
             }
             cmd_mkdir(resolved);
         } else if (strcmp(cmd, "touch") == 0) {
-            if (argc < 2) {
+            if (argcount < 2) {
                 print_error("missing path");
                 continue;
             }
             char resolved[PATH_MAX];
-            if (normalize_path(root, cwd, argv[1], resolved, sizeof(resolved)) != 0) {
+            if (normalize_path(root, cwd, argsv[1], resolved, sizeof(resolved)) != 0) {
                 print_error("invalid path");
                 continue;
             }
@@ -475,48 +513,48 @@ int main() {
         } else if (strcmp(cmd, "rm") == 0) {
             int recursive = 0;
             int argi = 1;
-            if (argc > 1 && strcmp(argv[1], "-r") == 0) {
+            if (argcount > 1 && strcmp(argsv[1], "-r") == 0) {
                 recursive = 1;
                 argi = 2;
             }
-            if (argc <= argi) {
+            if (argcount <= argi) {
                 print_error("missing path");
                 continue;
             }
             char resolved[PATH_MAX];
-            if (normalize_path(root, cwd, argv[argi], resolved, sizeof(resolved)) != 0) {
+            if (normalize_path(root, cwd, argsv[argi], resolved, sizeof(resolved)) != 0) {
                 print_error("invalid path");
                 continue;
             }
             cmd_rm(resolved, recursive);
         } else if (strcmp(cmd, "cp") == 0) {
-            if (argc < 3) {
+            if (argcount < 3) {
                 print_error("missing src/dst");
                 continue;
             }
             char src[PATH_MAX];
             char dst[PATH_MAX];
-            if (normalize_path(root, cwd, argv[1], src, sizeof(src)) != 0 ||
-                normalize_path(root, cwd, argv[2], dst, sizeof(dst)) != 0) {
+            if (normalize_path(root, cwd, argsv[1], src, sizeof(src)) != 0 ||
+                normalize_path(root, cwd, argsv[2], dst, sizeof(dst)) != 0) {
                 print_error("invalid path");
                 continue;
             }
             cmd_cp(src, dst);
         } else if (strcmp(cmd, "mv") == 0) {
-            if (argc < 3) {
+            if (argcount < 3) {
                 print_error("missing src/dst");
                 continue;
             }
             char src[PATH_MAX];
             char dst[PATH_MAX];
-            if (normalize_path(root, cwd, argv[1], src, sizeof(src)) != 0 ||
-                normalize_path(root, cwd, argv[2], dst, sizeof(dst)) != 0) {
+            if (normalize_path(root, cwd, argsv[1], src, sizeof(src)) != 0 ||
+                normalize_path(root, cwd, argsv[2], dst, sizeof(dst)) != 0) {
                 print_error("invalid path");
                 continue;
             }
             cmd_mv(src, dst);
         } else if (strcmp(cmd, "cd") == 0) {
-            const char *arg = (argc > 1) ? argv[1] : "/";
+            const char *arg = (argcount > 1) ? argsv[1] : "/";
             char resolved[PATH_MAX];
             if (normalize_path(root, cwd, arg, resolved, sizeof(resolved)) != 0) {
                 print_error("invalid path");
