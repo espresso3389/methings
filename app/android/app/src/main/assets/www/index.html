@@ -1607,7 +1607,7 @@
         // Examples:
         // - audio_recording_2026-02-09T00-54-59-123Z.webm
         // - audio_recording-2026-02-09T01-18-15-881Z.webm
-        if (/(^|\\/)audio_recording[-_]/.test(s)) return true;
+        if (/(^|\/)audio_recording[-_]/.test(s)) return true;
         // Some paths don't include a leading "/" (they're rel_paths). Match both forms.
         if (s.includes("uploads/recordings/")) return true;
         return false;
