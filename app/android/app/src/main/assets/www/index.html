@@ -498,11 +498,12 @@
         box-sizing: border-box;
         padding: 10px 12px;
         border-radius: var(--radius-md);
-        border: 1px solid rgba(245,158,11,0.45);
-        background: var(--amber-soft);
+        border: 1px solid rgba(245,158,11,0.70);
+        /* Opaque background for readability (avoid translucent soft colors). */
+        background: #2b1e06;
         color: var(--ink);
         font-size: 13px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
       }
       .locked-banner .lb-row {
         display: flex;
@@ -515,9 +516,9 @@
         border-radius: 10px;
         display: grid;
         place-items: center;
-        background: rgba(245,158,11,0.12);
-        border: 1px solid rgba(245,158,11,0.35);
-        color: var(--amber);
+        background: #3a2a0b;
+        border: 1px solid rgba(245,158,11,0.55);
+        color: #ffd08a;
         flex-shrink: 0;
         margin-top: 1px;
       }
@@ -527,7 +528,7 @@
         letter-spacing: 0.2px;
         margin-bottom: 2px;
       }
-      .locked-banner .lb-sub { color: var(--ink-secondary); }
+      .locked-banner .lb-sub { color: rgba(236,236,241,0.86); }
       @media (min-width: 640px) {
         .locked-banner {
           width: min(560px, calc(100% - 32px));
