@@ -37,6 +37,18 @@ Notes:
 
 Used for allowlisted device control-plane actions (python/ssh/memory/shell.exec, etc). Some actions require user approval and will return `permission_required`.
 
+## App SSH Shell Commands (Outbound)
+
+When you are inside the app's SSH shell prompt (it looks like `methings>`), a few outbound SSH helpers are available:
+
+- `ssh user@host <command>`
+  - Interactive `ssh user@host` (no command) is not supported (no PTY). Use exec-form only.
+- `put <local_file> <user@host:remote_path_or_dir>`
+- `get <user@host:remote_file> <local_path>`
+
+Notes:
+- `scp` exists but may stall against some OpenSSH-for-Windows targets. Prefer `put/get` when `scp` stalls.
+
 ### Camera Quickstart (Take A Picture)
 
 Use `device_api` (do not try to `pip install` camera bindings):
