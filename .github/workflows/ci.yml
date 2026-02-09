@@ -177,7 +177,7 @@ jobs:
             echo "::endgroup::"
             echo "::group::API health check"
             adb forward tcp:8765 tcp:8765
-            curl -sf --retry 15 --retry-delay 2 --retry-connrefused http://127.0.0.1:8765/health
+            curl -sf --retry 15 --retry-delay 2 --retry-all-errors http://127.0.0.1:8765/health
             echo ""
             echo "::endgroup::"
             echo "::group::Python exec test"
