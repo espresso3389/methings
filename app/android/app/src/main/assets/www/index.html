@@ -260,6 +260,30 @@
         border-radius: var(--radius-md);
         padding: 10px;
       }
+      .attach-card.attach-card-audio {
+        /* Audio should be minimal: just the player (no "card" chrome). */
+        background: transparent;
+        border: 0;
+        padding: 0;
+        position: relative;
+      }
+      .attach-card.attach-card-audio .attach-head,
+      .attach-card.attach-card-audio .attach-hint {
+        display: none;
+      }
+      .attach-card.attach-card-audio .attach-body audio {
+        width: 100%;
+        background: #0d0d0f;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 8px;
+      }
+      .attach-card.attach-card-audio .attach-actions {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        z-index: 2;
+      }
       .attach-head {
         display: flex;
         align-items: center;
@@ -1673,6 +1697,7 @@
           const kind = kindFor(p);
           const card = document.createElement("div");
           card.className = "attach-card";
+          if (kind === "audio") card.classList.add("attach-card-audio");
 
           const head = document.createElement("div");
           head.className = "attach-head";
@@ -1752,6 +1777,7 @@
                 a.src = src;
                 a.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
                 body.appendChild(a);
+                // Audio attachments are rendered as a minimal player; the card header/hint are hidden by CSS.
                 hint.textContent = "Audio";
               } else {
                 hint.textContent = "No inline preview for this file type.";

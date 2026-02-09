@@ -24,6 +24,12 @@ Messages are JSON strings like:
     - `partial` (bool, default true)
     - `max_results` (int)
 - `stt.stop` (POST)
+- `stt.transcribe` (POST) -> file/data to text (not implemented yet)
+  - payload:
+    - `rel_path` (preferred): audio file under `user/` root (e.g. `uploads/chat/foo.webm`)
+    - OR `audio_b64`: base64-encoded bytes
+  - current behavior:
+    - returns `error=stt_transcribe_unavailable` (Android SpeechRecognizer supports live mic only)
+    - use `/cloud/request` with `${file:...:base64}` for cloud STT fallback
 
 Note: STT requires Android runtime permission `RECORD_AUDIO` (the app will prompt).
-

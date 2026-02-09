@@ -73,6 +73,14 @@ class MethingsClient:
     def usb_status(self) -> Dict[str, Any]:
         return self.device_api("usb.status", {}, detail="USB status")
 
+    def stt_transcribe(self, *, rel_path: str = "", audio_b64: str = "") -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if rel_path:
+            payload["rel_path"] = rel_path
+        if audio_b64:
+            payload["audio_b64"] = audio_b64
+        return self.device_api("stt.transcribe", payload, detail="STT transcribe (file)")
+
     def uvc_mjpeg_capture(
         self,
         *,
