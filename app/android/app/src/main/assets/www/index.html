@@ -1595,15 +1595,22 @@
       function extOf(name) {
         const n = String(name || "").trim().toLowerCase();
         const i = n.lastIndexOf(".");
-        return i >= 0 ? n.slice(i + 1) : "";
+        const e = i >= 0 ? n.slice(i + 1) : "";
+        // Be robust to invisible chars accidentally copied into paths (e.g. ZWSP).
+        return String(e).replace(/[^a-z0-9]+/g, "");
       }
       function isLikelyAudioWebm(name) {
         const s = String(name || "").toLowerCase();
+        // Fallback: if the path/name contains the recorder prefix anywhere, treat as audio.
+        if (s.includes("audio_recording")) return true;
         // Recorder filenames may use either "_" or "-" after "audio_recording".
         // Examples:
         // - audio_recording_2026-02-09T00-54-59-123Z.webm
         // - audio_recording-2026-02-09T01-18-15-881Z.webm
-        return /(^|\\/)audio_recording[-_]/.test(s) || s.includes("/uploads/recordings/");
+        if (/(^|\\/)audio_recording[-_]/.test(s)) return true;
+        // Some paths don't include a leading "/" (they're rel_paths). Match both forms.
+        if (s.includes("uploads/recordings/")) return true;
+        return false;
       }
       function kindFor(name) {
         const e = extOf(name);
@@ -1641,6 +1648,8 @@
         // - Trailing punctuation: "captures/latest.jpg." or "...jpg," breaks ext detection.
         // - Wrapped in quotes/backticks/brackets.
         let s = String(p || "").trim();
+        // Strip zero-width/invisible separators that can break ext detection.
+        s = s.replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g, "");
         s = s.replace(/^\/+/, "");
         s = s.replace(/^["'`<(\[]+/, "");
         s = s.replace(/["'`>\])]+$/, "");
@@ -1703,10 +1712,22 @@
         for (const p0 of paths) {
           const p = safeRelPath(p0);
           if (!p) continue;
-          const kind = kindFor(p);
+          let kind = kindFor(p);
+          const pLower = String(p).toLowerCase();
+          const forceAudioWebm =
+            (extOf(p) === "webm") &&
+            (pLower.includes("uploads/recordings/") || pLower.includes("audio_recording"));
+          // Defensive: some Android builds treat .webm as video by default. If the path clearly
+          // indicates an audio recording, force audio rendering.
+          try {
+            if (kind === "video" && extOf(p) === "webm" && isLikelyAudioWebm(p)) kind = "audio";
+            // Stronger heuristic: our mic recordings are stored under uploads/recordings.
+            // Always render these as audio even if the extension is .webm.
+            if (extOf(p) === "webm" && String(p).toLowerCase().includes("uploads/recordings/")) kind = "audio";
+          } catch (_) {}
           const card = document.createElement("div");
           card.className = "attach-card";
-          if (kind === "audio") card.classList.add("attach-card-audio");
+          if (kind === "audio" || forceAudioWebm) card.classList.add("attach-card-audio");
 
           const head = document.createElement("div");
           head.className = "attach-head";
@@ -1771,6 +1792,16 @@
                 body.appendChild(img);
                 hint.textContent = "Image (tap to zoom)";
               } else if (kind === "video") {
+                if (forceAudioWebm) {
+                  const a = document.createElement("audio");
+                  a.controls = true;
+                  a.preload = "metadata";
+                  a.src = src;
+                  a.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
+                  body.appendChild(a);
+                  hint.textContent = "Audio";
+                  return;
+                }
                 const v = document.createElement("video");
                 v.controls = true;
                 v.playsInline = true;

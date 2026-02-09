@@ -1238,7 +1238,15 @@ class LocalHttpServer(
         val file = userPath(rel) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
         if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
 
-        val mime = URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
+        val relLower = rel.lowercase()
+        val nameLower = file.name.lowercase()
+        val isAudioRecordingWebm =
+            (nameLower.endsWith(".webm") && (nameLower.startsWith("audio_recording") || relLower.contains("uploads/recordings/")))
+        val mime = if (isAudioRecordingWebm) {
+            "audio/webm"
+        } else {
+            URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
+        }
         val stream: InputStream = FileInputStream(file)
         val response = newChunkedResponse(Response.Status.OK, mime, stream)
         response.addHeader("Cache-Control", "no-cache")
