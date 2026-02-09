@@ -1643,6 +1643,45 @@
         return "application/octet-stream";
       }
 
+      // Pause inline media when it scrolls out of view (with a small grace period).
+      // This prevents audio/video from continuing to play after the user scrolls away.
+      const mediaPauseTimers = new WeakMap(); // HTMLMediaElement -> timeout id
+      const mediaLastInView = new WeakMap(); // HTMLMediaElement -> bool
+      let mediaObserver = null;
+      function ensureMediaObserver() {
+        if (mediaObserver) return mediaObserver;
+        // Root is the scrollable message list so "out of view" means out of the chat viewport.
+        const rootEl = document.getElementById("chatMessages") || null;
+        mediaObserver = new IntersectionObserver((entries) => {
+          for (const entry of entries) {
+            const el = entry.target;
+            if (!(el && typeof el.pause === "function")) continue;
+            const inView = !!entry.isIntersecting && (entry.intersectionRatio || 0) >= 0.15;
+            mediaLastInView.set(el, inView);
+
+            const existing = mediaPauseTimers.get(el);
+            if (existing) {
+              clearTimeout(existing);
+              mediaPauseTimers.delete(el);
+            }
+
+            if (!inView) {
+              // Redemption time: if it comes back into view quickly, don't pause.
+              const t = setTimeout(() => {
+                try {
+                  if (mediaLastInView.get(el) === false && !el.paused) el.pause();
+                } catch (_) {}
+              }, 500);
+              mediaPauseTimers.set(el, t);
+            }
+          }
+        }, { root: rootEl, threshold: [0, 0.15, 0.5, 1.0] });
+        return mediaObserver;
+      }
+      function watchInlineMedia(el) {
+        try { ensureMediaObserver().observe(el); } catch (_) {}
+      }
+
       function safeRelPath(p) {
         // Normalize common "rel_path:" render variants:
         // - Trailing punctuation: "captures/latest.jpg." or "...jpg," breaks ext detection.
@@ -1799,6 +1838,7 @@
                   a.src = src;
                   a.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
                   body.appendChild(a);
+                  watchInlineMedia(a);
                   hint.textContent = "Audio";
                   return;
                 }
@@ -1809,6 +1849,7 @@
                 v.src = src;
                 v.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
                 body.appendChild(v);
+                watchInlineMedia(v);
                 hint.textContent = "Video";
               } else if (kind === "audio") {
                 const a = document.createElement("audio");
@@ -1817,6 +1858,7 @@
                 a.src = src;
                 a.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
                 body.appendChild(a);
+                watchInlineMedia(a);
                 // Audio attachments are rendered as a minimal player; the card header/hint are hidden by CSS.
                 hint.textContent = "Audio";
               } else {
