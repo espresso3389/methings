@@ -175,6 +175,15 @@ jobs:
             echo "::group::Verify app process"
             adb shell pidof jp.espresso3389.methings || { echo "::error::App process not found -- likely crashed on startup"; adb logcat -d -s AndroidRuntime:E; exit 1; }
             echo "::endgroup::"
+            echo "::group::API health check"
+            adb forward tcp:8765 tcp:8765
+            curl -sf --retry 15 --retry-delay 2 --retry-connrefused http://127.0.0.1:8765/health
+            echo ""
+            echo "::endgroup::"
+            echo "::group::Python exec test"
+            curl -sf --retry 5 --retry-delay 5 --retry-all-errors -X POST http://127.0.0.1:8765/shell/exec -H "Content-Type: application/json" -d "{\"cmd\":\"python\",\"args\":\"-c \\\"import sys; print(sys.version_info[:2])\\\"\",\"cwd\":\"/\"}" -o shell_result.json && cat shell_result.json && grep -q '"code"' shell_result.json || { echo "::error::Python exec failed or returned unexpected response"; cat shell_result.json 2>/dev/null; exit 1; }
+            echo ""
+            echo "::endgroup::"
             adb logcat -d > logcat.txt 2>&1 || true
 
       - name: Upload logcat
@@ -182,5 +191,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: emulator-logcat
-          path: logcat.txt
+          path: |
+            logcat.txt
+            shell_result.json
           retention-days: 7
