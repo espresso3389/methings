@@ -609,7 +609,10 @@ class LocalHttpServer(
                 )
             }
             (uri == "/usb/list" || uri == "/usb/list/") && session.method == Method.GET -> {
-                return handleUsbList()
+                return handleUsbList(session)
+            }
+            (uri == "/usb/status" || uri == "/usb/status/") && session.method == Method.GET -> {
+                return handleUsbStatus(session)
             }
             (uri == "/usb/open" || uri == "/usb/open/") && session.method == Method.POST -> {
                 return try {
@@ -1310,7 +1313,17 @@ class LocalHttpServer(
         }
     }
 
-    private fun handleUsbList(): Response {
+    private fun handleUsbList(session: IHTTPSession): Response {
+        // Enumeration is sensitive (device presence and IDs); gate it the same way as other USB actions.
+        val perm = ensureDevicePermission(
+            session,
+            JSONObject(),
+            tool = "device.usb",
+            capability = "usb",
+            detail = "USB list"
+        )
+        if (!perm.first) return perm.second!!
+
         val list = usbManager.deviceList
         val arr = org.json.JSONArray()
         list.values.forEach { dev ->
@@ -1321,6 +1334,59 @@ class LocalHttpServer(
                 .put("status", "ok")
                 .put("count", arr.length())
                 .put("devices", arr)
+        )
+    }
+
+    private fun handleUsbStatus(session: IHTTPSession): Response {
+        val perm = ensureDevicePermission(
+            session,
+            JSONObject(),
+            tool = "device.usb",
+            capability = "usb",
+            detail = "USB status"
+        )
+        if (!perm.first) return perm.second!!
+
+        val list = usbManager.deviceList.values.toList()
+        val devices = org.json.JSONArray()
+        for (dev in list) {
+            val o = usbDeviceToJson(dev)
+            val has = runCatching { usbManager.hasPermission(dev) }.getOrDefault(false)
+            o.put("has_permission", has)
+            val snap = UsbPermissionWaiter.snapshot(dev.deviceName)
+            if (snap != null) {
+                o.put(
+                    "permission_request",
+                    JSONObject()
+                        .put("requested_at_ms", snap.requestedAtMs)
+                        .put("age_ms", (System.currentTimeMillis() - snap.requestedAtMs).coerceAtLeast(0L))
+                        .put("responded", snap.responded)
+                        .put("granted", if (snap.granted == null) JSONObject.NULL else snap.granted)
+                        .put("completed_at_ms", if (snap.completedAtMs == null) JSONObject.NULL else snap.completedAtMs)
+                        .put("timed_out", snap.timedOut)
+                )
+            }
+            devices.put(o)
+        }
+
+        val pending = org.json.JSONArray()
+        for (snap in UsbPermissionWaiter.pendingSnapshots()) {
+            pending.put(
+                JSONObject()
+                    .put("name", snap.deviceName)
+                    .put("requested_at_ms", snap.requestedAtMs)
+                    .put("age_ms", (System.currentTimeMillis() - snap.requestedAtMs).coerceAtLeast(0L))
+                    .put("timed_out", snap.timedOut)
+            )
+        }
+
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("now_ms", System.currentTimeMillis())
+                .put("count", devices.length())
+                .put("devices", devices)
+                .put("pending_permission_requests", pending)
         )
     }
 

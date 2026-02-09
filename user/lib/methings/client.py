@@ -70,6 +70,9 @@ class MethingsClient:
     def usb_list(self) -> Dict[str, Any]:
         return self.device_api("usb.list", {}, detail="USB list")
 
+    def usb_status(self) -> Dict[str, Any]:
+        return self.device_api("usb.status", {}, detail="USB status")
+
     def uvc_mjpeg_capture(
         self,
         *,

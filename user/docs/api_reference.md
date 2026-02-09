@@ -38,6 +38,7 @@ Common patterns:
 
 ### USB (generic)
 - `usb.list` -> `GET /usb/list`
+- `usb.status` -> `GET /usb/status`
 - `usb.open` -> `POST /usb/open`
 - `usb.close` -> `POST /usb/close`
 - `usb.raw_descriptors` -> `POST /usb/raw_descriptors`

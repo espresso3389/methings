@@ -5,6 +5,7 @@ This document describes the USB control/data plane exposed to the agent.
 ## Enumerate + Open
 
 - `device_api` action `usb.list`
+- `device_api` action `usb.status` (shows `has_permission` and pending OS permission requests)
 - `device_api` action `usb.open` (by `{name}` or `{vendor_id, product_id}`) -> returns `handle`
 - `device_api` action `usb.close`
 
@@ -40,4 +41,3 @@ Use `uvc.ptz.*` helpers:
 - `uvc.ptz.get_abs`, `uvc.ptz.set_abs`
 
 These are implemented by calling `usb.control_transfer` with standard UVC CameraTerminal selectors.
-
