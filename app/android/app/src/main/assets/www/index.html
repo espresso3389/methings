@@ -2508,6 +2508,23 @@
 
         if (recBtn) {
           setRecordUi(false);
+          async function getMicStreamWithFallback() {
+            // Some Android builds/WebView versions intermittently throw NotReadableError
+            // ("Could not start audio source") on the first attempt depending on routing.
+            try {
+              return await navigator.mediaDevices.getUserMedia({ audio: true });
+            } catch (e) {
+              const name = (e && e.name) ? String(e.name) : "";
+              const msg = (e && e.message) ? String(e.message) : "";
+              const isNotReadable = name === "NotReadableError" || /start audio source/i.test(msg);
+              if (!isNotReadable) throw e;
+              await new Promise(r => setTimeout(r, 250));
+              // Fallback: disable processing constraints (can help on some devices).
+              return await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+              });
+            }
+          }
           recBtn.addEventListener("click", async () => {
             if (recordingBusy) return;
             // Toggle stop if active.
@@ -2528,7 +2545,7 @@
                 throw new Error("MediaRecorder unavailable");
               }
               rChunks = [];
-              rStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              rStream = await getMicStreamWithFallback();
               rRec = new MediaRecorder(rStream);
               rRec.ondataavailable = (e) => { if (e.data && e.data.size) rChunks.push(e.data); };
               rRec.onstop = () => {
@@ -2553,10 +2570,15 @@
               let msg = "Record failed";
               try {
                 const n = (e && e.name) ? String(e.name) : "";
-                const m = (e && e.message) ? String(e.message) : String(e || "");
+                const m = (e && e.message) ? String(e.message) : String(e);
                 const s = (n ? (n + ": ") : "") + (m || "");
-                if (s.trim()) msg = "Record failed: " + s.trim();
+                if (s.trim() && s.trim() !== "undefined") {
+                  msg = "Record failed: " + s.trim();
+                } else {
+                  msg = "Record failed: (no detail) Try closing other apps using the mic and retry.";
+                }
               } catch (_) {}
+              try { console.log("record error", e); } catch (_) {}
               showToast(msg, 2400);
               try { addMsg("assistant", msg, { debug: true }); } catch (_) {}
             }
