@@ -48,6 +48,7 @@ When you are inside the app's SSH shell prompt (it looks like `methings>`), a fe
 
 Notes:
 - `scp` exists but may stall against some OpenSSH-for-Windows targets. Prefer `put/get` when `scp` stalls.
+- Node.js may be available as `node` plus JS tools `npm`/`npx` (if the runtime is bundled).
 
 ### Camera Quickstart (Take A Picture)
 
