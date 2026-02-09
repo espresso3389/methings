@@ -165,7 +165,7 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
 
             echo "::group::Install APK"
             adb install apk/app-debug.apk
