@@ -68,6 +68,35 @@ class AssetExtractor(private val context: Context) {
         }
     }
 
+    fun extractNodeAssetsIfMissing(): File? {
+        return try {
+            val assetRoot = "node"
+            if (!assetDirExists(assetRoot)) {
+                return null
+            }
+            val targetDir = File(context.filesDir, "node")
+            if (targetDir.exists()) {
+                val localVersion = File(targetDir, ".version").takeIf { it.exists() }?.readText()?.trim()
+                val assetVersion = readAssetText("$assetRoot/.version")?.trim()
+                if (assetVersion != null && assetVersion.isNotBlank() && assetVersion != localVersion) {
+                    // Reset on version change so npm/corepack stay in sync with the bundled node binary.
+                    targetDir.deleteRecursively()
+                }
+                // If the dir still has content after potential reset, keep it.
+                val entries = targetDir.list()
+                if (entries != null && entries.isNotEmpty()) {
+                    return targetDir
+                }
+            }
+            targetDir.mkdirs()
+            copyAssetDir(assetRoot, targetDir)
+            targetDir
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to extract Node assets", ex)
+            null
+        }
+    }
+
     fun extractDropbearIfMissing(): File? {
         return try {
             val targetDir = File(context.filesDir, "bin")

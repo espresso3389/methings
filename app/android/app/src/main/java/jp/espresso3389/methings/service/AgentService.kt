@@ -67,6 +67,7 @@ class AgentService : LifecycleService() {
         val extractor = AssetExtractor(this)
         extractor.extractUiAssetsIfMissing()
         extractor.extractUserDefaultsIfMissing()
+        extractor.extractNodeAssetsIfMissing()
         extractor.extractDropbearIfMissing()
         // Ensure Python runtime is installed for SSH/pip subprocesses (build isolation) even if the
         // main Python worker hasn't been started yet.

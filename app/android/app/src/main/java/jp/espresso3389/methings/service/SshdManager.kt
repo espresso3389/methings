@@ -135,6 +135,8 @@ class SshdManager(private val context: Context) {
             pb.environment()["METHINGS_PYENV"] = pyenvDir.absolutePath
             pb.environment()["METHINGS_NATIVELIB"] = nativeLibDir
             pb.environment()["METHINGS_BINDIR"] = binDir.absolutePath
+            // Node runtime assets (npm/corepack) are extracted under files/node.
+            pb.environment()["METHINGS_NODE_ROOT"] = File(context.filesDir, "node").absolutePath
             pb.environment()["LD_LIBRARY_PATH"] = nativeLibDir
             pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
             pb.environment()["PYTHONPATH"] = listOf(
@@ -163,7 +165,9 @@ class SshdManager(private val context: Context) {
             }
             // Add nativeLibDir to PATH so python3/pip are accessible via libmethingspy.so
             val existingPath = pb.environment()["PATH"] ?: "/usr/bin:/bin"
-            pb.environment()["PATH"] = "${binDir.absolutePath}:$nativeLibDir:$existingPath"
+            // Include npm global prefix bin dir so `npm i -g` installs are callable.
+            val npmBin = File(userHome, "npm-prefix/bin").absolutePath
+            pb.environment()["PATH"] = "${binDir.absolutePath}:$nativeLibDir:$npmBin:$existingPath"
             // mksh reads $ENV for startup config in both interactive and non-interactive shells.
             pb.environment()["ENV"] = mkshEnv.absolutePath
             if (authMode == AUTH_MODE_NOTIFICATION) {
