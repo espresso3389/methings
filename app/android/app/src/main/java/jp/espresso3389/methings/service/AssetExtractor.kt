@@ -74,6 +74,9 @@ class AssetExtractor(private val context: Context) {
             targetDir.mkdirs()
             val outFile = File(targetDir, "dropbear")
             if (outFile.exists()) {
+                // Outbound ssh/scp are provided via native libs (libdbclient.so/libscp.so).
+                // Clean up old extracted copies (Android commonly blocks exec from app data dirs).
+                cleanupExtractedDropbearClientTools(targetDir)
                 extractDropbearKeyIfMissing()
                 return outFile
             }
@@ -85,11 +88,26 @@ class AssetExtractor(private val context: Context) {
             }
             copyAssetFile(assetPath, outFile)
             outFile.setExecutable(true, true)
+            cleanupExtractedDropbearClientTools(targetDir)
             extractDropbearKeyIfMissing()
             outFile
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to extract Dropbear binary", ex)
             null
+        }
+    }
+
+    private fun cleanupExtractedDropbearClientTools(binDir: File) {
+        // If these exist under files/bin, they may shadow the native-lib backed tools and then fail
+        // with EACCES on many Android builds (noexec / SELinux). Prefer native libs instead.
+        for (name in listOf("ssh", "scp", "dbclient")) {
+            try {
+                val f = File(binDir, name)
+                if (f.exists()) {
+                    f.delete()
+                }
+            } catch (_: Exception) {
+            }
         }
     }
 

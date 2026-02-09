@@ -144,6 +144,8 @@ val buildUsbLibs by tasks.registering(Exec::class) {
     }
     workingDir = repoRoot
     environment("NDK_DIR", ndkDir)
+    // Needed so outbound `ssh`/`scp` inside the on-device shell work (libdbclient.so/libscp.so).
+    environment("DROPBEAR_INCLUDE_CLIENT_TOOLS", "1")
     commandLine(
         "bash",
         "-lc",
