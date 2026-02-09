@@ -2519,7 +2519,14 @@
             }
             try {
               recordingBusy = true;
-              await requestPermission("device.mic", "Record audio");
+              // Recording is a user-initiated UI action; rely on WebView/OS microphone permission prompts.
+              // Do not route through the agent permission broker, which would break the user-gesture chain.
+              if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error("mediaDevices.getUserMedia unavailable");
+              }
+              if (typeof MediaRecorder === "undefined") {
+                throw new Error("MediaRecorder unavailable");
+              }
               rChunks = [];
               rStream = await navigator.mediaDevices.getUserMedia({ audio: true });
               rRec = new MediaRecorder(rStream);
@@ -2540,10 +2547,18 @@
               rRec.start();
               setRecordUi(true);
               showToast("Recording... tap again to stop", 1400);
-            } catch (_) {
+            } catch (e) {
               setRecordUi(false);
               recordingBusy = false;
-              showToast("Record failed", 1600);
+              let msg = "Record failed";
+              try {
+                const n = (e && e.name) ? String(e.name) : "";
+                const m = (e && e.message) ? String(e.message) : String(e || "");
+                const s = (n ? (n + ": ") : "") + (m || "");
+                if (s.trim()) msg = "Record failed: " + s.trim();
+              } catch (_) {}
+              showToast(msg, 2400);
+              try { addMsg("assistant", msg, { debug: true }); } catch (_) {}
             }
           });
         }
