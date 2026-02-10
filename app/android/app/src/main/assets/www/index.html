@@ -2457,11 +2457,15 @@
           if (!sid) return;
           if (!confirm("Remove current session '" + sid + "'?\nThis deletes the on-device transcript for that session.")) return;
           try {
-            await fetch(API + "/brain/session/delete", {
+            const r = await fetch(API + "/brain/session/delete", {
               method: "POST",
               headers: { "Content-Type": "application/json; charset=utf-8" },
               body: JSON.stringify({ session_id: sid }),
             });
+            if (!r.ok) {
+              // Older APKs may not have this endpoint yet. Still allow local-only removal.
+              showToast("Removed locally (app update needed to delete device transcript)", 1800);
+            }
           } catch (_) {}
           try { localStorage.removeItem(CHAT_STORAGE_PREFIX + sid); } catch (_) {}
           const next = (sid === "default") ? genSessionId() : "default";
@@ -3310,11 +3314,16 @@
         for (const it of items) {
           const fp = String(it.fingerprint || "");
           const label = String(it.label || "").trim();
+          const unmanaged = !!it.unmanaged;
           const created = Number(it.created_at || 0);
           const exp = it.expires_at === null || typeof it.expires_at === "undefined" ? null : Number(it.expires_at);
           const createdStr = created ? (new Date(created)).toLocaleString() : "";
           const expStr = exp ? (new Date(exp)).toLocaleString() : "";
-          const meta = [createdStr ? ("created " + createdStr) : "", expStr ? ("expires " + expStr) : ""].filter(Boolean).join(" · ");
+          const meta = [
+            unmanaged ? "external (file-only)" : "",
+            createdStr ? ("created " + createdStr) : "",
+            expStr ? ("expires " + expStr) : ""
+          ].filter(Boolean).join(" · ");
           rows.push(
             "<div style='display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(0,0,0,0.08);border-radius:10px;margin-top:8px;background:rgba(0,0,0,0.02);'>" +
               "<div style='flex:1;min-width:0;'>" +
@@ -3324,7 +3333,9 @@
                 "</div>" +
                 (meta ? ("<div class='muted' style='margin-top:2px;font-size:11px;'>" + esc(meta) + "</div>") : "") +
               "</div>" +
-              "<button class='btn' data-fp=\"" + escAttr(fp) + "\" style='padding:5px 10px;font-size:12px;'>Remove</button>" +
+              (unmanaged
+                ? "<button class='btn' disabled style='padding:5px 10px;font-size:12px;'>Unmanaged</button>"
+                : "<button class='btn' data-fp=\"" + escAttr(fp) + "\" style='padding:5px 10px;font-size:12px;'>Remove</button>") +
             "</div>"
           );
         }
@@ -3356,7 +3367,44 @@
           const res = await fetch(API + "/ssh/keys");
           if (!res.ok) throw 0;
           const data = await res.json();
-          renderSshKeys(data.items || []);
+          const items = Array.isArray(data.items) ? data.items : [];
+          if (items.length) {
+            renderSshKeys(items);
+            return;
+          }
+          // Fallback: show file-only keys if the DB is empty (e.g., keys were edited via SSH).
+          try {
+            const fres = await fetch(API + "/user/file?path=" + encodeURIComponent(".ssh/authorized_keys"));
+            if (!fres.ok) { renderSshKeys([]); return; }
+            const txt = await fres.text().catch(() => "");
+            const lines = String(txt || "").split("\n").map(s => s.trim()).filter(Boolean).filter(s => !s.startsWith("#"));
+            const allowed = new Set([
+              "ssh-ed25519",
+              "ssh-rsa",
+              "ecdsa-sha2-nistp256",
+              "ecdsa-sha2-nistp384",
+              "ecdsa-sha2-nistp521",
+              "sk-ssh-ed25519@openssh.com",
+              "sk-ecdsa-sha2-nistp256@openssh.com"
+            ]);
+            const parsed = [];
+            for (const ln of lines) {
+              const toks = ln.split(/\s+/);
+              let idx = -1;
+              for (let i = 0; i < toks.length - 1; i++) {
+                if (allowed.has(String(toks[i] || "").toLowerCase())) { idx = i; break; }
+              }
+              if (idx < 0) continue;
+              const type = toks[idx];
+              const b64 = toks[idx + 1];
+              const comment = (idx + 2 < toks.length) ? toks.slice(idx + 2).join(" ").trim() : "";
+              const fp = "file:" + type + ":" + (b64 || "").slice(0, 16);
+              parsed.push({ fingerprint: fp, label: comment, unmanaged: true });
+            }
+            renderSshKeys(parsed);
+          } catch (_) {
+            renderSshKeys([]);
+          }
         } catch (_) {
           sshKeysList.innerHTML = "<div class='muted'>(keys unavailable)</div>";
         }
