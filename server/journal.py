@@ -3,7 +3,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 def _now_ms() -> int:
@@ -247,4 +247,3 @@ class JournalStore:
         if len(items) > limit_i:
             items = items[-limit_i:]
         return {"status": "ok", "session_id": sid, "entries": items, "limit": limit_i}
-
