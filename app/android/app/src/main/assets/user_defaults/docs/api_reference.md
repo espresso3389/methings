@@ -55,6 +55,13 @@ Common patterns:
 - `uvc.mjpeg.capture` -> `POST /uvc/mjpeg/capture`
   - Captures one MJPEG frame from a connected UVC webcam and saves a JPEG under `captures/`.
   - Supports both `transfer_mode=iso` and `transfer_mode=bulk` depending on the camera endpoints.
+- `uvc.diagnose` -> `POST /uvc/diagnose`
+  - Runs a step-by-step USB/UVC diagnostic and returns a structured `steps[]` report:
+    - USB device listing + matching
+    - OS-level USB permission
+    - Open device
+    - Read raw descriptors + parse VC interface / camera terminal IDs / extension units
+    - PTZ GET_CUR probes (including a known-good `wIndex=0x0100` probe for Insta360 Link)
 - `uvc.ptz.*` -> implemented client-side via `usb.control_transfer` (CameraTerminal PTZ selectors)
 
 ### Vision (local TFLite pipeline)
