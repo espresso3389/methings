@@ -2454,6 +2454,10 @@
 
       function addMsg(role, content, meta) {
         if (chatWelcome.parentNode) chatWelcome.remove();
+        // Remove stale Retry buttons from older error messages.
+        if (role === "assistant" || role === "user") {
+          chatMessages.querySelectorAll("[data-ui='retry-actions']").forEach(el => el.remove());
+        }
         // Remove orphan thinking bubbles before appending real content,
         // but only when sendAgentChat is not actively waiting (streaming).
         if ((role === "assistant" || role === "user") && !streaming) {
@@ -2485,6 +2489,7 @@
             const isAgentFailure = role === "assistant" && !!itemId && (err === "brain_item_failed" || /^Error:/i.test(String(content || "").trim()));
             if (isAgentFailure) {
               const actions = document.createElement("div");
+              actions.dataset.ui = "retry-actions";
               actions.style.display = "flex";
               actions.style.gap = "8px";
               actions.style.marginTop = "10px";

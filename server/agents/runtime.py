@@ -1061,6 +1061,79 @@ class BrainRuntime:
 
         self._emit_log("brain_item_done", {"id": item.get("id"), "actions": total_actions})
 
+    def _provider_post(
+        self,
+        url: str,
+        headers: Dict[str, str],
+        body: Dict[str, Any],
+        connect_timeout_s: float,
+        read_timeout_s: float,
+    ) -> Dict[str, Any]:
+        """POST to provider using streaming to avoid read timeouts.
+
+        Sends the request with ``stream=True`` so that SSE chunks keep the
+        connection alive while the model is thinking.  The ``response.completed``
+        event contains the full response object, which is returned as-is so
+        callers don't need any parsing changes.
+
+        Falls back to a normal (non-streaming) request when the provider
+        doesn't return SSE. If SSE ends without a completed/failed event, we
+        raise an error rather than re-posting (to avoid potential duplicate
+        provider calls).
+        """
+        stream_body = dict(body)
+        stream_body["stream"] = True
+        resp = requests.post(
+            url,
+            headers=headers,
+            data=json.dumps(stream_body),
+            timeout=(connect_timeout_s, read_timeout_s),
+            stream=True,
+        )
+        resp.raise_for_status()
+
+        content_type = resp.headers.get("content-type", "")
+        if "text/event-stream" not in content_type:
+            # Provider didn't honour stream=True; fall back to full body.
+            return resp.json()
+
+        completed_payload: Optional[Dict] = None
+        failed_error: Optional[str] = None
+        try:
+            for raw_line in resp.iter_lines(decode_unicode=True):
+                if self._interrupt.is_set():
+                    raise InterruptedError("interrupted during streaming")
+                if raw_line is None:
+                    continue
+                line = raw_line.strip() if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data_str = line[len("data:"):].strip()
+                if not data_str:
+                    continue
+                if data_str == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data_str)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                event_type = event.get("type", "")
+                if event_type == "response.completed":
+                    completed_payload = event.get("response")
+                    break
+                if event_type in ("response.failed", "response.incomplete"):
+                    # These event shapes vary by gateway; keep it simple.
+                    failed_error = json.dumps(event.get("error") or event, ensure_ascii=True)
+                    break
+        finally:
+            resp.close()
+
+        if completed_payload is not None:
+            return completed_payload
+        if failed_error is not None:
+            raise RuntimeError(f"provider_stream_failed: {failed_error}")
+        raise RuntimeError("provider_stream_incomplete: SSE ended without response.completed")
+
     def _responses_tools(self) -> List[Dict[str, Any]]:
         return [
             {
@@ -1492,13 +1565,9 @@ class BrainRuntime:
             last_ex: Optional[Exception] = None
             for attempt in range(max_retries + 1):
                 try:
-                    resp = requests.post(
-                        provider_url,
-                        headers=headers,
-                        data=json.dumps(body),
-                        timeout=(connect_timeout_s, read_timeout_s),
+                    payload = self._provider_post(
+                        provider_url, headers, body, connect_timeout_s, read_timeout_s,
                     )
-                    resp.raise_for_status()
                     last_ex = None
                     break
                 except Exception as ex:
@@ -1508,13 +1577,9 @@ class BrainRuntime:
                     if "tool_choice" in body:
                         body2 = dict(body)
                         body2.pop("tool_choice", None)
-                        resp = requests.post(
-                            provider_url,
-                            headers=headers,
-                            data=json.dumps(body2),
-                            timeout=(connect_timeout_s, read_timeout_s),
+                        payload = self._provider_post(
+                            provider_url, headers, body2, connect_timeout_s, read_timeout_s,
                         )
-                        resp.raise_for_status()
                         last_ex = None
                         break
                     transient = isinstance(ex, (requests.exceptions.Timeout, requests.exceptions.ConnectionError))
@@ -1523,7 +1588,6 @@ class BrainRuntime:
                     time.sleep(min(1.5, 0.3 * (attempt + 1)))
             if last_ex is not None:
                 raise last_ex
-            payload = resp.json()
             previous_response_id = payload.get("id")
 
             output_items = payload.get("output") or []
@@ -1699,26 +1763,16 @@ class BrainRuntime:
             if previous_response_id:
                 final_body["previous_response_id"] = previous_response_id
             try:
-                final_resp = requests.post(
-                    provider_url,
-                    headers=headers,
-                    data=json.dumps(final_body),
-                    timeout=(connect_timeout_s, read_timeout_s),
+                final_payload = self._provider_post(
+                    provider_url, headers, final_body, connect_timeout_s, read_timeout_s,
                 )
-                final_resp.raise_for_status()
             except Exception:
                 # Fallback for gateways/providers that don't support tool_choice.
                 final_body2 = dict(final_body)
                 final_body2.pop("tool_choice", None)
-                final_resp = requests.post(
-                    provider_url,
-                    headers=headers,
-                    data=json.dumps(final_body2),
-                    timeout=(connect_timeout_s, read_timeout_s),
+                final_payload = self._provider_post(
+                    provider_url, headers, final_body2, connect_timeout_s, read_timeout_s,
                 )
-                final_resp.raise_for_status()
-
-            final_payload = final_resp.json()
             final_output_items = final_payload.get("output") or []
             final_texts: List[str] = []
             for out in final_output_items:
