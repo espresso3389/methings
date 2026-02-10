@@ -751,6 +751,15 @@ class LocalHttpServer(
                     jsonError(Response.Status.INTERNAL_ERROR, "uvc_capture_handler_failed")
                 }
             }
+            (uri == "/uvc/diagnose" || uri == "/uvc/diagnose/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleUvcDiagnose(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "UVC diagnose handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "uvc_diagnose_handler_failed")
+                }
+            }
             (uri == "/vision/model/load" || uri == "/vision/model/load/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -2216,6 +2225,220 @@ class LocalHttpServer(
         b[off + 3] = ((v ushr 24) and 0xFF).toByte()
     }
 
+    private data class UvcXuUnit(val unitId: Int, val guidHex: String, val bmControls: ByteArray)
+
+    private fun parseUvcExtensionUnitsFromRaw(raw: ByteArray): List<UvcXuUnit> {
+        val out = mutableListOf<UvcXuUnit>()
+        var i = 0
+        while (i + 2 < raw.size) {
+            val len = raw[i].toInt() and 0xFF
+            if (len <= 0 || i + len > raw.size) break
+            val dtype = raw[i + 1].toInt() and 0xFF
+            val subtype = if (len >= 3) (raw[i + 2].toInt() and 0xFF) else -1
+            // CS_INTERFACE (0x24), VC_EXTENSION_UNIT (0x06)
+            if (dtype == 0x24 && subtype == 0x06 && len >= 24) {
+                val unitId = raw[i + 3].toInt() and 0xFF
+                val guidBytes = raw.copyOfRange(i + 4, i + 20)
+                val guidHex = guidBytes.joinToString("") { "%02X".format(it.toInt() and 0xFF) }
+                val numPins = raw[i + 21].toInt() and 0xFF
+                val ctrlSizeIndex = i + 22 + numPins
+                val ctrlSize = if (ctrlSizeIndex < i + len) (raw[ctrlSizeIndex].toInt() and 0xFF) else 0
+                val ctrlStart = ctrlSizeIndex + 1
+                val ctrlEnd = (ctrlStart + ctrlSize).coerceAtMost(i + len)
+                val bm = if (ctrlStart < ctrlEnd) raw.copyOfRange(ctrlStart, ctrlEnd) else ByteArray(0)
+                out.add(UvcXuUnit(unitId = unitId, guidHex = guidHex, bmControls = bm))
+            }
+            i += len
+        }
+        return out
+    }
+
+    private fun findUvcVideoControlInterface(dev: UsbDevice): Int? {
+        for (i in 0 until dev.interfaceCount) {
+            val intf = dev.getInterface(i)
+            if (intf.interfaceClass == 0x0E && intf.interfaceSubclass == 0x01) {
+                return intf.id
+            }
+        }
+        return null
+    }
+
+    private fun findUvcCameraTerminalIds(raw: ByteArray): List<Int> {
+        val out = mutableListOf<Int>()
+        var i = 0
+        while (i + 2 < raw.size) {
+            val len = raw[i].toInt() and 0xFF
+            if (len <= 0 || i + len > raw.size) break
+            val dtype = raw[i + 1].toInt() and 0xFF
+            val subtype = if (len >= 3) (raw[i + 2].toInt() and 0xFF) else -1
+            // CS_INTERFACE (0x24), VC_INPUT_TERMINAL (0x02)
+            if (dtype == 0x24 && subtype == 0x02 && len >= 8) {
+                val terminalId = raw[i + 3].toInt() and 0xFF
+                val wTerminalType = (raw[i + 4].toInt() and 0xFF) or ((raw[i + 5].toInt() and 0xFF) shl 8)
+                if (wTerminalType == 0x0201) {
+                    out.add(terminalId)
+                }
+            }
+            i += len
+        }
+        return out.distinct()
+    }
+
+    private fun handleUvcDiagnose(session: IHTTPSession, payload: JSONObject): Response {
+        val steps = org.json.JSONArray()
+        fun step(name: String, ok: Boolean, detail: JSONObject? = null) {
+            val o = JSONObject().put("name", name).put("ok", ok)
+            if (detail != null) o.put("detail", detail)
+            steps.put(o)
+        }
+
+        val perm = ensureDevicePermission(
+            session = session,
+            payload = payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "UVC diagnose (step-by-step USB/UVC check)"
+        )
+        if (!perm.first) return perm.second!!
+
+        val vid = payload.optInt("vendor_id", -1)
+        val pid = payload.optInt("product_id", -1)
+        val deviceName = payload.optString("device_name", "").trim().ifBlank { payload.optString("name", "").trim() }
+        val timeoutMs = payload.optLong("timeout_ms", 60000L).coerceIn(3000L, 120000L)
+        val doPtz = payload.optBoolean("ptz_get_cur", true)
+        val ptzSelector = payload.optInt("ptz_selector", 0x0D).coerceIn(0, 255)
+
+        val all = usbManager.deviceList.values.toList()
+        step(
+            "usb.list",
+            true,
+            JSONObject()
+                .put("count", all.size)
+                .put("devices", org.json.JSONArray().apply { all.forEach { put(usbDeviceToJson(it)) } })
+        )
+
+        val dev = all.firstOrNull { d ->
+            when {
+                deviceName.isNotBlank() -> d.deviceName == deviceName
+                vid >= 0 && pid >= 0 -> d.vendorId == vid && d.productId == pid
+                else -> false
+            }
+        }
+        if (dev == null) {
+            step("usb.pick_device", false, JSONObject().put("error", "device_not_found"))
+            return jsonError(Response.Status.NOT_FOUND, "device_not_found", JSONObject().put("steps", steps))
+        }
+        step("usb.pick_device", true, usbDeviceToJson(dev))
+
+        if (!ensureUsbPermission(dev, timeoutMs)) {
+            step("usb.os_permission", false, JSONObject().put("error", "usb_permission_required"))
+            return jsonError(
+                Response.Status.FORBIDDEN,
+                "usb_permission_required",
+                JSONObject()
+                    .put("steps", steps)
+                    .put(
+                        "hint",
+                        "Android USB permission is required. Accept the system 'Allow access to USB device' dialog. " +
+                            "If no dialog appears, bring methings to foreground and retry. " +
+                            "If it still auto-denies with no dialog, clear app defaults in Android settings, then replug and retry."
+                    )
+            )
+        }
+        step("usb.os_permission", true, JSONObject().put("granted", true))
+
+        val conn = usbManager.openDevice(dev)
+        if (conn == null) {
+            step("usb.open", false, JSONObject().put("error", "usb_open_failed"))
+            return jsonError(Response.Status.INTERNAL_ERROR, "usb_open_failed", JSONObject().put("steps", steps))
+        }
+        step("usb.open", true)
+
+        try {
+            val raw = conn.rawDescriptors
+            if (raw == null || raw.isEmpty()) {
+                step("usb.raw_descriptors", false, JSONObject().put("error", "raw_descriptors_unavailable"))
+                return jsonError(Response.Status.INTERNAL_ERROR, "raw_descriptors_unavailable", JSONObject().put("steps", steps))
+            }
+            step("usb.raw_descriptors", true, JSONObject().put("length", raw.size))
+
+            val vcByIntf = findUvcVideoControlInterface(dev)
+            val ctIds = findUvcCameraTerminalIds(raw)
+            val xuUnits = parseUvcExtensionUnitsFromRaw(raw)
+
+            step(
+                "uvc.parse",
+                true,
+                JSONObject()
+                    .put("vc_interface", vcByIntf ?: JSONObject.NULL)
+                    .put("camera_terminal_ids", org.json.JSONArray().apply { ctIds.forEach { put(it) } })
+                    .put(
+                        "xu_units",
+                        org.json.JSONArray().apply {
+                            xuUnits.forEach { u ->
+                                val bmHex = u.bmControls.joinToString("") { "%02X".format(it.toInt() and 0xFF) }
+                                put(JSONObject().put("unit_id", u.unitId).put("guid", u.guidHex).put("bm_controls_hex", bmHex))
+                            }
+                        }
+                    )
+            )
+
+            val vc = vcByIntf ?: 0
+            val vcIntf = (0 until dev.interfaceCount).map { dev.getInterface(it) }.firstOrNull { it.id == vc }
+            if (vcIntf != null) {
+                val claimed = conn.claimInterface(vcIntf, true)
+                step("usb.claim_vc_interface", claimed, JSONObject().put("interface_id", vc))
+            } else {
+                step("usb.claim_vc_interface", false, JSONObject().put("error", "vc_interface_not_found").put("interface_id", vc))
+            }
+
+            val out = JSONObject()
+                .put("status", "ok")
+                .put("device", usbDeviceToJson(dev))
+                .put("vc_interface", vcByIntf ?: JSONObject.NULL)
+                .put("camera_terminal_ids", org.json.JSONArray().apply { ctIds.forEach { put(it) } })
+                .put("steps", steps)
+
+            if (doPtz) {
+                val entity = (ctIds.firstOrNull() ?: 1).coerceIn(0, 255)
+                val selector = (ptzSelector and 0xFF)
+                val wValue = (selector shl 8) and 0xFF00
+                val buf = ByteArray(8)
+                fun probe(label: String, wIndex: Int): JSONObject {
+                    val rc = conn.controlTransfer(
+                        0xA1, // IN | Class | Interface
+                        0x81, // GET_CUR
+                        wValue,
+                        wIndex,
+                        buf,
+                        buf.size,
+                        350
+                    )
+                    val o = JSONObject().put("label", label).put("wIndex", wIndex).put("rc", rc)
+                    if (rc >= 8) {
+                        val pan = java.nio.ByteBuffer.wrap(buf).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                        val tilt = java.nio.ByteBuffer.wrap(buf, 4, 4).order(java.nio.ByteOrder.LITTLE_ENDIAN).int
+                        o.put("pan_abs", pan).put("tilt_abs", tilt)
+                        o.put("data_hex", buf.joinToString("") { "%02x".format(it.toInt() and 0xFF) })
+                    }
+                    return o
+                }
+
+                val probes = org.json.JSONArray()
+                // Common guesses:
+                probes.put(probe("entity<<8|vc", ((entity and 0xFF) shl 8) or (vc and 0xFF)))
+                probes.put(probe("vc<<8|entity", ((vc and 0xFF) shl 8) or (entity and 0xFF)))
+                // Known-good for Insta360 Link based on linux capture.
+                probes.put(probe("fixed_0x0100", 0x0100))
+                out.put("ptz_get_cur", probes)
+            }
+
+            return jsonResponse(out)
+        } finally {
+            runCatching { conn.close() }
+        }
+    }
+
     private fun handleUvcMjpegCapture(payload: JSONObject): Response {
         val handle = payload.optString("handle", "").trim()
         if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
@@ -2528,22 +2751,22 @@ class LocalHttpServer(
                 qBytes += chunk.size
 
                 while (qBytes >= payloadSize) {
-                    val payloadBuf = ByteArray(payloadSize)
-                    var off = 0
-                    while (off < payloadSize && q.isNotEmpty()) {
-                        val head = q.peekFirst()
-                        val take = kotlin.math.min(payloadSize - off, head.size)
-                        java.lang.System.arraycopy(head, 0, payloadBuf, off, take)
-                        off += take
-                        if (take == head.size) {
-                            q.removeFirst()
-                        } else {
-                            val rest = ByteArray(head.size - take)
-                            java.lang.System.arraycopy(head, take, rest, 0, rest.size)
-                            q.removeFirst()
-                            q.addFirst(rest)
-                        }
-                    }
+	                    val payloadBuf = ByteArray(payloadSize)
+	                    var off = 0
+	                    while (off < payloadSize && q.isNotEmpty()) {
+	                        val head = q.peekFirst() ?: break
+	                        val take = kotlin.math.min(payloadSize - off, head.size)
+	                        java.lang.System.arraycopy(head, 0, payloadBuf, off, take)
+	                        off += take
+	                        if (take == head.size) {
+	                            q.removeFirst()
+	                        } else {
+	                            val rest = ByteArray(head.size - take)
+	                            java.lang.System.arraycopy(head, take, rest, 0, rest.size)
+	                            q.removeFirst()
+	                            q.addFirst(rest)
+	                        }
+	                    }
                     qBytes -= payloadSize
                     val r = processUvcPayload(payloadBuf, 0, payloadBuf.size)
                     if (r != null) return r

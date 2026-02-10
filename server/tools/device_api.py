@@ -59,6 +59,7 @@ class DeviceApiTool:
         "usb.stream.stop": {"method": "POST", "path": "/usb/stream/stop", "permission": True},
         "usb.stream.status": {"method": "GET", "path": "/usb/stream/status", "permission": True},
         "uvc.mjpeg.capture": {"method": "POST", "path": "/uvc/mjpeg/capture", "permission": True},
+        "uvc.diagnose": {"method": "POST", "path": "/uvc/diagnose", "permission": True},
         "vision.model.load": {"method": "POST", "path": "/vision/model/load", "permission": True},
         "vision.model.unload": {"method": "POST", "path": "/vision/model/unload", "permission": True},
         "vision.frame.put": {"method": "POST", "path": "/vision/frame/put", "permission": True},

@@ -30,6 +30,25 @@ Usage notes:
   - `transfer_mode=bulk`: bulk IN endpoint (read via `bulkTransfer`, split using negotiated `dwMaxPayloadTransferSize` when available)
 - To show the image inline in chat, include a line: `rel_path: <rel_path>`
 
+## Diagnose (Step-by-Step)
+
+Action: `uvc.diagnose`
+
+Payload:
+- `vendor_id` (int, optional): match by VID
+- `product_id` (int, optional): match by PID
+- `device_name` (string, optional): match by `/dev/bus/usb/...` device name
+- `timeout_ms` (int, optional): OS permission wait timeout (default 60000)
+- `ptz_get_cur` (bool, optional): run PTZ GET_CUR probes (default true)
+- `ptz_selector` (int, optional): PTZ selector (default `0x0D`)
+
+Response (success):
+- `status=ok`
+- `steps[]`: ordered step results (use this to find where it failed)
+- `vc_interface`: detected VideoControl interface id (if found)
+- `camera_terminal_ids[]`: detected CameraTerminal IDs (if found)
+- `ptz_get_cur[]`: PTZ GET_CUR probe results, including a known-good `wIndex=0x0100` probe for Insta360 Link
+
 ## PTZ (Pan/Tilt)
 
 Actions:
