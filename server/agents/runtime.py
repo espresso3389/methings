@@ -1305,19 +1305,16 @@ class BrainRuntime:
             block_type = "output_text" if r == "assistant" else "input_text"
             return [{"type": block_type, "text": str(text or "")}]
 
-        pending_input.append(
-            {
-                "role": "user",
-                "content": _as_text_blocks_for_role(
-                    "user",
-                    "Journal (per-session, keep short for context efficiency):\n"
-                    + (journal_current.strip() or "(empty)")
-                    + "\n\nSession notes (ephemeral, no permissions required):\n"
-                    + json.dumps(self._session_notes.get(session_id) or {}, ensure_ascii=True)
-                    + "\n\nPersistent memory (may be empty; writing may require permission):\n"
-                    + (persistent_memory.strip() or "(empty)"),
-                ),
-            }
+        # NOTE: We intentionally inject Journal/Memory near the end of the prompt (right before the
+        # current user message). Many providers truncate the oldest input first when over context;
+        # keeping the journal late makes it more likely to survive truncation and remain useful.
+        journal_blob = (
+            "Journal (per-session, keep short for context efficiency):\n"
+            + (journal_current.strip() or "(empty)")
+            + "\n\nSession notes (ephemeral, no permissions required):\n"
+            + json.dumps(self._session_notes.get(session_id) or {}, ensure_ascii=True)
+            + "\n\nPersistent memory (may be empty; writing may require permission):\n"
+            + (persistent_memory.strip() or "(empty)")
         )
         def _decorate_with_actor(role: str, text: str, meta: Dict) -> str:
             actor = str((meta or {}).get("actor") or "").strip().lower()
@@ -1342,6 +1339,7 @@ class BrainRuntime:
                 )
         cur_text = str(item.get("text") or "")
         cur_meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+        pending_input.append({"role": "user", "content": _as_text_blocks_for_role("user", journal_blob)})
         pending_input.append(
             {"role": "user", "content": _as_text_blocks_for_role("user", _decorate_with_actor("user", cur_text, cur_meta))}
         )
