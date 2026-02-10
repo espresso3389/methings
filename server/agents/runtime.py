@@ -220,6 +220,13 @@ class BrainRuntime:
             "max_actions": 10,
             # Max tool-loop rounds for providers that support responses-style tool calling.
             "max_tool_rounds": 18,
+            # Provider HTTP timeouts/retries.
+            # - connect_timeout_s: TCP/TLS connect timeout
+            # - read_timeout_s: response read timeout (models can take time)
+            # - max_retries: retry count for transient network failures (timeouts, resets)
+            "provider_connect_timeout_s": 10,
+            "provider_read_timeout_s": 80,
+            "provider_max_retries": 1,
             "idle_sleep_ms": 800,
         }
 
@@ -721,6 +728,12 @@ class BrainRuntime:
                     msg = str(ex) or "Unknown error"
                     if "401" in msg and "Unauthorized" in msg:
                         msg = "Unauthorized (401). Check your API key in Settings."
+                    if isinstance(ex, requests.exceptions.Timeout) or "Read timed out" in msg:
+                        msg = (
+                            "Provider request timed out. "
+                            "Check network connectivity, then retry. "
+                            "If it keeps happening, increase Brain timeouts (provider_read_timeout_s) or reduce the task size."
+                        )
                     self._record_message(
                         "assistant",
                         f"Error: {msg}",
@@ -1347,6 +1360,12 @@ class BrainRuntime:
         max_rounds = int(self._config.get("max_tool_rounds", 12) or 12)
         max_rounds = max(1, min(max_rounds, 24))
         max_actions = max(1, min(int(self._config.get("max_actions", 6) or 6), 12))
+        connect_timeout_s = float(self._config.get("provider_connect_timeout_s", 10) or 10)
+        read_timeout_s = float(self._config.get("provider_read_timeout_s", 80) or 80)
+        max_retries = int(self._config.get("provider_max_retries", 1) or 1)
+        connect_timeout_s = max(1.0, min(connect_timeout_s, 60.0))
+        read_timeout_s = max(5.0, min(read_timeout_s, 600.0))
+        max_retries = max(0, min(max_retries, 3))
         previous_response_id: Optional[str] = None
         forced_rounds = 0
         last_tool_summaries: List[Dict[str, Any]] = []
@@ -1426,29 +1445,40 @@ class BrainRuntime:
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
             }
-            try:
-                resp = requests.post(
-                    provider_url,
-                    headers=headers,
-                    data=json.dumps(body),
-                    timeout=40,
-                )
-                resp.raise_for_status()
-            except Exception:
-                # Some non-OpenAI providers (or older gateways) may not support tool_choice.
-                # If we were forcing tool calls, retry once without tool_choice before failing.
-                if "tool_choice" in body:
-                    body2 = dict(body)
-                    body2.pop("tool_choice", None)
+            last_ex: Optional[Exception] = None
+            for attempt in range(max_retries + 1):
+                try:
                     resp = requests.post(
                         provider_url,
                         headers=headers,
-                        data=json.dumps(body2),
-                        timeout=40,
+                        data=json.dumps(body),
+                        timeout=(connect_timeout_s, read_timeout_s),
                     )
                     resp.raise_for_status()
-                else:
-                    raise
+                    last_ex = None
+                    break
+                except Exception as ex:
+                    last_ex = ex
+                    # Some non-OpenAI providers (or older gateways) may not support tool_choice.
+                    # If we were forcing tool calls, retry once without tool_choice before failing.
+                    if "tool_choice" in body:
+                        body2 = dict(body)
+                        body2.pop("tool_choice", None)
+                        resp = requests.post(
+                            provider_url,
+                            headers=headers,
+                            data=json.dumps(body2),
+                            timeout=(connect_timeout_s, read_timeout_s),
+                        )
+                        resp.raise_for_status()
+                        last_ex = None
+                        break
+                    transient = isinstance(ex, (requests.exceptions.Timeout, requests.exceptions.ConnectionError))
+                    if not transient or attempt >= max_retries:
+                        raise
+                    time.sleep(min(1.5, 0.3 * (attempt + 1)))
+            if last_ex is not None:
+                raise last_ex
             payload = resp.json()
             previous_response_id = payload.get("id")
 
@@ -1629,7 +1659,7 @@ class BrainRuntime:
                     provider_url,
                     headers=headers,
                     data=json.dumps(final_body),
-                    timeout=40,
+                    timeout=(connect_timeout_s, read_timeout_s),
                 )
                 final_resp.raise_for_status()
             except Exception:
@@ -1640,7 +1670,7 @@ class BrainRuntime:
                     provider_url,
                     headers=headers,
                     data=json.dumps(final_body2),
-                    timeout=40,
+                    timeout=(connect_timeout_s, read_timeout_s),
                 )
                 final_resp.raise_for_status()
 
