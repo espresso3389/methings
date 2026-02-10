@@ -34,7 +34,8 @@
         --transition: 180ms ease;
       }
 
-      * { box-sizing: border-box; margin: 0; padding: 0; }
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+      .msg, .msg *, textarea, input, [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 
       body {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -2725,6 +2726,14 @@
           } catch (_) {}
         });
       })();
+
+      // Tap outside a balloon to dismiss selection.
+      chatMessages.addEventListener("click", (e) => {
+        const sel = window.getSelection();
+        if (!sel || sel.isCollapsed) return;
+        if (e.target.closest(".msg")) return;
+        sel.removeAllRanges();
+      });
 
       async function checkAgentBusy() {
         try {
