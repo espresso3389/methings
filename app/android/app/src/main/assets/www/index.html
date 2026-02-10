@@ -380,6 +380,27 @@
         0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
         30% { opacity: 1; transform: scale(1); }
       }
+      .thinking-wrap {
+        display: flex;
+        align-items: center;
+      }
+      .thinking-stop {
+        margin-left: 12px;
+        margin-right: -6px;
+        width: 24px;
+        height: 24px;
+        border-radius: var(--radius-full);
+        border: none;
+        background: transparent;
+        color: var(--ink-muted);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        transition: background var(--transition), color var(--transition);
+      }
+      .thinking-stop svg { width: 14px; height: 14px; display: block; }
+      .thinking-stop:hover { background: var(--surface); color: var(--ink-secondary); }
+      .thinking-stop:active { transform: scale(0.92); }
 
       /* Chat input */
       .chat-input-area {
@@ -1165,7 +1186,6 @@
             <button class="icon-btn" id="chatRecordBtn" title="Record audio" aria-label="Record audio"></button>
           </div>
           <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
-          <button class="icon-btn danger" id="chatInterrupt" title="Interrupt" aria-label="Interrupt" style="display:none;"></button>
           <button class="send-btn" id="chatSend" title="Send" aria-label="Send"></button>
         </div>
       </div>
@@ -1486,7 +1506,7 @@
         settings: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.05-1.59a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.42.98a7.23 7.23 0 0 0-1.63-.94l-.37-2.6A.5.5 0 0 0 13.8 2h-3.6a.5.5 0 0 0-.49.42l-.37 2.6c-.58.23-1.12.54-1.63.94l-2.42-.98a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.05 1.59c-.04.31-.06.63-.06.94s.02.63.06.94l-2.05 1.59a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.42-.98c.5.39 1.05.7 1.63.94l.37 2.6a.5.5 0 0 0 .49.42h3.6a.5.5 0 0 0 .49-.42l.37-2.6c.58-.23 1.12-.54 1.63-.94l2.42.98a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.05-1.59ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>',
         attach: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.49-8.48"/></svg>',
         mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4"/><path d="M8 23h8"/></svg>',
-        stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+        stop: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>',
         send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
         back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>',
         close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>',
@@ -2431,6 +2451,12 @@
 
       function addMsg(role, content, meta) {
         if (chatWelcome.parentNode) chatWelcome.remove();
+        // Remove orphan thinking bubbles before appending real content.
+        if (role === "assistant" || role === "user") {
+          chatMessages.querySelectorAll(".msg.assistant").forEach(el => {
+            if (el.querySelector(".thinking-wrap .thinking-dots:not(.mini)") && !el.querySelector("p, li, pre, code, span:not(.thinking-dots span)")) el.remove();
+          });
+        }
         const shouldScroll = isNearBottom(chatMessages, 140);
         const div = document.createElement("div");
         const m = (meta && typeof meta === "object") ? meta : {};
@@ -2506,7 +2532,7 @@
         const shouldScroll = isNearBottom(chatMessages, 140);
         const div = document.createElement("div");
         div.className = "msg assistant";
-        div.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div>';
+        div.innerHTML = '<div class="thinking-wrap"><div class="thinking-dots"><span></span><span></span><span></span></div></div>';
         chatMessages.appendChild(div);
         if (shouldScroll || stickToBottom) scrollToBottomSoon();
         return div;
@@ -2603,6 +2629,12 @@
                 if (meta.debug) existing.classList.add("debug");
                 if (msg.role === "assistant" && existing.querySelector(".thinking-dots")) {
                   existing.innerHTML = renderMarkdown(text);
+                  // Clean up recovered-streaming state if applicable.
+                  if (streaming && !activeAgentItemId) {
+                    streaming = false;
+                    chatSend.disabled = false;
+                    setInterruptUi(false, "");
+                  }
                 }
                 // Always refresh attachments and persist upgraded content for rotation recovery.
                 try { renderInlineAttachments(existing, text); } catch (_) {}
@@ -2631,6 +2663,24 @@
             saveConversation();
           }
         } catch (_) {}
+        // If we're in recovered-streaming mode (no active waitForAgentReply loop),
+        // check if the agent finished so we can clean up the thinking bubble.
+        if (streaming && !activeAgentItemId) {
+          try {
+            const sr = await fetch(API + "/brain/status");
+            if (sr.ok) {
+              const st = await sr.json();
+              if (!st.busy) {
+                streaming = false;
+                chatSend.disabled = false;
+                setInterruptUi(false, "");
+                // Remove leftover thinking bubble if still present.
+                const tb = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
+                if (tb) { const m = tb.closest(".msg"); if (m) m.remove(); }
+              }
+            }
+          } catch (_) {}
+        }
       }
 
       function autoResize() {
@@ -2643,8 +2693,24 @@
       });
       chatSend.addEventListener("click", sendChat);
       restoreConversation();
-      syncConversationFromServer();
+      syncConversationFromServer().then(checkAgentBusy);
       setInterval(pollServerMessages, 900);
+
+      async function checkAgentBusy() {
+        try {
+          const res = await fetch(API + "/brain/status");
+          if (!res.ok) return;
+          const st = await res.json();
+          if (!st.busy) return;
+          // Agent is still processing — show thinking indicator with stop button.
+          // If there's already a thinking bubble, skip adding a new one.
+          if (chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)")) return;
+          streaming = true;
+          chatSend.disabled = true;
+          addThinkingIndicator();
+          setInterruptUi(true, "");
+        } catch (_) {}
+      }
 
       // ==============================
       // Permission cards (inline in chat)
@@ -2783,19 +2849,37 @@
       } catch (_) {}
       // Session delete is now handled per-item inside refreshSessionMenu().
       // Interrupt current agent work (best-effort).
+      // Stop button is injected directly into the thinking bubble.
       let activeAgentItemId = "";
-      const chatInterrupt = $("chatInterrupt");
-      try { if (chatInterrupt) chatInterrupt.innerHTML = ICON.stop; } catch (_) {}
+      let activeThinkingDiv = null;
+
       function setInterruptUi(show, itemId) {
         activeAgentItemId = String(itemId || "");
-        if (!chatInterrupt) return;
-        chatInterrupt.style.display = show ? "inline-flex" : "none";
-        chatInterrupt.disabled = !show;
-      }
-      if (chatInterrupt) {
-        chatInterrupt.addEventListener("click", async () => {
+        if (!show) {
+          // Remove any existing stop button.
+          if (activeThinkingDiv) {
+            const btn = activeThinkingDiv.querySelector(".thinking-stop");
+            if (btn) btn.remove();
+          }
+          activeThinkingDiv = null;
+          return;
+        }
+        // Find the current thinking bubble (last .msg.assistant with .thinking-wrap).
+        const all = chatMessages.querySelectorAll(".msg.assistant .thinking-wrap");
+        const wrap = all.length ? all[all.length - 1] : null;
+        if (!wrap) return;
+        activeThinkingDiv = wrap.closest(".msg");
+        // Don't add duplicate.
+        if (wrap.querySelector(".thinking-stop")) return;
+        const btn = document.createElement("button");
+        btn.className = "thinking-stop";
+        btn.title = "Stop";
+        btn.setAttribute("aria-label", "Stop");
+        btn.innerHTML = ICON.close;
+        btn.addEventListener("click", async () => {
           if (!activeAgentItemId) return;
-          chatInterrupt.disabled = true;
+          btn.disabled = true;
+          btn.style.opacity = "0.4";
           try {
             await fetch(API + "/brain/interrupt", {
               method: "POST",
@@ -2805,9 +2889,11 @@
             showToast("Interrupt sent", 900);
           } catch (_) {
             showToast("Interrupt failed", 1200);
-            chatInterrupt.disabled = false;
+            btn.disabled = false;
+            btn.style.opacity = "";
           }
         });
+        wrap.appendChild(btn);
       }
 
       async function sendChat() {
