@@ -76,6 +76,24 @@ Common patterns:
   - Serves bytes from user-root.
   - Used by the WebView to render previews (image/video/audio).
 
+## Brain Journal (Per-Session Notes)
+
+These endpoints store small, file-backed notes under `files/user/journal/<session_id>/...`.
+
+- `GET /brain/journal/config`
+  - Returns journal size limits and the root path.
+- `GET /brain/journal/current?session_id=<sid>`
+  - Returns the current per-session journal note (`CURRENT.md`).
+- `POST /brain/journal/current`
+  - Body: `{ "session_id": "<sid>", "text": "..." }`
+  - Replaces `CURRENT.md` (auto-rotates to `CURRENT.<ts>.md` if too large).
+- `POST /brain/journal/append`
+  - Body: `{ "session_id": "<sid>", "kind": "milestone", "title": "...", "text": "...", "meta": {...} }`
+  - Appends to `entries.jsonl` (auto-rotates to `entries.<ts>.jsonl` if too large).
+  - If entry text is too large, it is stored as `entry.<ts>.<title>.md` and `stored_path` is set.
+- `GET /brain/journal/list?session_id=<sid>&limit=30`
+  - Returns recent journal entries for the session.
+
 ## Cloud Broker (Placeholder Expansion + Secrets)
 
 - `POST /cloud/request`

@@ -466,7 +466,14 @@ class LocalHttpServer(
             uri == "/builtins/stt" && session.method == Method.POST -> {
                 return jsonError(Response.Status.NOT_IMPLEMENTED, "not_implemented", JSONObject().put("feature", "stt"))
             }
-            (uri == "/brain/status" || uri == "/brain/messages" || uri == "/brain/sessions") && session.method == Method.GET -> {
+            (
+                uri == "/brain/status" ||
+                    uri == "/brain/messages" ||
+                    uri == "/brain/sessions" ||
+                    uri == "/brain/journal/config" ||
+                    uri == "/brain/journal/current" ||
+                    uri == "/brain/journal/list"
+                ) && session.method == Method.GET -> {
                 if (runtimeManager.getStatus() != "ok") {
                     runtimeManager.startWorker()
                     waitForPythonHealth(5000)
@@ -479,7 +486,15 @@ class LocalHttpServer(
                 )
                 proxied ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
             }
-            (uri == "/brain/start" || uri == "/brain/stop" || uri == "/brain/inbox/chat" || uri == "/brain/inbox/event" || uri == "/brain/debug/comment") && session.method == Method.POST -> {
+            (
+                uri == "/brain/start" ||
+                    uri == "/brain/stop" ||
+                    uri == "/brain/inbox/chat" ||
+                    uri == "/brain/inbox/event" ||
+                    uri == "/brain/debug/comment" ||
+                    uri == "/brain/journal/current" ||
+                    uri == "/brain/journal/append"
+                ) && session.method == Method.POST -> {
                 if (runtimeManager.getStatus() != "ok") {
                     runtimeManager.startWorker()
                     waitForPythonHealth(5000)

@@ -11,6 +11,8 @@ from typing import Any, Callable, Deque, Dict, List, Optional
 
 import requests
 
+from journal import JournalStore
+
 
 class BrainRuntime:
     """Background agent loop that processes chat/event inbox items with a cloud model."""
@@ -29,6 +31,8 @@ class BrainRuntime:
         self._emit_log = emit_log
         self._shell_exec = shell_exec
         self._tool_invoke = tool_invoke
+
+        self._journal = JournalStore(self._user_dir / "journal")
 
         self._lock = threading.Lock()
         self._queue: Deque[Dict] = deque()
@@ -165,7 +169,9 @@ class BrainRuntime:
                 "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. "
                 "For execution, use run_python/run_pip/run_curl. "
                 "Keep responses concise: do the work, then summarize the result and include only relevant tool output snippets. "
-                "Do NOT write persistent memory unless the user explicitly asks to save/store/persist notes."
+                "Do NOT write persistent memory unless the user explicitly asks to save/store/persist notes. "
+                "You MAY use the journal tools (journal_get_current/journal_set_current/journal_append/journal_list) for continuity: "
+                "keep Journal (Current) short, update it at milestones, and append brief entries when you make key decisions or complete steps."
             ),
             "temperature": 0.2,
             # Some tasks need a burst of tool calls (e.g. capture -> analyze -> postprocess).
@@ -739,6 +745,15 @@ class BrainRuntime:
         except Exception:
             return ""
 
+    def _get_journal_current(self, session_id: str) -> str:
+        try:
+            res = self._journal.get_current(session_id)
+            if isinstance(res, dict) and res.get("status") == "ok":
+                return str(res.get("text") or "")
+        except Exception:
+            pass
+        return ""
+
     def _update_session_notes(self, session_id: str, text: str) -> Dict[str, str]:
         t = (text or "").strip()
         if not t:
@@ -1042,6 +1057,62 @@ class BrainRuntime:
             },
             {
                 "type": "function",
+                "name": "journal_get_current",
+                "description": "Read the per-session journal CURRENT note (kept small for context efficiency).",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {"session_id": {"type": "string"}},
+                    "required": [],
+                },
+            },
+            {
+                "type": "function",
+                "name": "journal_set_current",
+                "description": "Replace the per-session journal CURRENT note (auto-rotates if too large).",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "text": {"type": "string"},
+                    },
+                    "required": ["text"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "journal_append",
+                "description": "Append a journal entry (auto-rotates entries and stores oversized payloads as a separate file).",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "kind": {"type": "string"},
+                        "title": {"type": "string"},
+                        "text": {"type": "string"},
+                        "meta": {"type": "object", "additionalProperties": True},
+                    },
+                    "required": ["kind", "title", "text"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "journal_list",
+                "description": "List recent journal entries for a session.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": [],
+                },
+            },
+            {
+                "type": "function",
                 "name": "run_python",
                 "description": "Run Python locally (equivalent to: python <args>) within the user directory.",
                 "parameters": {
@@ -1186,6 +1257,7 @@ class BrainRuntime:
         session_id = self._session_id_for_item(item)
         self._active_identity = session_id or "default"
         persistent_memory = self._get_persistent_memory()
+        journal_current = self._get_journal_current(session_id)
         dialogue = self._list_dialogue(session_id=session_id, limit=30)
         # _process_item already recorded the current user message; don't duplicate it in the prompt.
         if dialogue and dialogue[-1].get("role") == "user" and dialogue[-1].get("text") == str(item.get("text") or ""):
@@ -1238,7 +1310,9 @@ class BrainRuntime:
                 "role": "user",
                 "content": _as_text_blocks_for_role(
                     "user",
-                    "Session notes (ephemeral, no permissions required):\n"
+                    "Journal (per-session, keep short for context efficiency):\n"
+                    + (journal_current.strip() or "(empty)")
+                    + "\n\nSession notes (ephemeral, no permissions required):\n"
                     + json.dumps(self._session_notes.get(session_id) or {}, ensure_ascii=True)
                     + "\n\nPersistent memory (may be empty; writing may require permission):\n"
                     + (persistent_memory.strip() or "(empty)"),
@@ -1773,11 +1847,13 @@ class BrainRuntime:
 
         session_id = self._session_id_for_item(item)
         persistent_memory = self._get_persistent_memory()
+        journal_current = self._get_journal_current(session_id)
         history = self._list_dialogue(session_id=session_id, limit=20)
         user_payload = {
             "item": item,
             "recent_messages": history,
             "persistent_memory": persistent_memory,
+            "journal_current": journal_current,
                 "constraints": {
                     "device_api_actions": [
                         "python.status",
@@ -2025,6 +2101,27 @@ class BrainRuntime:
                 },
             }
             return self._execute_action(item, action)
+        if name == "journal_get_current":
+            sid = str(args.get("session_id") or self._session_id_for_item(item)).strip() or "default"
+            return self._journal.get_current(sid)
+        if name == "journal_set_current":
+            sid = str(args.get("session_id") or self._session_id_for_item(item)).strip() or "default"
+            text = str(args.get("text") or "")
+            return self._journal.set_current(sid, text)
+        if name == "journal_append":
+            sid = str(args.get("session_id") or self._session_id_for_item(item)).strip() or "default"
+            kind = str(args.get("kind") or "note")
+            title = str(args.get("title") or "")
+            text = str(args.get("text") or "")
+            meta = args.get("meta") if isinstance(args.get("meta"), dict) else {}
+            return self._journal.append(sid, kind=kind, title=title, text=text, meta=meta)
+        if name == "journal_list":
+            sid = str(args.get("session_id") or self._session_id_for_item(item)).strip() or "default"
+            try:
+                limit = int(args.get("limit") or 50)
+            except Exception:
+                limit = 50
+            return self._journal.list_entries(sid, limit=limit)
         if name == "shell_exec":
             action = {
                 "type": "shell_exec",

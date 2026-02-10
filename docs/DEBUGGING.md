@@ -73,6 +73,22 @@ Notes:
 - `role` can be `user`, `assistant`, or `tool`.
 - Tool outputs (including Python errors) appear as `role=tool` messages.
 
+## Journal (Agent Continuity Notes)
+
+The app also keeps a per-session journal (file-backed under `files/user/journal/<session_id>/...`).
+
+Fetch the current journal note:
+
+```bash
+curl -sS 'http://127.0.0.1:18765/brain/journal/current?session_id=<session_id>'
+```
+
+List recent journal entries:
+
+```bash
+curl -sS 'http://127.0.0.1:18765/brain/journal/list?session_id=<session_id>&limit=30'
+```
+
 ## Talk To The Agent (UI)
 
 The in-app WebView control panel includes an **Agent Console** section:

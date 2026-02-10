@@ -26,6 +26,7 @@ import urllib.request
 import urllib.error
 
 from agents.runtime import BrainRuntime
+from journal import JournalStore
 from storage.db import Storage
 from tools.router import ToolRouter
 
@@ -57,6 +58,7 @@ storage = Storage(data_dir / "app.db")
 tool_router = ToolRouter(data_dir)
 user_dir = base_dir / "user"
 user_dir.mkdir(parents=True, exist_ok=True)
+journal_store = JournalStore(user_dir / "journal")
 
 legacy_www = base_dir / "www"
 legacy_python = base_dir / "python"
@@ -833,6 +835,35 @@ async def brain_messages(limit: int = 50, session_id: str = ""):
 @app.get("/brain/sessions")
 async def brain_sessions(limit: int = 50):
     return {"sessions": BRAIN_RUNTIME.list_sessions(limit=limit)}
+
+@app.get("/brain/journal/config")
+async def brain_journal_config():
+    return {"status": "ok", "config": journal_store.config()}
+
+@app.get("/brain/journal/current")
+async def brain_journal_current(session_id: str = "default"):
+    return journal_store.get_current(session_id)
+
+@app.get("/brain/journal/list")
+async def brain_journal_list(session_id: str = "default", limit: int = 50):
+    return journal_store.list_entries(session_id, limit=limit)
+
+@app.post("/brain/journal/current")
+async def brain_journal_set_current(payload: Dict):
+    session_id = str((payload or {}).get("session_id") or "default")
+    text = str((payload or {}).get("text") or "")
+    return journal_store.set_current(session_id, text)
+
+@app.post("/brain/journal/append")
+async def brain_journal_append(payload: Dict):
+    session_id = str((payload or {}).get("session_id") or "default")
+    kind = str((payload or {}).get("kind") or "note")
+    title = str((payload or {}).get("title") or "")
+    text = str((payload or {}).get("text") or "")
+    meta = (payload or {}).get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    return journal_store.append(session_id, kind=kind, title=title, text=text, meta=meta)
 
 
 def _require_permission(tool: str, permission_id: str) -> Dict:

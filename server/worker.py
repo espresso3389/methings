@@ -18,6 +18,7 @@ import urllib.request
 import urllib.error
 
 from agents.runtime import BrainRuntime
+from journal import JournalStore
 from storage.db import Storage
 from tools.router import ToolRouter
 
@@ -35,6 +36,7 @@ if PYENV_DIR.exists():
 
 STORAGE = Storage(DATA_DIR / "app.db")
 TOOL_ROUTER = ToolRouter(DATA_DIR)
+JOURNAL = JournalStore(USER_DIR / "journal")
 
 
 def _patch_ctypes_find_library():
@@ -535,6 +537,23 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 limit = 50
             self._send_json({"sessions": BRAIN_RUNTIME.list_sessions(limit=limit)})
             return
+        if parsed.path == "/brain/journal/config":
+            self._send_json({"status": "ok", "config": JOURNAL.config()})
+            return
+        if parsed.path == "/brain/journal/current":
+            query = parse_qs(parsed.query or "")
+            session_id = str((query.get("session_id") or ["default"])[0] or "default").strip() or "default"
+            self._send_json(JOURNAL.get_current(session_id))
+            return
+        if parsed.path == "/brain/journal/list":
+            query = parse_qs(parsed.query or "")
+            session_id = str((query.get("session_id") or ["default"])[0] or "default").strip() or "default"
+            try:
+                limit = int((query.get("limit") or ["50"])[0])
+            except Exception:
+                limit = 50
+            self._send_json(JOURNAL.list_entries(session_id, limit=limit))
+            return
         if parsed.path.startswith("/vault/credentials/"):
             name = parsed.path.removeprefix("/vault/credentials/").strip()
             if not name:
@@ -610,6 +629,21 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "missing_name"}, status=400)
                 return
             self._send_json(BRAIN_RUNTIME.enqueue_event(name=name, payload=body))
+            return
+        if parsed.path == "/brain/journal/current":
+            session_id = str((payload or {}).get("session_id") or "default").strip() or "default"
+            text = str((payload or {}).get("text") or "")
+            self._send_json(JOURNAL.set_current(session_id, text))
+            return
+        if parsed.path == "/brain/journal/append":
+            session_id = str((payload or {}).get("session_id") or "default").strip() or "default"
+            kind = str((payload or {}).get("kind") or "note")
+            title = str((payload or {}).get("title") or "")
+            text = str((payload or {}).get("text") or "")
+            meta = (payload or {}).get("meta")
+            if not isinstance(meta, dict):
+                meta = {}
+            self._send_json(JOURNAL.append(session_id, kind=kind, title=title, text=text, meta=meta))
             return
         if parsed.path == "/brain/debug/comment":
             # Debug-only: insert a message into a given session without enqueuing agent work.

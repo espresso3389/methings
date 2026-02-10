@@ -1158,6 +1158,19 @@
             <label>Transcript</label>
             <div id="agentTranscript" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 12px; line-height: 1.35; background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); padding: 10px; border-radius: 10px; max-height: 260px; overflow:auto; white-space: pre-wrap;"></div>
           </div>
+          <div class="field" style="margin-top:10px;">
+            <label>Journal (Current)</label>
+            <textarea id="agentJournalCurrent" class="memory-textarea" style="min-height: 120px;" placeholder="Short per-session notes (kept small for context efficiency)."></textarea>
+          </div>
+          <div class="btn-group">
+            <button class="btn primary" id="agentJournalSave">Save Journal</button>
+            <button class="btn" id="agentJournalRefresh">Refresh Journal</button>
+            <button class="btn" id="agentJournalAppend">+ Entry</button>
+          </div>
+          <div class="field" style="margin-top:10px;">
+            <label>Recent Journal Entries</label>
+            <div id="agentJournalEntries" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 12px; line-height: 1.35; background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); padding: 10px; border-radius: 10px; max-height: 200px; overflow:auto; white-space: pre-wrap;"></div>
+          </div>
           <div class="field">
             <label>Message</label>
             <textarea id="agentInput" class="memory-textarea" style="min-height: 90px;" placeholder="Type a message to the agent..."></textarea>
@@ -3101,6 +3114,8 @@
       const agentStatus = $("agentStatus");
       const agentSession = $("agentSession");
       const agentTranscript = $("agentTranscript");
+      const agentJournalCurrent = $("agentJournalCurrent");
+      const agentJournalEntries = $("agentJournalEntries");
       const agentInput = $("agentInput");
       const agentHint = $("agentHint");
 
@@ -3204,6 +3219,83 @@
         }
       }
 
+      function renderAgentJournalEntries(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+          agentJournalEntries.textContent = "(no journal entries)";
+          return;
+        }
+        const lines = [];
+        for (const it of items) {
+          const ts = fmtTs(it.ts);
+          const kind = String(it.kind || "").trim();
+          const title = String(it.title || "").trim();
+          const stored = String(it.stored_path || "").trim();
+          const text = String(it.text || "");
+          const head = "[" + (ts || "no-ts") + "]" + (kind ? (" " + kind) : "") + (title ? (" " + title) : "");
+          lines.push(head);
+          if (stored) lines.push("(stored: " + stored + ")");
+          if (text) lines.push(text);
+          lines.push("");
+        }
+        agentJournalEntries.textContent = lines.join("\n").trim() + "\n";
+      }
+
+      async function refreshAgentJournal() {
+        const sid = currentAgentSessionId();
+        try {
+          const res = await fetch(API + "/brain/journal/current?session_id=" + encodeURIComponent(sid));
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          agentJournalCurrent.value = String(data.text || "");
+        } catch (_) {
+          // Keep user's edits if fetch fails.
+        }
+        try {
+          const res = await fetch(API + "/brain/journal/list?session_id=" + encodeURIComponent(sid) + "&limit=30");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          renderAgentJournalEntries(data.entries || []);
+        } catch (_) {
+          agentJournalEntries.textContent = "(failed to load journal entries)";
+        }
+      }
+
+      async function saveAgentJournal() {
+        const sid = currentAgentSessionId();
+        try {
+          const text = String(agentJournalCurrent.value || "");
+          const res = await fetch(API + "/brain/journal/current", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ session_id: sid, text }),
+          });
+          if (!res.ok) throw 0;
+          showToast("Journal saved", 1200);
+          await refreshAgentJournal();
+        } catch (_) {
+          showToast("Journal save failed", 1500);
+        }
+      }
+
+      async function appendAgentJournalEntry() {
+        const sid = currentAgentSessionId();
+        const title = String(window.prompt("Entry title (optional):", "") || "").trim();
+        const text = String(window.prompt("Entry text:", "") || "").trim();
+        if (!title && !text) return;
+        try {
+          const res = await fetch(API + "/brain/journal/append", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ session_id: sid, kind: "milestone", title, text, meta: { source: "webui_agent_console" } }),
+          });
+          if (!res.ok) throw 0;
+          showToast("Entry added", 1200);
+          await refreshAgentJournal();
+        } catch (_) {
+          showToast("Entry add failed", 1500);
+        }
+      }
+
       async function agentSendMessage() {
         const sid = currentAgentSessionId();
         const text = String(agentInput.value || "").trim();
@@ -3227,9 +3319,11 @@
       $("agentSessionsRefresh").addEventListener("click", async () => {
         await refreshAgentSessions();
         await refreshAgentTranscript();
+        await refreshAgentJournal();
       });
       agentSession.addEventListener("change", () => {
         refreshAgentTranscript();
+        refreshAgentJournal();
       });
       $("agentStart").addEventListener("click", async () => {
         try {
@@ -3246,7 +3340,11 @@
       $("agentRefresh").addEventListener("click", async () => {
         await refreshAgentStatus();
         await refreshAgentTranscript();
+        await refreshAgentJournal();
       });
+      $("agentJournalRefresh").addEventListener("click", refreshAgentJournal);
+      $("agentJournalSave").addEventListener("click", saveAgentJournal);
+      $("agentJournalAppend").addEventListener("click", appendAgentJournalEntry);
       $("agentSend").addEventListener("click", agentSendMessage);
       $("agentClearInput").addEventListener("click", () => { agentInput.value = ""; });
       agentInput.addEventListener("keydown", (e) => {
@@ -3689,7 +3787,10 @@
 
       // Agent console initial load.
       refreshAgentStatus();
-      refreshAgentSessions().then(() => refreshAgentTranscript());
+      refreshAgentSessions().then(async () => {
+        await refreshAgentTranscript();
+        await refreshAgentJournal();
+      });
       refreshSshKeys();
 
       window.onPythonStatus = function(status) {
