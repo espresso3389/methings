@@ -2692,12 +2692,17 @@
               const hasThinking = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
               const hasWorking = chatMessages.querySelector(".msg.assistant .msg-working");
               if (!hasThinking && !hasWorking) {
-                // Only add dots if the last message overall is an assistant bubble
-                // (not if the user has sent a new message after it).
-                const lastChild = chatMessages.lastElementChild;
-                const isLastAssistant = lastChild && lastChild.classList.contains("assistant");
-                if (isLastAssistant) {
-                  setMsgWorking(lastChild, true);
+                // Find the last assistant bubble and ensure no user message follows it.
+                const allAssistant = chatMessages.querySelectorAll(".msg.assistant");
+                const last = allAssistant.length ? allAssistant[allAssistant.length - 1] : null;
+                if (last) {
+                  let hasUserAfter = false;
+                  let sib = last.nextElementSibling;
+                  while (sib) {
+                    if (sib.classList.contains("msg") && sib.classList.contains("user")) { hasUserAfter = true; break; }
+                    sib = sib.nextElementSibling;
+                  }
+                  if (!hasUserAfter) setMsgWorking(last, true);
                 }
               }
             } else {
