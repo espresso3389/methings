@@ -156,6 +156,9 @@ class AgentService : LifecycleService() {
             val pinMgr = sshPinManager ?: return
             val noAuthMgr = sshNoAuthModeManager ?: return
 
+            // Watchdog: restart SSHD if it was killed externally (e.g. Phantom Process Killer)
+            sshd.ensureRunning()
+
             val pin = pinMgr.status()
             if (pin.expired) {
                 android.util.Log.i("AgentService", "PIN auth expired; exiting PIN mode")

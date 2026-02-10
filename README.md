@@ -113,6 +113,25 @@ The build process automatically handles:
 - **Scoped access:** File operations scoped to user root or app-private directories
 - **Key lifecycle:** Encryption keys tied to device; removed on app uninstall
 
+## Troubleshooting
+
+### SSH server stops unexpectedly (Android 12+)
+
+Android 12 introduced a "Phantom Process Killer" that terminates child processes
+(like the built-in SSH server) when the system is under memory pressure. The app
+automatically restarts the SSH server when this happens, but frequent kills may
+interrupt active SSH sessions.
+
+To disable the phantom process killer entirely (requires ADB):
+
+    adb shell settings put global settings_enable_monitor_phantom_procs false
+
+To re-enable:
+
+    adb shell settings put global settings_enable_monitor_phantom_procs true
+
+This setting persists across reboots but resets on factory reset.
+
 ## License
 
 TBD

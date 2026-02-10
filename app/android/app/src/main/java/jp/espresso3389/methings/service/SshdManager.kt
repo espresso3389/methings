@@ -21,6 +21,18 @@ class SshdManager(private val context: Context) {
         }
     }
 
+    /** Watchdog: restart SSHD if it was enabled but killed externally (e.g. Phantom Process Killer). */
+    fun ensureRunning() {
+        if (!isEnabled()) return
+        // Already alive — nothing to do
+        if (processRef.get()?.isAlive == true) return
+        // Port still open (process was orphaned but still serves) — nothing to do
+        if (isPortOpen(getPort())) return
+        // SSHD died — restart
+        Log.w(TAG, "SSHD not running but enabled; restarting")
+        start()
+    }
+
     fun start(): Boolean {
         if (processRef.get()?.isAlive == true) {
             return true
