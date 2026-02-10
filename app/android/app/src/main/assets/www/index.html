@@ -2674,10 +2674,13 @@
               const hasThinking = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
               const hasWorking = chatMessages.querySelector(".msg.assistant .msg-working");
               if (!hasThinking && !hasWorking) {
-                // Add mini-dots to the last assistant bubble.
-                const last = chatMessages.querySelector(".msg.assistant:last-of-type") ||
-                  [...chatMessages.querySelectorAll(".msg.assistant")].pop();
-                if (last) setMsgWorking(last, true);
+                // Only add dots if the last message overall is an assistant bubble
+                // (not if the user has sent a new message after it).
+                const lastChild = chatMessages.lastElementChild;
+                const isLastAssistant = lastChild && lastChild.classList.contains("assistant");
+                if (isLastAssistant) {
+                  setMsgWorking(lastChild, true);
+                }
               }
             } else {
               // Agent is idle — clean up any lingering indicators.
