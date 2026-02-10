@@ -24,6 +24,12 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - Developer option: set brain config `fs_scope="app"` to allow filesystem tools to access the whole app private files dir (includes `protected/`, `server/`, etc). Use with care.
 - Do not try to run `ls`, `pwd`, `cat` via a shell. Use filesystem tools.
 
+## UI Iteration (Prefer Hot Reload Over Reinstall)
+
+- During WebView UI iteration, prefer hot-reloading `files/www/index.html` instead of rebuilding/reinstalling the APK.
+- Use the host helper script `scripts/ui_hot_reload.sh [adb_serial]` (it pushes to `files/www` via `run-as` and calls `POST /ui/reload`).
+- Note: `Reset UI` in Settings overwrites `files/www` from APK assets.
+
 ## When Unsure About APIs
 
 - Do not guess or ask the user to "implement a new API" prematurely.
