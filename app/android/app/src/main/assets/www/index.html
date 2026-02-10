@@ -2366,6 +2366,8 @@
       let chatSessionId = "";
       let lastServerTs = 0;
       let stickToBottom = true;
+      // item_id -> exact text we sent to /brain/inbox/chat (for UI-side retry fallback).
+      const _sentTextByItemId = new Map();
 
       function genSessionId() {
         return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
@@ -2499,6 +2501,24 @@
         chatMessages.appendChild(div);
         if (shouldScroll || isDebug || stickToBottom) scrollToBottomSoon();
         return div;
+      }
+
+      function attachAgentFailureActions(div, itemId) {
+        try {
+          if (!div || !itemId) return;
+          if (div.querySelector("[data-ui='retry-actions']")) return;
+          const actions = document.createElement("div");
+          actions.dataset.ui = "retry-actions";
+          actions.style.display = "flex";
+          actions.style.gap = "8px";
+          actions.style.marginTop = "10px";
+          const btn = document.createElement("button");
+          btn.className = "btn";
+          btn.textContent = "Retry";
+          btn.addEventListener("click", () => retryAgentItem(String(itemId)));
+          actions.appendChild(btn);
+          div.appendChild(actions);
+        } catch (_) {}
       }
 
       function setMsgWorking(div, working) {
@@ -3041,6 +3061,7 @@
           if (!itemId) {
             throw new Error("Agent item id missing");
           }
+          try { _sentTextByItemId.set(String(itemId), String(text || "")); } catch (_) {}
           setInterruptUi(true, itemId);
           try {
             if (uDiv) uDiv.dataset.itemId = String(itemId);
@@ -3069,6 +3090,9 @@
             aDiv.innerHTML = renderMarkdown(cleaned);
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
+            if (/^Error:/i.test(String(cleaned || "").trim())) {
+              attachAgentFailureActions(aDiv, itemId);
+            }
             conversation.push({ role: "assistant", content: cleaned, meta: { item_id: itemId }, ts: Date.now() });
             saveConversation();
           } else {
@@ -3091,6 +3115,9 @@
 
       async function retryAgentItem(itemId) {
         if (!itemId || streaming) return;
+        const fallbackText = (function() {
+          try { return String(_sentTextByItemId.get(String(itemId)) || ""); } catch (_) { return ""; }
+        })();
         streaming = true;
         chatSend.disabled = true;
         setInterruptUi(true, "");
@@ -3103,19 +3130,34 @@
           });
           if (!boot.ok) throw new Error("Agent bootstrap failed (" + boot.status + ")");
 
-          const res = await fetch(API + "/brain/retry", {
+          // Prefer backend retry (it can recover after rotation), but fall back to UI resend.
+          let newId = "";
+          let res = await fetch(API + "/brain/retry", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ item_id: String(itemId), session_id: chatSessionId }),
           });
-          const body = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            throw new Error((body && (body.error || body.detail || body.message)) ? String(body.error || body.detail || body.message) : ("Retry failed (" + res.status + ")"));
+          let body = await res.json().catch(() => ({}));
+          if (res.ok && body && body.id) {
+            newId = String(body.id);
+          } else if (fallbackText) {
+            res = await fetch(API + "/brain/inbox/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json; charset=utf-8" },
+              body: JSON.stringify({ text: fallbackText, meta: { source: "chat_ui_retry", session_id: chatSessionId, retry_of: String(itemId) } }),
+            });
+            body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              throw new Error("Retry failed (" + res.status + ")");
+            }
+            newId = body && body.id ? String(body.id) : "";
+          } else {
+            throw new Error("Retry unavailable (missing original text)");
           }
-          const newId = body && body.id ? String(body.id) : "";
           if (!newId) throw new Error("Retry: missing item id");
           setInterruptUi(true, newId);
           try { aDiv.dataset.itemId = String(newId); } catch (_) {}
+          try { if (fallbackText) _sentTextByItemId.set(String(newId), fallbackText); } catch (_) {}
 
           const answer = await waitForAgentReply(newId);
           if (!answer) throw new Error("Agent timed out");
@@ -3124,6 +3166,9 @@
             aDiv.innerHTML = renderMarkdown(cleaned);
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
+            if (/^Error:/i.test(String(cleaned || "").trim())) {
+              attachAgentFailureActions(aDiv, newId);
+            }
             conversation.push({ role: "assistant", content: cleaned, meta: { item_id: newId }, ts: Date.now() });
             saveConversation();
           } else {

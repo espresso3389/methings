@@ -352,7 +352,16 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
         return {"status": "error", "error": "command_not_allowed"}
 
     workdir = _resolve_cwd(cwd)
-    args = shlex.split(raw_args or "")
+    try:
+        args = shlex.split(raw_args or "")
+    except ValueError as exc:
+        # Avoid crashing the whole brain item on malformed quoting.
+        return {
+            "status": "error",
+            "error": "invalid_shell_args",
+            "detail": str(exc) or "invalid_shell_args",
+            "hint": "Unmatched quotes in shell args. Prefer writing a script file and running it, or avoid quotes by passing simple args.",
+        }
     output = io.StringIO()
     code = 0
 
