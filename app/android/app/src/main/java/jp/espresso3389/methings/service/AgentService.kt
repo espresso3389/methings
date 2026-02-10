@@ -272,28 +272,30 @@ class AgentService : LifecycleService() {
         }
     }
 
+    // Tools that require native biometric/PIN consent (keep individual notification flow).
+    private val biometricTools = setOf("credentials", "ssh_keys", "ssh_pin")
+
     private fun enqueuePermissionPrompt(prompt: PermissionPrompt) {
         synchronized(permissionNotifLock) {
             val id = prompt.id.trim()
             if (id.isBlank()) return
 
+            if (biometricTools.contains(prompt.tool)) {
+                // Biometric permissions: use the individual notification + PermissionBroker flow.
+                showBiometricPermissionNotification(prompt)
+                return
+            }
+
+            // Non-biometric: track and show a single summary notification.
             // Avoid duplicates.
-            if (activePermissionPrompt?.id == id) {
-                // Update the active notification (e.g. detail changes or more queued).
-                showActivePermissionNotificationLocked()
-                return
-            }
-            if (permissionPromptQueue.any { it.id == id }) {
-                showActivePermissionNotificationLocked()
-                return
-            }
+            if (activePermissionPrompt?.id == id) return
+            if (permissionPromptQueue.any { it.id == id }) return
             permissionPromptQueue.addLast(prompt)
             if (activePermissionPrompt == null) {
-                showNextPermissionNotificationLocked()
-            } else {
-                // Merge: keep one visible notification, but show "+N more".
-                showActivePermissionNotificationLocked()
+                activePermissionPrompt = prompt
+                permissionPromptQueue.removeFirst()
             }
+            showSummaryPermissionNotification()
         }
     }
 
@@ -303,34 +305,26 @@ class AgentService : LifecycleService() {
             if (permissionPromptQueue.isNotEmpty()) {
                 val it = permissionPromptQueue.iterator()
                 while (it.hasNext()) {
-                    if (it.next().id == id) {
-                        it.remove()
-                        break
-                    }
+                    if (it.next().id == id) { it.remove(); break }
                 }
             }
-            val active = activePermissionPrompt
-            if (active != null && active.id == id) {
+            if (activePermissionPrompt?.id == id) {
                 activePermissionPrompt = null
-                cancelPermissionNotification()
-                showNextPermissionNotificationLocked()
+                if (permissionPromptQueue.isNotEmpty()) {
+                    activePermissionPrompt = permissionPromptQueue.removeFirst()
+                }
+            }
+            if (activePermissionPrompt != null || permissionPromptQueue.isNotEmpty()) {
+                showSummaryPermissionNotification()
             } else {
-                // Still update the visible notification to reflect new queue size.
-                showActivePermissionNotificationLocked()
+                cancelPermissionNotification()
             }
         }
     }
 
     private fun onPermissionNotificationDismissed(id: String) {
-        synchronized(permissionNotifLock) {
-            val active = activePermissionPrompt ?: return
-            if (active.id != id) return
-            // Requeue the dismissed prompt so it isn't lost.
-            activePermissionPrompt = null
-            permissionPromptQueue.addLast(active)
-            cancelPermissionNotification()
-            showNextPermissionNotificationLocked()
-        }
+        // Summary notification dismissed: do nothing (permissions stay pending,
+        // user will see the in-chat permission card when they open the app).
     }
 
     private fun cancelPermissionNotification() {
@@ -338,30 +332,54 @@ class AgentService : LifecycleService() {
         nm.cancel(PERMISSION_NOTIFICATION_ID)
     }
 
-    private fun showNextPermissionNotificationLocked() {
-        if (activePermissionPrompt != null) return
-        val next = if (permissionPromptQueue.isEmpty()) null else permissionPromptQueue.removeFirst()
-        next ?: return
-        activePermissionPrompt = next
-        showActivePermissionNotificationLocked()
-    }
-
-    private fun showActivePermissionNotificationLocked() {
-        val p = activePermissionPrompt ?: return
-        val more = permissionPromptQueue.size
-        showPermissionNotification(p, moreQueued = more)
-    }
-
-    private fun showPermissionNotification(prompt: PermissionPrompt, moreQueued: Int) {
+    /**
+     * Show a single summary notification for all non-biometric pending permissions.
+     * Tapping it just opens the app (no PermissionBroker dialog).
+     */
+    private fun showSummaryPermissionNotification() {
         val channelId = "permission_prompts"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                channelId,
-                "Permission Prompts",
-                NotificationManager.IMPORTANCE_HIGH
+                channelId, "Permission Prompts", NotificationManager.IMPORTANCE_HIGH
             )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+
+        val total = 1 + permissionPromptQueue.size  // active + queued
+        val text = if (total == 1) "1 permission waiting for review" else "$total permissions waiting for review"
+
+        // Tap: just open the app (no permission extras → no PermissionBroker).
+        val openIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val openPi = PendingIntent.getActivity(
+            this, PERMISSION_NOTIFICATION_ID, openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notif = NotificationCompat.Builder(this, channelId)
+            .setContentTitle("Permission required")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setContentIntent(openPi)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        getSystemService(NotificationManager::class.java).notify(PERMISSION_NOTIFICATION_ID, notif)
+    }
+
+    /**
+     * Show an individual notification for biometric-required permissions.
+     * Tapping opens PermissionBroker as before.
+     */
+    private fun showBiometricPermissionNotification(prompt: PermissionPrompt) {
+        val channelId = "permission_prompts"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId, "Permission Prompts", NotificationManager.IMPORTANCE_HIGH
+            )
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
 
         val openIntent = Intent(this, MainActivity::class.java).apply {
@@ -369,41 +387,27 @@ class AgentService : LifecycleService() {
             putExtra(LocalHttpServer.EXTRA_PERMISSION_ID, prompt.id)
             putExtra(LocalHttpServer.EXTRA_PERMISSION_TOOL, prompt.tool)
             putExtra(LocalHttpServer.EXTRA_PERMISSION_DETAIL, prompt.detail)
+            putExtra(LocalHttpServer.EXTRA_PERMISSION_BIOMETRIC, true)
         }
         val openPi = PendingIntent.getActivity(
-            this,
-            prompt.id.hashCode(),
-            openIntent,
+            this, prompt.id.hashCode(), openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val base = if (prompt.detail.isBlank()) prompt.tool else "${prompt.tool}: ${prompt.detail}"
-        val text = if (moreQueued > 0) base + "  (+" + moreQueued + " more)" else base
-
-        val dismissedIntent = Intent(ACTION_PERMISSION_NOTIFICATION_DISMISSED).apply {
-            setPackage(packageName)
-            putExtra(LocalHttpServer.EXTRA_PERMISSION_ID, prompt.id)
-        }
-        val dismissedPi = PendingIntent.getBroadcast(
-            this,
-            prompt.id.hashCode(),
-            dismissedIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
+        val text = if (prompt.detail.isBlank()) prompt.tool else "${prompt.tool}: ${prompt.detail}"
         val notif = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Permission required")
+            .setContentTitle("Authentication required")
             .setContentText(text.take(120))
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.stat_sys_warning)
             .setContentIntent(openPi)
-            .setDeleteIntent(dismissedPi)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(PERMISSION_NOTIFICATION_ID, notif)
+        // Use a separate notification ID for biometric prompts so they don't collide with summary.
+        getSystemService(NotificationManager::class.java)
+            .notify(prompt.id.hashCode(), notif)
     }
 
     private fun buildNotification(): Notification {

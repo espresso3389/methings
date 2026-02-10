@@ -1061,6 +1061,81 @@
       .session-item .session-del svg { width: 14px; height: 14px; display: block; }
       .session-item .session-del:hover { background: var(--red-soft); color: var(--red); border-color: rgba(239,68,68,0.25); }
       .session-item .session-del:active { transform: scale(0.9); }
+
+      /* Permission card (inline in chat) */
+      .perm-card {
+        align-self: stretch;
+        max-width: 100%;
+        background: var(--bg-raised);
+        border: 1px solid var(--border);
+        border-left: 3px solid var(--accent);
+        border-radius: var(--radius-md);
+        padding: 12px 14px;
+      }
+      .perm-card-title {
+        font-size: 12px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--accent);
+        margin-bottom: 10px;
+      }
+      .perm-card-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .perm-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        transition: background var(--transition), border-color var(--transition);
+      }
+      .perm-item-info {
+        flex: 1;
+        min-width: 0;
+      }
+      .perm-item-tool {
+        font-size: 12px;
+        font-weight: 650;
+        color: var(--ink);
+      }
+      .perm-item-detail {
+        font-size: 12px;
+        color: var(--ink-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .perm-item-actions {
+        display: flex;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+      .perm-item-actions .btn { padding: 4px 10px; font-size: 11px; }
+      .perm-item.approved {
+        background: var(--green-soft);
+        border-color: rgba(34,197,94,0.25);
+      }
+      .perm-item.approved .perm-item-tool,
+      .perm-item.approved .perm-item-detail { opacity: 0.7; }
+      .perm-item.denied {
+        background: var(--red-soft);
+        border-color: rgba(239,68,68,0.25);
+      }
+      .perm-item.denied .perm-item-tool,
+      .perm-item.denied .perm-item-detail { opacity: 0.7; text-decoration: line-through; }
+      .perm-card-footer {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .perm-card-footer .btn { font-size: 12px; padding: 6px 14px; }
+      .perm-card.resolved { opacity: 0.6; }
     </style>
   </head>
   <body>
@@ -2297,6 +2372,7 @@
         conversation = [];
         lastServerTs = 0;
         try { chatMessages.textContent = ""; } catch (_) {}
+        _permState.knownIds.clear(); _permState.cardEl = null; _permState.items = {};
         restoreConversation();
         await syncConversationFromServer();
       }
@@ -2568,6 +2644,123 @@
       restoreConversation();
       syncConversationFromServer();
       setInterval(pollServerMessages, 900);
+
+      // ==============================
+      // Permission cards (inline in chat)
+      // ==============================
+      const BIOMETRIC_TOOLS = new Set(["credentials", "ssh_keys", "ssh_pin"]);
+      const _permState = { knownIds: new Set(), cardEl: null, items: {} };
+
+      function renderPermCard(pending) {
+        const shouldScroll = isNearBottom(chatMessages, 140);
+        if (chatWelcome.parentNode) chatWelcome.remove();
+        if (!_permState.cardEl) {
+          const card = document.createElement("div");
+          card.className = "perm-card";
+          card.innerHTML =
+            "<div class='perm-card-title'>Permission required</div>" +
+            "<div class='perm-card-list' id='permCardList'></div>" +
+            "<div class='perm-card-footer' id='permCardFooter'></div>";
+          chatMessages.appendChild(card);
+          _permState.cardEl = card;
+        }
+        _permState.cardEl.classList.remove("resolved");
+        const list = _permState.cardEl.querySelector("#permCardList");
+        const footer = _permState.cardEl.querySelector("#permCardFooter");
+        for (const p of pending) {
+          if (_permState.items[p.id]) continue;
+          const isBio = BIOMETRIC_TOOLS.has(p.tool);
+          const row = document.createElement("div");
+          row.className = "perm-item";
+          row.dataset.pid = p.id;
+          row.innerHTML =
+            "<div class='perm-item-info'>" +
+              "<div class='perm-item-tool'>" + (p.tool || "").replace(/</g, "&lt;") + "</div>" +
+              "<div class='perm-item-detail'>" + (p.detail || "").replace(/</g, "&lt;") + "</div>" +
+            "</div>" +
+            (isBio
+              ? "<div style='font-size:11px; color:var(--ink-muted); white-space:nowrap;'>device auth</div>"
+              : "<div class='perm-item-actions'>" +
+                  "<button class='btn' data-action='deny' data-pid='" + p.id + "'>Deny</button>" +
+                  "<button class='btn primary' data-action='approve' data-pid='" + p.id + "'>Allow</button>" +
+                "</div>");
+          list.appendChild(row);
+          _permState.items[p.id] = { el: row, status: "pending" };
+          _permState.knownIds.add(p.id);
+        }
+        // Wire individual buttons.
+        for (const btn of list.querySelectorAll("button[data-pid]")) {
+          if (btn._wired) continue;
+          btn._wired = true;
+          btn.addEventListener("click", () => postPermAction(btn.dataset.pid, btn.dataset.action));
+        }
+        // Approve All footer.
+        const pendingCount = pending.filter(p => !BIOMETRIC_TOOLS.has(p.tool)).length;
+        if (pendingCount > 1) {
+          footer.innerHTML = "<button class='btn primary' id='permApproveAll'>Approve All</button>";
+          const allBtn = $("permApproveAll");
+          if (allBtn) allBtn.addEventListener("click", () => {
+            for (const p of pending) {
+              if (!BIOMETRIC_TOOLS.has(p.tool) && _permState.items[p.id] && _permState.items[p.id].status === "pending") {
+                postPermAction(p.id, "approve");
+              }
+            }
+          });
+        } else {
+          footer.innerHTML = "";
+        }
+        if (shouldScroll || stickToBottom) scrollToBottomSoon();
+      }
+
+      function updatePermItemStatus(pid, status) {
+        const entry = _permState.items[pid];
+        if (!entry || entry.status !== "pending") return;
+        entry.status = status;
+        entry.el.className = "perm-item " + status;
+        const actions = entry.el.querySelector(".perm-item-actions");
+        if (actions) actions.innerHTML = "<span style='font-size:11px; font-weight:600; color:var(" + (status === "approved" ? "--green" : "--red") + ");'>" + (status === "approved" ? "Allowed" : "Denied") + "</span>";
+        // Check if all resolved.
+        const allResolved = Object.values(_permState.items).every(e => e.status !== "pending");
+        if (allResolved && _permState.cardEl) {
+          _permState.cardEl.classList.add("resolved");
+          const footer = _permState.cardEl.querySelector("#permCardFooter");
+          if (footer) footer.innerHTML = "";
+        }
+      }
+
+      async function postPermAction(pid, action) {
+        try {
+          await fetch(API + "/permissions/" + pid + "/" + action, {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: "{}",
+          });
+          updatePermItemStatus(pid, action === "approve" ? "approved" : "denied");
+        } catch (_) {
+          showToast("Failed to " + action, 1500);
+        }
+      }
+
+      async function pollPendingPermissions() {
+        try {
+          const res = await fetch(API + "/permissions/pending");
+          if (!res.ok) return;
+          const data = await res.json();
+          const pending = Array.isArray(data) ? data : [];
+          // Check for resolved permissions we're tracking.
+          for (const [pid, entry] of Object.entries(_permState.items)) {
+            if (entry.status === "pending" && !pending.find(p => p.id === pid)) {
+              // Was pending, now gone — resolved externally (notification, etc.)
+              updatePermItemStatus(pid, "approved");
+            }
+          }
+          // Filter to truly new pending items.
+          const newPending = pending.filter(p => !_permState.knownIds.has(p.id));
+          if (newPending.length > 0) renderPermCard(newPending);
+        } catch (_) {}
+      }
+
+      setInterval(pollPendingPermissions, 1500);
 
       // Session menu handlers.
       try { sessionChip.addEventListener("click", openSessionModal); } catch (_) {}
