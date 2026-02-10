@@ -238,6 +238,12 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         AppForegroundState.isForeground = true
+        // Cancel "Agent is working" and permission summary notifications when app comes to foreground.
+        try {
+            val nm = getSystemService(android.app.NotificationManager::class.java)
+            nm.cancel(82010)  // brain work notification
+            nm.cancel(200201) // permission summary notification
+        } catch (_: Exception) {}
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
                 pythonHealthReceiver,

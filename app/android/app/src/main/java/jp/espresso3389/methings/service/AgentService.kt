@@ -248,7 +248,7 @@ class AgentService : LifecycleService() {
 
         val channelId = "methings_agent_work"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(channelId, "Agent Activity", NotificationManager.IMPORTANCE_HIGH)
+            val ch = NotificationChannel(channelId, "Agent Activity", NotificationManager.IMPORTANCE_LOW)
             nm.createNotificationChannel(ch)
         }
         val openIntent = Intent(this, MainActivity::class.java)
@@ -418,6 +418,8 @@ class AgentService : LifecycleService() {
      * Tapping it just opens the app (no PermissionBroker dialog).
      */
     private fun showSummaryPermissionNotification() {
+        // Skip notification when the app is in the foreground — user sees in-chat permission cards.
+        if (AppForegroundState.isForeground) return
         val channelId = "permission_prompts"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(

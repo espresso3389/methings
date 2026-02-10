@@ -2454,8 +2454,9 @@
 
       function addMsg(role, content, meta) {
         if (chatWelcome.parentNode) chatWelcome.remove();
-        // Remove orphan thinking bubbles before appending real content.
-        if (role === "assistant" || role === "user") {
+        // Remove orphan thinking bubbles before appending real content,
+        // but only when sendAgentChat is not actively waiting (streaming).
+        if ((role === "assistant" || role === "user") && !streaming) {
           chatMessages.querySelectorAll(".msg.assistant").forEach(el => {
             if (el.querySelector(".thinking-wrap .thinking-dots:not(.mini)") && !el.querySelector("p, li, pre, code, span:not(.thinking-dots span)")) el.remove();
           });
@@ -2711,18 +2712,23 @@
               // Agent is still working — ensure there's a visible indicator.
               const hasThinking = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
               const hasWorking = chatMessages.querySelector(".msg.assistant .msg-working");
-              if (!hasThinking && !hasWorking) {
-                // Find the last assistant bubble and ensure no user message follows it.
+              if (!hasThinking && !hasWorking && !streaming) {
+                // Find the last assistant bubble and check if a user message follows it.
                 const allAssistant = chatMessages.querySelectorAll(".msg.assistant");
                 const last = allAssistant.length ? allAssistant[allAssistant.length - 1] : null;
+                let hasUserAfter = false;
                 if (last) {
-                  let hasUserAfter = false;
                   let sib = last.nextElementSibling;
                   while (sib) {
                     if (sib.classList.contains("msg") && sib.classList.contains("user")) { hasUserAfter = true; break; }
                     sib = sib.nextElementSibling;
                   }
-                  if (!hasUserAfter) setMsgWorking(last, true);
+                }
+                if (last && !hasUserAfter) {
+                  setMsgWorking(last, true);
+                } else {
+                  // User sent a message after the last reply — add a new thinking bubble.
+                  addThinkingIndicator();
                 }
               }
             } else {
