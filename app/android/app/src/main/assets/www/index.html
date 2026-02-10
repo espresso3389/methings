@@ -2664,24 +2664,38 @@
             saveConversation();
           }
         } catch (_) {}
-        // If we're in recovered-streaming mode (no active waitForAgentReply loop),
-        // check if the agent finished so we can clean up the thinking bubble.
-        if (streaming && !activeAgentItemId) {
-          try {
-            const sr = await fetch(API + "/brain/status");
-            if (sr.ok) {
-              const st = await sr.json();
-              if (!st.busy) {
+        // Check brain busy status to show/hide working indicator.
+        try {
+          const sr = await fetch(API + "/brain/status");
+          if (sr.ok) {
+            const st = await sr.json();
+            if (st.busy) {
+              // Agent is still working — ensure there's a visible indicator.
+              const hasThinking = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
+              const hasWorking = chatMessages.querySelector(".msg.assistant .msg-working");
+              if (!hasThinking && !hasWorking) {
+                // Add mini-dots to the last assistant bubble.
+                const last = chatMessages.querySelector(".msg.assistant:last-of-type") ||
+                  [...chatMessages.querySelectorAll(".msg.assistant")].pop();
+                if (last) setMsgWorking(last, true);
+              }
+            } else {
+              // Agent is idle — clean up any lingering indicators.
+              if (streaming && !activeAgentItemId) {
                 streaming = false;
                 chatSend.disabled = false;
                 setInterruptUi(false, "");
-                // Remove leftover thinking bubble if still present.
-                const tb = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
-                if (tb) { const m = tb.closest(".msg"); if (m) m.remove(); }
+              }
+              // Remove leftover thinking bubble if present.
+              const tb = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
+              if (tb) { const m = tb.closest(".msg"); if (m) m.remove(); }
+              // Remove lingering mini-dots not from an active sendAgentChat.
+              if (!streaming) {
+                chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
               }
             }
-          } catch (_) {}
-        }
+          }
+        } catch (_) {}
       }
 
       function autoResize() {
