@@ -1371,6 +1371,18 @@
       </div>
     </div>
 
+    <!-- App Dialog (replaces native confirm/prompt) -->
+    <div class="modal" id="dialogModal" role="dialog" aria-modal="true">
+      <div class="modal-card" style="text-align:left; max-width:340px;">
+        <div class="card-title" id="dialogTitle" style="margin-bottom:8px; font-size:15px;"></div>
+        <div class="muted" id="dialogMessage" style="font-size:13px; margin-bottom:14px; white-space:pre-line;"></div>
+        <div id="dialogInputWrap" style="display:none; margin-bottom:14px;">
+          <input type="text" id="dialogInput" autocomplete="off" autocapitalize="none" spellcheck="false" />
+        </div>
+        <div class="btn-group" id="dialogButtons"></div>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
@@ -1423,6 +1435,55 @@
         t.textContent = msg;
         t.classList.add("show");
         setTimeout(() => t.classList.remove("show"), ms || 2000);
+      }
+
+      // ==============================
+      // App Dialog (confirm / prompt)
+      // ==============================
+      const _dlg = {
+        modal: $("dialogModal"),
+        title: $("dialogTitle"),
+        message: $("dialogMessage"),
+        inputWrap: $("dialogInputWrap"),
+        input: $("dialogInput"),
+        buttons: $("dialogButtons"),
+        resolve: null,
+      };
+
+      function appConfirm(title, message) {
+        return new Promise((resolve) => {
+          if (_dlg.resolve) { _dlg.resolve(null); }
+          _dlg.title.textContent = title;
+          _dlg.message.textContent = message;
+          _dlg.inputWrap.style.display = "none";
+          _dlg.buttons.innerHTML =
+            "<button class='btn' id='_dlgCancel'>Cancel</button>" +
+            "<button class='btn danger' id='_dlgOk'>Confirm</button>";
+          _dlg.resolve = resolve;
+          _dlg.modal.classList.add("show");
+          $("_dlgCancel").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(false); });
+          $("_dlgOk").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(true); });
+        });
+      }
+
+      function appPrompt(title, message, placeholder) {
+        return new Promise((resolve) => {
+          if (_dlg.resolve) { _dlg.resolve(null); }
+          _dlg.title.textContent = title;
+          _dlg.message.textContent = message;
+          _dlg.input.value = "";
+          _dlg.input.placeholder = placeholder || "";
+          _dlg.inputWrap.style.display = "";
+          _dlg.buttons.innerHTML =
+            "<button class='btn' id='_dlgCancel'>Cancel</button>" +
+            "<button class='btn primary' id='_dlgOk'>OK</button>";
+          _dlg.resolve = resolve;
+          _dlg.modal.classList.add("show");
+          setTimeout(() => _dlg.input.focus(), 60);
+          _dlg.input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("_dlgOk").click(); } };
+          $("_dlgCancel").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(null); });
+          $("_dlgOk").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(_dlg.input.value); });
+        });
       }
 
       // ==============================
@@ -1502,7 +1563,7 @@
               e.stopPropagation();
               const sid = String(btn.getAttribute("data-del") || "").trim();
               if (!sid) return;
-              if (!confirm("Delete session '" + sid + "'?\nThis removes the on-device transcript.")) return;
+              if (!await appConfirm("Delete session", "Delete '" + sid + "'?\nThis removes the on-device transcript.")) return;
               try {
                 const r = await fetch(API + "/brain/session/delete", {
                   method: "POST",
@@ -2519,7 +2580,7 @@
       try { $("sessionRefresh").addEventListener("click", refreshSessionMenu); } catch (_) {}
       try {
         $("sessionNew").addEventListener("click", async () => {
-          const name = String(window.prompt("New session id (optional):", "") || "").trim();
+          const name = String(await appPrompt("New session", "Session name (optional)", "") || "").trim();
           const sid = name || genSessionId();
           await switchChatSession(sid);
           await refreshSessionMenu();
@@ -3169,7 +3230,7 @@
       });
 
       $("memoryClear").addEventListener("click", async () => {
-        if (!confirm("Clear all memory? This cannot be undone.")) return;
+        if (!await appConfirm("Clear memory", "Clear all memory? This cannot be undone.")) return;
         memoryEditor.value = "";
         try {
           await fetch(API + "/brain/memory", {
@@ -3397,7 +3458,7 @@
           btn.addEventListener("click", async () => {
             const fp = String(btn.getAttribute("data-fp") || "");
             if (!fp) return;
-            if (!window.confirm("Remove this SSH key?")) return;
+            if (!await appConfirm("Remove SSH key", "Remove this authorized key?")) return;
             try {
               const permission_id = await requestPermission("ssh_keys", "Remove SSH authorized key " + shortFp(fp));
               const res = await fetch(API + "/ssh/keys/delete", {
@@ -3571,7 +3632,7 @@
         }
       });
       $("permClear").addEventListener("click", async () => {
-        if (!window.confirm("Clear all saved tool approvals?")) return;
+        if (!await appConfirm("Clear approvals", "Clear all saved tool approvals?")) return;
         try {
           const res = await fetch(API + "/permissions/clear", { method: "POST" });
           if (!res.ok) throw 0;
@@ -3665,15 +3726,15 @@
         showToast("Not available on this build", 1600);
       });
 
-      $("resetUi").addEventListener("click", () => {
-        if (!window.confirm("Reset UI to defaults? This will overwrite any local changes.")) return;
+      $("resetUi").addEventListener("click", async () => {
+        if (!await appConfirm("Reset UI", "Reset UI to defaults? This will overwrite any local changes.")) return;
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.resetUiToDefaults) {
           AndroidBridge.resetUiToDefaults();
         }
       });
 
-      $("resetAgentDocs").addEventListener("click", () => {
-        if (!window.confirm("Reset AGENTS.md / TOOLS.md / docs/ to defaults? This will overwrite those files.")) return;
+      $("resetAgentDocs").addEventListener("click", async () => {
+        if (!await appConfirm("Reset agent docs", "Reset AGENTS.md / TOOLS.md / docs/ to defaults? This will overwrite those files.")) return;
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.resetUserDefaultsToDefaults) {
           AndroidBridge.resetUserDefaultsToDefaults();
         } else {
@@ -3699,9 +3760,9 @@
       sshEnabled.addEventListener("change", updateSshConfig);
       sshKeysRefresh.addEventListener("click", refreshSshKeys);
       sshKeysAdd.addEventListener("click", async () => {
-        const key = String(window.prompt("Paste SSH public key (one line):", "") || "").trim();
+        const key = String(await appPrompt("Add SSH key", "Paste the public key (one line)", "") || "").trim();
         if (!key) return;
-        const label = String(window.prompt("Label (optional):", "") || "").trim();
+        const label = String(await appPrompt("Key label", "Label (optional)", "") || "").trim();
         try {
           const permission_id = await requestPermission("ssh_keys", "Add SSH authorized key" + (label ? (" (" + label + ")") : ""));
           const res = await fetch(API + "/ssh/keys/add", {
