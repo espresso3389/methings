@@ -639,6 +639,7 @@
         border: 1px solid var(--border);
         transition: background var(--transition), border-color var(--transition), color var(--transition);
       }
+      .btn.nowrap { white-space: nowrap; }
       .btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
       .btn:active { transform: scale(0.97); }
       .btn:disabled {
@@ -985,6 +986,45 @@
           width: 100%;
         }
       }
+
+      .session-chip {
+        font-size: 12px;
+        font-weight: 650;
+        padding: 6px 10px;
+        border-radius: var(--radius-full);
+        border: 1px solid rgba(0,0,0,0.12);
+        background: rgba(255,255,255,0.75);
+        color: var(--ink);
+        max-width: 140px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .session-chip:active { filter: brightness(0.97); }
+      .session-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 10px;
+        max-height: min(420px, 60vh);
+        overflow: auto;
+      }
+      .session-item {
+        display: flex;
+        gap: 10px;
+        align-items: baseline;
+        justify-content: space-between;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid rgba(0,0,0,0.10);
+        background: rgba(0,0,0,0.02);
+        cursor: pointer;
+        user-select: none;
+      }
+      .session-item:hover { background: rgba(0,0,0,0.03); }
+      .session-item.active { border-color: rgba(0,0,0,0.22); background: rgba(0,0,0,0.04); }
+      .session-item .sid { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 12px; opacity: 0.9; }
+      .session-item .meta { font-size: 11px; opacity: 0.7; }
     </style>
   </head>
   <body>
@@ -992,7 +1032,10 @@
     <div id="chatPage" class="page active">
       <div class="topbar">
         <div class="title">methings</div>
-        <button class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings"></button>
+        <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+          <button class="session-chip" id="sessionChip" title="Session menu" aria-label="Session menu">default</button>
+          <button class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings"></button>
+        </div>
       </div>
       <div class="chat-messages" id="chatMessages">
         <div class="chat-welcome" id="chatWelcome">
@@ -1103,61 +1146,6 @@
           </div>
         </section>
 
-        <!-- Agent Console -->
-        <section class="card">
-          <div class="card-header">
-            <div class="card-icon blue">&#9993;</div>
-            <div class="card-title">Agent Console</div>
-            <div id="agentStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
-          </div>
-          <div class="card-desc">
-            Send messages to the on-device agent and view the transcript (stored in the on-device DB).
-          </div>
-          <div class="field">
-            <label>Session</label>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <select id="agentSession" style="flex:1; min-width: 0;">
-                <option value="default">default</option>
-              </select>
-              <button class="btn" id="agentSessionsRefresh" style="white-space:nowrap;">Refresh</button>
-            </div>
-            <div class="muted" style="margin-top:6px;">
-              Use sessions to keep separate transcripts and session-scoped approvals.
-            </div>
-          </div>
-          <div class="btn-group">
-            <button class="btn" id="agentStart">Start</button>
-            <button class="btn" id="agentStop">Stop</button>
-            <button class="btn" id="agentRefresh">Refresh Transcript</button>
-          </div>
-          <div class="field" style="margin-top:10px;">
-            <label>Transcript</label>
-            <div id="agentTranscript" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 12px; line-height: 1.35; background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); padding: 10px; border-radius: 10px; max-height: 260px; overflow:auto; white-space: pre-wrap;"></div>
-          </div>
-          <div class="field" style="margin-top:10px;">
-            <label>Journal (Current)</label>
-            <textarea id="agentJournalCurrent" class="memory-textarea" style="min-height: 120px;" placeholder="Short per-session notes (kept small for context efficiency)."></textarea>
-          </div>
-          <div class="btn-group">
-            <button class="btn primary" id="agentJournalSave">Save Journal</button>
-            <button class="btn" id="agentJournalRefresh">Refresh Journal</button>
-            <button class="btn" id="agentJournalAppend">+ Entry</button>
-          </div>
-          <div class="field" style="margin-top:10px;">
-            <label>Recent Journal Entries</label>
-            <div id="agentJournalEntries" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 12px; line-height: 1.35; background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); padding: 10px; border-radius: 10px; max-height: 200px; overflow:auto; white-space: pre-wrap;"></div>
-          </div>
-          <div class="field">
-            <label>Message</label>
-            <textarea id="agentInput" class="memory-textarea" style="min-height: 90px;" placeholder="Type a message to the agent..."></textarea>
-          </div>
-          <div class="btn-group">
-            <button class="btn primary" id="agentSend">Send</button>
-            <button class="btn" id="agentClearInput">Clear</button>
-          </div>
-          <div class="muted" id="agentHint" style="margin-top:6px;"></div>
-        </section>
-
         <!-- SSHD -->
         <section class="card">
           <div class="card-header">
@@ -1219,19 +1207,30 @@
             <div class="card-title">UI Maintenance</div>
           </div>
           <div class="row">
-            <span class="muted">Open Android settings for this app.</span>
-            <div class="btn-group" style="margin-left:auto;">
-              <button class="btn" id="openAppSettings">App Settings</button>
-              <button class="btn" id="openOpenByDefault">Open by default</button>
-            </div>
-          </div>
-          <div class="row">
             <span class="muted">Reset the UI files to defaults.</span>
             <button class="btn" id="resetUi">Reset UI</button>
           </div>
           <div class="row" style="margin-top:10px;">
             <span class="muted">Reset agent docs (AGENTS/TOOLS/docs) to defaults.</span>
             <button class="btn" id="resetAgentDocs">Reset Agent Docs</button>
+          </div>
+        </section>
+
+        <!-- Android -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon blue">&#9881;</div>
+            <div class="card-title">Android</div>
+          </div>
+          <div class="card-desc">
+            OS-level app settings and defaults (not related to UI hot-reload or asset reset).
+          </div>
+          <div class="row">
+            <span class="muted">Open Android settings for this app.</span>
+            <div class="btn-group" style="margin-left:auto;">
+              <button class="btn nowrap" id="openAppSettings">App Settings</button>
+              <button class="btn nowrap" id="openOpenByDefault">Open by default</button>
+            </div>
           </div>
         </section>
 
@@ -1318,6 +1317,21 @@
       </div>
     </div>
 
+    <!-- Session Modal -->
+    <div class="modal" id="sessionModal" role="dialog" aria-modal="true" aria-labelledby="sessionTitle">
+      <div class="modal-card">
+        <div class="card-title" id="sessionTitle">Session</div>
+        <div class="muted" id="sessionSubtitle" style="margin-top:6px;"></div>
+        <div class="btn-group" style="margin-top:10px;">
+          <button class="btn primary" id="sessionNew">New</button>
+          <button class="btn" id="sessionRefresh">Refresh</button>
+          <button class="btn danger" id="sessionRemove">Remove</button>
+        </div>
+        <div class="session-list" id="sessionList"></div>
+        <button class="btn" id="sessionClose" style="width:100%; margin-top:12px;">Close</button>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
@@ -1343,8 +1357,6 @@
 
       const ICON = {
         settings: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.05-1.59a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.42.98a7.23 7.23 0 0 0-1.63-.94l-.37-2.6A.5.5 0 0 0 13.8 2h-3.6a.5.5 0 0 0-.49.42l-.37 2.6c-.58.23-1.12.54-1.63.94l-2.42-.98a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.05 1.59c-.04.31-.06.63-.06.94s.02.63.06.94l-2.05 1.59a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.42-.98c.5.39 1.05.7 1.63.94l.37 2.6a.5.5 0 0 0 .49.42h3.6a.5.5 0 0 0 .49-.42l.37-2.6c.58-.23 1.12-.54 1.63-.94l2.42.98a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.05-1.59ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>',
-        lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
-        unlock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.5-2"/></svg>',
         attach: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.49-8.48"/></svg>',
         mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4"/><path d="M8 23h8"/></svg>',
         stop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
@@ -1367,6 +1379,74 @@
         t.textContent = msg;
         t.classList.add("show");
         setTimeout(() => t.classList.remove("show"), ms || 2000);
+      }
+
+      // ==============================
+      // Sessions (Chat UI)
+      // ==============================
+      const sessionChip = $("sessionChip");
+      const sessionModal = $("sessionModal");
+      const sessionList = $("sessionList");
+      const sessionSubtitle = $("sessionSubtitle");
+
+      function setSessionChipText() {
+        try { sessionChip.textContent = String(chatSessionId || "default"); } catch (_) {}
+      }
+
+      function openSessionModal() {
+        try {
+          sessionSubtitle.textContent = "Current: " + String(chatSessionId || "");
+          sessionModal.classList.add("show");
+        } catch (_) {}
+        refreshSessionMenu();
+      }
+
+      function closeSessionModal() {
+        try { sessionModal.classList.remove("show"); } catch (_) {}
+      }
+
+      async function refreshSessionMenu() {
+        const cur = String(chatSessionId || "").trim();
+        try {
+          const res = await fetch(API + "/brain/sessions?limit=60");
+          const data = res.ok ? await res.json().catch(() => ({})) : {};
+          const items = Array.isArray(data.sessions) ? data.sessions : [];
+          const uniq = [];
+          function addSid(s) { if (s && !uniq.includes(s)) uniq.push(s); }
+          addSid("default");
+          addSid(cur);
+          for (const it of items) addSid(String(it.session_id || "").trim());
+
+          const rows = [];
+          for (const sid of uniq.filter(Boolean)) {
+            const found = items.find(x => String(x.session_id || "").trim() === sid) || null;
+            const count = found ? Number(found.count || 0) : 0;
+            const last = found ? Number(found.last_created_at || 0) : 0;
+            const meta = [];
+            if (count) meta.push(String(count) + " msg");
+            if (last) meta.push((new Date(last)).toLocaleString());
+            rows.push(
+              "<div class='session-item" + (sid === cur ? " active" : "") + "' data-sid='" + sid.replace(/'/g, "&#39;") + "'>" +
+                "<div style='min-width:0;'>" +
+                  "<div class='sid'>" + sid.replace(/&/g,\"&amp;\").replace(/</g,\"&lt;\").replace(/>/g,\"&gt;\") + "</div>" +
+                  "<div class='meta'>" + meta.join(" · ") + "</div>" +
+                "</div>" +
+                "<div class='meta' style='white-space:nowrap;'>" + (sid === cur ? "current" : "tap") + "</div>" +
+              "</div>"
+            );
+          }
+          sessionList.innerHTML = rows.join("") || "<div class='muted'>(no sessions)</div>";
+          for (const el of sessionList.querySelectorAll(".session-item[data-sid]")) {
+            el.addEventListener("click", async () => {
+              const sid = String(el.getAttribute("data-sid") || "").trim();
+              if (!sid) return;
+              await switchChatSession(sid);
+              closeSessionModal();
+            });
+          }
+        } catch (_) {
+          sessionList.innerHTML = "<div class='muted'>(sessions unavailable)</div>";
+        }
       }
 
       // ==============================
@@ -2068,6 +2148,22 @@
         return created;
       }
       chatSessionId = loadSessionId();
+      setSessionChipText();
+
+      async function switchChatSession(newId) {
+        const sid = String(newId || "").trim();
+        if (!sid) return;
+        if (streaming) { showToast("Wait for reply before switching", 1400); return; }
+        if (sid === chatSessionId) return;
+        chatSessionId = sid;
+        try { localStorage.setItem(CHAT_SESSION_KEY, sid); } catch (_) {}
+        setSessionChipText();
+        conversation = [];
+        lastServerTs = 0;
+        try { chatMessages.textContent = ""; } catch (_) {}
+        restoreConversation();
+        await syncConversationFromServer();
+      }
 
       function convoStorageKey() {
         return CHAT_STORAGE_PREFIX + chatSessionId;
@@ -2336,6 +2432,44 @@
       restoreConversation();
       syncConversationFromServer();
       setInterval(pollServerMessages, 900);
+
+      // Session menu handlers.
+      try { sessionChip.addEventListener("click", openSessionModal); } catch (_) {}
+      try { $("sessionClose").addEventListener("click", closeSessionModal); } catch (_) {}
+      try {
+        sessionModal.addEventListener("click", (e) => {
+          if (e && e.target === sessionModal) closeSessionModal();
+        });
+      } catch (_) {}
+      try { $("sessionRefresh").addEventListener("click", refreshSessionMenu); } catch (_) {}
+      try {
+        $("sessionNew").addEventListener("click", async () => {
+          const name = String(window.prompt("New session id (optional):", "") || "").trim();
+          const sid = name || genSessionId();
+          await switchChatSession(sid);
+          await refreshSessionMenu();
+          showToast("Session created", 900);
+        });
+      } catch (_) {}
+      try {
+        $("sessionRemove").addEventListener("click", async () => {
+          const sid = String(chatSessionId || "").trim();
+          if (!sid) return;
+          if (!confirm("Remove current session '" + sid + "'?\nThis deletes the on-device transcript for that session.")) return;
+          try {
+            await fetch(API + "/brain/session/delete", {
+              method: "POST",
+              headers: { "Content-Type": "application/json; charset=utf-8" },
+              body: JSON.stringify({ session_id: sid }),
+            });
+          } catch (_) {}
+          try { localStorage.removeItem(CHAT_STORAGE_PREFIX + sid); } catch (_) {}
+          const next = (sid === "default") ? genSessionId() : "default";
+          await switchChatSession(next);
+          await refreshSessionMenu();
+          showToast("Session removed", 1100);
+        });
+      } catch (_) {}
 
       async function sendChat() {
         if (streaming) return;
@@ -3127,253 +3261,6 @@
         else if (value === "stopping") el.classList.add("stopping");
         else el.classList.add("starting");
       }
-
-      // ==============================
-      // Agent Console
-      // ==============================
-      const agentStatus = $("agentStatus");
-      const agentSession = $("agentSession");
-      const agentTranscript = $("agentTranscript");
-      const agentJournalCurrent = $("agentJournalCurrent");
-      const agentJournalEntries = $("agentJournalEntries");
-      const agentInput = $("agentInput");
-      const agentHint = $("agentHint");
-
-      function currentAgentSessionId() {
-        const v = String(agentSession && agentSession.value || "default").trim();
-        return v || "default";
-      }
-
-      function fmtTs(ts) {
-        const t = Number(ts || 0);
-        if (!isFinite(t) || t <= 0) return "";
-        try {
-          const d = new Date(t);
-          return d.toLocaleString();
-        } catch (_) {
-          return "";
-        }
-      }
-
-      async function refreshAgentStatus() {
-        try {
-          const res = await fetch(API + "/brain/status");
-          if (!res.ok) throw 0;
-          const data = await res.json();
-          const running = !!data.running;
-          const enabled = !!data.enabled;
-          const busy = !!data.busy;
-          const q = Number(data.queue_size || 0);
-          if (!enabled) setStatus(agentStatus, "offline");
-          else if (busy) setStatus(agentStatus, "starting");
-          else if (running) setStatus(agentStatus, "ok");
-          else setStatus(agentStatus, "offline");
-          const parts = [];
-          parts.push("enabled=" + (enabled ? "true" : "false"));
-          parts.push("running=" + (running ? "true" : "false"));
-          parts.push("queue=" + (isFinite(q) ? String(q) : "0"));
-          if (data.last_error) parts.push("last_error=" + String(data.last_error).slice(0, 200));
-          agentHint.textContent = parts.join("  ");
-        } catch (_) {
-          setStatus(agentStatus, "offline");
-          agentHint.textContent = "brain status unavailable";
-        }
-      }
-
-      async function refreshAgentSessions() {
-        const cur = currentAgentSessionId();
-        try {
-          const res = await fetch(API + "/brain/sessions?limit=30");
-          if (!res.ok) throw 0;
-          const data = await res.json();
-          const items = Array.isArray(data.sessions) ? data.sessions : [];
-          const sids = items.map(x => String(x.session_id || "").trim()).filter(Boolean);
-          const uniq = [];
-          for (const s of sids) if (!uniq.includes(s)) uniq.push(s);
-          if (!uniq.includes("default")) uniq.unshift("default");
-          agentSession.innerHTML = "";
-          for (const s of uniq) {
-            const opt = document.createElement("option");
-            opt.value = s;
-            opt.textContent = s;
-            agentSession.appendChild(opt);
-          }
-          agentSession.value = uniq.includes(cur) ? cur : "default";
-        } catch (_) {
-          // Keep whatever is currently present.
-          if (!agentSession.value) agentSession.value = "default";
-        }
-      }
-
-      function renderAgentTranscript(messages) {
-        const sid = currentAgentSessionId();
-        if (!Array.isArray(messages) || messages.length === 0) {
-          agentTranscript.textContent = "(no messages for session: " + sid + ")";
-          return;
-        }
-        const lines = [];
-        for (const m of messages) {
-          const role = String(m.role || "").trim() || "unknown";
-          const text = String(m.text || "");
-          const meta = (m && typeof m.meta === "object" && m.meta) ? m.meta : {};
-          const actor = String(meta.actor || "").trim();
-          const ts = fmtTs(m.ts);
-          const head = "[" + (ts || "no-ts") + "] " + role + (actor ? "/" + actor : "");
-          lines.push(head);
-          lines.push(text);
-          lines.push("");
-        }
-        agentTranscript.textContent = lines.join("\n").trim() + "\n";
-        agentTranscript.scrollTop = agentTranscript.scrollHeight;
-      }
-
-      async function refreshAgentTranscript() {
-        const sid = currentAgentSessionId();
-        try {
-          const res = await fetch(API + "/brain/messages?session_id=" + encodeURIComponent(sid) + "&limit=200");
-          if (!res.ok) throw 0;
-          const data = await res.json();
-          renderAgentTranscript(data.messages || []);
-        } catch (_) {
-          agentTranscript.textContent = "(failed to load transcript)";
-        }
-      }
-
-      function renderAgentJournalEntries(items) {
-        if (!Array.isArray(items) || items.length === 0) {
-          agentJournalEntries.textContent = "(no journal entries)";
-          return;
-        }
-        const lines = [];
-        for (const it of items) {
-          const ts = fmtTs(it.ts);
-          const kind = String(it.kind || "").trim();
-          const title = String(it.title || "").trim();
-          const stored = String(it.stored_path || "").trim();
-          const text = String(it.text || "");
-          const head = "[" + (ts || "no-ts") + "]" + (kind ? (" " + kind) : "") + (title ? (" " + title) : "");
-          lines.push(head);
-          if (stored) lines.push("(stored: " + stored + ")");
-          if (text) lines.push(text);
-          lines.push("");
-        }
-        agentJournalEntries.textContent = lines.join("\n").trim() + "\n";
-      }
-
-      async function refreshAgentJournal() {
-        const sid = currentAgentSessionId();
-        try {
-          const res = await fetch(API + "/brain/journal/current?session_id=" + encodeURIComponent(sid));
-          if (!res.ok) throw 0;
-          const data = await res.json();
-          agentJournalCurrent.value = String(data.text || "");
-        } catch (_) {
-          // Keep user's edits if fetch fails.
-        }
-        try {
-          const res = await fetch(API + "/brain/journal/list?session_id=" + encodeURIComponent(sid) + "&limit=30");
-          if (!res.ok) throw 0;
-          const data = await res.json();
-          renderAgentJournalEntries(data.entries || []);
-        } catch (_) {
-          agentJournalEntries.textContent = "(failed to load journal entries)";
-        }
-      }
-
-      async function saveAgentJournal() {
-        const sid = currentAgentSessionId();
-        try {
-          const text = String(agentJournalCurrent.value || "");
-          const res = await fetch(API + "/brain/journal/current", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ session_id: sid, text }),
-          });
-          if (!res.ok) throw 0;
-          showToast("Journal saved", 1200);
-          await refreshAgentJournal();
-        } catch (_) {
-          showToast("Journal save failed", 1500);
-        }
-      }
-
-      async function appendAgentJournalEntry() {
-        const sid = currentAgentSessionId();
-        const title = String(window.prompt("Entry title (optional):", "") || "").trim();
-        const text = String(window.prompt("Entry text:", "") || "").trim();
-        if (!title && !text) return;
-        try {
-          const res = await fetch(API + "/brain/journal/append", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ session_id: sid, kind: "milestone", title, text, meta: { source: "webui_agent_console" } }),
-          });
-          if (!res.ok) throw 0;
-          showToast("Entry added", 1200);
-          await refreshAgentJournal();
-        } catch (_) {
-          showToast("Entry add failed", 1500);
-        }
-      }
-
-      async function agentSendMessage() {
-        const sid = currentAgentSessionId();
-        const text = String(agentInput.value || "").trim();
-        if (!text) { showToast("Enter a message", 1400); return; }
-        try {
-          const res = await fetch(API + "/brain/inbox/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ text, meta: { session_id: sid, source: "webui_agent_console" } }),
-          });
-          if (!res.ok) throw 0;
-          agentInput.value = "";
-          showToast("Sent", 900);
-          // Give the loop a moment to write the user message, then refresh.
-          setTimeout(() => { refreshAgentStatus(); refreshAgentTranscript(); }, 600);
-        } catch (_) {
-          showToast("Send failed", 1500);
-        }
-      }
-
-      $("agentSessionsRefresh").addEventListener("click", async () => {
-        await refreshAgentSessions();
-        await refreshAgentTranscript();
-        await refreshAgentJournal();
-      });
-      agentSession.addEventListener("change", () => {
-        refreshAgentTranscript();
-        refreshAgentJournal();
-      });
-      $("agentStart").addEventListener("click", async () => {
-        try {
-          await fetch(API + "/brain/start", { method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
-        } catch (_) {}
-        await refreshAgentStatus();
-      });
-      $("agentStop").addEventListener("click", async () => {
-        try {
-          await fetch(API + "/brain/stop", { method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
-        } catch (_) {}
-        await refreshAgentStatus();
-      });
-      $("agentRefresh").addEventListener("click", async () => {
-        await refreshAgentStatus();
-        await refreshAgentTranscript();
-        await refreshAgentJournal();
-      });
-      $("agentJournalRefresh").addEventListener("click", refreshAgentJournal);
-      $("agentJournalSave").addEventListener("click", saveAgentJournal);
-      $("agentJournalAppend").addEventListener("click", appendAgentJournalEntry);
-      $("agentSend").addEventListener("click", agentSendMessage);
-      $("agentClearInput").addEventListener("click", () => { agentInput.value = ""; });
-      agentInput.addEventListener("keydown", (e) => {
-        // Ctrl/Cmd+Enter to send.
-        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-          e.preventDefault();
-          agentSendMessage();
-        }
-      });
 
       async function refreshPython() {
         try {

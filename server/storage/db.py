@@ -227,6 +227,14 @@ class Storage:
             )
             return [dict(r) for r in cur.fetchall()]
 
+    def delete_chat_session(self, session_id: str) -> int:
+        sid = (session_id or "").strip()
+        if not sid:
+            return 0
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (sid,))
+            return int(getattr(cur, "rowcount", 0) or 0)
+
     def get_setting(self, key: str) -> Optional[str]:
         with self._connect() as conn:
             cur = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))

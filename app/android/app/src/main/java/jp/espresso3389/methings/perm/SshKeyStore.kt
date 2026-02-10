@@ -9,13 +9,21 @@ class SshKeyStore(context: Context) {
     private val dao = PlainDbProvider.get(context).sshKeyDao()
 
     fun upsert(key: String, label: String?, expiresAt: Long?): SshKeyEntity {
+        return upsertMerge(key, label, expiresAt)
+    }
+
+    fun upsertMerge(key: String, label: String?, expiresAt: Long?): SshKeyEntity {
         val fingerprint = fingerprintFor(key)
+        val existing = dao.getByFingerprint(fingerprint)
+        val createdAt = existing?.createdAt ?: System.currentTimeMillis()
+        val finalLabel = label?.trim()?.takeIf { it.isNotBlank() } ?: existing?.label
+        val finalExpiresAt = expiresAt ?: existing?.expiresAt
         val entity = SshKeyEntity(
             fingerprint = fingerprint,
             key = key.trim(),
-            label = label,
-            expiresAt = expiresAt,
-            createdAt = System.currentTimeMillis()
+            label = finalLabel,
+            expiresAt = finalExpiresAt,
+            createdAt = createdAt
         )
         dao.upsert(entity)
         return entity

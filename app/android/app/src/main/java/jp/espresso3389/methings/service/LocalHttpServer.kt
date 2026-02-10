@@ -491,6 +491,7 @@ class LocalHttpServer(
                     uri == "/brain/stop" ||
                     uri == "/brain/inbox/chat" ||
                     uri == "/brain/inbox/event" ||
+                    uri == "/brain/session/delete" ||
                     uri == "/brain/debug/comment" ||
                     uri == "/brain/journal/current" ||
                     uri == "/brain/journal/append"
@@ -1058,6 +1059,13 @@ class LocalHttpServer(
                 )
             }
             uri == "/ssh/keys" -> {
+                // If the authorized_keys file was edited externally (e.g., via SSH), the DB-backed
+                // key list can get out of sync. Import any valid keys from the file so the UI
+                // reflects reality and future syncs won't accidentally drop them.
+                try {
+                    importAuthorizedKeysFromFile()
+                } catch (_: Exception) {
+                }
                 val arr = org.json.JSONArray()
                 sshKeyStore.listAll().forEach { key ->
                     arr.put(
@@ -4961,6 +4969,63 @@ class LocalHttpServer(
             if (label != null) "$key $label" else key
         }
         authFile.writeText(lines.joinToString("\n") + if (lines.isNotEmpty()) "\n" else "")
+    }
+
+    private fun importAuthorizedKeysFromFile() {
+        val userHome = File(context.filesDir, "user")
+        val authFile = File(File(userHome, ".ssh"), "authorized_keys")
+        if (!authFile.exists()) return
+        val text = runCatching { authFile.readText() }.getOrNull() ?: return
+        val lines = text.split("\n")
+        for (raw in lines) {
+            val line = raw.trim()
+            if (line.isBlank()) continue
+            if (line.startsWith("#")) continue
+            val parsed = parseAuthorizedKeysLine(line) ?: continue
+            val label = sanitizeSshKeyLabel(parsed.comment ?: "")
+            // Merge into DB without clobbering existing metadata.
+            sshKeyStore.upsertMerge(parsed.canonicalNoComment(), label, expiresAt = null)
+        }
+    }
+
+    private fun parseAuthorizedKeysLine(raw: String): ParsedSshPublicKey? {
+        // authorized_keys can contain options before the key type:
+        //   from="1.2.3.4" ssh-ed25519 AAAA... comment
+        // We only import keys (ignore options). Prefer the first token that matches a key type.
+        val line = raw.trim().replace("\r", " ").replace("\n", " ").trim()
+        if (line.isBlank()) return null
+        val toks = line.split(Regex("\\s+"))
+        if (toks.size < 2) return null
+
+        val allowed = setOf(
+            "ssh-ed25519",
+            "ssh-rsa",
+            "ecdsa-sha2-nistp256",
+            "ecdsa-sha2-nistp384",
+            "ecdsa-sha2-nistp521",
+            "sk-ssh-ed25519@openssh.com",
+            "sk-ecdsa-sha2-nistp256@openssh.com"
+        )
+        var idx = -1
+        for (i in 0 until toks.size - 1) {
+            val t = toks[i].trim()
+            if (allowed.contains(t.lowercase(Locale.US))) {
+                idx = i
+                break
+            }
+        }
+        if (idx < 0 || idx + 1 >= toks.size) return null
+        val type = toks[idx].trim()
+        val b64 = toks[idx + 1].trim()
+        val comment = if (idx + 2 < toks.size) toks.subList(idx + 2, toks.size).joinToString(" ").trim().ifBlank { null } else null
+
+        try {
+            val decoded = Base64.decode(b64, Base64.DEFAULT)
+            if (decoded.isEmpty()) return null
+        } catch (_: Exception) {
+            return null
+        }
+        return ParsedSshPublicKey(type = type, b64 = b64, comment = comment)
     }
 
     private fun createTask(name: String, payload: JSONObject): AgentTask {

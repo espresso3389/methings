@@ -645,6 +645,18 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 meta = {}
             self._send_json(JOURNAL.append(session_id, kind=kind, title=title, text=text, meta=meta))
             return
+        if parsed.path == "/brain/session/delete":
+            session_id = str((payload or {}).get("session_id") or "").strip()
+            if not session_id:
+                self._send_json({"error": "missing_session_id"}, status=400)
+                return
+            deleted = 0
+            try:
+                deleted = STORAGE.delete_chat_session(session_id)
+            except Exception:
+                deleted = 0
+            self._send_json({"status": "ok", "session_id": session_id, "deleted": int(deleted or 0)})
+            return
         if parsed.path == "/brain/debug/comment":
             # Debug-only: insert a message into a given session without enqueuing agent work.
             sid = str((payload or {}).get("session_id") or "default").strip() or "default"
