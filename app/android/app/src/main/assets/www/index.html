@@ -1045,6 +1045,22 @@
       }
       .session-item.active .sid { color: var(--accent-hover); }
       .session-item .meta { font-size: 11px; color: var(--ink-muted); white-space: nowrap; }
+      .session-item .session-del {
+        width: 26px;
+        height: 26px;
+        flex-shrink: 0;
+        border-radius: var(--radius-sm);
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--ink-muted);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        transition: background var(--transition), color var(--transition), border-color var(--transition);
+      }
+      .session-item .session-del svg { width: 14px; height: 14px; display: block; }
+      .session-item .session-del:hover { background: var(--red-soft); color: var(--red); border-color: rgba(239,68,68,0.25); }
+      .session-item .session-del:active { transform: scale(0.9); }
     </style>
   </head>
   <body>
@@ -1342,18 +1358,16 @@
     <!-- Session Modal -->
     <div class="modal" id="sessionModal" role="dialog" aria-modal="true" aria-labelledby="sessionTitle">
       <div class="modal-card" style="text-align:left; max-width:360px;">
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
-          <div class="card-icon purple" style="width:30px; height:30px; font-size:14px;">&#9654;</div>
-          <div class="card-title" id="sessionTitle">Sessions</div>
+        <div class="card-header">
+          <div class="card-icon purple">&#9654;</div>
+          <div class="card-title" id="sessionTitle" style="margin-bottom:0;">Sessions</div>
           <button class="icon-btn secondary" id="sessionClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
         </div>
-        <div class="muted" id="sessionSubtitle" style="font-size:12px; margin-bottom:12px;"></div>
-        <div class="btn-group">
-          <button class="btn primary" id="sessionNew">New</button>
-          <button class="btn" id="sessionRefresh">Refresh</button>
-          <button class="btn danger" id="sessionRemove">Delete</button>
-        </div>
         <div class="session-list" id="sessionList"></div>
+        <div style="display:flex; align-items:center; gap:6px; margin-top:10px;">
+          <button class="icon-btn" id="sessionNew" style="width:30px; height:30px;" title="New session" aria-label="New session"></button>
+          <button class="icon-btn" id="sessionRefresh" style="width:30px; height:30px;" title="Refresh" aria-label="Refresh"></button>
+        </div>
       </div>
     </div>
 
@@ -1389,6 +1403,8 @@
         back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>',
         close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></svg>',
         share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5 15.4 17.5"/><path d="M15.4 6.5 8.6 10.5"/></svg>',
+        plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
+        refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
       };
 
       // Set static button icons (record button is handled by setRecordUi()).
@@ -1398,6 +1414,8 @@
       try { $("backToChatBtn").innerHTML = ICON.back; } catch (_) {}
       try { $("viewerClose").innerHTML = ICON.close; } catch (_) {}
       try { $("viewerShare").innerHTML = ICON.share; } catch (_) {}
+      try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
+      try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
 
       function showToast(msg, ms) {
@@ -1413,18 +1431,13 @@
       const sessionChip = $("sessionChip");
       const sessionModal = $("sessionModal");
       const sessionList = $("sessionList");
-      const sessionSubtitle = $("sessionSubtitle");
 
       function setSessionChipText() {
         try { sessionChip.textContent = String(chatSessionId || "default"); } catch (_) {}
       }
 
       function openSessionModal() {
-        try {
-          const sid = String(chatSessionId || "default");
-          sessionSubtitle.textContent = "Active: " + sid;
-          sessionModal.classList.add("show");
-        } catch (_) {}
+        try { sessionModal.classList.add("show"); } catch (_) {}
         refreshSessionMenu();
       }
 
@@ -1461,23 +1474,49 @@
               else meta.push(d.toLocaleDateString());
             }
             const isCur = sid === cur;
+            const eSid = sid.replace(/'/g, "&#39;");
+            const hSid = sid.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
             rows.push(
-              "<div class='session-item" + (isCur ? " active" : "") + "' data-sid='" + sid.replace(/'/g, "&#39;") + "'>" +
+              "<div class='session-item" + (isCur ? " active" : "") + "' data-sid='" + eSid + "'>" +
                 "<div style='min-width:0; flex:1;'>" +
-                  "<div class='sid'>" + sid.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;") + "</div>" +
+                  "<div class='sid'>" + hSid + "</div>" +
                   (meta.length ? "<div class='meta'>" + meta.join(" &middot; ") + "</div>" : "") +
                 "</div>" +
                 (isCur ? "<div style='font-size:10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--accent); background:var(--accent-soft); border:1px solid rgba(99,102,241,0.25); border-radius:var(--radius-full); padding:2px 8px;'>active</div>" : "") +
+                "<button class='session-del' data-del='" + eSid + "' title='Delete session'>" + ICON.close + "</button>" +
               "</div>"
             );
           }
           sessionList.innerHTML = rows.join("") || "<div class='muted'>(no sessions)</div>";
           for (const el of sessionList.querySelectorAll(".session-item[data-sid]")) {
-            el.addEventListener("click", async () => {
+            el.addEventListener("click", async (e) => {
+              if (e.target.closest(".session-del")) return;
               const sid = String(el.getAttribute("data-sid") || "").trim();
               if (!sid) return;
               await switchChatSession(sid);
               closeSessionModal();
+            });
+          }
+          for (const btn of sessionList.querySelectorAll(".session-del[data-del]")) {
+            btn.addEventListener("click", async (e) => {
+              e.stopPropagation();
+              const sid = String(btn.getAttribute("data-del") || "").trim();
+              if (!sid) return;
+              if (!confirm("Delete session '" + sid + "'?\nThis removes the on-device transcript.")) return;
+              try {
+                const r = await fetch(API + "/brain/session/delete", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json; charset=utf-8" },
+                  body: JSON.stringify({ session_id: sid }),
+                });
+                if (!r.ok) showToast("Removed locally (app update needed to delete transcript)", 1800);
+              } catch (_) {}
+              try { localStorage.removeItem(CHAT_STORAGE_PREFIX + sid); } catch (_) {}
+              if (sid === String(chatSessionId || "").trim()) {
+                await switchChatSession("default");
+              }
+              await refreshSessionMenu();
+              showToast("Session deleted", 1100);
             });
           }
         } catch (_) {
@@ -2487,29 +2526,7 @@
           showToast("Session created", 900);
         });
       } catch (_) {}
-      try {
-        $("sessionRemove").addEventListener("click", async () => {
-          const sid = String(chatSessionId || "").trim();
-          if (!sid) return;
-          if (!confirm("Remove current session '" + sid + "'?\nThis deletes the on-device transcript for that session.")) return;
-          try {
-            const r = await fetch(API + "/brain/session/delete", {
-              method: "POST",
-              headers: { "Content-Type": "application/json; charset=utf-8" },
-              body: JSON.stringify({ session_id: sid }),
-            });
-            if (!r.ok) {
-              // Older APKs may not have this endpoint yet. Still allow local-only removal.
-              showToast("Removed locally (app update needed to delete device transcript)", 1800);
-            }
-          } catch (_) {}
-          try { localStorage.removeItem(CHAT_STORAGE_PREFIX + sid); } catch (_) {}
-          const next = (sid === "default") ? genSessionId() : "default";
-          await switchChatSession(next);
-          await refreshSessionMenu();
-          showToast("Session removed", 1100);
-        });
-      } catch (_) {}
+      // Session delete is now handled per-item inside refreshSessionMenu().
 
       async function sendChat() {
         if (streaming) return;
