@@ -1127,6 +1127,48 @@
           </div>
         </section>
 
+        <!-- Agent Console -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon blue">&#9993;</div>
+            <div class="card-title">Agent Console</div>
+            <div id="agentStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
+          </div>
+          <div class="card-desc">
+            Send messages to the on-device agent and view the transcript (stored in the on-device DB).
+          </div>
+          <div class="field">
+            <label>Session</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <select id="agentSession" style="flex:1; min-width: 0;">
+                <option value="default">default</option>
+              </select>
+              <button class="btn" id="agentSessionsRefresh" style="white-space:nowrap;">Refresh</button>
+            </div>
+            <div class="muted" style="margin-top:6px;">
+              Use sessions to keep separate transcripts and session-scoped approvals.
+            </div>
+          </div>
+          <div class="btn-group">
+            <button class="btn" id="agentStart">Start</button>
+            <button class="btn" id="agentStop">Stop</button>
+            <button class="btn" id="agentRefresh">Refresh Transcript</button>
+          </div>
+          <div class="field" style="margin-top:10px;">
+            <label>Transcript</label>
+            <div id="agentTranscript" style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 12px; line-height: 1.35; background: rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.08); padding: 10px; border-radius: 10px; max-height: 260px; overflow:auto; white-space: pre-wrap;"></div>
+          </div>
+          <div class="field">
+            <label>Message</label>
+            <textarea id="agentInput" class="memory-textarea" style="min-height: 90px;" placeholder="Type a message to the agent..."></textarea>
+          </div>
+          <div class="btn-group">
+            <button class="btn primary" id="agentSend">Send</button>
+            <button class="btn" id="agentClearInput">Clear</button>
+          </div>
+          <div class="muted" id="agentHint" style="margin-top:6px;"></div>
+        </section>
+
         <!-- SSHD -->
         <section class="card">
           <div class="card-header">
@@ -1175,6 +1217,13 @@
           <div class="card-header">
             <div class="card-icon red">&#9888;</div>
             <div class="card-title">UI Maintenance</div>
+          </div>
+          <div class="row">
+            <span class="muted">Open Android settings for this app.</span>
+            <div class="btn-group" style="margin-left:auto;">
+              <button class="btn" id="openAppSettings">App Settings</button>
+              <button class="btn" id="openOpenByDefault">Open by default</button>
+            </div>
           </div>
           <div class="row">
             <span class="muted">Reset the UI files to defaults.</span>
@@ -3021,6 +3070,168 @@
         else el.classList.add("starting");
       }
 
+      // ==============================
+      // Agent Console
+      // ==============================
+      const agentStatus = $("agentStatus");
+      const agentSession = $("agentSession");
+      const agentTranscript = $("agentTranscript");
+      const agentInput = $("agentInput");
+      const agentHint = $("agentHint");
+
+      function currentAgentSessionId() {
+        const v = String(agentSession && agentSession.value || "default").trim();
+        return v || "default";
+      }
+
+      function fmtTs(ts) {
+        const t = Number(ts || 0);
+        if (!isFinite(t) || t <= 0) return "";
+        try {
+          const d = new Date(t);
+          return d.toLocaleString();
+        } catch (_) {
+          return "";
+        }
+      }
+
+      async function refreshAgentStatus() {
+        try {
+          const res = await fetch(API + "/brain/status");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          const running = !!data.running;
+          const enabled = !!data.enabled;
+          const busy = !!data.busy;
+          const q = Number(data.queue_size || 0);
+          if (!enabled) setStatus(agentStatus, "offline");
+          else if (busy) setStatus(agentStatus, "starting");
+          else if (running) setStatus(agentStatus, "ok");
+          else setStatus(agentStatus, "offline");
+          const parts = [];
+          parts.push("enabled=" + (enabled ? "true" : "false"));
+          parts.push("running=" + (running ? "true" : "false"));
+          parts.push("queue=" + (isFinite(q) ? String(q) : "0"));
+          if (data.last_error) parts.push("last_error=" + String(data.last_error).slice(0, 200));
+          agentHint.textContent = parts.join("  ");
+        } catch (_) {
+          setStatus(agentStatus, "offline");
+          agentHint.textContent = "brain status unavailable";
+        }
+      }
+
+      async function refreshAgentSessions() {
+        const cur = currentAgentSessionId();
+        try {
+          const res = await fetch(API + "/brain/sessions?limit=30");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          const items = Array.isArray(data.sessions) ? data.sessions : [];
+          const sids = items.map(x => String(x.session_id || "").trim()).filter(Boolean);
+          const uniq = [];
+          for (const s of sids) if (!uniq.includes(s)) uniq.push(s);
+          if (!uniq.includes("default")) uniq.unshift("default");
+          agentSession.innerHTML = "";
+          for (const s of uniq) {
+            const opt = document.createElement("option");
+            opt.value = s;
+            opt.textContent = s;
+            agentSession.appendChild(opt);
+          }
+          agentSession.value = uniq.includes(cur) ? cur : "default";
+        } catch (_) {
+          // Keep whatever is currently present.
+          if (!agentSession.value) agentSession.value = "default";
+        }
+      }
+
+      function renderAgentTranscript(messages) {
+        const sid = currentAgentSessionId();
+        if (!Array.isArray(messages) || messages.length === 0) {
+          agentTranscript.textContent = "(no messages for session: " + sid + ")";
+          return;
+        }
+        const lines = [];
+        for (const m of messages) {
+          const role = String(m.role || "").trim() || "unknown";
+          const text = String(m.text || "");
+          const meta = (m && typeof m.meta === "object" && m.meta) ? m.meta : {};
+          const actor = String(meta.actor || "").trim();
+          const ts = fmtTs(m.ts);
+          const head = "[" + (ts || "no-ts") + "] " + role + (actor ? "/" + actor : "");
+          lines.push(head);
+          lines.push(text);
+          lines.push("");
+        }
+        agentTranscript.textContent = lines.join("\n").trim() + "\n";
+        agentTranscript.scrollTop = agentTranscript.scrollHeight;
+      }
+
+      async function refreshAgentTranscript() {
+        const sid = currentAgentSessionId();
+        try {
+          const res = await fetch(API + "/brain/messages?session_id=" + encodeURIComponent(sid) + "&limit=200");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          renderAgentTranscript(data.messages || []);
+        } catch (_) {
+          agentTranscript.textContent = "(failed to load transcript)";
+        }
+      }
+
+      async function agentSendMessage() {
+        const sid = currentAgentSessionId();
+        const text = String(agentInput.value || "").trim();
+        if (!text) { showToast("Enter a message", 1400); return; }
+        try {
+          const res = await fetch(API + "/brain/inbox/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ text, meta: { session_id: sid, source: "webui_agent_console" } }),
+          });
+          if (!res.ok) throw 0;
+          agentInput.value = "";
+          showToast("Sent", 900);
+          // Give the loop a moment to write the user message, then refresh.
+          setTimeout(() => { refreshAgentStatus(); refreshAgentTranscript(); }, 600);
+        } catch (_) {
+          showToast("Send failed", 1500);
+        }
+      }
+
+      $("agentSessionsRefresh").addEventListener("click", async () => {
+        await refreshAgentSessions();
+        await refreshAgentTranscript();
+      });
+      agentSession.addEventListener("change", () => {
+        refreshAgentTranscript();
+      });
+      $("agentStart").addEventListener("click", async () => {
+        try {
+          await fetch(API + "/brain/start", { method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
+        } catch (_) {}
+        await refreshAgentStatus();
+      });
+      $("agentStop").addEventListener("click", async () => {
+        try {
+          await fetch(API + "/brain/stop", { method: "POST", headers: { "Content-Type": "application/json; charset=utf-8" }, body: "{}" });
+        } catch (_) {}
+        await refreshAgentStatus();
+      });
+      $("agentRefresh").addEventListener("click", async () => {
+        await refreshAgentStatus();
+        await refreshAgentTranscript();
+      });
+      $("agentSend").addEventListener("click", agentSendMessage);
+      $("agentClearInput").addEventListener("click", () => { agentInput.value = ""; });
+      agentInput.addEventListener("keydown", (e) => {
+        // Ctrl/Cmd+Enter to send.
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          agentSendMessage();
+        }
+      });
+
       async function refreshPython() {
         try {
           const res = await fetch(API + "/python/status");
@@ -3236,6 +3447,26 @@
         setStatus(pythonStatus, "starting");
       });
 
+      $("openAppSettings").addEventListener("click", () => {
+        try {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openAppDetailsSettings) {
+            AndroidBridge.openAppDetailsSettings();
+            return;
+          }
+        } catch (_) {}
+        showToast("Not available on this build", 1600);
+      });
+
+      $("openOpenByDefault").addEventListener("click", () => {
+        try {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openAppOpenByDefaultSettings) {
+            AndroidBridge.openAppOpenByDefaultSettings();
+            return;
+          }
+        } catch (_) {}
+        showToast("Not available on this build", 1600);
+      });
+
       $("resetUi").addEventListener("click", () => {
         if (!window.confirm("Reset UI to defaults? This will overwrite any local changes.")) return;
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.resetUiToDefaults) {
@@ -3341,6 +3572,10 @@
           pinModal.classList.remove("show");
         }
       });
+
+      // Agent console initial load.
+      refreshAgentStatus();
+      refreshAgentSessions().then(() => refreshAgentTranscript());
 
       window.onPythonStatus = function(status) {
         setStatus(pythonStatus, status);

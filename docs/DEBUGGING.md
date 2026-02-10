@@ -73,6 +73,31 @@ Notes:
 - `role` can be `user`, `assistant`, or `tool`.
 - Tool outputs (including Python errors) appear as `role=tool` messages.
 
+## Talk To The Agent (UI)
+
+The in-app WebView control panel includes an **Agent Console** section:
+- Pick a `session_id` (keeps transcripts and “approve once per session” permissions separate)
+- Tap `Start` if the brain loop is not enabled
+- Type a message and tap `Send` (or `Ctrl+Enter`)
+
+This UI uses the same local HTTP APIs as the curl examples below.
+
+## Talk To The Agent (HTTP)
+
+Start the brain loop:
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:18765/brain/start' -H 'Content-Type: application/json' -d '{}'
+```
+
+Send a chat message to a specific session:
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:18765/brain/inbox/chat' \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"hello","meta":{"session_id":"debug"}}'
+```
+
 ## Filesystem Scope (Reducing Permission Noise)
 
 By default, the built-in filesystem tools are restricted to the user root (`files/user`).

@@ -197,7 +197,27 @@ class LocalHttpServer(
                     ((session.headers["x-methings-identity"] ?: session.headers["x-methings-identity"]) ?: "").trim()
                 val identity = payload.optString("identity", "").trim().ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
                 val capabilityFromTool = if (tool.startsWith("device.")) tool.removePrefix("device.").trim() else ""
-                val capability = payload.optString("capability", "").trim().ifBlank { capabilityFromTool }
+                val capabilityFromPayload = payload.optString("capability", "").trim()
+                val capability = capabilityFromPayload.ifBlank {
+                    if (capabilityFromTool.isNotBlank()) {
+                        capabilityFromTool
+                    } else if (tool.trim().lowercase() == "device_api") {
+                        // Back-compat: older clients used a generic "device_api" tool. Without a capability,
+                        // "remember approvals" becomes ineffective and the UI keeps prompting.
+                        val req = jp.espresso3389.methings.perm.DevicePermissionPolicy.requiredFor(tool, detail)
+                        when ((req?.userFacingLabel ?: "").trim().lowercase()) {
+                            "camera" -> "camera"
+                            "microphone" -> "mic"
+                            "location" -> "location"
+                            "bluetooth" -> "bluetooth"
+                            "usb device access" -> "usb"
+                            "text-to-speech" -> "tts"
+                            else -> "device"
+                        }
+                    } else {
+                        ""
+                    }
+                }
                 val remember = permissionPrefs.rememberApprovals()
                 val scope = when {
                     tool == "ssh_keys" -> "once"

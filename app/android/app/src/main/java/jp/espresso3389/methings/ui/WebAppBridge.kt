@@ -2,6 +2,8 @@ package jp.espresso3389.methings.ui
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
 import android.webkit.JavascriptInterface
@@ -257,6 +259,36 @@ class WebAppBridge(private val activity: MainActivity) {
             addr?.hostAddress ?: ""
         } catch (_: Exception) {
             ""
+        }
+    }
+
+    @JavascriptInterface
+    fun openAppDetailsSettings() {
+        handler.post {
+            runCatching {
+                activity.startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:${activity.packageName}")
+                    }
+                )
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun openAppOpenByDefaultSettings() {
+        handler.post {
+            // Some OEM builds don't support this action; fail soft back to app details.
+            val pkg = activity.packageName
+            val intent = Intent("android.settings.APP_OPEN_BY_DEFAULT_SETTINGS").apply {
+                data = Uri.parse("package:$pkg")
+                putExtra("android.provider.extra.APP_PACKAGE", pkg)
+                putExtra(Intent.EXTRA_PACKAGE_NAME, pkg)
+            }
+            val ok = runCatching { activity.startActivity(intent) }.isSuccess
+            if (!ok) {
+                openAppDetailsSettings()
+            }
         }
     }
 }

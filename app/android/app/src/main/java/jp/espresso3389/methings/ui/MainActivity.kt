@@ -345,27 +345,40 @@ class MainActivity : AppCompatActivity() {
 
         val name = device.deviceName
         UsbPermissionWaiter.begin(name)
-        try {
-            val pi = PendingIntent.getBroadcast(
-                this,
-                name.hashCode(),
-                Intent(this, UsbPermissionResultReceiver::class.java).apply {
-                    action = UsbPermissionResultReceiver.USB_PERMISSION_ACTION
-                    setPackage(packageName)
-                },
-                // Must be mutable: the platform attaches extras (UsbDevice, granted flag).
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        // Prefer the trampoline activity: some Android builds auto-deny background/non-UI requests
+        // or fail to show the OS prompt reliably.
+        runCatching {
+            startActivity(
+                Intent(this, UsbPermissionActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    putExtra(UsbPermissionActivity.EXTRA_DEVICE_NAME, name)
+                }
             )
-            usb.requestPermission(device, pi)
-        } catch (_: Exception) {
-            UsbPermissionWaiter.clear(name)
-            cb(false)
-            return
+        }.onFailure {
+            // Fallback to direct requestPermission() if the activity launch fails.
+            runCatching {
+                val pi = PendingIntent.getBroadcast(
+                    this,
+                    name.hashCode(),
+                    Intent(this, UsbPermissionResultReceiver::class.java).apply {
+                        action = UsbPermissionResultReceiver.USB_PERMISSION_ACTION
+                        setPackage(packageName)
+                    },
+                    // Must be mutable: the platform attaches extras (UsbDevice, granted flag).
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                )
+                usb.requestPermission(device, pi)
+            }.onFailure {
+                UsbPermissionWaiter.clear(name)
+                cb(false)
+                return
+            }
         }
 
         Thread {
-            // Do not time out user interaction. If the platform never responds, keep waiting.
-            val granted = UsbPermissionWaiter.await(name, timeoutMs = 0L)
+            // Bound the wait: some OEM builds never deliver the broadcast when the dialog
+            // fails to appear. In that case we show help UI instead of hanging forever.
+            val granted = UsbPermissionWaiter.await(name, timeoutMs = 60_000L)
             UsbPermissionWaiter.clear(name)
             val ok = granted && usb.hasPermission(device)
             runOnUiThread { cb(ok) }

@@ -1225,14 +1225,23 @@ class BrainRuntime:
         last_tool_summaries: List[Dict[str, Any]] = []
         # Build a normal conversation for the model so it can use context naturally.
         pending_input: List[Dict[str, Any]] = []
+
+        def _as_text_blocks_for_role(role: str, text: str) -> List[Dict[str, str]]:
+            # OpenAI Responses API expects message content as an array of content blocks.
+            # For assistant history, use output_text blocks (matches OpenAI examples).
+            r = str(role or "").strip().lower()
+            block_type = "output_text" if r == "assistant" else "input_text"
+            return [{"type": block_type, "text": str(text or "")}]
+
         pending_input.append(
             {
                 "role": "user",
-                "content": (
+                "content": _as_text_blocks_for_role(
+                    "user",
                     "Session notes (ephemeral, no permissions required):\n"
                     + json.dumps(self._session_notes.get(session_id) or {}, ensure_ascii=True)
                     + "\n\nPersistent memory (may be empty; writing may require permission):\n"
-                    + (persistent_memory.strip() or "(empty)")
+                    + (persistent_memory.strip() or "(empty)"),
                 ),
             }
         )
@@ -1254,10 +1263,14 @@ class BrainRuntime:
             text = msg.get("text")
             meta = msg.get("meta") if isinstance(msg.get("meta"), dict) else {}
             if role in {"user", "assistant"} and isinstance(text, str) and text.strip():
-                pending_input.append({"role": role, "content": _decorate_with_actor(role, text, meta)})
+                pending_input.append(
+                    {"role": role, "content": _as_text_blocks_for_role(role, _decorate_with_actor(role, text, meta))}
+                )
         cur_text = str(item.get("text") or "")
         cur_meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
-        pending_input.append({"role": "user", "content": _decorate_with_actor("user", cur_text, cur_meta)})
+        pending_input.append(
+            {"role": "user", "content": _as_text_blocks_for_role("user", _decorate_with_actor("user", cur_text, cur_meta))}
+        )
 
         for _ in range(max_rounds):
             system_prompt = str(cfg.get("system_prompt") or "")
@@ -1271,6 +1284,8 @@ class BrainRuntime:
                 "input": pending_input,
                 # Keep instructions on every round; some models drift once the tool loop begins.
                 "instructions": system_prompt,
+                # Avoid hard failures when prompts exceed provider limits.
+                "truncation": "auto",
             }
             # When tool_policy is required for this user request, ask the provider to enforce
             # tool calling at the API level as well (prevents "pretend tool results").
@@ -1331,13 +1346,14 @@ class BrainRuntime:
                     pending_input.append(
                         {
                             "role": "user",
-                            "content": (
+                            "content": _as_text_blocks_for_role(
+                                "user",
                                 "You returned an empty response (no text, no tool calls). "
                                 "You MUST either respond with text or call tools. "
                                 "If the user asked to take a photo and describe it, you must: "
                                 "1) call device_api camera.capture (if not already done), "
                                 "2) then call cloud_request to analyze the captured image (if user allowed cloud upload), "
-                                "3) then provide a textual description and include rel_path: ... for the captured image."
+                                "3) then provide a textual description and include rel_path: ... for the captured image.",
                             ),
                         }
                     )
@@ -1349,12 +1365,13 @@ class BrainRuntime:
                     pending_input = [
                         {
                             "role": "user",
-                            "content": (
+                            "content": _as_text_blocks_for_role(
+                                "user",
                                 "Tool policy is REQUIRED for this request. "
                                 "You MUST call one or more tools (device_api, run_python/run_pip/run_curl, "
                                 "filesystem tools, write_file, sleep) to perform the action(s), "
                                 "then summarize after tool outputs are provided. "
-                                "Do not claim you executed anything without tool output."
+                                "Do not claim you executed anything without tool output.",
                             ),
                         }
                     ]
@@ -1442,11 +1459,12 @@ class BrainRuntime:
             pending_input.append(
                 {
                     "role": "user",
-                    "content": (
+                    "content": _as_text_blocks_for_role(
+                        "user",
                         "Tool outputs have been provided. "
                         "If the user's request is fully satisfied, respond with the final answer and STOP. "
                         "If there are still outstanding checklist items or follow-up actions needed to satisfy the request, "
-                        "call additional tools now (within the remaining rounds) and only stop once the checklist is complete."
+                        "call additional tools now (within the remaining rounds) and only stop once the checklist is complete.",
                     ),
                 }
             )
@@ -1473,6 +1491,7 @@ class BrainRuntime:
                 "input": pending_input,
                 "instructions": final_prompt,
                 "tool_choice": "none",
+                "truncation": "auto",
             }
             if previous_response_id:
                 final_body["previous_response_id"] = previous_response_id
@@ -1863,7 +1882,8 @@ class BrainRuntime:
             body = {
                 "model": model,
                 "instructions": system_prompt,
-                "input": [{"role": "user", "content": planner_prompt}],
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": planner_prompt}]}],
+                "truncation": "auto",
             }
         else:
             body = {
