@@ -196,9 +196,63 @@ class DeviceApiTool:
         # Convenience defaults for UVC PTZ.
         selector = int(payload.get("selector") or 0x0D)  # CT_PANTILT_ABSOLUTE_CONTROL
         handle = str(payload.get("handle") or "").strip()
-        if not handle:
-            return {"status": "error", "error": "missing_handle"}
         timeout_ms = int(payload.get("timeout_ms") or 220)
+        device_name = str(payload.get("device_name") or payload.get("name") or "").strip()
+
+        def _uvc_pick_device_name() -> str:
+            # Best-effort: pick the first UVC VideoControl interface device.
+            resp = self._request_json("GET", "/usb/list", None, timeout_s=8.0)
+            body = resp.get("body") if isinstance(resp, dict) else None
+            if not isinstance(body, dict):
+                return ""
+            devices = body.get("devices")
+            if not isinstance(devices, list):
+                return ""
+            for d in devices:
+                if not isinstance(d, dict):
+                    continue
+                name = str(d.get("name") or "").strip()
+                if not name:
+                    continue
+                interfaces = d.get("interfaces")
+                if not isinstance(interfaces, list):
+                    continue
+                for it in interfaces:
+                    if not isinstance(it, dict):
+                        continue
+                    if int(it.get("interface_class") or -1) == 0x0E and int(it.get("interface_subclass") or -1) == 0x01:
+                        return name
+            return ""
+
+        def _usb_open(name: str) -> Dict[str, Any]:
+            return self._request_json("POST", "/usb/open", {"permission_id": pid, "name": name}, timeout_s=60.0)
+
+        def _usb_close(h: str) -> None:
+            h = str(h or "").strip()
+            if not h:
+                return
+            try:
+                self._request_json("POST", "/usb/close", {"permission_id": pid, "handle": h}, timeout_s=8.0)
+            except Exception:
+                pass
+
+        def _ensure_handle() -> str:
+            nonlocal device_name
+            nonlocal handle
+            if handle:
+                return handle
+            if not device_name:
+                device_name = _uvc_pick_device_name()
+            if not device_name:
+                return ""
+            opened = _usb_open(device_name)
+            b = opened.get("body") if isinstance(opened, dict) else None
+            if isinstance(b, dict) and b.get("status") == "ok":
+                handle = str(b.get("handle") or "").strip()
+            return handle
+
+        if not _ensure_handle():
+            return {"status": "error", "error": "missing_handle", "detail": "No handle provided and no UVC device could be selected."}
 
         # Resolve vc_interface + entity_id (camera terminal id) if absent.
         vc_interface = payload.get("vc_interface")
@@ -228,26 +282,67 @@ class DeviceApiTool:
         get_max = 0x83
 
         def usb_control_transfer(request_type: int, request: int, value: int, index: int, data_b64: str) -> Dict[str, Any]:
-            body = {
+            body: Dict[str, Any] = {
                 "permission_id": pid,
                 "handle": handle,
                 "request_type": int(request_type),
                 "request": int(request),
                 "value": int(value),
                 "index": int(index),
-                "data_b64": data_b64,
                 "timeout_ms": int(timeout_ms),
             }
+            if (int(request_type) & 0x80) != 0:
+                # IN transfer: provide explicit length. Some devices reject the default 256 bytes.
+                body["length"] = int(payload.get("length") or 8)
+            else:
+                body["data_b64"] = data_b64
             return self._request_json("POST", "/usb/control_transfer", body)
 
         def ctrl_in(request: int, length: int) -> Dict[str, Any]:
-            return usb_control_transfer(req_type_in, request, w_value, w_index, base64.b64encode(bytes(length)).decode("ascii"))
+            # Explicitly set length for IN transfers. Do not send data_b64 (ignored by Kotlin for IN).
+            payload["length"] = int(length)
+            return usb_control_transfer(req_type_in, request, w_value, w_index, "")
 
         def ctrl_out(request: int, data: bytes) -> Dict[str, Any]:
+            payload.pop("length", None)
             return usb_control_transfer(req_type_out, request, w_value, w_index, base64.b64encode(data).decode("ascii"))
 
+        def ctrl_in_with_retry(request: int, length: int) -> Dict[str, Any]:
+            nonlocal handle
+            r = ctrl_in(request, length)
+            if r.get("status") != "http_error" or int(r.get("http_status") or 0) != 500:
+                return r
+            body = r.get("body") if isinstance(r, dict) else None
+            if not (isinstance(body, dict) and body.get("error") == "control_transfer_failed"):
+                return r
+            # Transient/stale handle: reopen once and retry.
+            if not device_name:
+                dn = _uvc_pick_device_name()
+            else:
+                dn = device_name
+            if not dn:
+                return r
+            _usb_close(handle)
+            opened = _usb_open(dn)
+            ob = opened.get("body") if isinstance(opened, dict) else None
+            new_handle = str(ob.get("handle") or "").strip() if isinstance(ob, dict) else ""
+            if not new_handle:
+                return r
+            handle = new_handle
+            # Try to claim the VC interface (best-effort).
+            try:
+                self._request_json(
+                    "POST",
+                    "/usb/claim_interface",
+                    {"permission_id": pid, "handle": handle, "interface_id": int(vc_interface), "force": True},
+                    timeout_s=8.0,
+                )
+            except Exception:
+                pass
+            return ctrl_in(request, length)
+
         if action == "uvc.ptz.get_abs":
-            resp = ctrl_in(get_cur, 8)
+            resp = ctrl_in_with_retry(get_cur, 8)
             raw = self._extract_b64(resp)
             if raw is None or len(raw) < 8:
                 return {"status": "error", "error": "short_read", "detail": resp}
@@ -255,8 +350,8 @@ class DeviceApiTool:
             return {"status": "ok", "pan_abs": int(pan_abs), "tilt_abs": int(tilt_abs), "detail": resp}
 
         if action == "uvc.ptz.get_limits":
-            rmin = ctrl_in(get_min, 8)
-            rmax = ctrl_in(get_max, 8)
+            rmin = ctrl_in_with_retry(get_min, 8)
+            rmax = ctrl_in_with_retry(get_max, 8)
             min_raw = self._extract_b64(rmin)
             max_raw = self._extract_b64(rmax)
             if min_raw is None or max_raw is None or len(min_raw) < 8 or len(max_raw) < 8:
