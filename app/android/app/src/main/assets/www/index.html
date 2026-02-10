@@ -639,7 +639,11 @@
         border: 1px solid var(--border);
         transition: background var(--transition), border-color var(--transition), color var(--transition);
       }
-      .btn.nowrap { white-space: nowrap; }
+      .btn.nowrap {
+        white-space: nowrap;
+        /* Prevent flexbox from shrinking the button and clipping the caption on narrow screens. */
+        flex-shrink: 0;
+      }
       .btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
       .btn:active { transform: scale(0.97); }
       .btn:disabled {
@@ -990,41 +994,57 @@
       .session-chip {
         font-size: 12px;
         font-weight: 650;
-        padding: 6px 10px;
+        padding: 6px 12px;
         border-radius: var(--radius-full);
-        border: 1px solid rgba(0,0,0,0.12);
-        background: rgba(255,255,255,0.75);
-        color: var(--ink);
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--ink-secondary);
         max-width: 140px;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        cursor: pointer;
+        transition: background var(--transition), border-color var(--transition), color var(--transition);
       }
-      .session-chip:active { filter: brightness(0.97); }
+      .session-chip:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
+      .session-chip:active { transform: scale(0.95); }
       .session-list {
         display: flex;
         flex-direction: column;
-        gap: 8px;
-        margin-top: 10px;
+        gap: 6px;
+        margin-top: 14px;
         max-height: min(420px, 60vh);
         overflow: auto;
+        text-align: left;
       }
       .session-item {
         display: flex;
         gap: 10px;
-        align-items: baseline;
+        align-items: center;
         justify-content: space-between;
         padding: 10px 12px;
-        border-radius: 12px;
-        border: 1px solid rgba(0,0,0,0.10);
-        background: rgba(0,0,0,0.02);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border);
+        background: var(--surface);
         cursor: pointer;
         user-select: none;
+        transition: background var(--transition), border-color var(--transition);
       }
-      .session-item:hover { background: rgba(0,0,0,0.03); }
-      .session-item.active { border-color: rgba(0,0,0,0.22); background: rgba(0,0,0,0.04); }
-      .session-item .sid { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace; font-size: 12px; opacity: 0.9; }
-      .session-item .meta { font-size: 11px; opacity: 0.7; }
+      .session-item:hover { background: var(--bg-overlay); border-color: var(--ink-muted); }
+      .session-item.active {
+        border-color: var(--border-focus);
+        background: var(--accent-soft);
+      }
+      .session-item .sid {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        font-size: 12px;
+        color: var(--ink);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .session-item.active .sid { color: var(--accent-hover); }
+      .session-item .meta { font-size: 11px; color: var(--ink-muted); white-space: nowrap; }
     </style>
   </head>
   <body>
@@ -1321,16 +1341,19 @@
 
     <!-- Session Modal -->
     <div class="modal" id="sessionModal" role="dialog" aria-modal="true" aria-labelledby="sessionTitle">
-      <div class="modal-card">
-        <div class="card-title" id="sessionTitle">Session</div>
-        <div class="muted" id="sessionSubtitle" style="margin-top:6px;"></div>
-        <div class="btn-group" style="margin-top:10px;">
+      <div class="modal-card" style="text-align:left; max-width:360px;">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+          <div class="card-icon purple" style="width:30px; height:30px; font-size:14px;">&#9654;</div>
+          <div class="card-title" id="sessionTitle">Sessions</div>
+          <button class="icon-btn secondary" id="sessionClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
+        </div>
+        <div class="muted" id="sessionSubtitle" style="font-size:12px; margin-bottom:12px;"></div>
+        <div class="btn-group">
           <button class="btn primary" id="sessionNew">New</button>
           <button class="btn" id="sessionRefresh">Refresh</button>
-          <button class="btn danger" id="sessionRemove">Remove</button>
+          <button class="btn danger" id="sessionRemove">Delete</button>
         </div>
         <div class="session-list" id="sessionList"></div>
-        <button class="btn" id="sessionClose" style="width:100%; margin-top:12px;">Close</button>
       </div>
     </div>
 
@@ -1375,6 +1398,7 @@
       try { $("backToChatBtn").innerHTML = ICON.back; } catch (_) {}
       try { $("viewerClose").innerHTML = ICON.close; } catch (_) {}
       try { $("viewerShare").innerHTML = ICON.share; } catch (_) {}
+      try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
 
       function showToast(msg, ms) {
         const t = $("toast");
@@ -1397,7 +1421,8 @@
 
       function openSessionModal() {
         try {
-          sessionSubtitle.textContent = "Current: " + String(chatSessionId || "");
+          const sid = String(chatSessionId || "default");
+          sessionSubtitle.textContent = "Active: " + sid;
           sessionModal.classList.add("show");
         } catch (_) {}
         refreshSessionMenu();
@@ -1426,14 +1451,23 @@
             const last = found ? Number(found.last_created_at || 0) : 0;
             const meta = [];
             if (count) meta.push(String(count) + " msg");
-            if (last) meta.push((new Date(last)).toLocaleString());
+            if (last) {
+              const d = new Date(last);
+              const now = new Date();
+              const diff = now - d;
+              if (diff < 60000) meta.push("just now");
+              else if (diff < 3600000) meta.push(Math.floor(diff / 60000) + "m ago");
+              else if (diff < 86400000) meta.push(Math.floor(diff / 3600000) + "h ago");
+              else meta.push(d.toLocaleDateString());
+            }
+            const isCur = sid === cur;
             rows.push(
-              "<div class='session-item" + (sid === cur ? " active" : "") + "' data-sid='" + sid.replace(/'/g, "&#39;") + "'>" +
-                "<div style='min-width:0;'>" +
+              "<div class='session-item" + (isCur ? " active" : "") + "' data-sid='" + sid.replace(/'/g, "&#39;") + "'>" +
+                "<div style='min-width:0; flex:1;'>" +
                   "<div class='sid'>" + sid.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;") + "</div>" +
-                  "<div class='meta'>" + meta.join(" · ") + "</div>" +
+                  (meta.length ? "<div class='meta'>" + meta.join(" &middot; ") + "</div>" : "") +
                 "</div>" +
-                "<div class='meta' style='white-space:nowrap;'>" + (sid === cur ? "current" : "tap") + "</div>" +
+                (isCur ? "<div style='font-size:10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--accent); background:var(--accent-soft); border:1px solid rgba(99,102,241,0.25); border-radius:var(--radius-full); padding:2px 8px;'>active</div>" : "") +
               "</div>"
             );
           }
