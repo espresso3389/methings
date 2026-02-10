@@ -1484,7 +1484,13 @@
           for (const el of elems) {
             const id = String(el.id || "");
             if (id === "backToChatBtn" || id === "unlockSettingsBtn") continue;
-            el.disabled = !!locked;
+            // Keep SSH auth buttons available even while settings are locked, but only when SSHD is enabled.
+            // These buttons still trigger a biometric prompt on tap.
+            const keepEnabled =
+              !!locked &&
+              (id === "authNotification" || id === "authPin") &&
+              !!($("sshEnabled") && $("sshEnabled").checked);
+            el.disabled = !!locked && !keepEnabled;
           }
 
           // Hide raw secrets when locked (do not show placeholders like '(locked)' either).
@@ -3714,6 +3720,12 @@
       authNotification.addEventListener("click", async () => {
         sshDetail.textContent = "Enabling notification auth...";
         try {
+          // Always require biometric for enabling auth modes, even if settings are currently UI-locked.
+          const u = await requestSettingsUnlock();
+          if (!u || !u.ok) { showToast("Unlock failed", 1400); return; }
+          // Keep the rest of the page locked; this unlock is purely for biometric gating.
+          settingsUiForceLocked = true;
+          setSettingsUiLocked(true);
           const permission_id = await requestPermission("ssh_noauth", "Enable SSH notification auth");
           const res = await fetch(API + "/ssh/noauth/start", {
             method: "POST",
@@ -3733,6 +3745,12 @@
           pinCountdown.textContent = "Generating PIN...";
           pinBarFill.style.width = "0%";
           pinModal.classList.add("show");
+          // Always require biometric for enabling auth modes, even if settings are currently UI-locked.
+          const u = await requestSettingsUnlock();
+          if (!u || !u.ok) { showToast("Unlock failed", 1400); pinModal.classList.remove("show"); return; }
+          // Keep the rest of the page locked; this unlock is purely for biometric gating.
+          settingsUiForceLocked = true;
+          setSettingsUiLocked(true);
           const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
           const res = await fetch(API + "/ssh/pin/start", {
             method: "POST",
