@@ -2696,6 +2696,36 @@
       syncConversationFromServer().then(checkAgentBusy);
       setInterval(pollServerMessages, 900);
 
+      // Scope "Select All" to the message balloon where the selection started.
+      (function initMsgSelectAll() {
+        let originMsg = null;
+        document.addEventListener("selectstart", () => {
+          const sel = window.getSelection();
+          const node = sel && sel.anchorNode;
+          originMsg = node ? node.nodeType === 1 ? node.closest(".msg") : node.parentElement && node.parentElement.closest(".msg") : null;
+        });
+        let cooldown = 0;
+        document.addEventListener("selectionchange", () => {
+          if (Date.now() < cooldown) return;
+          if (!originMsg || !originMsg.isConnected) { originMsg = null; return; }
+          const sel = window.getSelection();
+          if (!sel || sel.rangeCount === 0 || sel.isCollapsed) { originMsg = null; return; }
+          const range = sel.getRangeAt(0);
+          // Still within the same balloon — no action needed.
+          if (originMsg.contains(range.startContainer) && originMsg.contains(range.endContainer)) return;
+          // Re-scope selection to the origin balloon (one-shot).
+          const target = originMsg;
+          originMsg = null;
+          cooldown = Date.now() + 300;
+          try {
+            const r = document.createRange();
+            r.selectNodeContents(target);
+            sel.removeAllRanges();
+            sel.addRange(r);
+          } catch (_) {}
+        });
+      })();
+
       async function checkAgentBusy() {
         try {
           const res = await fetch(API + "/brain/status");
