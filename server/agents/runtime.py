@@ -39,6 +39,14 @@ class BrainRuntime:
         self._messages: Deque[Dict] = deque(maxlen=200)
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        # "Interrupt" cancels the currently-processing inbox item as soon as the runtime
+        # reaches a safe checkpoint (between tool calls / planning rounds).
+        #
+        # NOTE: This can't reliably preempt an in-flight blocking call (e.g., a long HTTP request)
+        # but it prevents further tool calls and unblocks the UI quickly.
+        self._interrupt = threading.Event()
+        self._interrupt_info: Dict[str, Any] = {}
+        self._current_item: Optional[Dict[str, Any]] = None
         self._busy = False
         self._last_error = ""
         self._last_processed_at = 0
@@ -56,6 +64,38 @@ class BrainRuntime:
         self._awaiting_permissions: Dict[str, Dict[str, Any]] = {}
 
         self._config = self._load_config()
+
+    def interrupt(self, *, item_id: str = "", session_id: str = "", clear_queue: bool = False) -> Dict[str, Any]:
+        """
+        Best-effort cancel the currently running item, and optionally clear queued work.
+
+        item_id/session_id are used to immediately unblock chat UI polling (waitForAgentReply)
+        by inserting an assistant message with a matching item_id.
+        """
+        iid = str(item_id or "").strip()
+        sid = str(session_id or "").strip()
+        now = int(time.time() * 1000)
+        with self._lock:
+            self._interrupt.set()
+            self._interrupt_info = {"ts": now, "item_id": iid, "session_id": sid, "clear_queue": bool(clear_queue)}
+            if clear_queue:
+                if sid:
+                    self._queue = deque([it for it in self._queue if str((it.get("meta") or {}).get("session_id") or "") != sid])
+                else:
+                    self._queue.clear()
+        # Insert a deterministic "interrupted" reply to unblock the UI even if the runtime is
+        # stuck in a blocking call and can't hit a checkpoint immediately.
+        if iid:
+            meta = {"item_id": iid, "session_id": (sid or self._session_id_for_item(self._current_item or {}) or "default"), "actor": "system"}
+            self._record_message("assistant", "Interrupted.", meta)
+            self._emit_log("brain_interrupted", {"item_id": iid, "session_id": meta.get("session_id")})
+        else:
+            self._emit_log("brain_interrupted", {"item_id": "", "session_id": sid})
+        return {"status": "ok", "item_id": iid, "session_id": sid, "clear_queue": bool(clear_queue)}
+
+    def _check_interrupt(self) -> None:
+        if self._interrupt.is_set():
+            raise InterruptedError("interrupted")
 
     def _read_user_root_doc(self, name: str, *, max_chars: int = 20000) -> Dict[str, Any]:
         """
@@ -494,6 +534,8 @@ class BrainRuntime:
             self._config["enabled"] = False
             self._save_config()
             self._stop.set()
+            # Also request an interrupt so long-running items stop at the next checkpoint.
+            self._interrupt.set()
             thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=2.0)
@@ -660,9 +702,14 @@ class BrainRuntime:
                 self._busy = True
                 self._last_error = ""
             try:
+                with self._lock:
+                    self._current_item = item
                 self._process_item(item)
                 with self._lock:
                     self._last_processed_at = int(time.time() * 1000)
+            except InterruptedError:
+                # Treat as a user-initiated cancel, not a failure.
+                self._emit_log("brain_item_interrupted", {"id": item.get("id")})
             except Exception as ex:
                 with self._lock:
                     self._last_error = str(ex)
@@ -685,6 +732,8 @@ class BrainRuntime:
             finally:
                 with self._lock:
                     self._busy = False
+                    self._current_item = None
+                    self._interrupt.clear()
 
     def _record_message(self, role: str, text: str, meta: Optional[Dict] = None) -> None:
         meta = dict(meta or {})
@@ -794,6 +843,7 @@ class BrainRuntime:
         return changed
 
     def _process_item(self, item: Dict) -> None:
+        self._check_interrupt()
         self._emit_log("brain_item_started", {"id": item.get("id"), "kind": item.get("kind")})
         if str(item.get("kind") or "") == "event":
             name = str(item.get("name") or "").strip()
@@ -917,6 +967,7 @@ class BrainRuntime:
         total_actions = 0
 
         for round_idx in range(max_rounds):
+            self._check_interrupt()
             plan = self._plan_with_cloud(item, tool_results)
             responses = plan.get("responses") if isinstance(plan, dict) else []
             actions = plan.get("actions") if isinstance(plan, dict) else []
@@ -941,6 +992,7 @@ class BrainRuntime:
 
             round_results: List[Dict] = []
             for action in actions[:max_actions]:
+                self._check_interrupt()
                 if not isinstance(action, dict):
                     continue
                 result = self._execute_action(item, action)
@@ -1256,6 +1308,7 @@ class BrainRuntime:
         ]
 
     def _process_with_responses_tools(self, item: Dict) -> None:
+        self._check_interrupt()
         session_id = self._session_id_for_item(item)
         self._active_identity = session_id or "default"
         persistent_memory = self._get_persistent_memory()
@@ -1347,6 +1400,7 @@ class BrainRuntime:
         )
 
         for _ in range(max_rounds):
+            self._check_interrupt()
             system_prompt = str(cfg.get("system_prompt") or "")
             policy_blob = self._user_root_policy_blob()
             if policy_blob:
@@ -1467,6 +1521,7 @@ class BrainRuntime:
             pending_input = []
             last_tool_summaries = []
             for call in calls[:max_actions]:
+                self._check_interrupt()
                 name = str(call.get("name") or "")
                 call_id = str(call.get("call_id") or "")
                 raw_args = call.get("arguments")
@@ -2293,6 +2348,7 @@ class BrainRuntime:
         return result
 
     def _execute_action(self, item: Dict, action: Dict) -> Dict:
+        self._check_interrupt()
         a_type = str(action.get("type") or "").strip()
         result: Dict
         session_id = self._session_id_for_item(item)

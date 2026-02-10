@@ -489,6 +489,7 @@ class LocalHttpServer(
             (
                 uri == "/brain/start" ||
                     uri == "/brain/stop" ||
+                    uri == "/brain/interrupt" ||
                     uri == "/brain/inbox/chat" ||
                     uri == "/brain/inbox/event" ||
                     uri == "/brain/session/delete" ||

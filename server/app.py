@@ -794,6 +794,14 @@ async def brain_stop():
     return BRAIN_RUNTIME.stop()
 
 
+@app.post("/brain/interrupt")
+async def brain_interrupt(payload: Dict):
+    item_id = str((payload or {}).get("item_id") or (payload or {}).get("itemId") or "").strip()
+    session_id = str((payload or {}).get("session_id") or (payload or {}).get("sessionId") or "").strip()
+    clear_queue = bool((payload or {}).get("clear_queue") or (payload or {}).get("clearQueue") or False)
+    return BRAIN_RUNTIME.interrupt(item_id=item_id, session_id=session_id, clear_queue=clear_queue)
+
+
 @app.post("/brain/inbox/chat")
 async def brain_inbox_chat(payload: Dict):
     text = str(payload.get("text") or "")

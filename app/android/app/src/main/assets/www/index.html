@@ -1165,6 +1165,7 @@
             <button class="icon-btn" id="chatRecordBtn" title="Record audio" aria-label="Record audio"></button>
           </div>
           <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
+          <button class="icon-btn danger" id="chatInterrupt" title="Interrupt" aria-label="Interrupt" style="display:none;"></button>
           <button class="send-btn" id="chatSend" title="Send" aria-label="Send"></button>
         </div>
       </div>
@@ -2781,6 +2782,33 @@
         });
       } catch (_) {}
       // Session delete is now handled per-item inside refreshSessionMenu().
+      // Interrupt current agent work (best-effort).
+      let activeAgentItemId = "";
+      const chatInterrupt = $("chatInterrupt");
+      try { if (chatInterrupt) chatInterrupt.innerHTML = ICON.stop; } catch (_) {}
+      function setInterruptUi(show, itemId) {
+        activeAgentItemId = String(itemId || "");
+        if (!chatInterrupt) return;
+        chatInterrupt.style.display = show ? "inline-flex" : "none";
+        chatInterrupt.disabled = !show;
+      }
+      if (chatInterrupt) {
+        chatInterrupt.addEventListener("click", async () => {
+          if (!activeAgentItemId) return;
+          chatInterrupt.disabled = true;
+          try {
+            await fetch(API + "/brain/interrupt", {
+              method: "POST",
+              headers: { "Content-Type": "application/json; charset=utf-8" },
+              body: JSON.stringify({ item_id: activeAgentItemId, session_id: chatSessionId }),
+            });
+            showToast("Interrupt sent", 900);
+          } catch (_) {
+            showToast("Interrupt failed", 1200);
+            chatInterrupt.disabled = false;
+          }
+        });
+      }
 
       async function sendChat() {
         if (streaming) return;
@@ -2812,6 +2840,7 @@
       async function sendAgentChat(text, uDiv) {
         streaming = true;
         chatSend.disabled = true;
+        setInterruptUi(true, "");
         const aDiv = addThinkingIndicator();
         try {
           async function readError(res, fallbackPrefix) {
@@ -2847,6 +2876,7 @@
           if (!itemId) {
             throw new Error("Agent item id missing");
           }
+          setInterruptUi(true, itemId);
           try {
             if (uDiv) uDiv.dataset.itemId = String(itemId);
             aDiv.dataset.itemId = String(itemId);
@@ -2890,6 +2920,7 @@
         } finally {
           streaming = false;
           chatSend.disabled = false;
+          setInterruptUi(false, "");
         }
       }
 
