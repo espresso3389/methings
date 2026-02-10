@@ -15,6 +15,7 @@ import java.util.ArrayDeque
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import jp.espresso3389.methings.AppForegroundState
 import jp.espresso3389.methings.ui.MainActivity
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -30,6 +31,8 @@ class AgentService : LifecycleService() {
     private val sshAuthExecutor = Executors.newSingleThreadScheduledExecutor()
     private var lastActiveAuthMode: String = ""
     private var permissionReceiverRegistered = false
+    private var brainWorkNotificationShown = false
+    private var lastBrainWorkCheckAtMs: Long = 0L
 
     // Permission prompt notifications:
     // - Show exactly one notification at a time.
@@ -196,8 +199,86 @@ class AgentService : LifecycleService() {
                 }
             )
             startForegroundCompat(fg)
+
+            tickBrainWorkNotification()
         } catch (_: Exception) {
         }
+    }
+
+    private fun tickBrainWorkNotification() {
+        val now = System.currentTimeMillis()
+        if (now - lastBrainWorkCheckAtMs < 2500) return
+        lastBrainWorkCheckAtMs = now
+
+        val nm = getSystemService(NotificationManager::class.java)
+        val id = 82010
+        if (AppForegroundState.isForeground) {
+            if (brainWorkNotificationShown) {
+                nm.cancel(id)
+                brainWorkNotificationShown = false
+            }
+            return
+        }
+
+        // Query the python worker brain status (best-effort).
+        val raw = try {
+            val url = java.net.URL("http://127.0.0.1:8776/brain/status")
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 1200
+                readTimeout = 1800
+            }
+            val txt = runCatching { conn.inputStream.bufferedReader().use { it.readText() } }.getOrDefault("")
+            conn.disconnect()
+            txt
+        } catch (_: Exception) {
+            ""
+        }
+        val st = runCatching { org.json.JSONObject(raw) }.getOrNull()
+        val busy = st?.optBoolean("busy", false) ?: false
+        val q = st?.optInt("queue_size", 0) ?: 0
+        val shouldShow = busy || q > 0
+        if (!shouldShow) {
+            if (brainWorkNotificationShown) {
+                nm.cancel(id)
+                brainWorkNotificationShown = false
+            }
+            return
+        }
+
+        val channelId = "methings_agent_work"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(channelId, "Agent Activity", NotificationManager.IMPORTANCE_HIGH)
+            nm.createNotificationChannel(ch)
+        }
+        val openIntent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val openPi = PendingIntent.getActivity(
+            this,
+            82010,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val interruptIntent = Intent(this, BrainInterruptReceiver::class.java).apply {
+            action = BrainInterruptReceiver.ACTION_INTERRUPT
+        }
+        val interruptPi = PendingIntent.getBroadcast(
+            this,
+            82011,
+            interruptIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("methings")
+            .setContentText("Agent is working")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(openPi)
+            .setAutoCancel(true)
+            .addAction(NotificationCompat.Action(0, "Interrupt", interruptPi))
+            .build()
+        nm.notify(id, notif)
+        brainWorkNotificationShown = true
     }
 
     private fun startForegroundCompat(notification: Notification) {

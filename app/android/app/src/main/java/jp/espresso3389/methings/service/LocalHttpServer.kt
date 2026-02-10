@@ -12,10 +12,7 @@ import android.hardware.usb.UsbConstants
 import android.os.Build
 import android.os.PowerManager
 import android.app.PendingIntent
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.util.Log
-import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleOwner
 import fi.iki.elonen.NanoHTTPD
 import fi.iki.elonen.NanoWSD
@@ -56,7 +53,6 @@ import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.Locale
 import jp.espresso3389.methings.device.UsbPermissionWaiter
-import jp.espresso3389.methings.AppForegroundState
 
 class LocalHttpServer(
     private val context: Context,
@@ -100,75 +96,6 @@ class LocalHttpServer(
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
     private val screenScheduler = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var screenReleaseFuture: ScheduledFuture<*>? = null
-    private val brainNotifScheduler = Executors.newSingleThreadScheduledExecutor()
-    @Volatile private var brainNotifFuture: ScheduledFuture<*>? = null
-
-    private fun showBrainWorkNotification(preview: String) {
-        try {
-            // Throttle: if one is already active, just keep it (avoid spam).
-            if (brainNotifFuture != null) return
-            val nm = context.getSystemService(NotificationManager::class.java)
-            val channelId = "methings_agent_work"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val ch = NotificationChannel(channelId, "Agent Activity", NotificationManager.IMPORTANCE_HIGH)
-                nm.createNotificationChannel(ch)
-            }
-            val openIntent = Intent(context, jp.espresso3389.methings.ui.MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            val openPi = PendingIntent.getActivity(
-                context,
-                82010,
-                openIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val interruptIntent = Intent(context, BrainInterruptReceiver::class.java).apply {
-                action = BrainInterruptReceiver.ACTION_INTERRUPT
-            }
-            val interruptPi = PendingIntent.getBroadcast(
-                context,
-                82011,
-                interruptIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val text = if (preview.isNotBlank()) preview else "Agent is working in the background."
-            val notif = NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("methings")
-                .setContentText("Agent is working")
-                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setContentIntent(openPi)
-                .setAutoCancel(true)
-                .addAction(NotificationCompat.Action(0, "Interrupt", interruptPi))
-                .build()
-            val id = 82010
-            nm.notify(id, notif)
-
-            // Auto-cancel when brain becomes idle again (best-effort).
-            brainNotifFuture = brainNotifScheduler.scheduleAtFixedRate({
-                try {
-                    val url = java.net.URL("http://127.0.0.1:8776/brain/status")
-                    val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-                        requestMethod = "GET"
-                        connectTimeout = 1200
-                        readTimeout = 1800
-                    }
-                    val raw = runCatching { conn.inputStream.bufferedReader().use { it.readText() } }.getOrDefault("")
-                    conn.disconnect()
-                    val st = runCatching { JSONObject(raw) }.getOrNull() ?: return@scheduleAtFixedRate
-                    val busy = st.optBoolean("busy", false)
-                    val q = st.optInt("queue_size", 0)
-                    if (!busy && q <= 0) {
-                        nm.cancel(id)
-                        brainNotifFuture?.cancel(false)
-                        brainNotifFuture = null
-                    }
-                } catch (_: Exception) {
-                }
-            }, 2, 2, TimeUnit.SECONDS)
-        } catch (_: Exception) {
-        }
-    }
 
     fun startServer(): Boolean {
         return try {
@@ -193,10 +120,6 @@ class LocalHttpServer(
         }
         try {
             screenScheduler.shutdownNow()
-        } catch (_: Exception) {
-        }
-        try {
-            brainNotifScheduler.shutdownNow()
         } catch (_: Exception) {
         }
     }
@@ -597,15 +520,6 @@ class LocalHttpServer(
                 if (uri == "/brain/inbox/chat" && proxied.status == Response.Status.BAD_REQUEST) {
                     // Help diagnose UI issues; keep it short and avoid logging secrets.
                     Log.w(TAG, "brain/inbox/chat 400 body.len=${body.length} body.head=${body.take(120)}")
-                }
-                if (uri == "/brain/inbox/chat" && !AppForegroundState.isForeground) {
-                    try {
-                        val payload = runCatching { JSONObject(body) }.getOrNull()
-                        val preview = payload?.optString("text", "")?.trim()?.take(140) ?: ""
-                        showBrainWorkNotification(preview = preview)
-                    } catch (_: Exception) {
-                        showBrainWorkNotification(preview = "")
-                    }
                 }
                 proxied
             }
