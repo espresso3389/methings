@@ -1428,7 +1428,7 @@
             rows.push(
               "<div class='session-item" + (sid === cur ? " active" : "") + "' data-sid='" + sid.replace(/'/g, "&#39;") + "'>" +
                 "<div style='min-width:0;'>" +
-                  "<div class='sid'>" + sid.replace(/&/g,\"&amp;\").replace(/</g,\"&lt;\").replace(/>/g,\"&gt;\") + "</div>" +
+                  "<div class='sid'>" + sid.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;") + "</div>" +
                   "<div class='meta'>" + meta.join(" · ") + "</div>" +
                 "</div>" +
                 "<div class='meta' style='white-space:nowrap;'>" + (sid === cur ? "current" : "tap") + "</div>" +
