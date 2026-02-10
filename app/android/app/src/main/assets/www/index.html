@@ -2475,6 +2475,24 @@
           div.innerHTML = renderMarkdown(content);
           // Attachments should render for both user and assistant messages.
           try { renderInlineAttachments(div, content); } catch (_) {}
+          // Retry affordance for agent failures.
+          try {
+            const err = m && m.error ? String(m.error) : "";
+            const itemId = m && m.item_id ? String(m.item_id) : "";
+            const isAgentFailure = role === "assistant" && !!itemId && (err === "brain_item_failed" || /^Error:/i.test(String(content || "").trim()));
+            if (isAgentFailure) {
+              const actions = document.createElement("div");
+              actions.style.display = "flex";
+              actions.style.gap = "8px";
+              actions.style.marginTop = "10px";
+              const btn = document.createElement("button");
+              btn.className = "btn";
+              btn.textContent = "Retry";
+              btn.addEventListener("click", () => retryAgentItem(itemId));
+              actions.appendChild(btn);
+              div.appendChild(actions);
+            }
+          } catch (_) {}
         } else {
           div.textContent = content;
         }
@@ -3059,6 +3077,57 @@
             "agent_vendor_not_supported": "Agent mode currently supports OpenAI-compatible providers only.",
           };
           addMsg("error", friendly[msg] || msg);
+        } finally {
+          streaming = false;
+          chatSend.disabled = false;
+          setInterruptUi(false, "");
+        }
+      }
+
+      async function retryAgentItem(itemId) {
+        if (!itemId || streaming) return;
+        streaming = true;
+        chatSend.disabled = true;
+        setInterruptUi(true, "");
+        const aDiv = addThinkingIndicator();
+        try {
+          const boot = await fetch(API + "/brain/agent/bootstrap", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: "{}",
+          });
+          if (!boot.ok) throw new Error("Agent bootstrap failed (" + boot.status + ")");
+
+          const res = await fetch(API + "/brain/retry", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ item_id: String(itemId), session_id: chatSessionId }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error((body && (body.error || body.detail || body.message)) ? String(body.error || body.detail || body.message) : ("Retry failed (" + res.status + ")"));
+          }
+          const newId = body && body.id ? String(body.id) : "";
+          if (!newId) throw new Error("Retry: missing item id");
+          setInterruptUi(true, newId);
+          try { aDiv.dataset.itemId = String(newId); } catch (_) {}
+
+          const answer = await waitForAgentReply(newId);
+          if (!answer) throw new Error("Agent timed out");
+          const cleaned = String(answer || "").trim();
+          if (cleaned) {
+            aDiv.innerHTML = renderMarkdown(cleaned);
+            try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
+            setMsgWorking(aDiv, false);
+            conversation.push({ role: "assistant", content: cleaned, meta: { item_id: newId }, ts: Date.now() });
+            saveConversation();
+          } else {
+            aDiv.remove();
+          }
+        } catch (e) {
+          try { if (aDiv.parentNode) aDiv.remove(); } catch (_) {}
+          showToast("Retry failed", 1400);
+          try { addMsg("error", String(e && e.message ? e.message : e)); } catch (_) {}
         } finally {
           streaming = false;
           chatSend.disabled = false;

@@ -603,6 +603,11 @@ class WorkerHandler(BaseHTTPRequestHandler):
             clear_queue = bool((payload or {}).get("clear_queue") or (payload or {}).get("clearQueue") or False)
             self._send_json(BRAIN_RUNTIME.interrupt(item_id=item_id, session_id=session_id, clear_queue=clear_queue))
             return
+        if parsed.path == "/brain/retry":
+            item_id = str((payload or {}).get("item_id") or (payload or {}).get("itemId") or "").strip()
+            session_id = str((payload or {}).get("session_id") or (payload or {}).get("sessionId") or "").strip()
+            self._send_json(BRAIN_RUNTIME.retry(item_id=item_id, session_id=session_id))
+            return
         if parsed.path == "/brain/inbox/chat":
             text = str((payload or {}).get("text") or "")
             meta = (payload or {}).get("meta")

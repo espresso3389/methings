@@ -93,6 +93,46 @@ class BrainRuntime:
             self._emit_log("brain_interrupted", {"item_id": "", "session_id": sid})
         return {"status": "ok", "item_id": iid, "session_id": sid, "clear_queue": bool(clear_queue)}
 
+    def retry(self, *, item_id: str, session_id: str = "") -> Dict[str, Any]:
+        """
+        Retry a previously queued chat item by re-enqueuing the original user text.
+
+        This is intended for transient failures (network timeouts, provider 5xx).
+        """
+        iid = str(item_id or "").strip()
+        sid = str(session_id or "").strip() or "default"
+        if not iid:
+            return {"status": "error", "error": "missing_item_id"}
+        # Find the original user message text for this item_id.
+        try:
+            msgs = self.list_messages_for_session(session_id=sid, limit=500)
+        except Exception:
+            msgs = []
+        text = ""
+        for msg in reversed(msgs):
+            if not isinstance(msg, dict):
+                continue
+            if str(msg.get("role") or "") != "user":
+                continue
+            meta = msg.get("meta") if isinstance(msg.get("meta"), dict) else {}
+            if str(meta.get("item_id") or "") != iid:
+                continue
+            t = msg.get("text")
+            if isinstance(t, str) and t.strip():
+                text = t.strip()
+                break
+        if not text:
+            return {"status": "error", "error": "item_not_found"}
+        return self.enqueue_chat(
+            text,
+            meta={
+                "session_id": sid,
+                "actor": "system",
+                "source": "retry",
+                "tag": f"retry:{iid}",
+            },
+        )
+
     def _check_interrupt(self) -> None:
         if self._interrupt.is_set():
             raise InterruptedError("interrupted")

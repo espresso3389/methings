@@ -23,6 +23,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
+import jp.espresso3389.methings.AppForegroundState
 import jp.espresso3389.methings.device.UsbPermissionResultReceiver
 import jp.espresso3389.methings.device.UsbPermissionWaiter
 import jp.espresso3389.methings.service.AgentService
@@ -236,6 +237,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        AppForegroundState.isForeground = true
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
                 pythonHealthReceiver,
@@ -263,6 +265,7 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(pythonHealthReceiver)
         unregisterReceiver(permissionPromptReceiver)
         unregisterReceiver(uiReloadReceiver)
+        AppForegroundState.isForeground = false
         super.onStop()
     }
 

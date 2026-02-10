@@ -802,6 +802,13 @@ async def brain_interrupt(payload: Dict):
     return BRAIN_RUNTIME.interrupt(item_id=item_id, session_id=session_id, clear_queue=clear_queue)
 
 
+@app.post("/brain/retry")
+async def brain_retry(payload: Dict):
+    item_id = str((payload or {}).get("item_id") or (payload or {}).get("itemId") or "").strip()
+    session_id = str((payload or {}).get("session_id") or (payload or {}).get("sessionId") or "").strip()
+    return BRAIN_RUNTIME.retry(item_id=item_id, session_id=session_id)
+
+
 @app.post("/brain/inbox/chat")
 async def brain_inbox_chat(payload: Dict):
     text = str(payload.get("text") or "")
