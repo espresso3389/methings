@@ -1194,6 +1194,17 @@
               <button class="btn" id="copyClientKey" style="padding:5px 10px;font-size:12px;">Copy</button>
             </div>
           </div>
+          <div style="margin-top:14px;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div class="muted" style="font-weight:600;">Authorized Keys</div>
+              <button class="btn" id="sshKeysAdd" style="margin-left:auto;padding:5px 10px;font-size:12px;">+ Add</button>
+              <button class="btn" id="sshKeysRefresh" style="padding:5px 10px;font-size:12px;">Refresh</button>
+            </div>
+            <div class="muted" style="margin-top:6px;">
+              Keys in <span style="font-family:monospace;">files/user/.ssh/authorized_keys</span>. Adding/removing requires approval.
+            </div>
+            <div id="sshKeysList" style="margin-top:8px;"></div>
+          </div>
         </section>
 
         <!-- Python Worker -->
@@ -3051,6 +3062,9 @@
       const clientKeyRow = $("clientKeyRow");
       const clientKeyFp = $("clientKeyFp");
       const copyClientKey = $("copyClientKey");
+      const sshKeysList = $("sshKeysList");
+      const sshKeysAdd = $("sshKeysAdd");
+      const sshKeysRefresh = $("sshKeysRefresh");
       let currentClientKeyPublic = "";
       const pinModal = $("pinModal");
       const pinCode = $("pinCode");
@@ -3060,6 +3074,17 @@
       const pinDurationMs = 20000;
       let pinExpiresAt = null;
       let lastPin = null;
+
+      function esc(s) {
+        return String(s || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function escAttr(s) {
+        return esc(s).replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
+      }
 
       function setStatus(el, value) {
         el.textContent = value;
@@ -3262,6 +3287,73 @@
           setStatus(sshStatus, "offline");
           sshDetail.textContent = "SSHD status unavailable";
           clientKeyRow.style.display = "none";
+        }
+      }
+
+      function shortFp(fp) {
+        const s = String(fp || "");
+        if (s.length <= 16) return s;
+        return s.slice(0, 8) + "…" + s.slice(-8);
+      }
+
+      function renderSshKeys(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+          sshKeysList.innerHTML = "<div class='muted'>(no keys)</div>";
+          return;
+        }
+        const rows = [];
+        for (const it of items) {
+          const fp = String(it.fingerprint || "");
+          const label = String(it.label || "").trim();
+          const created = Number(it.created_at || 0);
+          const exp = it.expires_at === null || typeof it.expires_at === "undefined" ? null : Number(it.expires_at);
+          const createdStr = created ? (new Date(created)).toLocaleString() : "";
+          const expStr = exp ? (new Date(exp)).toLocaleString() : "";
+          const meta = [createdStr ? ("created " + createdStr) : "", expStr ? ("expires " + expStr) : ""].filter(Boolean).join(" · ");
+          rows.push(
+            "<div style='display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(0,0,0,0.08);border-radius:10px;margin-top:8px;background:rgba(0,0,0,0.02);'>" +
+              "<div style='flex:1;min-width:0;'>" +
+                "<div style='display:flex;gap:8px;align-items:baseline;'>" +
+                  "<span style='font-family:monospace;font-size:12px;opacity:0.85;'>" + esc(shortFp(fp)) + "</span>" +
+                  (label ? ("<span class='muted' style='font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>" + esc(label) + "</span>") : "") +
+                "</div>" +
+                (meta ? ("<div class='muted' style='margin-top:2px;font-size:11px;'>" + esc(meta) + "</div>") : "") +
+              "</div>" +
+              "<button class='btn' data-fp=\"" + escAttr(fp) + "\" style='padding:5px 10px;font-size:12px;'>Remove</button>" +
+            "</div>"
+          );
+        }
+        sshKeysList.innerHTML = rows.join("");
+        for (const btn of sshKeysList.querySelectorAll("button[data-fp]")) {
+          btn.addEventListener("click", async () => {
+            const fp = String(btn.getAttribute("data-fp") || "");
+            if (!fp) return;
+            if (!window.confirm("Remove this SSH key?")) return;
+            try {
+              const permission_id = await requestPermission("ssh_keys", "Remove SSH authorized key " + shortFp(fp));
+              const res = await fetch(API + "/ssh/keys/delete", {
+                method: "POST",
+                headers: { "Content-Type": "application/json; charset=utf-8" },
+                body: JSON.stringify({ permission_id, fingerprint: fp }),
+              });
+              if (!res.ok) throw 0;
+              showToast("Key removed", 1400);
+              await refreshSshKeys();
+            } catch (_) {
+              showToast("Remove failed", 1600);
+            }
+          });
+        }
+      }
+
+      async function refreshSshKeys() {
+        try {
+          const res = await fetch(API + "/ssh/keys");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          renderSshKeys(data.items || []);
+        } catch (_) {
+          sshKeysList.innerHTML = "<div class='muted'>(keys unavailable)</div>";
         }
       }
 
@@ -3499,6 +3591,28 @@
       }
 
       sshEnabled.addEventListener("change", updateSshConfig);
+      sshKeysRefresh.addEventListener("click", refreshSshKeys);
+      sshKeysAdd.addEventListener("click", async () => {
+        const key = String(window.prompt("Paste SSH public key (one line):", "") || "").trim();
+        if (!key) return;
+        const label = String(window.prompt("Label (optional):", "") || "").trim();
+        try {
+          const permission_id = await requestPermission("ssh_keys", "Add SSH authorized key" + (label ? (" (" + label + ")") : ""));
+          const res = await fetch(API + "/ssh/keys/add", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ permission_id, key, label }),
+          });
+          if (!res.ok) {
+            const t = await res.text().catch(() => "");
+            throw new Error(t || "failed");
+          }
+          showToast("Key added", 1400);
+          await refreshSshKeys();
+        } catch (_) {
+          showToast("Add failed", 1600);
+        }
+      });
       authNotification.addEventListener("click", async () => {
         sshDetail.textContent = "Enabling notification auth...";
         try {
@@ -3576,6 +3690,7 @@
       // Agent console initial load.
       refreshAgentStatus();
       refreshAgentSessions().then(() => refreshAgentTranscript());
+      refreshSshKeys();
 
       window.onPythonStatus = function(status) {
         setStatus(pythonStatus, status);

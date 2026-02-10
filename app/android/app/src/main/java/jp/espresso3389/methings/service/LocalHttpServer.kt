@@ -1070,7 +1070,12 @@ class LocalHttpServer(
                 if (key.isBlank()) {
                     return badRequest("key_required")
                 }
-                val entity = sshKeyStore.upsert(key, if (label.isBlank()) null else label, expiresAt)
+                val parsed = parseSshPublicKey(key) ?: return badRequest("invalid_public_key")
+                val finalLabel = sanitizeSshKeyLabel(label).takeIf { it != null }
+                    ?: sanitizeSshKeyLabel(parsed.comment ?: "")
+                // Store canonical key WITHOUT comment so fingerprinting and de-duplication remain stable
+                // even when labels/comments are edited.
+                val entity = sshKeyStore.upsert(parsed.canonicalNoComment(), finalLabel, expiresAt)
                 syncAuthorizedKeys()
                 jsonResponse(
                     JSONObject()
@@ -4657,6 +4662,53 @@ class LocalHttpServer(
         return true
     }
 
+    private data class ParsedSshPublicKey(
+        val type: String,
+        val b64: String,
+        val comment: String?
+    ) {
+        fun canonicalNoComment(): String = "$type $b64"
+    }
+
+    private fun sanitizeSshKeyLabel(raw: String): String? {
+        val s = raw.trim().replace(Regex("\\s+"), " ")
+        if (s.isBlank()) return null
+        return s.take(120)
+    }
+
+    private fun parseSshPublicKey(raw: String): ParsedSshPublicKey? {
+        val line = raw.trim()
+            .replace("\r", " ")
+            .replace("\n", " ")
+            .trim()
+        if (line.isBlank()) return null
+        val parts = line.split(Regex("\\s+"), limit = 3)
+        if (parts.size < 2) return null
+        val type = parts[0].trim()
+        val b64 = parts[1].trim()
+        val comment = parts.getOrNull(2)?.trim()?.ifBlank { null }
+
+        val t = type.lowercase(Locale.US)
+        val allowed = setOf(
+            "ssh-ed25519",
+            "ssh-rsa",
+            "ecdsa-sha2-nistp256",
+            "ecdsa-sha2-nistp384",
+            "ecdsa-sha2-nistp521",
+            "sk-ssh-ed25519@openssh.com",
+            "sk-ecdsa-sha2-nistp256@openssh.com"
+        )
+        if (!allowed.contains(t)) return null
+
+        try {
+            val decoded = Base64.decode(b64, Base64.DEFAULT)
+            if (decoded.isEmpty()) return null
+        } catch (_: Exception) {
+            return null
+        }
+        return ParsedSshPublicKey(type = type, b64 = b64, comment = comment)
+    }
+
     private fun syncAuthorizedKeys() {
         val userHome = File(context.filesDir, "user")
         val sshDir = File(userHome, ".ssh")
@@ -4664,7 +4716,12 @@ class LocalHttpServer(
         val authFile = File(sshDir, "authorized_keys")
         val now = System.currentTimeMillis()
         val active = sshKeyStore.listActive(now)
-        val lines = active.map { it.key.trim() }.filter { it.isNotBlank() }
+        val lines = active.mapNotNull { row ->
+            val key = row.key.trim()
+            if (key.isBlank()) return@mapNotNull null
+            val label = sanitizeSshKeyLabel(row.label ?: "")
+            if (label != null) "$key $label" else key
+        }
         authFile.writeText(lines.joinToString("\n") + if (lines.isNotEmpty()) "\n" else "")
     }
 

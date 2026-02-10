@@ -16,6 +16,9 @@ class DeviceApiTool:
         "screen.keep_on": {"method": "POST", "path": "/screen/keep_on", "permission": True},
         "ssh.status": {"method": "GET", "path": "/ssh/status", "permission": False},
         "ssh.config": {"method": "POST", "path": "/ssh/config", "permission": True},
+        "ssh.keys.list": {"method": "GET", "path": "/ssh/keys", "permission": False},
+        "ssh.keys.add": {"method": "POST", "path": "/ssh/keys/add", "permission": True},
+        "ssh.keys.delete": {"method": "POST", "path": "/ssh/keys/delete", "permission": True},
         "ssh.pin.status": {"method": "GET", "path": "/ssh/pin/status", "permission": False},
         "ssh.pin.start": {"method": "POST", "path": "/ssh/pin/start", "permission": True},
         "ssh.pin.stop": {"method": "POST", "path": "/ssh/pin/stop", "permission": True},
@@ -395,6 +398,9 @@ class DeviceApiTool:
         a = (action or "").strip()
         if a.startswith("screen."):
             return "device.screen", "screen", "session"
+        if a.startswith("ssh.keys."):
+            # Kotlin forces scope to once for ssh_keys; still group by session identity.
+            return "ssh_keys", "ssh_keys", "once"
         if a.startswith("ssh.pin."):
             return "ssh_pin", "ssh.pin", "session"
         if a.startswith("camera."):
