@@ -1022,32 +1022,8 @@
       <div class="topbar">
         <button class="icon-btn secondary" id="backToChatBtn" title="Back" aria-label="Back"></button>
         <div class="title">Settings</div>
-        <button class="icon-btn unlock" id="unlockSettingsBtn" title="Unlock" aria-label="Unlock">
-          <!-- Fallback icon (JS overwrites this too, but we keep it to avoid an empty button on failures). -->
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M21 2l-2 2m-7.5 7.5a4.5 4.5 0 1 1 0-6.36 4.5 4.5 0 0 1 0 6.36Z"/>
-            <path d="M15 7l3 3"/>
-            <path d="M12.5 9.5l3 3"/>
-            <path d="M8 14l-6 6v2h2l6-6"/>
-          </svg>
-        </button>
       </div>
       <div class="settings-scroll">
-        <div id="settingsLockedBanner" class="locked-banner" style="display:none;">
-          <div class="lb-row">
-            <div class="lb-ico" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"></circle>
-                <path d="M12 16v-4"></path>
-                <path d="M12 8h.01"></path>
-              </svg>
-            </div>
-            <div>
-              <div class="lb-title">Settings Locked</div>
-              <div class="lb-sub">Tap the lock icon (top-right) to unlock and view/edit secrets.</div>
-            </div>
-          </div>
-        </div>
         <!-- Brain Config -->
         <section class="card">
           <div class="card-header">
@@ -1083,11 +1059,11 @@
           </div>
           <div class="field">
             <label>API Key</label>
-            <input type="text" id="brainApiKey" placeholder="" autocomplete="off" autocapitalize="none" spellcheck="false" />
+            <input type="text" id="brainApiKey" placeholder="tap to unlock" autocomplete="off" autocapitalize="none" spellcheck="false" readonly />
             <div class="muted" id="brainKeyStatus" style="margin-top:4px;"></div>
           </div>
           <div class="btn-group">
-            <button class="btn primary" id="brainSave">Save</button>
+            <button class="btn primary" id="brainSave" disabled>Save</button>
           </div>
         </section>
 
@@ -1102,12 +1078,12 @@
           </div>
           <div class="field">
             <label>Brave Search API Key</label>
-            <input type="text" id="braveSearchApiKey" placeholder="" autocomplete="off" autocapitalize="none" spellcheck="false" />
+            <input type="text" id="braveSearchApiKey" placeholder="tap to unlock" autocomplete="off" autocapitalize="none" spellcheck="false" readonly />
             <div class="muted" id="braveSearchKeyStatus" style="margin-top:4px;">Status unknown.</div>
           </div>
           <div class="btn-group">
-            <button class="btn primary" id="braveSearchSave">Save</button>
-            <button class="btn" id="braveSearchClear">Clear</button>
+            <button class="btn primary" id="braveSearchSave" disabled>Save</button>
+            <button class="btn" id="braveSearchClear" disabled>Clear</button>
           </div>
         </section>
 
@@ -1380,7 +1356,6 @@
 
       // Set static button icons (record button is handled by setRecordUi()).
       try { $("openSettingsBtn").innerHTML = ICON.settings; } catch (_) {}
-      // Lock/unlock icon is managed by setSettingsUiLocked().
       try { $("chatUploadBtn").innerHTML = ICON.attach; } catch (_) {}
       try { $("chatSend").innerHTML = ICON.send; } catch (_) {}
       try { $("backToChatBtn").innerHTML = ICON.back; } catch (_) {}
@@ -1397,35 +1372,10 @@
       // ==============================
       // Router
       // ==============================
-      let settingsLockWatcherTimer = null;
-      let lastSettingsLocked = null;
-      function stopSettingsLockWatcher() {
-        try { if (settingsLockWatcherTimer) clearInterval(settingsLockWatcherTimer); } catch (_) {}
-        settingsLockWatcherTimer = null;
-        lastSettingsLocked = null;
-      }
-      function syncSettingsLockUiOnce() {
-        try {
-          const locked = isSettingsUiLocked();
-          if (lastSettingsLocked === null || locked !== lastSettingsLocked) {
-            setSettingsUiLocked(locked);
-            // Only populate secrets on explicit unlock flow; do not auto-fetch on timer ticks.
-            lastSettingsLocked = locked;
-          }
-        } catch (_) {}
-      }
-      function startSettingsLockWatcher() {
-        if (settingsLockWatcherTimer) return;
-        // Update quickly enough that auto-lock feels immediate, but avoid busy looping.
-        settingsLockWatcherTimer = setInterval(syncSettingsLockUiOnce, 400);
-        syncSettingsLockUiOnce();
-      }
 
       function navigateTo(pageId) {
         document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
         $(pageId).classList.add("active");
-        if (pageId === "settingsPage") startSettingsLockWatcher();
-        else stopSettingsLockWatcher();
       }
       function handleHash() {
         try {
@@ -1458,9 +1408,6 @@
       });
 
       let pendingSettingsUnlock = null;
-      // Pure-UI lock: lets the user quickly re-hide secrets without forcing another biometric prompt.
-      // Note: JS still must not read secrets while this is true, even if the bridge remains unlocked.
-      let settingsUiForceLocked = false;
       function getSettingsUnlockRemainingMs() {
         try {
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.getSettingsUnlockRemainingMs) {
@@ -1469,58 +1416,6 @@
           }
         } catch (_) {}
         return 0;
-      }
-      function isSettingsUiLocked() {
-        return settingsUiForceLocked || getSettingsUnlockRemainingMs() <= 0;
-      }
-
-      function setSettingsUiLocked(locked) {
-        try {
-          // Lock down all settings interactions until explicitly unlocked.
-          const root = $("settingsPage");
-          root.classList.toggle("settings-locked", !!locked);
-          try { $("settingsLockedBanner").style.display = locked ? "block" : "none"; } catch (_) {}
-          const elems = root.querySelectorAll("input,select,textarea,button");
-          for (const el of elems) {
-            const id = String(el.id || "");
-            if (id === "backToChatBtn" || id === "unlockSettingsBtn") continue;
-            // Keep SSH auth buttons available even while settings are locked, but only when SSHD is enabled.
-            // These buttons still trigger a biometric prompt on tap.
-            const keepEnabled =
-              !!locked &&
-              (id === "authNotification" || id === "authPin") &&
-              !!($("sshEnabled") && $("sshEnabled").checked);
-            el.disabled = !!locked && !keepEnabled;
-          }
-
-          // Hide raw secrets when locked (do not show placeholders like '(locked)' either).
-          $("brainApiKey").value = "";
-          $("brainApiKey").placeholder = locked ? "Tap Unlock to view/edit" : "";
-          $("braveSearchApiKey").value = "";
-          $("braveSearchApiKey").placeholder = locked ? "Tap Unlock to view/edit" : "";
-
-          if (locked) {
-            // Avoid leaking whether keys exist while locked.
-            try { $("brainKeyStatus").textContent = ""; } catch (_) {}
-            try { $("braveSearchKeyStatus").textContent = ""; } catch (_) {}
-          }
-
-          // Toggle button: Unlock while locked; Lock while unlocked.
-          const b = $("unlockSettingsBtn");
-          b.style.opacity = "1";
-          if (locked) {
-            // State indicator: show "locked" icon while locked.
-            // Action hint is conveyed via title/aria-label.
-            b.title = "Locked (tap to unlock)";
-            b.setAttribute("aria-label", "Locked. Tap to unlock");
-            b.innerHTML = ICON.lock;
-          } else {
-            // State indicator: show "unlocked" icon while unlocked.
-            b.title = "Unlocked (tap to lock)";
-            b.setAttribute("aria-label", "Unlocked. Tap to lock");
-            b.innerHTML = ICON.unlock;
-          }
-        } catch (_) {}
       }
 
       function requestSettingsUnlock() {
@@ -1549,81 +1444,100 @@
         } catch (_) {}
       };
 
-      function refreshSecretsFromBridge() {
-        const locked = isSettingsUiLocked();
-        setSettingsUiLocked(locked);
-        if (locked) {
-          return;
+      // ==============================
+      // Secret Fields (Biometric-on-demand)
+      // ==============================
+      const SECRET_PLACEHOLDER = "tap to unlock";
+      function isBridgeUnlocked() {
+        return getSettingsUnlockRemainingMs() > 0;
+      }
+      function lockSecretField(el) {
+        if (!el) return;
+        el.dataset.secretLocked = "1";
+        el.dataset.secretOriginal = "";
+        el.readOnly = true;
+        el.value = "";
+        el.placeholder = SECRET_PLACEHOLDER;
+      }
+      function markSecretOriginal(el) {
+        if (!el) return;
+        el.dataset.secretOriginal = String(el.value || "");
+      }
+      function isSecretDirty(el) {
+        if (!el) return false;
+        if (String(el.dataset.secretLocked || "1") !== "0") return false;
+        return String(el.value || "") !== String(el.dataset.secretOriginal || "");
+      }
+      function currentBrainKeyContext() {
+        const preset = getSelectedPreset ? getSelectedPreset() : null;
+        if (!preset) return { vendor: "", base_url: "" };
+        if (preset.vendor === "custom") {
+          return { vendor: "custom", base_url: String($("brainBaseUrl").value || "").trim() };
         }
-        function currentBrainKeyContext() {
-          const preset = getSelectedPreset ? getSelectedPreset() : null;
-          if (!preset) return { vendor: "", base_url: "" };
-          if (preset.vendor === "custom") {
-            return { vendor: "custom", base_url: String($("brainBaseUrl").value || "").trim() };
-          }
-          return { vendor: String(preset.vendor || ""), base_url: String(preset.base_url || "") };
-        }
+        return { vendor: String(preset.vendor || ""), base_url: String(preset.base_url || "") };
+      }
+      async function unlockBrainKeyField() {
+        const el = $("brainApiKey");
+        if (!el) return false;
+        const r = await requestSettingsUnlock();
+        if (!r || !r.ok) return false;
+        const ctx = currentBrainKeyContext();
+        let v = "";
         try {
-          const ctx = currentBrainKeyContext();
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.getBrainApiKeyFor) {
-            $("brainApiKey").value = AndroidBridge.getBrainApiKeyFor(ctx.vendor, ctx.base_url) || "";
-            $("brainApiKey").placeholder = "";
+            v = AndroidBridge.getBrainApiKeyFor(ctx.vendor, ctx.base_url) || "";
           } else if (typeof AndroidBridge !== "undefined" && AndroidBridge.getBrainApiKeyPlain) {
-            $("brainApiKey").value = AndroidBridge.getBrainApiKeyPlain() || "";
-            $("brainApiKey").placeholder = "";
+            v = AndroidBridge.getBrainApiKeyPlain() || "";
           }
         } catch (_) {}
+        el.dataset.secretLocked = "0";
+        el.readOnly = false;
+        el.placeholder = "";
+        el.value = String(v || "");
+        markSecretOriginal(el);
+        try { el.focus(); } catch (_) {}
+        return true;
+      }
+      async function unlockBraveKeyField() {
+        const el = $("braveSearchApiKey");
+        if (!el) return false;
+        const r = await requestSettingsUnlock();
+        if (!r || !r.ok) return false;
+        let v = "";
         try {
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.getBraveSearchApiKeyPlain) {
-            $("braveSearchApiKey").value = AndroidBridge.getBraveSearchApiKeyPlain() || "";
-            $("braveSearchApiKey").placeholder = "";
+            v = AndroidBridge.getBraveSearchApiKeyPlain() || "";
           }
         } catch (_) {}
-        try { refreshBraveSearchKeyStatus(); } catch (_) {}
+        el.dataset.secretLocked = "0";
+        el.readOnly = false;
+        el.placeholder = "";
+        el.value = String(v || "");
+        markSecretOriginal(el);
+        try { el.focus(); } catch (_) {}
+        return true;
       }
+
+      function refreshSecretFieldsLockState() {
+        // If the bridge re-locks (timeout), re-hide secrets in the UI.
+        if (isBridgeUnlocked()) return;
+        try { lockSecretField($("brainApiKey")); } catch (_) {}
+        try { lockSecretField($("braveSearchApiKey")); } catch (_) {}
+      }
+      setInterval(refreshSecretFieldsLockState, 700);
 
       function openSettings() {
         // Keep this minimal and robust. Heavy/permission-gated settings loaders run on demand.
         navigateTo("settingsPage");
-        // Immediately lock down the page even if bridge calls fail or are slow.
-        setSettingsUiLocked(true);
-        // Ensure the toggle/icon reflects the actual current state quickly.
-        syncSettingsLockUiOnce();
-        refreshSecretsFromBridge();
+        // Do not globally lock the page. Secrets are revealed only on explicit biometric unlock.
+        try { lockSecretField($("brainApiKey")); } catch (_) {}
+        try { lockSecretField($("braveSearchApiKey")); } catch (_) {}
       }
-
-      $("unlockSettingsBtn").addEventListener("click", async () => {
-        if (!isSettingsUiLocked()) {
-          // Lock immediately without prompting.
-          settingsUiForceLocked = true;
-          setSettingsUiLocked(true);
-          showToast("Locked", 1000);
-          return;
-        }
-        // Unlock (may prompt biometric).
+      async function ensureSensitiveUnlocked() {
         const r = await requestSettingsUnlock();
         if (!r || !r.ok) {
-          showToast("Unlock failed", 1400);
-          return;
-        }
-        settingsUiForceLocked = false;
-        refreshSecretsFromBridge();
-        showToast("Unlocked", 1000);
-      });
-
-      async function ensureSettingsUnlocked() {
-        if (!isSettingsUiLocked()) return true;
-        const brainBefore = $("brainApiKey").value;
-        const braveBefore = $("braveSearchApiKey").value;
-        const r = await requestSettingsUnlock();
-        if (!r || !r.ok) {
-          showToast("Settings locked", 1600);
+          showToast("Authentication required", 1600);
           return false;
-        }
-        settingsUiForceLocked = false;
-        setSettingsUiLocked(false);
-        if (!brainBefore && !braveBefore) {
-          refreshSecretsFromBridge();
         }
         return true;
       }
@@ -2872,9 +2786,38 @@
       brainSelect.addEventListener("change", () => {
         const p = getSelectedPreset();
         brainCustom.style.display = (p && p.vendor === "custom") ? "block" : "none";
-        // Update the key field to the key remembered for the newly selected provider.
-        try { refreshSecretsFromBridge(); } catch (_) {}
+        // Switching providers changes which API key slot will be used. Keep the key field locked
+        // until the user taps it and authenticates.
+        try { lockSecretField($("brainApiKey")); } catch (_) {}
+        try { updateBrainSaveEnabled(); } catch (_) {}
       });
+
+      let brainInitial = { vendor: "", base_url: "", model: "" };
+      function readBrainUiState() {
+        const preset = getSelectedPreset();
+        if (!preset) return { vendor: "", base_url: "", model: "" };
+        if (preset.vendor === "custom") {
+          return {
+            vendor: "custom",
+            base_url: $("brainBaseUrl").value.trim(),
+            model: $("brainModelId").value.trim(),
+          };
+        }
+        return { vendor: preset.vendor || "", base_url: preset.base_url || "", model: preset.model || "" };
+      }
+      function updateBrainSaveEnabled() {
+        try {
+          const cur = readBrainUiState();
+          const configDirty =
+            String(cur.vendor || "") !== String(brainInitial.vendor || "") ||
+            String(cur.base_url || "") !== String(brainInitial.base_url || "") ||
+            String(cur.model || "") !== String(brainInitial.model || "");
+          const keyDirty = isSecretDirty($("brainApiKey"));
+          $("brainSave").disabled = !(configDirty || keyDirty);
+        } catch (_) {
+          try { $("brainSave").disabled = false; } catch (_) {}
+        }
+      }
 
       async function loadBrainConfig() {
         try {
@@ -2904,13 +2847,13 @@
           } else {
             brainCustom.style.display = "none";
           }
-          // Ensure the key field reflects the currently selected provider.
-          try { refreshSecretsFromBridge(); } catch (_) {}
+          brainInitial = { vendor: data.vendor || "", base_url: data.base_url || "", model: data.model || "" };
+          try { lockSecretField($("brainApiKey")); } catch (_) {}
+          updateBrainSaveEnabled();
         } catch (_) {}
       }
 
       $("brainSave").addEventListener("click", async () => {
-        if (!(await ensureSettingsUnlocked())) return;
         const preset = getSelectedPreset();
         if (!preset) { showToast("Choose a model first"); return; }
 
@@ -2928,15 +2871,24 @@
           payload.model = preset.model;
         }
 
-        const apiKey = $("brainApiKey").value.trim();
-        payload.api_key = apiKey;
+        const keyEl = $("brainApiKey");
+        const keyUnlocked = String((keyEl && keyEl.dataset ? keyEl.dataset.secretLocked : "1") || "1") === "0";
+        const apiKey = keyUnlocked ? String(keyEl.value || "").trim() : "";
+        const keyDirty = keyUnlocked && isSecretDirty(keyEl);
+        if (keyDirty) {
+          if (!(await ensureSensitiveUnlocked())) return;
+          payload.api_key = apiKey;
+        }
 
         try {
           try {
-            if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBrainApiKeyFor) {
-              AndroidBridge.setBrainApiKeyFor(String(payload.vendor || ""), String(payload.base_url || ""), apiKey);
-            } else if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBrainApiKeyPlain) {
-              AndroidBridge.setBrainApiKeyPlain(apiKey);
+            // Only write secrets to the bridge when the user actually changed the value.
+            if (keyDirty) {
+              if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBrainApiKeyFor) {
+                AndroidBridge.setBrainApiKeyFor(String(payload.vendor || ""), String(payload.base_url || ""), apiKey);
+              } else if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBrainApiKeyPlain) {
+                AndroidBridge.setBrainApiKeyPlain(apiKey);
+              }
             }
           } catch (_) {}
 
@@ -2947,7 +2899,6 @@
           });
           if (!res.ok) { showToast("Failed to save config"); return; }
           await loadBrainConfig();
-          refreshSecretsFromBridge();
           showToast("Brain config saved");
         } catch (_) {
           showToast("Connection error");
@@ -2955,6 +2906,50 @@
       });
 
       loadBrainConfig();
+
+      // Secret field unlock triggers (tap-to-unlock).
+      try {
+        $("brainApiKey").addEventListener("focus", async (e) => {
+          if (String($("brainApiKey").dataset.secretLocked || "1") !== "0") {
+            try { e && e.preventDefault && e.preventDefault(); } catch (_) {}
+            await unlockBrainKeyField();
+            updateBrainSaveEnabled();
+          }
+        });
+        $("brainApiKey").addEventListener("click", async () => {
+          if (String($("brainApiKey").dataset.secretLocked || "1") !== "0") {
+            await unlockBrainKeyField();
+            updateBrainSaveEnabled();
+          }
+        });
+        $("brainApiKey").addEventListener("input", () => {
+          updateBrainSaveEnabled();
+        });
+        $("brainBaseUrl").addEventListener("input", updateBrainSaveEnabled);
+        $("brainModelId").addEventListener("input", updateBrainSaveEnabled);
+      } catch (_) {}
+
+      try {
+        $("braveSearchApiKey").addEventListener("focus", async (e) => {
+          if (String($("braveSearchApiKey").dataset.secretLocked || "1") !== "0") {
+            try { e && e.preventDefault && e.preventDefault(); } catch (_) {}
+            await unlockBraveKeyField();
+            refreshBraveSearchKeyStatus();
+            updateBraveButtons();
+          }
+        });
+        $("braveSearchApiKey").addEventListener("click", async () => {
+          if (String($("braveSearchApiKey").dataset.secretLocked || "1") !== "0") {
+            await unlockBraveKeyField();
+            refreshBraveSearchKeyStatus();
+            updateBraveButtons();
+          }
+        });
+        $("braveSearchApiKey").addEventListener("input", () => {
+          refreshBraveSearchKeyStatus();
+          updateBraveButtons();
+        });
+      } catch (_) {}
 
       // ==============================
       // Memory Editor
@@ -3002,8 +2997,10 @@
       // ==============================
       function refreshBraveSearchKeyStatus() {
         try {
-          if (isSettingsUiLocked()) {
-            $("braveSearchKeyStatus").textContent = "";
+          const locked = String($("braveSearchApiKey").dataset.secretLocked || "1") !== "0";
+          if (locked) {
+            // Don't try to infer from UI value while locked.
+            $("braveSearchKeyStatus").textContent = "Tap to unlock to view status.";
             return;
           }
           const k = String($("braveSearchApiKey").value || "").trim();
@@ -3013,16 +3010,27 @@
         }
       }
 
+      function updateBraveButtons() {
+        try {
+          const el = $("braveSearchApiKey");
+          const unlocked = String(el.dataset.secretLocked || "1") === "0";
+          const dirty = isSecretDirty(el);
+          $("braveSearchSave").disabled = !(unlocked && dirty);
+          $("braveSearchClear").disabled = !(unlocked && String(el.value || "").trim());
+        } catch (_) {}
+      }
+
       $("braveSearchSave").addEventListener("click", async () => {
-        if (!(await ensureSettingsUnlocked())) return;
+        if (!(await ensureSensitiveUnlocked())) return;
         const key = $("braveSearchApiKey").value.trim();
         try {
           try {
             if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBraveSearchApiKeyPlain) {
               AndroidBridge.setBraveSearchApiKeyPlain(key);
-              refreshSecretsFromBridge();
               showToast("Brave key saved");
               refreshBraveSearchKeyStatus();
+              markSecretOriginal($("braveSearchApiKey"));
+              updateBraveButtons();
               return;
             }
           } catch (_) {}
@@ -3036,20 +3044,24 @@
           if (!res.ok) throw 0;
           showToast("Brave key saved");
           refreshBraveSearchKeyStatus();
+          markSecretOriginal($("braveSearchApiKey"));
+          updateBraveButtons();
         } catch (_) {
           showToast("Failed to save key");
         }
       });
 
       $("braveSearchClear").addEventListener("click", async () => {
-        if (!(await ensureSettingsUnlocked())) return;
+        if (!(await ensureSensitiveUnlocked())) return;
         try {
           try {
             if (typeof AndroidBridge !== "undefined" && AndroidBridge.setBraveSearchApiKeyPlain) {
               AndroidBridge.setBraveSearchApiKeyPlain("");
-              refreshSecretsFromBridge();
+              $("braveSearchApiKey").value = "";
               showToast("Brave key cleared");
               refreshBraveSearchKeyStatus();
+              markSecretOriginal($("braveSearchApiKey"));
+              updateBraveButtons();
               return;
             }
           } catch (_) {}
@@ -3063,6 +3075,8 @@
           if (!res.ok) throw 0;
           showToast("Brave key cleared");
           refreshBraveSearchKeyStatus();
+          markSecretOriginal($("braveSearchApiKey"));
+          updateBraveButtons();
         } catch (_) {
           showToast("Failed to clear key");
         }
@@ -3720,12 +3734,9 @@
       authNotification.addEventListener("click", async () => {
         sshDetail.textContent = "Enabling notification auth...";
         try {
-          // Always require biometric for enabling auth modes, even if settings are currently UI-locked.
+          // Always require biometric for enabling auth modes.
           const u = await requestSettingsUnlock();
           if (!u || !u.ok) { showToast("Unlock failed", 1400); return; }
-          // Keep the rest of the page locked; this unlock is purely for biometric gating.
-          settingsUiForceLocked = true;
-          setSettingsUiLocked(true);
           const permission_id = await requestPermission("ssh_noauth", "Enable SSH notification auth");
           const res = await fetch(API + "/ssh/noauth/start", {
             method: "POST",
@@ -3745,12 +3756,9 @@
           pinCountdown.textContent = "Generating PIN...";
           pinBarFill.style.width = "0%";
           pinModal.classList.add("show");
-          // Always require biometric for enabling auth modes, even if settings are currently UI-locked.
+          // Always require biometric for enabling auth modes.
           const u = await requestSettingsUnlock();
           if (!u || !u.ok) { showToast("Unlock failed", 1400); pinModal.classList.remove("show"); return; }
-          // Keep the rest of the page locked; this unlock is purely for biometric gating.
-          settingsUiForceLocked = true;
-          setSettingsUiLocked(true);
           const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
           const res = await fetch(API + "/ssh/pin/start", {
             method: "POST",
