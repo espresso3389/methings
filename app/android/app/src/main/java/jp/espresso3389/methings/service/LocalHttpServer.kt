@@ -43,6 +43,7 @@ import jp.espresso3389.methings.perm.PermissionPrefs
 import jp.espresso3389.methings.device.BleManager
 import jp.espresso3389.methings.device.CameraXManager
 import jp.espresso3389.methings.device.DeviceLocationManager
+import jp.espresso3389.methings.device.LlamaCppManager
 import jp.espresso3389.methings.device.SensorsStreamManager
 import jp.espresso3389.methings.device.SttManager
 import jp.espresso3389.methings.device.TtsManager
@@ -96,6 +97,7 @@ class LocalHttpServer(
     private val stt = SttManager(context)
     private val location = DeviceLocationManager(context)
     private val sensors = SensorsStreamManager(context)
+    private val llama = LlamaCppManager(context)
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
@@ -1023,6 +1025,34 @@ class LocalHttpServer(
                 val ok = ensureDevicePermission(session, payload, tool = "device.tts", capability = "tts", detail = "Stop TTS")
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(tts.stop()))
+            }
+            (uri == "/llama/status" || uri == "/llama/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.llama", capability = "llama", detail = "Llama.cpp runtime status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(llama.status(JSONObject())))
+            }
+            (uri == "/llama/models" || uri == "/llama/models/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.llama", capability = "llama", detail = "List local Llama.cpp models")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(llama.listModels(JSONObject())))
+            }
+            (uri == "/llama/run" || uri == "/llama/run/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Run local Llama.cpp command")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(llama.run(payload)))
+            }
+            (uri == "/llama/generate" || uri == "/llama/generate/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Generate text with local Llama.cpp model")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(llama.generate(payload)))
+            }
+            (uri == "/llama/tts" || uri == "/llama/tts/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Synthesize speech with local Llama.cpp model")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(llama.tts(payload)))
             }
             (uri == "/stt/status" || uri == "/stt/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.mic", capability = "stt", detail = "Speech recognizer status")

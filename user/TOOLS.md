@@ -127,6 +127,47 @@ Example:
 }
 ```
 
+### Llama.cpp Quickstart (Local GGUF / MioTTS)
+
+Use `device_api` actions (not raw shell) for local `llama.cpp` binaries:
+
+- `llama.status`: detect installed binaries (`llama-cli`, `llama-tts`) and model roots.
+- `llama.models`: list local `.gguf` files.
+- `llama.run`: run arbitrary `llama.cpp` command-line args.
+- `llama.generate`: convenience text generation via `llama-cli`.
+- `llama.tts`: convenience wrapper for `llama-tts` with templated args.
+
+Example: status check
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": { "action": "llama.status", "payload": {}, "detail": "Check llama.cpp runtime" }
+}
+```
+
+Example: MioTTS-style synthesis (provide args for your `llama-tts` build)
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "llama.tts",
+    "payload": {
+      "model": "MioTTS-0.1B-Q8_0.gguf",
+      "text": "Hello from methings",
+      "output_path": "captures/miotts.wav",
+      "args": ["--model", "{{model}}", "--text", "{{text}}", "--output", "{{output_path}}"]
+    },
+    "detail": "Run llama-tts for local speech synthesis"
+  }
+}
+```
+
+After synthesis, include `rel_path: captures/miotts.wav` in your assistant message to render audio inline.
+
 ### Sensors Quickstart (Realtime Streams)
 
 Use a streaming sensor pipeline (single stream with multiple sensors) so Python code can poll batches with low latency, or attach a WebSocket client.
@@ -249,6 +290,7 @@ Read the relevant doc when working in that domain:
 - `docs/camera.md` (CameraX still capture + preview stream)
 - `docs/ble.md` (BLE scanning + GATT)
 - `docs/tts.md` (Android TextToSpeech)
+- `docs/llama.md` (local llama.cpp model execution)
 - `docs/stt.md` (Android SpeechRecognizer)
 - `docs/permissions.md` (permission scopes and identity)
 - `examples/README.md` (copy/paste golden paths)

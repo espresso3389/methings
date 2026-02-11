@@ -37,6 +37,16 @@ Notes:
 
 Used for allowlisted device control-plane actions (python/ssh/memory/shell.exec, etc). Some actions require user approval and will return `permission_required`.
 
+## Remote Access via SSH Tunnel
+
+If the device's SSH server is running, a remote user can forward the local API/UI port over SSH:
+
+```bash
+ssh <user>@<device-ip> -p <ssh-port> -L 8765:127.0.0.1:8765
+```
+
+Then `http://127.0.0.1:8765` on the remote machine gives full access to the WebView UI and all local HTTP APIs (brain, permissions, device, cloud, etc.).
+
 ## App SSH Shell Commands (Outbound)
 
 When you are inside the app's SSH shell prompt (it looks like `methings>`), a few outbound SSH helpers are available:
@@ -116,6 +126,47 @@ Example:
   }
 }
 ```
+
+### Llama.cpp Quickstart (Local GGUF / MioTTS)
+
+Use `device_api` actions (not raw shell) for local `llama.cpp` binaries:
+
+- `llama.status`: detect installed binaries (`llama-cli`, `llama-tts`) and model roots.
+- `llama.models`: list local `.gguf` files.
+- `llama.run`: run arbitrary `llama.cpp` command-line args.
+- `llama.generate`: convenience text generation via `llama-cli`.
+- `llama.tts`: convenience wrapper for `llama-tts` with templated args.
+
+Example: status check
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": { "action": "llama.status", "payload": {}, "detail": "Check llama.cpp runtime" }
+}
+```
+
+Example: MioTTS-style synthesis (provide args for your `llama-tts` build)
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "llama.tts",
+    "payload": {
+      "model": "MioTTS-0.1B-Q8_0.gguf",
+      "text": "Hello from methings",
+      "output_path": "captures/miotts.wav",
+      "args": ["--model", "{{model}}", "--text", "{{text}}", "--output", "{{output_path}}"]
+    },
+    "detail": "Run llama-tts for local speech synthesis"
+  }
+}
+```
+
+After synthesis, include `rel_path: captures/miotts.wav` in your assistant message to render audio inline.
 
 ### Sensors Quickstart (Realtime Streams)
 
@@ -239,6 +290,7 @@ Read the relevant doc when working in that domain:
 - `docs/camera.md` (CameraX still capture + preview stream)
 - `docs/ble.md` (BLE scanning + GATT)
 - `docs/tts.md` (Android TextToSpeech)
+- `docs/llama.md` (local llama.cpp model execution)
 - `docs/stt.md` (Android SpeechRecognizer)
 - `docs/permissions.md` (permission scopes and identity)
 - `examples/README.md` (copy/paste golden paths)

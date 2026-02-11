@@ -74,6 +74,13 @@ Common patterns:
 - `vision.frame.save` -> `POST /vision/frame/save`
 - `vision.run` -> `POST /vision/run`
 
+### Llama.cpp (local GGUF models)
+- `llama.status` -> `GET /llama/status`
+- `llama.models` -> `GET /llama/models`
+- `llama.run` -> `POST /llama/run`
+- `llama.generate` -> `POST /llama/generate`
+- `llama.tts` -> `POST /llama/tts`
+
 ## File Endpoints (User Root)
 
 - `POST /user/upload` (multipart)

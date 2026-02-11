@@ -41,6 +41,11 @@ class DeviceApiTool:
         "tts.voices": {"method": "GET", "path": "/tts/voices", "permission": True},
         "tts.speak": {"method": "POST", "path": "/tts/speak", "permission": True},
         "tts.stop": {"method": "POST", "path": "/tts/stop", "permission": True},
+        "llama.status": {"method": "GET", "path": "/llama/status", "permission": True},
+        "llama.models": {"method": "GET", "path": "/llama/models", "permission": True},
+        "llama.run": {"method": "POST", "path": "/llama/run", "permission": True},
+        "llama.generate": {"method": "POST", "path": "/llama/generate", "permission": True},
+        "llama.tts": {"method": "POST", "path": "/llama/tts", "permission": True},
         "stt.status": {"method": "GET", "path": "/stt/status", "permission": True},
         "stt.start": {"method": "POST", "path": "/stt/start", "permission": True},
         "stt.stop": {"method": "POST", "path": "/stt/stop", "permission": True},
@@ -97,6 +102,9 @@ class DeviceApiTool:
             "usb.stream.stop": 25.0,
             "uvc.mjpeg.capture": 45.0,
             "screen.keep_on": 12.0,
+            "llama.run": 300.0,
+            "llama.generate": 300.0,
+            "llama.tts": 420.0,
         }
 
     def set_identity(self, identity: str) -> None:
@@ -509,6 +517,8 @@ class DeviceApiTool:
             return "device.ble", "ble", "session"
         if a.startswith("tts."):
             return "device.tts", "tts", "session"
+        if a.startswith("llama."):
+            return "device.llama", "llama", "session"
         if a.startswith("stt."):
             return "device.mic", "stt", "session"
         if a.startswith("location."):
