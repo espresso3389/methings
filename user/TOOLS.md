@@ -208,22 +208,31 @@ To fetch the image onto your dev machine, use the local file endpoint (permissio
 
 ### Open Agent HTML From Chat
 
-If you create an HTML app/game under user files (for example `apps/game/index.html`), include one of these lines in your assistant message:
+When you create an HTML file and want the user to open it, do this in the same assistant reply:
+
+1. Create/write the HTML file under user root.
+2. Output exactly one line:
 
 ```text
-html_path: apps/game/index.html
+html_path: <relative_path>.html
 ```
 
-or
+Example:
 
 ```text
-open_html: apps/game/index.html
+html_path: agent_ui/sample.html
 ```
 
-The chat UI will render a tappable OPEN card. Tapping it launches a separate WebView container with an always-visible close (`X`) button outside the page, so users can always return to the main chat UI.
+Rules:
+- Prefer `html_path:` (use `open_html:` only for backward compatibility).
+- The path must be user-root relative (no absolute paths, no URL).
+- Do not tell the user to manually open a URL or endpoint.
+- Do not replace this with prose like "open this file with your UI."
 
-Runtime URL for direct hosting:
-- `http://127.0.0.1:8765/user/www/<rel_path>`
+What happens:
+- Chat renders an OPEN card automatically.
+- Tap OPEN to launch a separate WebView container.
+- A native always-visible `X` closes it and returns to chat.
 
 ## Docs Index
 
