@@ -2217,6 +2217,7 @@
                   a.preload = "metadata";
                   a.src = src;
                   a.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
+                  a.addEventListener("error", () => { try { card.remove(); } catch (_) {} });
                   body.appendChild(a);
                   watchInlineMedia(a);
                   hint.textContent = "Audio";
@@ -2228,6 +2229,7 @@
                 v.preload = "metadata";
                 v.src = src;
                 v.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
+                v.addEventListener("error", () => { try { card.remove(); } catch (_) {} });
                 body.appendChild(v);
                 watchInlineMedia(v);
                 hint.textContent = "Video";
@@ -2237,6 +2239,7 @@
                 a.preload = "metadata";
                 a.src = src;
                 a.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
+                a.addEventListener("error", () => { try { card.remove(); } catch (_) {} });
                 body.appendChild(a);
                 watchInlineMedia(a);
                 // Audio attachments are rendered as a minimal player; the card header/hint are hidden by CSS.
