@@ -2776,10 +2776,12 @@
           }
           return;
         }
+        const shouldScroll = isNearBottom(chatMessages, 140) || stickToBottom;
         const w = document.createElement("div");
         w.className = "msg-working";
         w.innerHTML = '<div class="thinking-dots mini"><span></span><span></span><span></span></div><span class="thinking-label">' + (label ? escapeHtml(label) : '') + '</span>';
         div.appendChild(w);
+        if (shouldScroll) scrollToBottomSoon();
       }
 
       function markWorkingByItemId(itemId) {
