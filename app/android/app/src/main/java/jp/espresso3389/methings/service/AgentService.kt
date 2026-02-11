@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import jp.espresso3389.methings.AppForegroundState
+import jp.espresso3389.methings.R
 import jp.espresso3389.methings.ui.MainActivity
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -505,7 +506,7 @@ class AgentService : LifecycleService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "Agent Service",
+                "methings Agent Service",
                 NotificationManager.IMPORTANCE_LOW
             )
             val manager = getSystemService(NotificationManager::class.java)
@@ -513,9 +514,9 @@ class AgentService : LifecycleService() {
         }
 
         val builder = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Agent Service")
+            .setContentTitle("methings Agent Service")
             .setContentText(foregroundText(activeMode, expiresAt))
-            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
 

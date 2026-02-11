@@ -101,8 +101,8 @@
       .icon-btn svg,
       .send-btn svg,
       .attach-icon-btn svg {
-        width: 19px;
-        height: 19px;
+        width: 15px;
+        height: 15px;
         display: block;
       }
       .send-btn svg { width: 20px; height: 20px; }
@@ -304,8 +304,8 @@
         white-space: nowrap;
       }
       .attach-icon-btn {
-        width: 34px;
-        height: 34px;
+        width: 28px;
+        height: 28px;
         border-radius: var(--radius-md);
         border: 1px solid rgba(161,161,170,0.25);
         background: rgba(255,255,255,0.04);
@@ -807,6 +807,7 @@
       }
       .field select,
       .field input[type="text"],
+      .field input[type="number"],
       .field input[type="url"],
       .field input[type="password"] {
         width: 100%;
@@ -1321,11 +1322,11 @@
           </div>
         </section>
 
-        <!-- Python Worker -->
+        <!-- Agent Service -->
         <section class="card">
           <div class="card-header">
             <div class="card-icon amber">&#9881;</div>
-            <div class="card-title">Python Worker</div>
+            <div class="card-title">Agent Service</div>
             <div id="pythonStatus" class="status-badge offline" style="margin-left:auto;">offline</div>
           </div>
           <p class="muted">Emergency restart only.</p>
@@ -1343,12 +1344,9 @@
             <div class="card-icon red">&#9888;</div>
             <div class="card-title">UI Maintenance</div>
           </div>
-          <div class="row">
-            <span class="muted">Reset the UI files to defaults.</span>
+          <div class="muted">Reset UI files or agent docs to defaults.</div>
+          <div class="btn-group">
             <button class="btn" id="resetUi">Reset UI</button>
-          </div>
-          <div class="row" style="margin-top:10px;">
-            <span class="muted">Reset agent docs (AGENTS/TOOLS/docs) to defaults.</span>
             <button class="btn" id="resetAgentDocs">Reset Agent Docs</button>
           </div>
         </section>
@@ -1362,12 +1360,10 @@
           <div class="card-desc">
             OS-level app settings and defaults (not related to UI hot-reload or asset reset).
           </div>
-          <div class="row">
-            <span class="muted">Open Android settings for this app.</span>
-            <div class="btn-group" style="margin-left:auto;">
-              <button class="btn nowrap" id="openAppSettings">App Settings</button>
-              <button class="btn nowrap" id="openOpenByDefault">Open by default</button>
-            </div>
+          <div class="muted">Open Android settings for this app.</div>
+          <div class="btn-group">
+            <button class="btn nowrap" id="openAppSettings">App Settings</button>
+            <button class="btn nowrap" id="openOpenByDefault">Open By Default</button>
           </div>
         </section>
 
@@ -1388,7 +1384,7 @@
             <span class="toggle-label">Remember approvals</span>
           </div>
           <div class="btn-group">
-            <button class="btn" id="permClear">Clear saved approvals</button>
+            <button class="btn" id="permClear">Clear Saved Approvals</button>
           </div>
         </section>
 
