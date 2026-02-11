@@ -24,6 +24,7 @@ import java.net.InetAddress
 import java.net.URI
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketTimeoutException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -2987,6 +2988,12 @@ class LocalHttpServer(
                 override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
                 override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
                 override fun onException(exception: java.io.IOException?) {
+                    val msg = exception?.message?.lowercase(Locale.US) ?: ""
+                    if (exception is SocketTimeoutException ||
+                        (exception is java.io.InterruptedIOException && msg.contains("timed out"))
+                    ) {
+                        return
+                    }
                     val id = streamId
                     if (id != null) {
                         sensors.removeWsClient(id, this)
@@ -5337,7 +5344,9 @@ class LocalHttpServer(
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
         private const val PORT = 8765
-    private const val BRAIN_SYSTEM_PROMPT = """You are the methings Brain, an AI assistant running on an Android device.
+        // NanoHTTPD default socket timeout (5s) is too short for WS sensor streams.
+        private const val SOCKET_READ_TIMEOUT = 600_000
+        private const val BRAIN_SYSTEM_PROMPT = """You are the methings Brain, an AI assistant running on an Android device.
 
 Policies:
 - For detailed operational rules and tool usage, read user-root docs: `AGENTS.md` and `TOOLS.md`.

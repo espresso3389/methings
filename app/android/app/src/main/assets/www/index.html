@@ -4476,12 +4476,7 @@
         }
       });
 
-      // Agent console initial load.
-      refreshAgentStatus();
-      refreshAgentSessions().then(async () => {
-        await refreshAgentTranscript();
-        await refreshAgentJournal();
-      });
+      // Agent console initial load (stubs removed; kept as no-ops for safety).
       refreshSshKeys();
 
       window.onPythonStatus = function(status) {

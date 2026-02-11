@@ -7,6 +7,10 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.SystemClock
+import android.os.Handler
+import android.os.Looper
+import android.os.HandlerThread
+import android.util.Log
 import fi.iki.elonen.NanoWSD
 import org.json.JSONArray
 import org.json.JSONObject
@@ -44,6 +48,7 @@ class SensorsStreamManager(private val context: Context) {
         val dropped: AtomicLong,
         @Volatile var lastEvent: JSONObject?,
         val listeners: MutableList<SensorEventListener>,
+        val callbackThread: HandlerThread?,
     )
 
     private val streams = ConcurrentHashMap<String, StreamState>()
@@ -164,9 +169,11 @@ class SensorsStreamManager(private val context: Context) {
             dropped = AtomicLong(0L),
             lastEvent = null,
             listeners = mutableListOf(),
+            callbackThread = HandlerThread("sensors-$id").apply { start() },
         )
 
         val samplingPeriodUs = (1_000_000 / rateHz.coerceAtLeast(1)).coerceIn(0, 1_000_000)
+        val callbackHandler = st.callbackThread?.looper?.let { Handler(it) } ?: Handler(Looper.getMainLooper())
         for ((key, sensor) in sensorMap) {
             val l = object : SensorEventListener {
                 override fun onSensorChanged(event: SensorEvent) {
@@ -204,14 +211,16 @@ class SensorsStreamManager(private val context: Context) {
             val ok = runCatching {
                 // For best-effort realtime, ask for FASTEST when the caller wants high rate.
                 if (rateHz >= 200) {
-                    m.registerListener(l, sensor, SensorManager.SENSOR_DELAY_FASTEST)
+                    m.registerListener(l, sensor, SensorManager.SENSOR_DELAY_FASTEST, callbackHandler)
                 } else {
-                    m.registerListener(l, sensor, samplingPeriodUs)
+                    m.registerListener(l, sensor, samplingPeriodUs, 0, callbackHandler)
                 }
             }.getOrDefault(false)
             if (!ok) {
                 st.running.set(false)
                 for (li in st.listeners) runCatching { m.unregisterListener(li) }
+                runCatching { st.callbackThread?.quitSafely() }
+                Log.w(TAG, "registerListener failed stream=${st.id} key=$key sensor=${sensor.name}")
                 return mapOf("status" to "error", "error" to "register_failed", "sensor" to sensorInfoJson(sensor).toString())
             }
         }
@@ -237,6 +246,7 @@ class SensorsStreamManager(private val context: Context) {
         if (m != null) {
             for (l in st.listeners) runCatching { m.unregisterListener(l) }
         }
+        runCatching { st.callbackThread?.quitSafely() }
         return mapOf("status" to "ok", "stopped" to true, "stream_id" to id)
     }
 
@@ -345,10 +355,15 @@ class SensorsStreamManager(private val context: Context) {
         for (ws in st.wsClients) {
             try {
                 if (ws.isOpen) ws.send(text) else dead.add(ws)
-            } catch (_: Exception) {
+            } catch (ex: Exception) {
+                Log.w(TAG, "emit send failed stream=${st.id} seq=${st.seq.get()} ex=${ex.javaClass.simpleName}:${ex.message}")
                 dead.add(ws)
             }
         }
         for (ws in dead) st.wsClients.remove(ws)
+    }
+
+    companion object {
+        private const val TAG = "SensorsStreamManager"
     }
 }
