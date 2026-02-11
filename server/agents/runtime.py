@@ -2075,17 +2075,8 @@ class BrainRuntime:
                         "location.status",
                         "location.get",
                         "sensors.list",
-                        "sensors.stream.status",
-                        "sensors.stream.start",
-                        "sensors.stream.stop",
-                        "sensors.stream.latest",
-                        "sensors.stream.batch",
                         "sensor.list",
-                        "sensor.stream.start",
-                        "sensor.stream.stop",
-                        "sensor.stream.status",
-                        "sensor.stream.latest",
-                        "sensor.stream.batch",
+                        "sensors.ws.contract",
                         "usb.list",
                         "usb.open",
                         "usb.close",
@@ -2143,8 +2134,8 @@ class BrainRuntime:
             "a permission approval, or you are about to do an irreversible/destructive action. "
             "Common camera actions include: camera.list, camera.status, camera.preview.start, camera.preview.stop, camera.capture. "
             "Common location actions include: location.status, location.get. "
-            "Common sensors actions include: sensors.list, sensors.stream.start, sensors.stream.status, sensors.stream.batch. "
-            "Preferred sensors actions include: sensor.stream.start, sensor.stream.status, sensor.stream.batch (realtime, short keys). "
+            "Common sensors actions include: sensors.list and sensors.ws.contract. "
+            "For realtime sensors, use WebSocket /ws/sensors based on sensors.ws.contract instead of old polling stream endpoints. "
             "Common vision actions include: vision.model.load, vision.image.load, vision.run. "
             "For cloud calls, use tool='cloud_request' and args shape: {request:{url,method,headers,json/body,...}}. "
             "Do NOT use shell_exec(curl) to call /cloud/request or /permissions/*; use cloud_request so requests are validated/audit-logged and placeholders are expanded safely. "

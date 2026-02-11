@@ -24,6 +24,7 @@ class SensorsStreamManager(private val context: Context) {
         val latency: String,
         val timestamp: String,
         val bufferMax: Int,
+        val backpressureMode: String,
     )
 
     private data class StreamState(
@@ -34,6 +35,7 @@ class SensorsStreamManager(private val context: Context) {
         val latency: String,
         val timestamp: String,
         val bufferMax: Int,
+        val backpressureMode: String,
         val wsClients: CopyOnWriteArrayList<NanoWSD.WebSocket>,
         val running: AtomicBoolean,
         val seq: AtomicLong,
@@ -83,7 +85,7 @@ class SensorsStreamManager(private val context: Context) {
             .put("ws_clients", st.wsClients.size)
             .put("buffer_size", synchronized(st.bufLock) { st.buf.size })
             .put("dropped", st.dropped.get())
-            .put("latest_q", st.seq.get())
+            .put("latest_seq", st.seq.get())
             .put("latest_t", last?.optDouble("t", 0.0) ?: 0.0)
     }
 
@@ -93,6 +95,19 @@ class SensorsStreamManager(private val context: Context) {
         return st.lastEvent ?: JSONObject(mapOf("status" to "error", "error" to "no_event"))
     }
 
+    fun hello(streamId: String): JSONObject {
+        val id = streamId.trim()
+        val st = streams[id] ?: return JSONObject(mapOf("status" to "error", "error" to "stream_not_found"))
+        return JSONObject()
+            .put("type", "hello")
+            .put("stream_id", st.id)
+            .put("sensors", JSONArray(st.requestedSensors))
+            .put("rate_hz", st.requestedRateHz)
+            .put("latency", st.latency)
+            .put("timestamp", st.timestamp)
+            .put("backpressure", JSONObject().put("mode", st.backpressureMode).put("max_queue", st.bufferMax))
+    }
+
     fun batch(streamId: String, sinceQExclusive: Long, limit: Int): JSONObject {
         val id = streamId.trim()
         val st = streams[id] ?: return JSONObject(mapOf("status" to "error", "error" to "stream_not_found"))
@@ -100,7 +115,7 @@ class SensorsStreamManager(private val context: Context) {
         val lim = limit.coerceIn(1, 5000)
         synchronized(st.bufLock) {
             for (e in st.buf) {
-                val q = e.optLong("q", -1L)
+                val q = e.optLong("seq", -1L)
                 if (q > sinceQExclusive) {
                     out.put(e)
                     if (out.length() >= lim) break
@@ -130,6 +145,7 @@ class SensorsStreamManager(private val context: Context) {
         val latency = req.latency.trim().lowercase().ifBlank { "realtime" }
         val timestamp = req.timestamp.trim().lowercase().let { if (it == "unix") "unix" else "mono" }
         val bufferMax = req.bufferMax.coerceIn(64, 50_000)
+        val backpressureMode = req.backpressureMode.trim().lowercase().let { if (it == "drop_new") "drop_new" else "drop_old" }
 
         val st = StreamState(
             id = id,
@@ -139,6 +155,7 @@ class SensorsStreamManager(private val context: Context) {
             latency = latency,
             timestamp = timestamp,
             bufferMax = bufferMax,
+            backpressureMode = backpressureMode,
             wsClients = CopyOnWriteArrayList(),
             running = AtomicBoolean(true),
             seq = AtomicLong(0L),
@@ -159,21 +176,27 @@ class SensorsStreamManager(private val context: Context) {
                     val vals = JSONArray()
                     for (x in event.values) vals.put(x.toDouble())
                     val obj = JSONObject()
-                        .put("status", "ok")
-                        .put("s", st.id)
-                        .put("k", key)
+                        .put("type", "sample")
+                        .put("stream_id", st.id)
+                        .put("sensor", key)
                         .put("t", t)
                         .put("v", vals)
-                        .put("q", q)
+                        .put("seq", q)
                     st.lastEvent = obj
+                    var keep = true
                     synchronized(st.bufLock) {
-                        st.buf.addLast(obj)
-                        while (st.buf.size > st.bufferMax) {
-                            st.buf.removeFirst()
+                        if (st.buf.size >= st.bufferMax && st.backpressureMode == "drop_new") {
                             st.dropped.incrementAndGet()
+                            keep = false
+                        } else {
+                            st.buf.addLast(obj)
+                            while (st.buf.size > st.bufferMax) {
+                                st.buf.removeFirst()
+                                st.dropped.incrementAndGet()
+                            }
                         }
                     }
-                    emit(st, obj)
+                    if (keep) emit(st, obj)
                 }
                 override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
             }
@@ -197,11 +220,12 @@ class SensorsStreamManager(private val context: Context) {
         return mapOf(
             "status" to "ok",
             "stream_id" to id,
-            "ws_path" to "/ws/sensor/stream/$id",
+            "ws_path" to "/ws/sensors?stream_id=$id",
             "sensors" to JSONArray(keys).toString(),
             "rate_hz" to rateHz,
             "latency" to latency,
             "timestamp" to timestamp,
+            "backpressure" to backpressureMode,
         )
     }
 

@@ -1066,75 +1066,46 @@ class LocalHttpServer(
                 }
                 return jsonResponse(out)
             }
-            (uri == "/sensors/stream/status" || uri == "/sensors/stream/status/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.sensors", capability = "sensors", detail = "Sensors stream status")
+            (uri == "/sensors/ws/contract" || uri == "/sensors/ws/contract/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.sensors", capability = "sensors", detail = "Sensors websocket contract")
                 if (!ok.first) return ok.second!!
-                val out = JSONObject(sensors.streamsStatus())
-                if (out.has("items")) {
-                    out.put("items", org.json.JSONArray(out.getString("items")))
-                }
-                return jsonResponse(out)
+                return jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("ws_path", "/ws/sensors")
+                        .put("query", JSONObject()
+                            .put("sensors", "comma-separated sensor keys, e.g. a,g,m")
+                            .put("rate_hz", "1..1000 (default 200)")
+                            .put("latency", "realtime|normal|ui (default realtime)")
+                            .put("timestamp", "mono|unix (default mono)")
+                            .put("backpressure", "drop_old|drop_new (default drop_old)")
+                            .put("max_queue", "64..50000 (default 4096)"))
+                        .put("sample_event", JSONObject()
+                            .put("type", "sample")
+                            .put("stream_id", "s1234abcd")
+                            .put("sensor", "a")
+                            .put("t", 12345.678)
+                            .put("seq", 1001)
+                            .put("v", org.json.JSONArray().put(0.01).put(9.8).put(0.12)))
+                )
+            }
+            (uri == "/sensors/stream/status" || uri == "/sensors/stream/status/") && session.method == Method.GET -> {
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
             }
             (uri == "/sensors/stream/start" || uri == "/sensors/stream/start/" || uri == "/sensor/stream/start" || uri == "/sensor/stream/start/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Start sensors stream")
-                if (!ok.first) return ok.second!!
-                val sensorsArr = payload.optJSONArray("sensors")
-                val names = mutableListOf<String>()
-                if (sensorsArr != null) {
-                    for (i in 0 until sensorsArr.length()) {
-                        val s = sensorsArr.optString(i, "").trim()
-                        if (s.isNotBlank()) names.add(s)
-                    }
-                }
-                val rateHz = payload.optInt("rate_hz", 200).coerceIn(1, 1000)
-                val latency = payload.optString("latency", "realtime").trim()
-                val timestamp = payload.optString("timestamp", "mono").trim()
-                val bufferMax = payload.optInt("buffer_max", 4096).coerceIn(64, 50_000)
-                val out = sensors.start(
-                    SensorsStreamManager.StreamStart(
-                        sensors = names,
-                        rateHz = rateHz,
-                        latency = latency,
-                        timestamp = timestamp,
-                        bufferMax = bufferMax,
-                    )
-                )
-                return jsonResponse(JSONObject(out))
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
             }
             (uri == "/sensors/stream/stop" || uri == "/sensors/stream/stop/" || uri == "/sensor/stream/stop" || uri == "/sensor/stream/stop/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Stop sensors stream")
-                if (!ok.first) return ok.second!!
-                val id = payload.optString("stream_id", "").trim()
-                if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "stream_id_required")
-                return jsonResponse(JSONObject(sensors.stop(id)))
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
             }
             (uri == "/sensors/stream/latest" || uri == "/sensors/stream/latest/" || uri == "/sensor/stream/latest" || uri == "/sensor/stream/latest/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Get latest sensors frame")
-                if (!ok.first) return ok.second!!
-                val id = payload.optString("stream_id", "").trim()
-                if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "stream_id_required")
-                return jsonResponse(sensors.latest(id))
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
             }
             (uri == "/sensors/stream/batch" || uri == "/sensors/stream/batch/" || uri == "/sensor/stream/batch" || uri == "/sensor/stream/batch/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Get sensors frames batch")
-                if (!ok.first) return ok.second!!
-                val id = payload.optString("stream_id", "").trim()
-                if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "stream_id_required")
-                val sinceQ = payload.optLong("since_q_exclusive", payload.optLong("since_seq_exclusive", 0L))
-                val limit = payload.optInt("limit", 500).coerceIn(1, 5000)
-                return jsonResponse(sensors.batch(id, sinceQ, limit))
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
             }
             (uri == "/sensor/stream/status" || uri == "/sensor/stream/status/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Sensors stream status (single)")
-                if (!ok.first) return ok.second!!
-                val id = payload.optString("stream_id", "").trim()
-                if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "stream_id_required")
-                return jsonResponse(sensors.streamStatus(id))
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
             }
             uri == "/ssh/status" -> {
                 val status = sshdManager.status()
@@ -2932,26 +2903,96 @@ class LocalHttpServer(
             }
         }
 
-        val sensorsPrefixes = listOf("/ws/sensors/stream/", "/ws/sensor/stream/")
-        val sensorsPrefix = sensorsPrefixes.firstOrNull { uri.startsWith(it) }
-        if (sensorsPrefix != null) {
-            val streamId = uri.removePrefix(sensorsPrefix).trim()
+        if (uri == "/ws/sensors") {
+            val params = handshake.parameters
+            val sensorsCsv = (params["sensors"]?.firstOrNull() ?: "").trim()
+            val names = sensorsCsv.split(",").map { it.trim() }.filter { it.isNotBlank() }
+            val rateHz = (params["rate_hz"]?.firstOrNull() ?: "200").toIntOrNull()?.coerceIn(1, 1000) ?: 200
+            val latency = (params["latency"]?.firstOrNull() ?: "realtime").trim()
+            val timestamp = (params["timestamp"]?.firstOrNull() ?: "mono").trim()
+            val backpressure = (params["backpressure"]?.firstOrNull() ?: "drop_old").trim()
+            val maxQueue = (params["max_queue"]?.firstOrNull() ?: "4096").toIntOrNull()?.coerceIn(64, 50_000) ?: 4096
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
+
             return object : NanoWSD.WebSocket(handshake) {
+                private var streamId: String? = null
+
                 override fun onOpen() {
-                    val ok = sensors.addWsClient(streamId, this)
-                    if (!ok) {
-                        runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "stream_not_found", false) }
+                    if (names.isEmpty()) {
+                        runCatching {
+                            send(JSONObject().put("type", "error").put("code", "sensors_required").toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "sensors_required", false)
+                        }
+                        return
                     }
+
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.sensors",
+                        capability = "sensors",
+                        detail = "Open sensors websocket stream"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
+
+                    val started = sensors.start(
+                        SensorsStreamManager.StreamStart(
+                            sensors = names,
+                            rateHz = rateHz,
+                            latency = latency,
+                            timestamp = timestamp,
+                            bufferMax = maxQueue,
+                            backpressureMode = backpressure,
+                        )
+                    )
+                    if (started["status"] != "ok") {
+                        runCatching {
+                            send(JSONObject().put("type", "error").put("code", "start_failed").put("detail", JSONObject(started)).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.InternalServerError, "start_failed", false)
+                        }
+                        return
+                    }
+                    val id = (started["stream_id"] as? String ?: "").trim()
+                    if (id.isBlank()) {
+                        runCatching { close(NanoWSD.WebSocketFrame.CloseCode.InternalServerError, "stream_id_missing", false) }
+                        return
+                    }
+                    streamId = id
+                    val added = sensors.addWsClient(id, this)
+                    if (!added) {
+                        sensors.stop(id)
+                        runCatching { close(NanoWSD.WebSocketFrame.CloseCode.InternalServerError, "attach_failed", false) }
+                        return
+                    }
+                    runCatching { send(sensors.hello(id).toString()) }
                 }
 
                 override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
-                    sensors.removeWsClient(streamId, this)
+                    val id = streamId
+                    if (id != null) {
+                        sensors.removeWsClient(id, this)
+                        sensors.stop(id)
+                        streamId = null
+                    }
                 }
 
                 override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
                 override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
                 override fun onException(exception: java.io.IOException?) {
-                    sensors.removeWsClient(streamId, this)
+                    val id = streamId
+                    if (id != null) {
+                        sensors.removeWsClient(id, this)
+                        sensors.stop(id)
+                        streamId = null
+                    }
                 }
             }
         }
@@ -3415,6 +3456,52 @@ class LocalHttpServer(
         }
 
         return Pair(true, null)
+    }
+
+    private fun ensureDevicePermissionForWs(
+        session: IHTTPSession,
+        permissionId: String,
+        identityFromQuery: String,
+        tool: String,
+        capability: String,
+        detail: String
+    ): JSONObject? {
+        val headerIdentity =
+            ((session.headers["x-methings-identity"] ?: session.headers["x-methings-identity"]) ?: "").trim()
+        val identity = identityFromQuery.ifBlank { headerIdentity }.ifBlank { installIdentity.get() }
+        var pid = permissionId.trim()
+        val scope = if (permissionPrefs.rememberApprovals()) "persistent" else "session"
+
+        if (!isPermissionApproved(pid, consume = true) && identity.isNotBlank()) {
+            val reusable = permissionStore.findReusableApproved(
+                tool = tool,
+                scope = scope,
+                identity = identity,
+                capability = capability
+            )
+            if (reusable != null) {
+                pid = reusable.id
+            }
+        }
+        if (isPermissionApproved(pid, consume = true)) return null
+
+        val req = permissionStore.create(
+            tool = tool,
+            detail = detail.take(240),
+            scope = scope,
+            identity = identity,
+            capability = capability
+        )
+        sendPermissionPrompt(req.id, req.tool, req.detail, false)
+        return JSONObject()
+            .put("id", req.id)
+            .put("status", req.status)
+            .put("tool", req.tool)
+            .put("detail", req.detail)
+            .put("scope", req.scope)
+            .put("created_at", req.createdAt)
+            .put("identity", req.identity)
+            .put("capability", req.capability)
     }
 
     private fun handlePipDownload(session: IHTTPSession, payload: JSONObject): Response {

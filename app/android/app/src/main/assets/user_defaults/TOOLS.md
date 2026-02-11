@@ -131,7 +131,17 @@ Use a streaming sensor pipeline (single stream with multiple sensors) so Python 
 }
 ```
 
-2) Start a stream (preferred short keys):
+2) Get websocket contract:
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": { "action": "sensors.ws.contract", "payload": {}, "detail": "Get sensors websocket contract" }
+}
+```
+
+3) Open realtime stream via WebSocket `GET /ws/sensors` (WS-first, breaking change):
 
 - `a`: accelerometer
 - `g`: gyroscope
@@ -149,45 +159,28 @@ Use a streaming sensor pipeline (single stream with multiple sensors) so Python 
 - `s`: step counter
 - `q`: step detector
 
+WS query params:
+- `sensors`: comma-separated keys (required), e.g. `a,g,m`
+- `rate_hz`: `1..1000` (default `200`)
+- `latency`: `realtime|normal|ui` (default `realtime`)
+- `timestamp`: `mono|unix` (default `mono`)
+- `backpressure`: `drop_old|drop_new` (default `drop_old`)
+- `max_queue`: `64..50000` (default `4096`)
+
+Server first sends `hello`, then per-sensor `sample` events:
+
 ```json
-{
-  "type": "tool_invoke",
-  "tool": "device_api",
-  "args": {
-    "action": "sensor.stream.start",
-    "payload": { "sensors": ["a", "g", "m"], "rate_hz": 200, "latency": "realtime", "timestamp": "mono" },
-    "detail": "Start IMU sensor stream"
-  }
-}
+{ "type":"hello", "stream_id":"s1", "sensors":["a","g","m"], "rate_hz":200, "timestamp":"mono" }
 ```
 
-This returns:
-- `stream_id`
-- `ws_path` like `/ws/sensor/stream/<stream_id>`
-
-Each emitted event (per sensor) looks like:
-
 ```json
-{ "s":"s1", "k":"a", "t": 123456.789, "v":[0.01, 9.80, 0.12], "q": 1001 }
+{ "type":"sample", "stream_id":"s1", "sensor":"a", "t": 123456.789, "v":[0.01, 9.80, 0.12], "seq": 1001 }
 ```
 
 Notes:
 - `t` is seconds (monotonic when `timestamp=mono`, unix epoch when `timestamp=unix`)
-- `q` is a monotonically increasing sequence number per stream
-
-3) Poll events (good for Python code) with `since_q_exclusive`:
-
-```json
-{
-  "type": "tool_invoke",
-  "tool": "device_api",
-  "args": {
-    "action": "sensor.stream.batch",
-    "payload": { "stream_id": "<stream_id>", "since_q_exclusive": 0, "limit": 500 },
-    "detail": "Fetch sensor events batch"
-  }
-}
-```
+- `seq` is a monotonically increasing sequence number per stream
+- Old HTTP stream endpoints (`sensor.stream.*`, `sensors.stream.*`) are deprecated and return `gone`.
 
 ### Show Media Inline In Chat (Required)
 
