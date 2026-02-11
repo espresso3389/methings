@@ -2905,6 +2905,11 @@
       function renderPermCard(pending) {
         const shouldScroll = isNearBottom(chatMessages, 140);
         if (chatWelcome.parentNode) chatWelcome.remove();
+        // If the current card is fully resolved, seal it and start a fresh one.
+        if (_permState.cardEl && _permState.cardEl.classList.contains("resolved")) {
+          _permState.cardEl = null;
+          _permState.items = {};
+        }
         if (!_permState.cardEl) {
           const card = document.createElement("div");
           card.className = "perm-card";
@@ -2997,13 +3002,19 @@
           const res = await fetch(API + "/permissions/pending");
           if (!res.ok) return;
           const data = await res.json();
-          const pending = Array.isArray(data) ? data : [];
+          const pending = Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
           // Check for resolved permissions we're tracking.
           for (const [pid, entry] of Object.entries(_permState.items)) {
             if (entry.status === "pending" && !pending.find(p => p.id === pid)) {
               // Was pending, now gone — resolved externally (notification, etc.)
               updatePermItemStatus(pid, "approved");
             }
+          }
+          // If card was detached from DOM (e.g., chat re-render), reset state so it re-creates.
+          if (_permState.cardEl && !_permState.cardEl.isConnected) {
+            _permState.cardEl = null;
+            _permState.items = {};
+            _permState.knownIds.clear();
           }
           // Filter to truly new pending items.
           const newPending = pending.filter(p => !_permState.knownIds.has(p.id));
