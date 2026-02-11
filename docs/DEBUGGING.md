@@ -17,11 +17,23 @@ All of that is persisted in `files/protected/app.db` on-device.
 
 ## Port-Forward (From Host)
 
+### Via ADB (USB or Wi-Fi paired)
+
 ```bash
 adb -s <serial> forward tcp:18765 tcp:8765
 ```
 
 After this, access the APIs at `http://127.0.0.1:18765`.
+
+### Via SSH Tunnel (Remote / No ADB)
+
+If the device's SSH server is running, you can forward the GUI and API port over SSH:
+
+```bash
+ssh <user>@<device-ip> -p <ssh-port> -L 8765:127.0.0.1:8765
+```
+
+Then open `http://127.0.0.1:8765` in a browser on the host to access the full WebView UI and all local HTTP APIs.
 
 ## Hot Reload Web UI (No APK Rebuild)
 

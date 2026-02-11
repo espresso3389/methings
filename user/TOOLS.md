@@ -37,6 +37,16 @@ Notes:
 
 Used for allowlisted device control-plane actions (python/ssh/memory/shell.exec, etc). Some actions require user approval and will return `permission_required`.
 
+## Remote Access via SSH Tunnel
+
+If the device's SSH server is running, a remote user can forward the local API/UI port over SSH:
+
+```bash
+ssh <user>@<device-ip> -p <ssh-port> -L 8765:127.0.0.1:8765
+```
+
+Then `http://127.0.0.1:8765` on the remote machine gives full access to the WebView UI and all local HTTP APIs (brain, permissions, device, cloud, etc.).
+
 ## App SSH Shell Commands (Outbound)
 
 When you are inside the app's SSH shell prompt (it looks like `methings>`), a few outbound SSH helpers are available:
