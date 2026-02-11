@@ -8,6 +8,8 @@ import java.io.File
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -19,6 +21,23 @@ class LlamaCppManager(private val context: Context) {
         File(filesRoot, "models/llama"),
         File(userRoot, "models"),
         File(userRoot, "models/llama"),
+    )
+    private val wavPlayer = WavStreamPlayer()
+    private val speechTasks = ConcurrentHashMap<String, SpeechTask>()
+
+    private data class SpeechTask(
+        val id: String,
+        val outputFile: File,
+        val startedAt: Long,
+        val stopRequested: AtomicBoolean = AtomicBoolean(false),
+        @Volatile var status: String = "running",
+        @Volatile var process: Process? = null,
+        @Volatile var processExitCode: Int? = null,
+        @Volatile var processTimedOut: Boolean = false,
+        @Volatile var playback: Map<String, Any?>? = null,
+        @Volatile var stdout: String = "",
+        @Volatile var stderr: String = "",
+        @Volatile var finishedAt: Long? = null,
     )
 
     fun status(payload: JSONObject): Map<String, Any?> {
@@ -100,6 +119,9 @@ class LlamaCppManager(private val context: Context) {
     }
 
     fun tts(payload: JSONObject): Map<String, Any?> {
+        if (payload.optBoolean("speak", false)) {
+            return ttsSpeak(payload)
+        }
         val binary = resolveBinary(payload.optString("binary", ""), "llama-tts")
             ?: return mapOf("status" to "error", "error" to "binary_not_found", "detail" to "llama-tts not found")
         val model = resolveModelFile(payload)
@@ -145,6 +167,160 @@ class LlamaCppManager(private val context: Context) {
             out["output_bytes"] = outputFile.length()
         }
         if (model != null) out["model_path"] = model.absolutePath
+        return out
+    }
+
+    fun ttsSpeak(payload: JSONObject): Map<String, Any?> {
+        val binary = resolveBinary(payload.optString("binary", ""), "llama-tts")
+            ?: return mapOf("status" to "error", "error" to "binary_not_found", "detail" to "llama-tts not found")
+        val model = resolveModelFile(payload)
+        val text = payload.optString("text", "")
+        val outputRel = payload.optString("output_path", "").trim().ifBlank {
+            "outputs/llama_tts_${System.currentTimeMillis()}.wav"
+        }
+        val outputFile = resolveUserPath(outputRel)
+        outputFile.parentFile?.mkdirs()
+
+        val templateArgs = payload.optJSONArray("args")
+            ?: return mapOf("status" to "error", "error" to "missing_args", "detail" to "Provide payload.args for llama-tts.")
+        if (templateArgs.length() == 0) {
+            return mapOf("status" to "error", "error" to "missing_args", "detail" to "Provide payload.args for llama-tts.")
+        }
+        val substitutions = mapOf(
+            "model" to (model?.absolutePath ?: ""),
+            "text" to text,
+            "output_path" to outputFile.absolutePath
+        )
+        val args = jsonArrayToStringList(templateArgs).map { token ->
+            when (token) {
+                "{{model}}" -> substitutions["model"] ?: ""
+                "{{text}}" -> substitutions["text"] ?: ""
+                "{{output_path}}" -> substitutions["output_path"] ?: ""
+                else -> token
+            }
+        }.filter { it.isNotEmpty() }
+        val cwd = resolveCwd(payload.optString("cwd", ""))
+        val timeoutMs = payload.optLong("timeout_ms", 300_000L).coerceIn(1_000L, 900_000L)
+        val maxOutputBytes = payload.optInt("max_output_bytes", 1_000_000).coerceIn(4096, 4_000_000)
+
+        val id = "tts_" + UUID.randomUUID().toString().replace("-", "")
+        val task = SpeechTask(id = id, outputFile = outputFile, startedAt = System.currentTimeMillis())
+        speechTasks[id] = task
+
+        Thread {
+            runSpeechTask(task, binary, args, cwd, timeoutMs, maxOutputBytes)
+        }.apply {
+            isDaemon = true
+            start()
+        }
+
+        return mapOf(
+            "status" to "ok",
+            "started" to true,
+            "speech_id" to id,
+            "output_path" to relativizeToUser(outputFile),
+            "output_abs_path" to outputFile.absolutePath,
+            "model_path" to model?.absolutePath,
+        )
+    }
+
+    fun ttsSpeakStatus(payload: JSONObject): Map<String, Any?> {
+        val id = payload.optString("speech_id", "").trim()
+        if (id.isEmpty()) return mapOf("status" to "error", "error" to "missing_speech_id")
+        val task = speechTasks[id] ?: return mapOf("status" to "error", "error" to "speech_not_found")
+        return mapOf(
+            "status" to "ok",
+            "speech" to speechTaskToJson(task)
+        )
+    }
+
+    fun ttsSpeakStop(payload: JSONObject): Map<String, Any?> {
+        val id = payload.optString("speech_id", "").trim()
+        val taskOrNull = if (id.isNotEmpty()) {
+            speechTasks[id]
+        } else {
+            speechTasks.values.firstOrNull { it.status == "running" }
+        }
+        val task = taskOrNull ?: return mapOf("status" to "ok", "stopped" to false)
+        task.stopRequested.set(true)
+        runCatching { task.process?.destroy() }
+        val playbackStop = wavPlayer.stop()
+        return mapOf("status" to "ok", "stopped" to true, "speech_id" to task.id, "playback" to JSONObject(playbackStop))
+    }
+
+    private fun runSpeechTask(
+        task: SpeechTask,
+        binary: File,
+        args: List<String>,
+        cwd: File?,
+        timeoutMs: Long,
+        maxOutputBytes: Int
+    ) {
+        val cmd = ArrayList<String>(1 + args.size).apply {
+            add(binary.absolutePath)
+            addAll(args)
+        }
+        val stdoutBuf = ByteArrayOutputStream()
+        val stderrBuf = ByteArrayOutputStream()
+        val stdoutOverflow = AtomicBoolean(false)
+        val stderrOverflow = AtomicBoolean(false)
+        try {
+            val pb = ProcessBuilder(cmd)
+            if (cwd != null) pb.directory(cwd)
+            val process = pb.start()
+            task.process = process
+
+            val tOut = streamPump(process.inputStream, stdoutBuf, maxOutputBytes, stdoutOverflow)
+            val tErr = streamPump(process.errorStream, stderrBuf, maxOutputBytes, stderrOverflow)
+            runCatching { process.outputStream.close() }
+
+            val playback = wavPlayer.playGrowingWav(
+                file = task.outputFile,
+                producerAlive = { process.isAlive },
+                stopRequested = task.stopRequested
+            )
+            task.playback = playback
+
+            val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+            if (!finished) {
+                task.processTimedOut = true
+                runCatching { process.destroy() }
+                runCatching { process.waitFor(500, TimeUnit.MILLISECONDS) }
+                runCatching { process.destroyForcibly() }
+            }
+            tOut.join(1500)
+            tErr.join(1500)
+            task.processExitCode = if (finished) process.exitValue() else null
+            task.stdout = stdoutBuf.toString(StandardCharsets.UTF_8.name())
+            task.stderr = stderrBuf.toString(StandardCharsets.UTF_8.name())
+            task.status = if (task.stopRequested.get()) "stopped" else if (finished && task.processExitCode == 0) "done" else "error"
+        } catch (ex: Exception) {
+            task.status = if (task.stopRequested.get()) "stopped" else "error"
+            task.stderr = (task.stderr + "\n" + (ex.message ?: ex.javaClass.simpleName)).trim()
+        } finally {
+            task.finishedAt = System.currentTimeMillis()
+            task.process = null
+            if (task.stdout.isNotEmpty() && stdoutOverflow.get()) task.stdout += "\n[truncated]"
+            if (task.stderr.isNotEmpty() && stderrOverflow.get()) task.stderr += "\n[truncated]"
+        }
+    }
+
+    private fun speechTaskToJson(task: SpeechTask): JSONObject {
+        val out = JSONObject()
+            .put("speech_id", task.id)
+            .put("status", task.status)
+            .put("started_at", task.startedAt)
+            .put("finished_at", task.finishedAt ?: JSONObject.NULL)
+            .put("timed_out", task.processTimedOut)
+            .put("exit_code", task.processExitCode ?: JSONObject.NULL)
+            .put("output_path", relativizeToUser(task.outputFile))
+            .put("output_abs_path", task.outputFile.absolutePath)
+            .put("output_exists", task.outputFile.exists())
+            .put("output_bytes", if (task.outputFile.exists()) task.outputFile.length() else 0L)
+            .put("stdout", task.stdout)
+            .put("stderr", task.stderr)
+        val playback = task.playback
+        if (playback != null) out.put("playback", JSONObject(playback))
         return out
     }
 

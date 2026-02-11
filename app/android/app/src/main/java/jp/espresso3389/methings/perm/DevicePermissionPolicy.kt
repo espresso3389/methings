@@ -48,6 +48,8 @@ object DevicePermissionPolicy {
                 Required(listOf(Manifest.permission.RECORD_AUDIO), "Microphone")
             t == "device.tts" || t.contains(".tts") ->
                 Required(emptyList(), "Text-to-speech")
+            t == "device.media" || t.startsWith("device.media.") ->
+                Required(emptyList(), "Media playback")
             t == "device.llama" || t.startsWith("device.llama.") || t.contains(".llama") ->
                 Required(emptyList(), "Local AI model")
             t == "device.sensors" || t.startsWith("device.sensors.") || t == "device.accel" ->

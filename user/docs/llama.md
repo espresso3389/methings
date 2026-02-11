@@ -9,6 +9,9 @@
 - `llama.run` -> `POST /llama/run`
 - `llama.generate` -> `POST /llama/generate`
 - `llama.tts` -> `POST /llama/tts`
+- `llama.tts.speak` -> `POST /llama/tts/speak`
+- `llama.tts.speak.status` -> `POST /llama/tts/speak/status`
+- `llama.tts.speak.stop` -> `POST /llama/tts/speak/stop`
 
 All actions are permission-gated under capability `llama` (`device.llama`).
 
@@ -97,3 +100,31 @@ Supported template tokens in `payload.args`:
 ```
 
 On success, include `rel_path: captures/miotts.wav` in your assistant reply so chat can render an audio card.
+
+### 5) Direct speaker playback with streaming (`llama.tts.speak`)
+
+This endpoint starts synthesis and plays audio on the device speaker while the WAV grows.
+
+```json
+{
+  "action": "llama.tts.speak",
+  "payload": {
+    "model": "MioTTS-0.1B-Q8_0.gguf",
+    "text": "Hello from methings",
+    "output_path": "captures/miotts_stream.wav",
+    "args": ["--model", "{{model}}", "--text", "{{text}}", "--output", "{{output_path}}"]
+  }
+}
+```
+
+The response returns `speech_id`. Poll status and stop if needed:
+
+```json
+{"action":"llama.tts.speak.status","payload":{"speech_id":"tts_xxx"}}
+```
+
+```json
+{"action":"llama.tts.speak.stop","payload":{"speech_id":"tts_xxx"}}
+```
+
+If you already have a generated audio file and only need playback, use `media.audio.play` with `path`.

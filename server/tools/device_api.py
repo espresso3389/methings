@@ -41,11 +41,17 @@ class DeviceApiTool:
         "tts.voices": {"method": "GET", "path": "/tts/voices", "permission": True},
         "tts.speak": {"method": "POST", "path": "/tts/speak", "permission": True},
         "tts.stop": {"method": "POST", "path": "/tts/stop", "permission": True},
+        "media.audio.status": {"method": "GET", "path": "/media/audio/status", "permission": True},
+        "media.audio.play": {"method": "POST", "path": "/media/audio/play", "permission": True},
+        "media.audio.stop": {"method": "POST", "path": "/media/audio/stop", "permission": True},
         "llama.status": {"method": "GET", "path": "/llama/status", "permission": True},
         "llama.models": {"method": "GET", "path": "/llama/models", "permission": True},
         "llama.run": {"method": "POST", "path": "/llama/run", "permission": True},
         "llama.generate": {"method": "POST", "path": "/llama/generate", "permission": True},
         "llama.tts": {"method": "POST", "path": "/llama/tts", "permission": True},
+        "llama.tts.speak": {"method": "POST", "path": "/llama/tts/speak", "permission": True},
+        "llama.tts.speak.status": {"method": "POST", "path": "/llama/tts/speak/status", "permission": True},
+        "llama.tts.speak.stop": {"method": "POST", "path": "/llama/tts/speak/stop", "permission": True},
         "stt.status": {"method": "GET", "path": "/stt/status", "permission": True},
         "stt.start": {"method": "POST", "path": "/stt/start", "permission": True},
         "stt.stop": {"method": "POST", "path": "/stt/stop", "permission": True},
@@ -105,6 +111,12 @@ class DeviceApiTool:
             "llama.run": 300.0,
             "llama.generate": 300.0,
             "llama.tts": 420.0,
+            "llama.tts.speak": 120.0,
+            "llama.tts.speak.status": 20.0,
+            "llama.tts.speak.stop": 20.0,
+            "media.audio.play": 120.0,
+            "media.audio.status": 20.0,
+            "media.audio.stop": 20.0,
         }
 
     def set_identity(self, identity: str) -> None:
@@ -184,7 +196,7 @@ class DeviceApiTool:
             timeout_s = float(timeout_s)
         except Exception:
             timeout_s = 12.0
-        timeout_s = max(3.0, min(timeout_s, 120.0))
+        timeout_s = max(3.0, min(timeout_s, 900.0))
 
         body = payload if spec["method"] == "POST" else None
         return self._request_json(spec["method"], spec["path"], body, timeout_s=timeout_s)
@@ -517,6 +529,8 @@ class DeviceApiTool:
             return "device.ble", "ble", "session"
         if a.startswith("tts."):
             return "device.tts", "tts", "session"
+        if a.startswith("media.audio."):
+            return "device.media", "media", "session"
         if a.startswith("llama."):
             return "device.llama", "llama", "session"
         if a.startswith("stt."):

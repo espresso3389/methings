@@ -29,6 +29,14 @@ Common patterns:
 - `ssh.pin.start` -> `POST /ssh/pin/start`
 - `ssh.pin.stop` -> `POST /ssh/pin/stop`
 
+### Media Playback
+- `media.audio.status` -> `GET /media/audio/status`
+- `media.audio.play` -> `POST /media/audio/play`
+- `media.audio.stop` -> `POST /media/audio/stop`
+  - `media.audio.play` accepts either:
+    - `path`: user-root relative audio file path
+    - `audio_b64`: base64 audio bytes (+ optional `ext`, e.g. `wav`, `mp3`, `m4a`)
+
 ### Camera (on-device)
 - `camera.list` -> `GET /camera/list`
 - `camera.status` -> `GET /camera/status`
@@ -80,6 +88,9 @@ Common patterns:
 - `llama.run` -> `POST /llama/run`
 - `llama.generate` -> `POST /llama/generate`
 - `llama.tts` -> `POST /llama/tts`
+- `llama.tts.speak` -> `POST /llama/tts/speak`
+- `llama.tts.speak.status` -> `POST /llama/tts/speak/status`
+- `llama.tts.speak.stop` -> `POST /llama/tts/speak/stop`
 
 ## File Endpoints (User Root)
 

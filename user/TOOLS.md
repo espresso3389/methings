@@ -136,6 +136,8 @@ Use `device_api` actions (not raw shell) for local `llama.cpp` binaries:
 - `llama.run`: run arbitrary `llama.cpp` command-line args.
 - `llama.generate`: convenience text generation via `llama-cli`.
 - `llama.tts`: convenience wrapper for `llama-tts` with templated args.
+- `llama.tts.speak`: dedicated fast path that streams generated WAV to the device speaker.
+- `llama.tts.speak.status` / `llama.tts.speak.stop`: task control.
 
 Example: status check
 
@@ -167,6 +169,61 @@ Example: MioTTS-style synthesis (provide args for your `llama-tts` build)
 ```
 
 After synthesis, include `rel_path: captures/miotts.wav` in your assistant message to render audio inline.
+
+Example: direct speaker playback (stream while generating)
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "llama.tts.speak",
+    "payload": {
+      "model": "MioTTS-0.1B-Q8_0.gguf",
+      "text": "Hello from methings",
+      "output_path": "captures/miotts_stream.wav",
+      "args": ["--model", "{{model}}", "--text", "{{text}}", "--output", "{{output_path}}"]
+    },
+    "detail": "Stream local llama-tts output to speaker"
+  }
+}
+```
+
+### Media Audio Playback Quickstart
+
+For immediate playback from file or raw data, use `media.audio.*`:
+
+- `media.audio.status`
+- `media.audio.play`
+- `media.audio.stop`
+
+Play from file:
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "media.audio.play",
+    "payload": { "path": "captures/miotts.wav" },
+    "detail": "Play audio file on device speaker"
+  }
+}
+```
+
+Play from base64 bytes:
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "media.audio.play",
+    "payload": { "audio_b64": "<base64-audio>", "ext": "wav" },
+    "detail": "Play base64 audio on device speaker"
+  }
+}
+```
 
 ### Sensors Quickstart (Realtime Streams)
 
