@@ -41,6 +41,7 @@ import jp.espresso3389.methings.perm.InstallIdentity
 import jp.espresso3389.methings.perm.PermissionPrefs
 import jp.espresso3389.methings.device.BleManager
 import jp.espresso3389.methings.device.CameraXManager
+import jp.espresso3389.methings.device.DeviceLocationManager
 import jp.espresso3389.methings.device.SttManager
 import jp.espresso3389.methings.device.TtsManager
 import jp.espresso3389.methings.vision.VisionFrameStore
@@ -91,6 +92,7 @@ class LocalHttpServer(
     private val ble = BleManager(context)
     private val tts = TtsManager(context)
     private val stt = SttManager(context)
+    private val location = DeviceLocationManager(context)
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
@@ -1045,6 +1047,19 @@ class LocalHttpServer(
                 val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Transcribe audio file")
                 if (!ok.first) return ok.second!!
                 return handleSttTranscribe(payload)
+            }
+            (uri == "/location/status" || uri == "/location/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.gps", capability = "location", detail = "Location status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(location.status()))
+            }
+            (uri == "/location/get" || uri == "/location/get/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.gps", capability = "location", detail = "Get current location")
+                if (!ok.first) return ok.second!!
+                val high = payload.optBoolean("high_accuracy", true)
+                val timeoutMs = payload.optLong("timeout_ms", 12_000L).coerceIn(250L, 120_000L)
+                return jsonResponse(JSONObject(location.getCurrent(highAccuracy = high, timeoutMs = timeoutMs)))
             }
             uri == "/ssh/status" -> {
                 val status = sshdManager.status()

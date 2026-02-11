@@ -45,6 +45,8 @@ class DeviceApiTool:
         "stt.start": {"method": "POST", "path": "/stt/start", "permission": True},
         "stt.stop": {"method": "POST", "path": "/stt/stop", "permission": True},
         "stt.transcribe": {"method": "POST", "path": "/stt/transcribe", "permission": True},
+        "location.status": {"method": "GET", "path": "/location/status", "permission": True},
+        "location.get": {"method": "POST", "path": "/location/get", "permission": True},
         "usb.list": {"method": "GET", "path": "/usb/list", "permission": True},
         "usb.status": {"method": "GET", "path": "/usb/status", "permission": True},
         "usb.open": {"method": "POST", "path": "/usb/open", "permission": True},
@@ -507,6 +509,8 @@ class DeviceApiTool:
             return "device.tts", "tts", "session"
         if a.startswith("stt."):
             return "device.mic", "stt", "session"
+        if a.startswith("location."):
+            return "device.gps", "location", "session"
         if a.startswith("usb."):
             return "device.usb", "usb", "session"
         if a.startswith("vision."):
