@@ -2793,9 +2793,18 @@
             const st = await sr.json();
             if (st.busy) {
               // Agent is still working — ensure there's a visible indicator.
-              const hasThinking = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
+              const thinkingDot = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
+              const thinkingMsg = thinkingDot ? thinkingDot.closest(".msg") : null;
               const hasWorking = chatMessages.querySelector(".msg.assistant .msg-working");
-              if (!hasThinking && !hasWorking && !streaming) {
+              // If thinking dots got displaced (messages appended after them), move to bottom.
+              if (thinkingMsg) {
+                let sib = thinkingMsg.nextElementSibling;
+                while (sib) {
+                  if (sib.classList.contains("msg")) { chatAppend(thinkingMsg); scrollToBottomSoon(); break; }
+                  sib = sib.nextElementSibling;
+                }
+              }
+              if (!thinkingMsg && !hasWorking && !streaming) {
                 // Find the last assistant bubble and check if a user message follows it.
                 const allAssistant = chatMessages.querySelectorAll(".msg.assistant");
                 const last = allAssistant.length ? allAssistant[allAssistant.length - 1] : null;
