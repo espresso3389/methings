@@ -117,6 +117,58 @@ Example:
 }
 ```
 
+### Sensors Quickstart (Realtime Streams)
+
+Use a streaming sensor pipeline (single stream with multiple sensors) so Python code can poll batches with low latency:
+
+1) List available sensors (inspect `type`/`string_type`/`name`):
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": { "action": "sensors.list", "payload": {}, "detail": "List available sensors" }
+}
+```
+
+2) Start a stream (pick sensor aliases like `accel`, `gyro`, `mag`, `linear`, `rotation_vector`, etc):
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "sensors.stream.start",
+    "payload": { "sensors": ["accel", "gyro", "mag"], "rate_hz": 100, "batch_ms": 20, "timestamp": "mono" },
+    "detail": "Start IMU sensor stream"
+  }
+}
+```
+
+This returns:
+- `stream_id`
+- `ws_path` like `/ws/sensors/stream/<stream_id>`
+
+Each emitted frame looks like:
+
+```json
+{ "type":"sensors", "stream_id":"...", "seq": 1, "t_ms": 123456, "samples": { "accel":[...], "gyro":[...], "mag":[...] } }
+```
+
+3) Poll frames (good for Python code) with `since_seq_exclusive`:
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "sensors.stream.batch",
+    "payload": { "stream_id": "<stream_id>", "since_seq_exclusive": 0, "limit": 200 },
+    "detail": "Fetch sensor frames batch"
+  }
+}
+```
+
 ### Show Media Inline In Chat (Required)
 
 The WebView chat UI auto-renders media previews when a message contains one or more lines like:

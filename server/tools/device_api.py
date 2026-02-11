@@ -46,6 +46,12 @@ class DeviceApiTool:
         "stt.stop": {"method": "POST", "path": "/stt/stop", "permission": True},
         "location.status": {"method": "GET", "path": "/location/status", "permission": True},
         "location.get": {"method": "POST", "path": "/location/get", "permission": True},
+        "sensors.list": {"method": "GET", "path": "/sensors/list", "permission": True},
+        "sensors.stream.status": {"method": "GET", "path": "/sensors/stream/status", "permission": True},
+        "sensors.stream.start": {"method": "POST", "path": "/sensors/stream/start", "permission": True},
+        "sensors.stream.stop": {"method": "POST", "path": "/sensors/stream/stop", "permission": True},
+        "sensors.stream.latest": {"method": "POST", "path": "/sensors/stream/latest", "permission": True},
+        "sensors.stream.batch": {"method": "POST", "path": "/sensors/stream/batch", "permission": True},
         "usb.list": {"method": "GET", "path": "/usb/list", "permission": True},
         "usb.status": {"method": "GET", "path": "/usb/status", "permission": True},
         "usb.open": {"method": "POST", "path": "/usb/open", "permission": True},
@@ -510,6 +516,8 @@ class DeviceApiTool:
             return "device.mic", "stt", "session"
         if a.startswith("location."):
             return "device.gps", "location", "session"
+        if a.startswith("sensors."):
+            return "device.sensors", "sensors", "session"
         if a.startswith("usb."):
             return "device.usb", "usb", "session"
         if a.startswith("vision."):

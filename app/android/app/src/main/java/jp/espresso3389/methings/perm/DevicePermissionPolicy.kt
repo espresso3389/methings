@@ -48,6 +48,10 @@ object DevicePermissionPolicy {
                 Required(listOf(Manifest.permission.RECORD_AUDIO), "Microphone")
             t == "device.tts" || t.contains(".tts") ->
                 Required(emptyList(), "Text-to-speech")
+            t == "device.sensors" || t.startsWith("device.sensors.") || t == "device.accel" ->
+                // Most motion sensors do not require Android runtime permissions, but still require
+                // explicit in-app consent and audit logging.
+                Required(emptyList(), "Motion sensors")
             t == "device.gps" || t.startsWith("device.location") ->
                 Required(
                     listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
