@@ -44,7 +44,6 @@ class DeviceApiTool:
         "stt.status": {"method": "GET", "path": "/stt/status", "permission": True},
         "stt.start": {"method": "POST", "path": "/stt/start", "permission": True},
         "stt.stop": {"method": "POST", "path": "/stt/stop", "permission": True},
-        "stt.transcribe": {"method": "POST", "path": "/stt/transcribe", "permission": True},
         "location.status": {"method": "GET", "path": "/location/status", "permission": True},
         "location.get": {"method": "POST", "path": "/location/get", "permission": True},
         "usb.list": {"method": "GET", "path": "/usb/list", "permission": True},

@@ -1042,12 +1042,6 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(stt.stop()))
             }
-            (uri == "/stt/transcribe" || uri == "/stt/transcribe/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Transcribe audio file")
-                if (!ok.first) return ok.second!!
-                return handleSttTranscribe(payload)
-            }
             (uri == "/location/status" || uri == "/location/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.gps", capability = "location", detail = "Location status")
                 if (!ok.first) return ok.second!!
@@ -3165,49 +3159,6 @@ class LocalHttpServer(
         val response = newFixedLengthResponse(status, "application/json", payload.toString())
         response.addHeader("Cache-Control", "no-cache")
         return response
-    }
-
-    private fun handleSttTranscribe(payload: JSONObject): Response {
-        // Android SpeechRecognizer supports live microphone recognition only. We still expose a
-        // file->text endpoint so agents can request it explicitly and handle a deterministic error
-        // (e.g., cloud fallback) until a local file STT engine is implemented.
-        val relPath = payload.optString("rel_path", "").trim().ifBlank {
-            payload.optString("path", "").trim()
-        }.trim().trimStart('/')
-        val b64 = payload.optString("audio_b64", "").trim()
-
-        if (relPath.isBlank() && b64.isBlank()) {
-            return jsonError(Response.Status.BAD_REQUEST, "rel_path_or_audio_b64_required")
-        }
-
-        var sizeBytes: Long? = null
-        if (relPath.isNotBlank()) {
-            val f = userPath(relPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-            if (!f.exists() || !f.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
-            sizeBytes = f.length().coerceAtLeast(0L)
-        } else if (b64.isNotBlank()) {
-            sizeBytes = runCatching {
-                android.util.Base64.decode(b64, android.util.Base64.DEFAULT).size.toLong()
-            }.getOrNull()
-        }
-
-        val extra = JSONObject()
-            .put(
-                "detail",
-                "File transcription is not implemented yet. Android SpeechRecognizer supports live microphone recognition only. " +
-                    "Use /stt/start (live mic) or perform a cloud STT request via /cloud/request with \${file:...:base64}."
-            )
-            .put("received_bytes", sizeBytes ?: JSONObject.NULL)
-            .put(
-                "supported",
-                org.json.JSONArray()
-                    .put("/stt/status")
-                    .put("/stt/start")
-                    .put("/stt/stop")
-                    .put("/cloud/request")
-            )
-
-        return jsonError(Response.Status.NOT_IMPLEMENTED, "stt_transcribe_unavailable", extra)
     }
 
     private fun handleShellExec(payload: JSONObject): Response {
