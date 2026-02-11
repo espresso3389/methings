@@ -94,12 +94,37 @@ Supported template tokens in `payload.args`:
     "model": "MioTTS-0.1B-Q8_0.gguf",
     "text": "Hello from methings",
     "output_path": "captures/miotts.wav",
-    "args": ["--model", "{{model}}", "--text", "{{text}}", "--output", "{{output_path}}"]
+    "args": ["-m", "{{model}}", "-p", "{{text}}", "-o", "{{output_path}}"]
   }
 }
 ```
 
 On success, include `rel_path: captures/miotts.wav` in your assistant reply so chat can render an audio card.
+
+Important notes for current Android runtime:
+
+- Prefer `-p` / `-o` for prompt/output. `--text` is not accepted by this `llama-tts` build.
+- Do not rely on `--tts-oute-default` by default. It may fail when remote presets are unavailable.
+- For MioTTS, prefer explicit local args and local vocoder path (example below).
+
+MioTTS explicit/local pattern (no remote preset dependency):
+
+```json
+{
+  "action": "llama.tts",
+  "payload": {
+    "model": "MioTTS-0.1B-Q4_K_M.gguf",
+    "text": "MioTTS test",
+    "output_path": "captures/miotts.wav",
+    "args": [
+      "-m", "{{model}}",
+      "-p", "{{text}}",
+      "-o", "{{output_path}}",
+      "--model-vocoder", "/data/user/0/jp.espresso3389.methings/files/user/.cache/llama.cpp/ggml-org_WavTokenizer_WavTokenizer-Large-75-F16.gguf"
+    ]
+  }
+}
+```
 
 ### 5) Direct speaker playback with streaming (`llama.tts.speak`)
 
