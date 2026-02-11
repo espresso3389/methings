@@ -34,3 +34,20 @@ Use this if `jniLibs/` got out of sync (e.g. after a clean) and the app fails at
 The script copies:
 - `.../dists/<DIST_NAME>/_python_bundle__<ARCH>/_python_bundle/*` -> `app/android/app/src/main/assets/pyenv/`
 - `.../dists/<DIST_NAME>/libs/<ARCH>/*` -> `app/android/app/src/main/jniLibs/<ARCH>/`
+
+## build_llama_android.sh
+Builds `llama.cpp` Android binaries from the pinned submodule and stages them into:
+`app/android/app/src/main/jniLibs/<abi>/`.
+
+Defaults:
+- Source: `third_party/llama.cpp` (submodule, fork branch `methings-miotts`)
+- ABI: `arm64-v8a`
+
+Important env vars:
+- `LLAMA_ENABLE_VULKAN=1` to request Vulkan backend build (`0` by default)
+- `LLAMA_BUILD_DIR=...` to override build output directory
+
+Notes:
+- Vulkan build requires `glslc` on host PATH (Vulkan SDK shader compiler).
+- Vulkan build requires NDK/toolchain support for C++ Vulkan header (`vulkan/vulkan.hpp`).
+- Script uses Android SDK/NDK from `ANDROID_SDK_ROOT` (or `ANDROID_HOME`, fallback `$HOME/Android/Sdk`).

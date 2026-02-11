@@ -7,3 +7,7 @@
 [submodule "third_party/libuvc"]
 	path = third_party/libuvc
 	url = https://github.com/libuvc/libuvc.git
+[submodule "third_party/llama.cpp"]
+	path = third_party/llama.cpp
+	url = https://github.com/espresso3389/llama.cpp
+	branch = methings-miotts
