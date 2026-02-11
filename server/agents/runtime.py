@@ -2071,6 +2071,8 @@ class BrainRuntime:
                         "stt.status",
                         "stt.start",
                         "stt.stop",
+                        "location.status",
+                        "location.get",
                         "usb.list",
                         "usb.open",
                         "usb.close",
@@ -2127,6 +2129,7 @@ class BrainRuntime:
             "Do NOT ask the user 'should I continue' for routine multi-step work. Continue automatically unless you need missing info, "
             "a permission approval, or you are about to do an irreversible/destructive action. "
             "Common camera actions include: camera.list, camera.status, camera.preview.start, camera.preview.stop, camera.capture. "
+            "Common location actions include: location.status, location.get. "
             "Common vision actions include: vision.model.load, vision.image.load, vision.run. "
             "For cloud calls, use tool='cloud_request' and args shape: {request:{url,method,headers,json/body,...}}. "
             "Do NOT use shell_exec(curl) to call /cloud/request or /permissions/*; use cloud_request so requests are validated/audit-logged and placeholders are expanded safely. "

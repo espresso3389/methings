@@ -96,6 +96,27 @@ USB permissions:
   - Accept Android's system "Allow access to USB device" dialog.
   - If the OS dialog never appears and it keeps auto-denying, clear defaults/USB associations in app settings, replug, and retry.
 
+### Location Quickstart (GPS)
+
+To query location, use `device_api`:
+
+- `location.status`: provider availability and enabled status.
+- `location.get`: best-effort current location via Android `LocationManager.getCurrentLocation`.
+
+Example:
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "location.get",
+    "payload": { "high_accuracy": true, "timeout_ms": 12000 },
+    "detail": "Get current device location"
+  }
+}
+```
+
 ### Show Media Inline In Chat (Required)
 
 The WebView chat UI auto-renders media previews when a message contains one or more lines like:
