@@ -208,6 +208,8 @@ To fetch the image onto your dev machine, use the local file endpoint (permissio
 
 ### Open Agent HTML From Chat
 
+If your reply includes `html_path: ...`, the app will show an OPEN card.
+
 When you create an HTML file and want the user to open it, do this in the same assistant reply:
 
 1. Create/write the HTML file under user root.
