@@ -17,6 +17,7 @@ import android.webkit.WebChromeClient
 import android.webkit.ValueCallback
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import androidx.activity.result.contract.ActivityResultContracts
@@ -195,6 +196,21 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 android.util.Log.d("MethingsWeb", "page finished: $url")
                 view.evaluateJavascript("console.log('methings page loaded: ' + location.href)", null)
+            }
+
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val u = request.url ?: return false
+                if (u.scheme == "methings" && u.host == "open_user_html") {
+                    val rel = (u.getQueryParameter("path") ?: "").trim().trimStart('/')
+                    if (rel.isBlank() || rel.contains("..")) return true
+                    try {
+                        val i = Intent(this@MainActivity, AgentHtmlActivity::class.java)
+                        i.putExtra(AgentHtmlActivity.EXTRA_REL_PATH, rel)
+                        startActivity(i)
+                    } catch (_: Exception) {}
+                    return true
+                }
+                return false
             }
 
             override fun onReceivedError(
@@ -419,64 +435,95 @@ class MainActivity : AppCompatActivity() {
 
     private fun handlePermissionPrompt(id: String, tool: String, detail: String, forceBiometric: Boolean) {
         val broker = jp.espresso3389.methings.perm.PermissionBroker(this)
-        broker.requestConsent(tool, detail, forceBiometric) { approved ->
+        val nativeShown = broker.requestConsent(tool, detail, forceBiometric) { approved ->
             if (!approved) {
                 postPermissionDecision(id, approved = false)
                 return@requestConsent
             }
-
-            fun continueWithAndroidPermsAndPost() {
-                val required = DevicePermissionPolicy.requiredFor(tool, detail)
-                val perms = required?.androidPermissions ?: emptyList()
-                if (perms.isEmpty()) {
-                    postPermissionDecision(id, approved = true)
-                    return
-                }
-
-                // Request Android runtime permissions. If denied, we deny the tool request as well.
-                // Avoid overlapping requests: if one is already in-flight, fail closed.
-                if (pendingAndroidPermRequestId.get() != null) {
-                    postPermissionDecision(id, approved = false)
-                    return
-                }
-
-                val missing = perms.filter { p ->
-                    ActivityCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED
-                }
-                if (missing.isEmpty()) {
-                    postPermissionDecision(id, approved = true)
-                    return
-                }
-
-                pendingAndroidPermRequestId.set(id)
-                pendingAndroidPermAction.set { ok -> postPermissionDecision(id, approved = ok) }
-                androidPermLauncher.launch(missing.toTypedArray())
-            }
-
-            // Special-case: for USB tools, complete the Android OS USB permission dialog before
-            // approving the in-app tool request, so the Python agent can auto-resume reliably.
-            if (tool == "device.usb") {
-                val (name, vid, pid) = extractUsbHint(detail)
-                val dev = findUsbDeviceByHint(name, vid, pid)
-                if (dev == null) {
-                    // No device hint; approve the tool request and let the tool call request USB later.
-                    continueWithAndroidPermsAndPost()
-                    return@requestConsent
-                }
-                ensureUsbPermissionAsync(dev) { granted ->
-                    if (!granted) {
-                        Toast.makeText(this, "USB permission denied by Android OS", Toast.LENGTH_SHORT).show()
-                        showUsbPermissionHelpDialog(dev)
-                        postPermissionDecision(id, approved = false)
-                    } else {
-                        continueWithAndroidPermsAndPost()
-                    }
-                }
-                return@requestConsent
-            }
-
-            continueWithAndroidPermsAndPost()
+            handlePostConsent(id, tool, detail)
         }
+        if (!nativeShown) {
+            // Foreground + non-biometric: WebView perm-card handles consent; poll until resolved.
+            awaitWebViewPermission(id, tool, detail)
+        }
+    }
+
+    private fun awaitWebViewPermission(id: String, tool: String, detail: String) {
+        Thread {
+            val deadline = System.currentTimeMillis() + 120_000
+            while (System.currentTimeMillis() < deadline) {
+                try {
+                    val url = java.net.URL("http://127.0.0.1:8765/permissions/$id")
+                    val conn = url.openConnection() as java.net.HttpURLConnection
+                    conn.connectTimeout = 2000
+                    conn.readTimeout = 2000
+                    val body = conn.inputStream.bufferedReader().readText()
+                    conn.disconnect()
+                    if (body.contains("\"approved\"")) {
+                        runOnUiThread { handlePostConsent(id, tool, detail) }
+                        return@Thread
+                    }
+                    if (body.contains("\"denied\"")) {
+                        return@Thread
+                    }
+                } catch (_: Exception) {}
+                Thread.sleep(800)
+            }
+        }.start()
+    }
+
+    private fun handlePostConsent(id: String, tool: String, detail: String) {
+        fun continueWithAndroidPermsAndPost() {
+            val required = DevicePermissionPolicy.requiredFor(tool, detail)
+            val perms = required?.androidPermissions ?: emptyList()
+            if (perms.isEmpty()) {
+                postPermissionDecision(id, approved = true)
+                return
+            }
+
+            // Request Android runtime permissions. If denied, we deny the tool request as well.
+            // Avoid overlapping requests: if one is already in-flight, fail closed.
+            if (pendingAndroidPermRequestId.get() != null) {
+                postPermissionDecision(id, approved = false)
+                return
+            }
+
+            val missing = perms.filter { p ->
+                ActivityCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missing.isEmpty()) {
+                postPermissionDecision(id, approved = true)
+                return
+            }
+
+            pendingAndroidPermRequestId.set(id)
+            pendingAndroidPermAction.set { ok -> postPermissionDecision(id, approved = ok) }
+            androidPermLauncher.launch(missing.toTypedArray())
+        }
+
+        // Special-case: for USB tools, complete the Android OS USB permission dialog before
+        // approving the in-app tool request, so the Python agent can auto-resume reliably.
+        if (tool == "device.usb") {
+            val (name, vid, pid) = extractUsbHint(detail)
+            val dev = findUsbDeviceByHint(name, vid, pid)
+            if (dev == null) {
+                // No device hint; approve the tool request and let the tool call request USB later.
+                continueWithAndroidPermsAndPost()
+                return
+            }
+            ensureUsbPermissionAsync(dev) { granted ->
+                if (!granted) {
+                    Toast.makeText(this, "USB permission denied by Android OS", Toast.LENGTH_SHORT).show()
+                    showUsbPermissionHelpDialog(dev)
+                    postPermissionDecision(id, approved = false)
+                } else {
+                    continueWithAndroidPermsAndPost()
+                }
+            }
+            return
+        }
+
+        continueWithAndroidPermsAndPost()
     }
 
     private fun postPermissionDecision(id: String, approved: Boolean) {

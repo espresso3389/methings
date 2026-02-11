@@ -56,6 +56,11 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".ui.AgentHtmlActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.Methings" />
+        <activity
             android:name=".ui.UsbPermissionActivity"
             android:exported="false"
             android:excludeFromRecents="true"

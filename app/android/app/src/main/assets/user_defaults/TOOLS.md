@@ -206,6 +206,25 @@ User UX notes:
 To fetch the image onto your dev machine, use the local file endpoint (permission-gated under `device.files`):
 - `GET /user/file?path=<rel_path>` (example: `/user/file?path=captures/latest.jpg`)
 
+### Open Agent HTML From Chat
+
+If you create an HTML app/game under user files (for example `apps/game/index.html`), include one of these lines in your assistant message:
+
+```text
+html_path: apps/game/index.html
+```
+
+or
+
+```text
+open_html: apps/game/index.html
+```
+
+The chat UI will render a tappable OPEN card. Tapping it launches a separate WebView container with an always-visible close (`X`) button outside the page, so users can always return to the main chat UI.
+
+Runtime URL for direct hosting:
+- `http://127.0.0.1:8765/user/www/<rel_path>`
+
 ## Docs Index
 
 Read the relevant doc when working in that domain:

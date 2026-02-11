@@ -1349,6 +1349,9 @@ class LocalHttpServer(
             uri == "/user/file" && session.method == Method.GET -> {
                 serveUserFile(session)
             }
+            uri.startsWith("/user/www/") && session.method == Method.GET -> {
+                serveUserWww(session)
+            }
             uri == "/user/upload" && session.method == Method.POST -> {
                 handleUserUpload(session)
             }
@@ -1396,6 +1399,27 @@ class LocalHttpServer(
         } else {
             URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
         }
+        val stream: InputStream = FileInputStream(file)
+        val response = newChunkedResponse(Response.Status.OK, mime, stream)
+        response.addHeader("Cache-Control", "no-cache")
+        response.addHeader("X-Content-Type-Options", "nosniff")
+        return response
+    }
+
+    private fun serveUserWww(session: IHTTPSession): Response {
+        val uri = session.uri ?: ""
+        val raw = uri.removePrefix("/user/www/").trimStart('/')
+        if (raw.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+        val decoded = URLDecoder.decode(raw, StandardCharsets.UTF_8.name())
+        val safePath = decoded.replace("\\", "/")
+            .split('/')
+            .filter { it.isNotBlank() && it != "." && it != ".." }
+            .joinToString("/")
+        if (safePath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+        val file0 = userPath(safePath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        val file = if (file0.isDirectory) File(file0, "index.html") else file0
+        if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+        val mime = URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
         val stream: InputStream = FileInputStream(file)
         val response = newChunkedResponse(Response.Status.OK, mime, stream)
         response.addHeader("Cache-Control", "no-cache")

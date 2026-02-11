@@ -2040,6 +2040,78 @@
         return out.slice(0, 4);
       }
 
+      function extractHtmlPathsFromText(text) {
+        const t = String(text || "");
+        const out = [];
+        const seen = new Set();
+        let m;
+
+        const re1 = /\bhtml_path\b\s*[:=]\s*([^\r\n]+)/gi;
+        while ((m = re1.exec(t)) !== null) {
+          const p = safeRelPath(m[1]);
+          if (p && p.toLowerCase().endsWith(".html") && !seen.has(p)) { out.push(p); seen.add(p); }
+        }
+
+        const re2 = /\bopen_html\b\s*[:=]\s*([^\r\n]+)/gi;
+        while ((m = re2.exec(t)) !== null) {
+          const p = safeRelPath(m[1]);
+          if (p && p.toLowerCase().endsWith(".html") && !seen.has(p)) { out.push(p); seen.add(p); }
+        }
+
+        return out.slice(0, 3);
+      }
+
+      function renderInlineHtmlLinks(msgDiv, rawText) {
+        const paths = extractHtmlPathsFromText(rawText);
+        if (!paths.length) return;
+
+        try {
+          const old = msgDiv.querySelector(".html-wrap");
+          if (old) old.remove();
+        } catch (_) {}
+
+        const wrap = document.createElement("div");
+        wrap.className = "html-wrap";
+        wrap.style.marginTop = "10px";
+
+        for (const p0 of paths) {
+          const p = safeRelPath(p0);
+          if (!p) continue;
+          const card = document.createElement("div");
+          card.className = "attach-card";
+          card.style.cursor = "pointer";
+
+          const head = document.createElement("div");
+          head.className = "attach-head";
+          const pathEl = document.createElement("div");
+          pathEl.className = "attach-path";
+          pathEl.textContent = p;
+          const actions = document.createElement("div");
+          actions.className = "attach-actions";
+          const openBtn = document.createElement("button");
+          openBtn.className = "attach-icon-btn";
+          openBtn.title = "Open";
+          openBtn.setAttribute("aria-label", "Open");
+          openBtn.textContent = "OPEN";
+          const open = () => {
+            try { location.href = "methings://open_user_html?path=" + encodeURIComponent(p); } catch (_) {}
+          };
+          openBtn.addEventListener("click", (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            open();
+          });
+          actions.appendChild(openBtn);
+          head.appendChild(pathEl);
+          head.appendChild(actions);
+          card.appendChild(head);
+          card.addEventListener("click", open);
+          wrap.appendChild(card);
+        }
+
+        if (wrap.childNodes.length) msgDiv.appendChild(wrap);
+      }
+
       function renderInlineAttachments(msgDiv, rawText) {
         const paths = extractRelPathsFromText(rawText);
         if (!paths.length) return;
@@ -2482,6 +2554,7 @@
           div.innerHTML = renderMarkdown(content);
           // Attachments should render for both user and assistant messages.
           try { renderInlineAttachments(div, content); } catch (_) {}
+          try { renderInlineHtmlLinks(div, content); } catch (_) {}
           // Retry affordance for agent failures.
           try {
             const err = m && m.error ? String(m.error) : "";
@@ -2683,6 +2756,7 @@
                 }
                 // Always refresh attachments and persist upgraded content for rotation recovery.
                 try { renderInlineAttachments(existing, text); } catch (_) {}
+                try { renderInlineHtmlLinks(existing, text); } catch (_) {}
                 upsertConversationEntry(msg.role, itemId, text, meta, ts);
                 if (msg.role === "assistant") clearWorkingByItemId(itemId);
                 // Permission resume events: show working indicator for the resumed item id.
@@ -3100,6 +3174,7 @@
           if (cleaned) {
             aDiv.innerHTML = renderMarkdown(cleaned);
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
+            try { renderInlineHtmlLinks(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
             if (/^Error:/i.test(String(cleaned || "").trim())) {
               attachAgentFailureActions(aDiv, itemId);
@@ -3176,6 +3251,7 @@
           if (cleaned) {
             aDiv.innerHTML = renderMarkdown(cleaned);
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
+            try { renderInlineHtmlLinks(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
             if (/^Error:/i.test(String(cleaned || "").trim())) {
               attachAgentFailureActions(aDiv, newId);
@@ -3318,6 +3394,7 @@
         try {
           uDiv.innerHTML = renderMarkdown(finalText);
           try { renderInlineAttachments(uDiv, finalText); } catch (_) {}
+          try { renderInlineHtmlLinks(uDiv, finalText); } catch (_) {}
         } catch (_) {}
 
         uploadBusy = false;

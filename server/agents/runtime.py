@@ -252,6 +252,7 @@ class BrainRuntime:
                 "Do NOT pre-emptively tell the user \"please allow\" before attempting the tool call. Attempt the tool call first; only if it returns a permission gate, ask for approval. "
                 "Keep permission-related messages to one short sentence, and never ask the user to approve the same action twice. "
                 "Prefer device_api for device controls exposed by the Kotlin control plane. "
+                "When you create an HTML app/page under user files and want the user to open it, include a line `html_path: <relative_path>.html` in your response. "
                 "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. "
                 "For execution, use run_python/run_pip/run_curl. "
                 "Keep responses concise: do the work, then summarize the result and include only relevant tool output snippets. "
