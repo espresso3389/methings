@@ -387,6 +387,17 @@
         display: flex;
         align-items: center;
       }
+      .thinking-label {
+        margin-left: 8px;
+        color: var(--ink-muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 220px;
+        transition: opacity 0.2s;
+      }
+      .msg-working .thinking-label { margin-left: 6px; font-size: 11px; }
       .thinking-stop {
         margin-left: 12px;
         margin-right: -6px;
@@ -1860,6 +1871,8 @@
       // ==============================
       // Markdown renderer (minimal)
       // ==============================
+      function escapeHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+
       function renderMarkdown(text) {
         let h = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -2557,6 +2570,26 @@
               chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
             } catch (_) {}
           });
+          es.addEventListener("brain_status", function(e) {
+            try {
+              if (streaming) return;
+              const data = JSON.parse(e.data);
+              const label = data.label || "";
+              if (!label) return;
+              // If a thinking bubble or working indicator is visible, update its label.
+              // If none exists yet, create one (the status event may arrive before brain_item_started).
+              if (_thinking.el && _thinking.el.isConnected) {
+                updateThinkingLabel(label);
+              } else {
+                var workingEls = chatMessages.querySelectorAll(".msg-working .thinking-label");
+                if (workingEls.length) {
+                  for (var i = 0; i < workingEls.length; i++) workingEls[i].textContent = label;
+                } else {
+                  addThinkingIndicator(label);
+                }
+              }
+            } catch (_) {}
+          });
           es.onerror = function() {
             // EventSource auto-reconnects; no extra logic needed.
           };
@@ -2723,7 +2756,7 @@
         } catch (_) {}
       }
 
-      function setMsgWorking(div, working) {
+      function setMsgWorking(div, working, label) {
         if (!div) return;
         const existing = div.querySelector(".msg-working");
         if (!working) {
@@ -2731,12 +2764,21 @@
           return;
         }
         // If this bubble is already the dedicated thinking placeholder (has dots),
-        // don't add a second set of dots.
-        if (div.querySelector(".thinking-dots")) return;
-        if (existing) return;
+        // don't add a second set of dots — but update label if provided.
+        if (div.querySelector(".thinking-dots")) {
+          if (label) updateThinkingLabel(label);
+          return;
+        }
+        if (existing) {
+          if (label) {
+            var lbl = existing.querySelector(".thinking-label");
+            if (lbl) lbl.textContent = label;
+          }
+          return;
+        }
         const w = document.createElement("div");
         w.className = "msg-working";
-        w.innerHTML = '<div class="thinking-dots mini"><span></span><span></span><span></span></div>';
+        w.innerHTML = '<div class="thinking-dots mini"><span></span><span></span><span></span></div><span class="thinking-label">' + (label ? escapeHtml(label) : '') + '</span>';
         div.appendChild(w);
       }
 
@@ -2768,21 +2810,33 @@
         conversation.push({ role, content: text, meta: meta || {}, ts: ts || Date.now() });
       }
 
-      function addThinkingIndicator() {
+      function addThinkingIndicator(label) {
         // If a valid thinking bubble already exists, reuse it.
         if (_thinking.el && _thinking.el.isConnected &&
             _thinking.el.querySelector(".thinking-wrap .thinking-dots:not(.mini)")) {
+          if (label) updateThinkingLabel(label);
           return _thinking.el;
         }
         if (chatWelcome.parentNode) chatWelcome.remove();
         const shouldScroll = isNearBottom(chatMessages, 140);
         const div = document.createElement("div");
         div.className = "msg assistant";
-        div.innerHTML = '<div class="thinking-wrap"><div class="thinking-dots"><span></span><span></span><span></span></div></div>';
+        div.innerHTML = '<div class="thinking-wrap"><div class="thinking-dots"><span></span><span></span><span></span></div><span class="thinking-label">' + (label ? escapeHtml(label) : '') + '</span></div>';
         chatAppend(div);
         if (shouldScroll || stickToBottom) scrollToBottomSoon();
         _thinking.el = div;
         return div;
+      }
+
+      function updateThinkingLabel(text) {
+        // Update the status label on any visible thinking/working indicator.
+        var labels = chatMessages.querySelectorAll(".thinking-label");
+        for (var i = 0; i < labels.length; i++) labels[i].textContent = text || "";
+        // Also update the dedicated thinking bubble if it exists.
+        if (_thinking.el && _thinking.el.isConnected) {
+          var lbl = _thinking.el.querySelector(".thinking-label");
+          if (lbl) lbl.textContent = text || "";
+        }
       }
 
       async function syncConversationFromServer() {

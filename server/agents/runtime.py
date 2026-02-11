@@ -1051,6 +1051,13 @@ class BrainRuntime:
 
         for round_idx in range(max_rounds):
             self._check_interrupt()
+            sid = self._session_id_for_item(item)
+            self._emit_log("brain_status", {
+                "item_id": item.get("id"),
+                "session_id": sid,
+                "status": "thinking",
+                "label": "Thinking\u2026",
+            })
             plan = self._plan_with_cloud(item, tool_results)
             responses = plan.get("responses") if isinstance(plan, dict) else []
             actions = plan.get("actions") if isinstance(plan, dict) else []
@@ -1064,7 +1071,7 @@ class BrainRuntime:
                     self._record_message(
                         "assistant",
                         text,
-                        {"item_id": item.get("id"), "session_id": self._session_id_for_item(item)},
+                        {"item_id": item.get("id"), "session_id": sid},
                     )
                     self._emit_log("brain_response", {"item_id": item.get("id"), "text": text[:300]})
 
@@ -1078,6 +1085,14 @@ class BrainRuntime:
                 self._check_interrupt()
                 if not isinstance(action, dict):
                     continue
+                a_type = str(action.get("type") or "")
+                self._emit_log("brain_status", {
+                    "item_id": item.get("id"),
+                    "session_id": sid,
+                    "status": "tool",
+                    "tool": a_type,
+                    "label": self._friendly_tool_label(a_type, action),
+                })
                 result = self._execute_action(item, action)
                 round_results.append({"action": action, "result": result})
                 total_actions += 1
@@ -1561,8 +1576,14 @@ class BrainRuntime:
             {"role": "user", "content": _as_text_blocks_for_role("user", _decorate_with_actor("user", cur_text, cur_meta))}
         )
 
-        for _ in range(max_rounds):
+        for round_idx in range(max_rounds):
             self._check_interrupt()
+            self._emit_log("brain_status", {
+                "item_id": item.get("id"),
+                "session_id": session_id,
+                "status": "thinking",
+                "label": "Thinking\u2026",
+            })
             system_prompt = str(cfg.get("system_prompt") or "")
             policy_blob = self._user_root_policy_blob()
             if policy_blob:
@@ -1695,6 +1716,13 @@ class BrainRuntime:
                     args = {}
                 if not isinstance(args, dict):
                     args = {}
+                self._emit_log("brain_status", {
+                    "item_id": item.get("id"),
+                    "session_id": session_id,
+                    "status": "tool",
+                    "tool": name,
+                    "label": self._friendly_tool_label(name, args),
+                })
                 result = self._execute_function_tool(item, name, args)
                 last_tool_summaries.append(
                     {
@@ -2521,6 +2549,65 @@ class BrainRuntime:
             {"item_id": item.get("id")},
         )
         return result
+
+    @staticmethod
+    def _friendly_tool_label(name: str, args: Any = None) -> str:
+        """Return a short, human-readable label for a tool invocation."""
+        n = str(name or "").strip().lower()
+        a = args if isinstance(args, dict) else {}
+        if n in ("list_dir", "filesystem") and str(a.get("op", "")).lower() == "list_dir":
+            return "Listing files\u2026"
+        if n in ("read_file", "filesystem") and str(a.get("op", "")).lower() == "read_file":
+            return "Reading file\u2026"
+        if n == "filesystem":
+            op = str(a.get("op") or "").lower()
+            if op == "mkdir":
+                return "Creating directory\u2026"
+            if op == "move_path":
+                return "Moving file\u2026"
+            if op == "delete_path":
+                return "Deleting file\u2026"
+            return "File operation\u2026"
+        if n in ("list_dir",):
+            return "Listing files\u2026"
+        if n in ("read_file",):
+            return "Reading file\u2026"
+        if n in ("write_file",):
+            return "Writing file\u2026"
+        if n in ("run_python", "shell_exec") and str(a.get("cmd", "")).lower() == "python":
+            return "Running Python\u2026"
+        if n in ("run_pip",) or (n == "shell_exec" and str(a.get("cmd", "")).lower() == "pip"):
+            return "Installing packages\u2026"
+        if n in ("run_curl",) or (n == "shell_exec" and str(a.get("cmd", "")).lower() == "curl"):
+            return "Making HTTP request\u2026"
+        if n == "shell_exec":
+            return "Running command\u2026"
+        if n == "device_api":
+            action_name = str(a.get("action") or "")
+            if action_name.startswith("camera."):
+                return "Capturing photo\u2026"
+            if action_name.startswith("media."):
+                return "Playing media\u2026"
+            if "tts" in action_name.lower() or "speak" in action_name.lower():
+                return "Synthesizing speech\u2026"
+            if action_name:
+                return f"Calling {action_name}\u2026"
+            return "Calling device API\u2026"
+        if n == "web_search":
+            return "Searching the web\u2026"
+        if n in ("memory_get",):
+            return "Reading memory\u2026"
+        if n in ("memory_set",):
+            return "Saving memory\u2026"
+        if n.startswith("journal_"):
+            return "Updating journal\u2026"
+        if n == "tool_invoke":
+            return BrainRuntime._friendly_tool_label(str(a.get("tool") or ""), a.get("args") or {})
+        if n == "sleep":
+            return "Waiting\u2026"
+        if n:
+            return f"Running {n}\u2026"
+        return "Working\u2026"
 
     def _execute_action(self, item: Dict, action: Dict) -> Dict:
         self._check_interrupt()
