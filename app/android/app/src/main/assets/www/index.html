@@ -290,6 +290,8 @@
         align-items: center;
         justify-content: space-between;
         gap: 10px;
+      }
+      .attach-head:not(:last-child) {
         margin-bottom: 8px;
       }
       .attach-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
@@ -1514,6 +1516,7 @@
         share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5 15.4 17.5"/><path d="M15.4 6.5 8.6 10.5"/></svg>',
         plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
         refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
+        externalLink: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
       };
 
       // Set static button icons (record button is handled by setRecordUi()).
@@ -2092,7 +2095,7 @@
           openBtn.className = "attach-icon-btn";
           openBtn.title = "Open";
           openBtn.setAttribute("aria-label", "Open");
-          openBtn.textContent = "OPEN";
+          openBtn.innerHTML = ICON.externalLink;
           const open = () => {
             try { location.href = "methings://open_user_html?path=" + encodeURIComponent(p); } catch (_) {}
           };
