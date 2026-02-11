@@ -264,14 +264,7 @@ jobs:
             echo ""
             echo "::endgroup::"
             echo "::group::Agent smoke test (real provider key)"
-            python3 scripts/ci_agent_smoke_test.py \
-              --base-url "http://127.0.0.1:8765" \
-              --vendor "${CI_AGENT_VENDOR:-openai}" \
-              --provider-base-url "${CI_AGENT_BASE_URL:-https://api.openai.com/v1}" \
-              --model "${CI_AGENT_MODEL:-gpt-4o-mini}" \
-              --api-key "${CI_AGENT_API_KEY}" \
-              --session-id "ci-agent-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
-              --timeout-sec 240
+            python3 scripts/ci_agent_smoke_test.py --base-url "http://127.0.0.1:8765" --vendor "${CI_AGENT_VENDOR:-openai}" --provider-base-url "${CI_AGENT_BASE_URL:-https://api.openai.com/v1}" --model "${CI_AGENT_MODEL:-gpt-4o-mini}" --api-key "${CI_AGENT_API_KEY}" --session-id "ci-agent-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --timeout-sec 240
             echo "::endgroup::"
             adb logcat -d > agent-logcat.txt 2>&1 || true
 
