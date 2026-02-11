@@ -119,7 +119,7 @@ Example:
 
 ### Sensors Quickstart (Realtime Streams)
 
-Use a streaming sensor pipeline (single stream with multiple sensors) so Python code can poll batches with low latency:
+Use a streaming sensor pipeline (single stream with multiple sensors) so Python code can poll batches with low latency, or attach a WebSocket client.
 
 1) List available sensors (inspect `type`/`string_type`/`name`):
 
@@ -127,19 +127,35 @@ Use a streaming sensor pipeline (single stream with multiple sensors) so Python 
 {
   "type": "tool_invoke",
   "tool": "device_api",
-  "args": { "action": "sensors.list", "payload": {}, "detail": "List available sensors" }
+  "args": { "action": "sensor.list", "payload": {}, "detail": "List available sensors" }
 }
 ```
 
-2) Start a stream (pick sensor aliases like `accel`, `gyro`, `mag`, `linear`, `rotation_vector`, etc):
+2) Start a stream (preferred short keys):
+
+- `a`: accelerometer
+- `g`: gyroscope
+- `m`: magnetic field
+- `r`: rotation vector
+- `u`: linear acceleration
+- `w`: gravity
+- `x`: geomagnetic rotation vector
+- `y`: game rotation vector
+- `z`: proximity
+- `l`: light
+- `p`: pressure
+- `h`: relative humidity
+- `t`: ambient temperature
+- `s`: step counter
+- `q`: step detector
 
 ```json
 {
   "type": "tool_invoke",
   "tool": "device_api",
   "args": {
-    "action": "sensors.stream.start",
-    "payload": { "sensors": ["accel", "gyro", "mag"], "rate_hz": 100, "batch_ms": 20, "timestamp": "mono" },
+    "action": "sensor.stream.start",
+    "payload": { "sensors": ["a", "g", "m"], "rate_hz": 200, "latency": "realtime", "timestamp": "mono" },
     "detail": "Start IMU sensor stream"
   }
 }
@@ -147,24 +163,28 @@ Use a streaming sensor pipeline (single stream with multiple sensors) so Python 
 
 This returns:
 - `stream_id`
-- `ws_path` like `/ws/sensors/stream/<stream_id>`
+- `ws_path` like `/ws/sensor/stream/<stream_id>`
 
-Each emitted frame looks like:
+Each emitted event (per sensor) looks like:
 
 ```json
-{ "type":"sensors", "stream_id":"...", "seq": 1, "t_ms": 123456, "samples": { "accel":[...], "gyro":[...], "mag":[...] } }
+{ "s":"s1", "k":"a", "t": 123456.789, "v":[0.01, 9.80, 0.12], "q": 1001 }
 ```
 
-3) Poll frames (good for Python code) with `since_seq_exclusive`:
+Notes:
+- `t` is seconds (monotonic when `timestamp=mono`, unix epoch when `timestamp=unix`)
+- `q` is a monotonically increasing sequence number per stream
+
+3) Poll events (good for Python code) with `since_q_exclusive`:
 
 ```json
 {
   "type": "tool_invoke",
   "tool": "device_api",
   "args": {
-    "action": "sensors.stream.batch",
-    "payload": { "stream_id": "<stream_id>", "since_seq_exclusive": 0, "limit": 200 },
-    "detail": "Fetch sensor frames batch"
+    "action": "sensor.stream.batch",
+    "payload": { "stream_id": "<stream_id>", "since_q_exclusive": 0, "limit": 500 },
+    "detail": "Fetch sensor events batch"
   }
 }
 ```

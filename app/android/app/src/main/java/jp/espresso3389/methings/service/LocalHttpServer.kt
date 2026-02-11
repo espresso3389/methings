@@ -1057,7 +1057,7 @@ class LocalHttpServer(
                 val timeoutMs = payload.optLong("timeout_ms", 12_000L).coerceIn(250L, 120_000L)
                 return jsonResponse(JSONObject(location.getCurrent(highAccuracy = high, timeoutMs = timeoutMs)))
             }
-            (uri == "/sensors/list" || uri == "/sensors/list/") && session.method == Method.GET -> {
+            (uri == "/sensors/list" || uri == "/sensors/list/" || uri == "/sensor/list" || uri == "/sensor/list/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.sensors", capability = "sensors", detail = "List available sensors")
                 if (!ok.first) return ok.second!!
                 val out = JSONObject(sensors.listSensors())
@@ -1075,7 +1075,7 @@ class LocalHttpServer(
                 }
                 return jsonResponse(out)
             }
-            (uri == "/sensors/stream/start" || uri == "/sensors/stream/start/") && session.method == Method.POST -> {
+            (uri == "/sensors/stream/start" || uri == "/sensors/stream/start/" || uri == "/sensor/stream/start" || uri == "/sensor/stream/start/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Start sensors stream")
                 if (!ok.first) return ok.second!!
@@ -1087,22 +1087,22 @@ class LocalHttpServer(
                         if (s.isNotBlank()) names.add(s)
                     }
                 }
-                val rateHz = payload.optInt("rate_hz", 100).coerceIn(1, 200)
-                val batchMs = payload.optInt("batch_ms", 20).coerceIn(5, 1000)
+                val rateHz = payload.optInt("rate_hz", 200).coerceIn(1, 1000)
+                val latency = payload.optString("latency", "realtime").trim()
                 val timestamp = payload.optString("timestamp", "mono").trim()
-                val bufferMax = payload.optInt("buffer_max", 256).coerceIn(16, 4096)
+                val bufferMax = payload.optInt("buffer_max", 4096).coerceIn(64, 50_000)
                 val out = sensors.start(
                     SensorsStreamManager.StreamStart(
                         sensors = names,
                         rateHz = rateHz,
-                        batchMs = batchMs,
+                        latency = latency,
                         timestamp = timestamp,
                         bufferMax = bufferMax,
                     )
                 )
                 return jsonResponse(JSONObject(out))
             }
-            (uri == "/sensors/stream/stop" || uri == "/sensors/stream/stop/") && session.method == Method.POST -> {
+            (uri == "/sensors/stream/stop" || uri == "/sensors/stream/stop/" || uri == "/sensor/stream/stop" || uri == "/sensor/stream/stop/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Stop sensors stream")
                 if (!ok.first) return ok.second!!
@@ -1110,7 +1110,7 @@ class LocalHttpServer(
                 if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "stream_id_required")
                 return jsonResponse(JSONObject(sensors.stop(id)))
             }
-            (uri == "/sensors/stream/latest" || uri == "/sensors/stream/latest/") && session.method == Method.POST -> {
+            (uri == "/sensors/stream/latest" || uri == "/sensors/stream/latest/" || uri == "/sensor/stream/latest" || uri == "/sensor/stream/latest/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Get latest sensors frame")
                 if (!ok.first) return ok.second!!
@@ -1118,15 +1118,23 @@ class LocalHttpServer(
                 if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "stream_id_required")
                 return jsonResponse(sensors.latest(id))
             }
-            (uri == "/sensors/stream/batch" || uri == "/sensors/stream/batch/") && session.method == Method.POST -> {
+            (uri == "/sensors/stream/batch" || uri == "/sensors/stream/batch/" || uri == "/sensor/stream/batch" || uri == "/sensor/stream/batch/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Get sensors frames batch")
                 if (!ok.first) return ok.second!!
                 val id = payload.optString("stream_id", "").trim()
                 if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "stream_id_required")
-                val sinceSeq = payload.optLong("since_seq_exclusive", 0L)
-                val limit = payload.optInt("limit", 200).coerceIn(1, 2000)
-                return jsonResponse(sensors.batch(id, sinceSeq, limit))
+                val sinceQ = payload.optLong("since_q_exclusive", payload.optLong("since_seq_exclusive", 0L))
+                val limit = payload.optInt("limit", 500).coerceIn(1, 5000)
+                return jsonResponse(sensors.batch(id, sinceQ, limit))
+            }
+            (uri == "/sensor/stream/status" || uri == "/sensor/stream/status/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.sensors", capability = "sensors", detail = "Sensors stream status (single)")
+                if (!ok.first) return ok.second!!
+                val id = payload.optString("stream_id", "").trim()
+                if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "stream_id_required")
+                return jsonResponse(sensors.streamStatus(id))
             }
             uri == "/ssh/status" -> {
                 val status = sshdManager.status()
@@ -2900,8 +2908,9 @@ class LocalHttpServer(
             }
         }
 
-        val sensorsPrefix = "/ws/sensors/stream/"
-        if (uri.startsWith(sensorsPrefix)) {
+        val sensorsPrefixes = listOf("/ws/sensors/stream/", "/ws/sensor/stream/")
+        val sensorsPrefix = sensorsPrefixes.firstOrNull { uri.startsWith(it) }
+        if (sensorsPrefix != null) {
             val streamId = uri.removePrefix(sensorsPrefix).trim()
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {

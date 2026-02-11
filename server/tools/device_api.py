@@ -52,6 +52,13 @@ class DeviceApiTool:
         "sensors.stream.stop": {"method": "POST", "path": "/sensors/stream/stop", "permission": True},
         "sensors.stream.latest": {"method": "POST", "path": "/sensors/stream/latest", "permission": True},
         "sensors.stream.batch": {"method": "POST", "path": "/sensors/stream/batch", "permission": True},
+        # Preferred (spec): sensor.* aliases with per-sensor realtime events.
+        "sensor.list": {"method": "GET", "path": "/sensor/list", "permission": True},
+        "sensor.stream.start": {"method": "POST", "path": "/sensor/stream/start", "permission": True},
+        "sensor.stream.stop": {"method": "POST", "path": "/sensor/stream/stop", "permission": True},
+        "sensor.stream.status": {"method": "POST", "path": "/sensor/stream/status", "permission": True},
+        "sensor.stream.latest": {"method": "POST", "path": "/sensor/stream/latest", "permission": True},
+        "sensor.stream.batch": {"method": "POST", "path": "/sensor/stream/batch", "permission": True},
         "usb.list": {"method": "GET", "path": "/usb/list", "permission": True},
         "usb.status": {"method": "GET", "path": "/usb/status", "permission": True},
         "usb.open": {"method": "POST", "path": "/usb/open", "permission": True},
@@ -517,6 +524,8 @@ class DeviceApiTool:
         if a.startswith("location."):
             return "device.gps", "location", "session"
         if a.startswith("sensors."):
+            return "device.sensors", "sensors", "session"
+        if a.startswith("sensor."):
             return "device.sensors", "sensors", "session"
         if a.startswith("usb."):
             return "device.usb", "usb", "session"
