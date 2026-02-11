@@ -267,6 +267,7 @@ class LlamaCppManager(private val context: Context) {
         try {
             val pb = ProcessBuilder(cmd)
             if (cwd != null) pb.directory(cwd)
+            configureRuntimeEnv(pb, binary)
             val process = pb.start()
             task.process = process
 
@@ -340,6 +341,7 @@ class LlamaCppManager(private val context: Context) {
         return try {
             val pb = ProcessBuilder(cmd)
             if (cwd != null) pb.directory(cwd)
+            configureRuntimeEnv(pb, binary)
             val process = pb.start()
 
             val stdoutBuf = ByteArrayOutputStream()
@@ -433,6 +435,22 @@ class LlamaCppManager(private val context: Context) {
         return findByName(defaultName).takeIf { isRunnable(it) }
     }
 
+    private fun configureRuntimeEnv(pb: ProcessBuilder, binary: File) {
+        val env = pb.environment()
+        val pathSep = File.pathSeparator
+        val extra = linkedSetOf(
+            binary.parentFile?.absolutePath,
+            context.applicationInfo.nativeLibraryDir
+        ).filterNotNull().filter { it.isNotBlank() }
+        if (extra.isEmpty()) return
+
+        val merged = ArrayList<String>()
+        merged.addAll(extra)
+        val existing = (env["LD_LIBRARY_PATH"] ?: "").trim()
+        if (existing.isNotEmpty()) merged.add(existing)
+        env["LD_LIBRARY_PATH"] = merged.joinToString(pathSep)
+    }
+
     private fun findByName(name: String): File? {
         val clean = name.trim()
         if (clean.isEmpty()) return null
@@ -446,9 +464,9 @@ class LlamaCppManager(private val context: Context) {
             "lib${clean.replace('_', '-')}.so",
         )
         val searchDirs = listOf(
+            File(context.applicationInfo.nativeLibraryDir),
             File(filesRoot, "bin"),
             File(userRoot, "bin"),
-            File(context.applicationInfo.nativeLibraryDir),
         )
         for (dir in searchDirs) {
             for (n in alt) {

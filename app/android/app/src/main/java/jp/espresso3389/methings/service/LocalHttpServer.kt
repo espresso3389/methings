@@ -475,6 +475,14 @@ class LocalHttpServer(
             uri == "/builtins/stt" && session.method == Method.POST -> {
                 return jsonError(Response.Status.NOT_IMPLEMENTED, "not_implemented", JSONObject().put("feature", "stt"))
             }
+            uri == "/brain/events" && session.method == Method.GET -> {
+                if (runtimeManager.getStatus() != "ok") {
+                    runtimeManager.startWorker()
+                    waitForPythonHealth(5000)
+                }
+                proxyGetStreamFromWorker("/brain/events", session.queryParameterString)
+                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+            }
             (
                 uri == "/brain/status" ||
                     uri == "/brain/messages" ||
@@ -5059,6 +5067,34 @@ class LocalHttpServer(
             response
         } catch (ex: Exception) {
             Log.w(TAG, "Brain chat proxy failed", ex)
+            null
+        }
+    }
+
+    private fun proxyGetStreamFromWorker(path: String, query: String?): Response? {
+        return try {
+            val fullPath = if (!query.isNullOrBlank()) "$path?$query" else path
+            val url = java.net.URL("http://127.0.0.1:8776$fullPath")
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 5000
+            conn.readTimeout = 0 // infinite for SSE
+            if (conn.responseCode !in 200..299) {
+                val errorStream = conn.errorStream ?: conn.inputStream
+                val errorBody = errorStream.bufferedReader().use { it.readText() }
+                return newFixedLengthResponse(
+                    Response.Status.lookup(conn.responseCode) ?: Response.Status.INTERNAL_ERROR,
+                    "application/json",
+                    errorBody
+                )
+            }
+            val inputStream = conn.inputStream
+            val response = newChunkedResponse(Response.Status.OK, "text/event-stream", inputStream)
+            response.addHeader("Cache-Control", "no-cache")
+            response.addHeader("Connection", "keep-alive")
+            response
+        } catch (ex: Exception) {
+            Log.w(TAG, "Brain SSE proxy failed", ex)
             null
         }
     }

@@ -40,6 +40,40 @@ app.add_middleware(
 )
 
 LOG_QUEUE: asyncio.Queue = asyncio.Queue()
+
+
+class EventBus:
+    """Fan-out pub/sub for SSE clients. Thread-safe."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._subscribers: list[asyncio.Queue] = []
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=256)
+        with self._lock:
+            self._subscribers.append(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        with self._lock:
+            try:
+                self._subscribers.remove(q)
+            except ValueError:
+                pass
+
+    def publish(self, event: str, data: Dict) -> None:
+        msg = {"event": event, "data": data, "ts": _now_ms()}
+        with self._lock:
+            for q in self._subscribers:
+                try:
+                    q.put_nowait(msg)
+                except asyncio.QueueFull:
+                    pass
+
+
+BRAIN_EVENT_BUS = EventBus()
+
 base_dir = Path(__file__).parent.parent
 legacy_data_dir = Path(__file__).parent / "data"
 protected_dir = base_dir / "protected"
@@ -110,6 +144,7 @@ def _emit_log(event: str, data: Dict):
         LOG_QUEUE.put_nowait({"event": event, "data": data, "ts": _now_ms()})
     except asyncio.QueueFull:
         pass
+    BRAIN_EVENT_BUS.publish(event, data)
     storage.add_audit(event, json.dumps(data))
 
 
@@ -601,6 +636,7 @@ BRAIN_RUNTIME = BrainRuntime(
     shell_exec=_shell_exec_impl,
     tool_invoke=_tool_invoke_impl,
 )
+BRAIN_RUNTIME.set_event_bus(BRAIN_EVENT_BUS)
 
 
 @app.get("/health")
@@ -768,6 +804,34 @@ async def logs_stream():
             item = await LOG_QUEUE.get()
             data = json.dumps(item)
             yield f"data: {data}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@app.get("/brain/events")
+async def brain_events(session_id: str = ""):
+    sid = (session_id or "").strip()
+    q = BRAIN_EVENT_BUS.subscribe()
+
+    async def event_generator():
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(q.get(), timeout=25.0)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                evt = item.get("event", "")
+                data = item.get("data") if isinstance(item.get("data"), dict) else {}
+                # Filter by session_id when provided.
+                if sid:
+                    item_sid = str(data.get("session_id") or "").strip()
+                    if item_sid and item_sid != sid:
+                        continue
+                payload = json.dumps(data)
+                yield f"event: {evt}\ndata: {payload}\n\n"
+        finally:
+            BRAIN_EVENT_BUS.unsubscribe(q)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

@@ -2440,8 +2440,132 @@
       let chatSessionId = "";
       let lastServerTs = 0;
       let stickToBottom = true;
+      // Centralized thinking indicator state.
+      // .el = the DOM element (a .msg.assistant with .thinking-wrap), or null.
+      const _thinking = { el: null };
       // item_id -> exact text we sent to /brain/inbox/chat (for UI-side retry fallback).
       const _sentTextByItemId = new Map();
+
+      // --- SSE connection for real-time brain events ---
+      let _brainSSE = null;
+      // item_id -> { resolve } for waitForAgentReply SSE path.
+      const _sseWaiters = new Map();
+
+      function connectBrainSSE() {
+        closeBrainSSE();
+        if (!chatSessionId) return;
+        try {
+          const url = API + "/brain/events?session_id=" + encodeURIComponent(chatSessionId);
+          const es = new EventSource(url);
+          _brainSSE = es;
+          es.onopen = function() {
+            // Catch up on any messages we missed while disconnected.
+            pollServerMessages();
+          };
+          es.addEventListener("brain_message", function(e) {
+            try {
+              const data = JSON.parse(e.data);
+              const role = data.role || "";
+              const text = (typeof data.text === "string") ? data.text.trim() : "";
+              const meta = (data.meta && typeof data.meta === "object") ? data.meta : {};
+              const ts = Number(data.ts || 0);
+              const itemId = meta.item_id || "";
+              if (!text || (role !== "user" && role !== "assistant")) return;
+              // Resolve SSE waiters.
+              if (role === "assistant" && itemId && _sseWaiters.has(itemId)) {
+                const w = _sseWaiters.get(itemId);
+                _sseWaiters.delete(itemId);
+                if (w && w.resolve) w.resolve(text);
+              }
+              // Update lastServerTs so the slow poll doesn't re-process.
+              if (ts && ts > lastServerTs) lastServerTs = ts;
+              // De-dupe: if already rendered, upgrade in place.
+              if (itemId) {
+                const existing = findRenderedByItem(role, itemId);
+                if (existing) {
+                  existing.dataset.ts = String(ts || "");
+                  if (meta.debug) existing.classList.add("debug");
+                  if (role === "assistant" && existing.querySelector(".thinking-dots")) {
+                    if (_thinking.el === existing) _thinking.el = null;
+                    existing.innerHTML = renderMarkdown(text);
+                    if (streaming && !activeAgentItemId) {
+                      streaming = false;
+                      chatSend.disabled = false;
+                      setInterruptUi(false, "");
+                    }
+                  }
+                  try { renderInlineAttachments(existing, text); } catch (_) {}
+                  try { renderInlineHtmlLinks(existing, text); } catch (_) {}
+                  upsertConversationEntry(role, itemId, text, meta, ts);
+                  if (role === "assistant") clearWorkingByItemId(itemId);
+                  return;
+                }
+              }
+              addMsg(role, text, Object.assign({}, meta, { _ts: ts }));
+              conversation.push({ role: role, content: text, meta: meta, ts: ts || Date.now() });
+              if (role === "assistant" && itemId) clearWorkingByItemId(itemId);
+              conversation = conversation.slice(-220);
+              saveConversation();
+            } catch (_) {}
+          });
+          es.addEventListener("brain_item_started", function(e) {
+            try {
+              // Show thinking indicator (unless streaming owns it).
+              if (streaming) return;
+              if (_thinking.el && _thinking.el.isConnected) return;
+              const allAssistant = chatMessages.querySelectorAll(".msg.assistant");
+              const last = allAssistant.length ? allAssistant[allAssistant.length - 1] : null;
+              let hasUserAfter = false;
+              if (last) {
+                let sib = last.nextElementSibling;
+                while (sib) {
+                  if (sib.classList.contains("msg") && sib.classList.contains("user")) { hasUserAfter = true; break; }
+                  sib = sib.nextElementSibling;
+                }
+              }
+              if (last && !hasUserAfter) {
+                setMsgWorking(last, true);
+              } else {
+                addThinkingIndicator();
+              }
+            } catch (_) {}
+          });
+          es.addEventListener("brain_idle", function(e) {
+            try {
+              if (streaming) return;
+              if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
+              _thinking.el = null;
+              chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
+            } catch (_) {}
+          });
+          es.addEventListener("brain_item_failed", function(e) {
+            try {
+              if (streaming) return;
+              if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
+              _thinking.el = null;
+              chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
+            } catch (_) {}
+          });
+          es.addEventListener("brain_item_interrupted", function(e) {
+            try {
+              if (streaming) return;
+              if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
+              _thinking.el = null;
+              chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
+            } catch (_) {}
+          });
+          es.onerror = function() {
+            // EventSource auto-reconnects; no extra logic needed.
+          };
+        } catch (_) {}
+      }
+
+      function closeBrainSSE() {
+        if (_brainSSE) {
+          try { _brainSSE.close(); } catch (_) {}
+          _brainSSE = null;
+        }
+      }
 
       function genSessionId() {
         return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
@@ -2472,6 +2596,7 @@
         try { chatMessages.textContent = ""; } catch (_) {}
         _permState.knownIds.clear(); _permState.cardEl = null; _permState.items = {};
         restoreConversation();
+        connectBrainSSE();
         await syncConversationFromServer();
       }
 
@@ -2531,13 +2656,6 @@
         // Remove stale Retry buttons from older error messages.
         if (role === "assistant" || role === "user") {
           chatMessages.querySelectorAll("[data-ui='retry-actions']").forEach(el => el.remove());
-        }
-        // Remove orphan thinking bubbles before appending real content,
-        // but only when sendAgentChat is not actively waiting (streaming).
-        if ((role === "assistant" || role === "user") && !streaming) {
-          chatMessages.querySelectorAll(".msg.assistant").forEach(el => {
-            if (el.querySelector(".thinking-wrap .thinking-dots:not(.mini)") && !el.querySelector("p, li, pre, code, span:not(.thinking-dots span)")) el.remove();
-          });
         }
         const shouldScroll = isNearBottom(chatMessages, 140);
         const div = document.createElement("div");
@@ -2648,6 +2766,11 @@
       }
 
       function addThinkingIndicator() {
+        // If a valid thinking bubble already exists, reuse it.
+        if (_thinking.el && _thinking.el.isConnected &&
+            _thinking.el.querySelector(".thinking-wrap .thinking-dots:not(.mini)")) {
+          return _thinking.el;
+        }
         if (chatWelcome.parentNode) chatWelcome.remove();
         const shouldScroll = isNearBottom(chatMessages, 140);
         const div = document.createElement("div");
@@ -2655,6 +2778,7 @@
         div.innerHTML = '<div class="thinking-wrap"><div class="thinking-dots"><span></span><span></span><span></span></div></div>';
         chatAppend(div);
         if (shouldScroll || stickToBottom) scrollToBottomSoon();
+        _thinking.el = div;
         return div;
       }
 
@@ -2693,8 +2817,9 @@
           lastServerTs = Math.max(lastServerTs, maxTs);
           conversation = rebuilt.slice(-200).map(m => ({ role: m.role, content: m.content, meta: m.meta || {}, ts: m.ts || 0 }));
           chatMessages.textContent = "";
-          // Reset perm-card state so it re-creates after rebuild.
+          // Reset perm-card and thinking state so they re-create after rebuild.
           _permState.cardEl = null; _permState.items = {}; _permState.knownIds.clear();
+          _thinking.el = null;
           for (const msg of conversation) addMsg(msg.role, msg.content, Object.assign({}, msg.meta || {}, { _ts: msg.ts || 0 }));
           // Restore working indicators for items that have tool activity after the last assistant bubble.
           for (const [itemId, tTs] of lastToolTsByItem.entries()) {
@@ -2752,6 +2877,7 @@
                 existing.dataset.ts = String(ts || "");
                 if (meta.debug) existing.classList.add("debug");
                 if (msg.role === "assistant" && existing.querySelector(".thinking-dots")) {
+                  if (_thinking.el === existing) _thinking.el = null;
                   existing.innerHTML = renderMarkdown(text);
                   // Clean up recovered-streaming state if applicable.
                   if (streaming && !activeAgentItemId) {
@@ -2795,8 +2921,9 @@
             const st = await sr.json();
             if (st.busy) {
               // Agent is still working — ensure there's a visible indicator.
-              const thinkingDot = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
-              const thinkingMsg = thinkingDot ? thinkingDot.closest(".msg") : null;
+              // Self-heal: if tracked element was detached, clear reference.
+              if (_thinking.el && !_thinking.el.isConnected) _thinking.el = null;
+              const thinkingMsg = _thinking.el;
               const hasWorking = chatMessages.querySelector(".msg.assistant .msg-working");
               // If thinking dots got displaced (messages appended after them), move to bottom.
               if (thinkingMsg) {
@@ -2827,16 +2954,17 @@
               }
             } else {
               // Agent is idle — clean up any lingering indicators.
+              // But if sendAgentChat owns the lifecycle (streaming), don't touch it.
               if (streaming && !activeAgentItemId) {
                 streaming = false;
                 chatSend.disabled = false;
                 setInterruptUi(false, "");
               }
-              // Remove leftover thinking bubble if present.
-              const tb = chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)");
-              if (tb) { const m = tb.closest(".msg"); if (m) m.remove(); }
-              // Remove lingering mini-dots not from an active sendAgentChat.
               if (!streaming) {
+                // Remove leftover thinking bubble if present.
+                if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
+                _thinking.el = null;
+                // Remove lingering mini-dots.
                 chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
               }
             }
@@ -2854,8 +2982,8 @@
       });
       chatSend.addEventListener("click", sendChat);
       restoreConversation();
-      syncConversationFromServer().then(checkAgentBusy);
-      setInterval(pollServerMessages, 900);
+      syncConversationFromServer().then(() => { checkAgentBusy(); connectBrainSSE(); });
+      setInterval(pollServerMessages, 20000);
 
       // Scope "Select All" to the message balloon where the selection started.
       (function initMsgSelectAll() {
@@ -2902,8 +3030,7 @@
           const st = await res.json();
           if (!st.busy) return;
           // Agent is still processing — show thinking indicator with stop button.
-          // If there's already a thinking bubble, skip adding a new one.
-          if (chatMessages.querySelector(".msg.assistant .thinking-wrap .thinking-dots:not(.mini)")) return;
+          if (_thinking.el && _thinking.el.isConnected) return;
           streaming = true;
           chatSend.disabled = true;
           addThinkingIndicator();
@@ -3090,9 +3217,10 @@
           activeThinkingDiv = null;
           return;
         }
-        // Find the current thinking bubble (last .msg.assistant with .thinking-wrap).
-        const all = chatMessages.querySelectorAll(".msg.assistant .thinking-wrap");
-        const wrap = all.length ? all[all.length - 1] : null;
+        // Find the current thinking bubble via tracked state, fallback to DOM query.
+        const wrap = (_thinking.el && _thinking.el.isConnected)
+          ? _thinking.el.querySelector(".thinking-wrap")
+          : (function() { const all = chatMessages.querySelectorAll(".msg.assistant .thinking-wrap"); return all.length ? all[all.length - 1] : null; })();
         if (!wrap) return;
         activeThinkingDiv = wrap.closest(".msg");
         // Don't add duplicate.
@@ -3214,6 +3342,7 @@
           const cleaned = (answer || "").replace(memRe, "").trim();
 
           if (cleaned) {
+            if (_thinking.el === aDiv) _thinking.el = null;
             aDiv.innerHTML = renderMarkdown(cleaned);
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
             try { renderInlineHtmlLinks(aDiv, cleaned); } catch (_) {}
@@ -3225,9 +3354,11 @@
             saveConversation();
           } else {
             aDiv.remove();
+            if (_thinking.el === aDiv) _thinking.el = null;
           }
         } catch (err) {
           if (aDiv.parentNode) aDiv.remove();
+          if (_thinking.el === aDiv) _thinking.el = null;
           const msg = err.message || "Agent request failed";
           const friendly = {
             "brain_not_configured": "Configure Brain in Settings first.",
@@ -3291,6 +3422,7 @@
           if (!answer) throw new Error("Agent timed out");
           const cleaned = String(answer || "").trim();
           if (cleaned) {
+            if (_thinking.el === aDiv) _thinking.el = null;
             aDiv.innerHTML = renderMarkdown(cleaned);
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
             try { renderInlineHtmlLinks(aDiv, cleaned); } catch (_) {}
@@ -3302,9 +3434,11 @@
             saveConversation();
           } else {
             aDiv.remove();
+            if (_thinking.el === aDiv) _thinking.el = null;
           }
         } catch (e) {
           try { if (aDiv.parentNode) aDiv.remove(); } catch (_) {}
+          if (_thinking.el === aDiv) _thinking.el = null;
           showToast("Retry failed", 1400);
           try { addMsg("error", String(e && e.message ? e.message : e)); } catch (_) {}
         } finally {
@@ -3597,40 +3731,48 @@
       })();
 
       async function waitForAgentReply(itemId) {
-        const deadline = Date.now() + 15 * 60 * 1000;
-        let lastToolError = "";
-        while (Date.now() < deadline) {
-          const res = await fetch(
-            API + "/brain/messages?limit=200&session_id=" + encodeURIComponent(chatSessionId)
-          );
-          if (!res.ok) {
-            await new Promise(r => setTimeout(r, 700));
-            continue;
-          }
-          const data = await res.json().catch(() => ({}));
-          const list = Array.isArray(data.messages) ? data.messages : [];
-          for (const msg of list) {
-            const meta = msg && msg.meta ? msg.meta : {};
-            if (meta.item_id !== itemId) continue;
-            if (msg.role === "assistant" && typeof msg.text === "string" && msg.text.trim()) {
-              return msg.text.trim();
-            }
-            if (msg.role === "tool" && typeof msg.text === "string") {
-              try {
-                const parsed = JSON.parse(msg.text);
-                const result = parsed && parsed.result ? parsed.result : {};
-                if (result.error) {
-                  lastToolError = result.error;
+        // SSE-primary: register a waiter resolved by the brain_message handler.
+        const ssePromise = new Promise(resolve => {
+          _sseWaiters.set(itemId, { resolve });
+        });
+
+        // Slow polling fallback (15s intervals) as safety net.
+        const pollPromise = (async () => {
+          const deadline = Date.now() + 15 * 60 * 1000;
+          let lastToolError = "";
+          while (Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 15000));
+            try {
+              const res = await fetch(
+                API + "/brain/messages?limit=200&session_id=" + encodeURIComponent(chatSessionId)
+              );
+              if (!res.ok) continue;
+              const data = await res.json().catch(() => ({}));
+              const list = Array.isArray(data.messages) ? data.messages : [];
+              for (const msg of list) {
+                const meta = msg && msg.meta ? msg.meta : {};
+                if (meta.item_id !== itemId) continue;
+                if (msg.role === "assistant" && typeof msg.text === "string" && msg.text.trim()) {
+                  return msg.text.trim();
                 }
-              } catch (_) {}
-            }
+                if (msg.role === "tool" && typeof msg.text === "string") {
+                  try {
+                    const parsed = JSON.parse(msg.text);
+                    const result = parsed && parsed.result ? parsed.result : {};
+                    if (result.error) lastToolError = result.error;
+                  } catch (_) {}
+                }
+              }
+            } catch (_) {}
           }
-          await new Promise(r => setTimeout(r, 700));
-        }
-        if (lastToolError) {
-          throw new Error(lastToolError);
-        }
-        return "";
+          if (lastToolError) throw new Error(lastToolError);
+          return "";
+        })();
+
+        const result = await Promise.race([ssePromise, pollPromise]);
+        // Clean up waiter if poll won.
+        _sseWaiters.delete(itemId);
+        return result;
       }
 
       // ==============================

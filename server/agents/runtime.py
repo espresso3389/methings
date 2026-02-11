@@ -64,6 +64,15 @@ class BrainRuntime:
         self._awaiting_permissions: Dict[str, Dict[str, Any]] = {}
 
         self._config = self._load_config()
+        self._event_bus = None
+
+    def set_event_bus(self, bus) -> None:
+        self._event_bus = bus
+
+    def _publish_message_event(self, entry: Dict) -> None:
+        bus = self._event_bus
+        if bus:
+            bus.publish("brain_message", entry)
 
     def interrupt(self, *, item_id: str = "", session_id: str = "", clear_queue: bool = False) -> Dict[str, Any]:
         """
@@ -761,7 +770,10 @@ class BrainRuntime:
                     self._last_processed_at = int(time.time() * 1000)
             except InterruptedError:
                 # Treat as a user-initiated cancel, not a failure.
-                self._emit_log("brain_item_interrupted", {"id": item.get("id")})
+                self._emit_log("brain_item_interrupted", {
+                    "id": item.get("id"),
+                    "session_id": self._session_id_for_item(item),
+                })
             except Exception as ex:
                 with self._lock:
                     self._last_error = str(ex)
@@ -786,8 +798,16 @@ class BrainRuntime:
                     )
                 except Exception:
                     pass
-                self._emit_log("brain_item_failed", {"id": item.get("id"), "error": str(ex)})
+                self._emit_log("brain_item_failed", {
+                    "id": item.get("id"),
+                    "error": str(ex),
+                    "session_id": self._session_id_for_item(item),
+                })
             finally:
+                self._emit_log("brain_idle", {
+                    "item_id": item.get("id") if item else "",
+                    "session_id": self._session_id_for_item(item) if item else "",
+                })
                 with self._lock:
                     self._busy = False
                     self._current_item = None
@@ -820,6 +840,7 @@ class BrainRuntime:
                 self._storage.add_chat_message(sid, role, text, json.dumps(meta, ensure_ascii=True))
         except Exception:
             pass
+        self._publish_message_event(entry)
 
     def _session_id_for_item(self, item: Dict) -> str:
         meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
@@ -902,7 +923,11 @@ class BrainRuntime:
 
     def _process_item(self, item: Dict) -> None:
         self._check_interrupt()
-        self._emit_log("brain_item_started", {"id": item.get("id"), "kind": item.get("kind")})
+        self._emit_log("brain_item_started", {
+            "id": item.get("id"),
+            "kind": item.get("kind"),
+            "session_id": self._session_id_for_item(item),
+        })
         if str(item.get("kind") or "") == "event":
             name = str(item.get("name") or "").strip()
             payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
@@ -1016,7 +1041,7 @@ class BrainRuntime:
         provider_url = str(cfg.get("provider_url") or "").strip()
         if provider_url.rstrip("/").endswith("/responses"):
             self._process_with_responses_tools(item)
-            self._emit_log("brain_item_done", {"id": item.get("id"), "actions": "tool_loop"})
+            self._emit_log("brain_item_done", {"id": item.get("id"), "actions": "tool_loop", "session_id": self._session_id_for_item(item)})
             return
 
         max_actions = max(0, min(int(self._config.get("max_actions", 6) or 6), 12))
@@ -1060,7 +1085,7 @@ class BrainRuntime:
             if not round_results:
                 break
 
-        self._emit_log("brain_item_done", {"id": item.get("id"), "actions": total_actions})
+        self._emit_log("brain_item_done", {"id": item.get("id"), "actions": total_actions, "session_id": self._session_id_for_item(item)})
 
     def _provider_post(
         self,
