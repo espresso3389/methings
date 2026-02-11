@@ -161,12 +161,17 @@ Example: MioTTS-style synthesis (provide args for your `llama-tts` build)
       "model": "MioTTS-0.1B-Q8_0.gguf",
       "text": "Hello from methings",
       "output_path": "captures/miotts.wav",
-      "args": ["--model", "{{model}}", "--text", "{{text}}", "--output", "{{output_path}}"]
+      "args": ["-m", "{{model}}", "-p", "{{text}}", "-o", "{{output_path}}"]
     },
     "detail": "Run llama-tts for local speech synthesis"
   }
 }
 ```
+
+Important:
+- Use `-p` / `-o` for this runtime. `--text` may fail.
+- Avoid `--tts-oute-default` by default; it may depend on remote preset files.
+- Prefer explicit local args for MioTTS and pass local `--model-vocoder` when needed.
 
 After synthesis, include `rel_path: captures/miotts.wav` in your assistant message to render audio inline.
 
@@ -182,7 +187,7 @@ Example: direct speaker playback (stream while generating)
       "model": "MioTTS-0.1B-Q8_0.gguf",
       "text": "Hello from methings",
       "output_path": "captures/miotts_stream.wav",
-      "args": ["--model", "{{model}}", "--text", "{{text}}", "--output", "{{output_path}}"]
+      "args": ["-m", "{{model}}", "-p", "{{text}}", "-o", "{{output_path}}"]
     },
     "detail": "Stream local llama-tts output to speaker"
   }

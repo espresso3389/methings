@@ -449,6 +449,16 @@ class LlamaCppManager(private val context: Context) {
         val existing = (env["LD_LIBRARY_PATH"] ?: "").trim()
         if (existing.isNotEmpty()) merged.add(existing)
         env["LD_LIBRARY_PATH"] = merged.joinToString(pathSep)
+
+        // llama-tts may use XDG/HF caches; ensure they point to writable app user paths.
+        val userHome = userRoot.absolutePath
+        val cacheRoot = File(userRoot, ".cache")
+        val hfRoot = File(cacheRoot, "hf")
+        runCatching { cacheRoot.mkdirs() }
+        runCatching { hfRoot.mkdirs() }
+        env["HOME"] = userHome
+        env["XDG_CACHE_HOME"] = cacheRoot.absolutePath
+        env["HF_HOME"] = hfRoot.absolutePath
     }
 
     private fun findByName(name: String): File? {
