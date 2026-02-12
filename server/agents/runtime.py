@@ -1245,9 +1245,17 @@ class BrainRuntime:
                                 "ssh.exec",
                                 "ssh.scp",
                                 "ssh.ws.contract",
+                                "ssh.keys.list",
+                                "ssh.keys.add",
+                                "ssh.keys.delete",
+                                "ssh.keys.policy.get",
+                                "ssh.keys.policy.set",
                                 "ssh.pin.status",
                                 "ssh.pin.start",
                                 "ssh.pin.stop",
+                                "ssh.noauth.status",
+                                "ssh.noauth.start",
+                                "ssh.noauth.stop",
                                 "camera.list",
                                 "camera.status",
                                 "camera.preview.start",
@@ -2123,9 +2131,14 @@ class BrainRuntime:
                         "ssh.keys.list",
                         "ssh.keys.add",
                         "ssh.keys.delete",
+                        "ssh.keys.policy.get",
+                        "ssh.keys.policy.set",
                         "ssh.pin.status",
                         "ssh.pin.start",
                         "ssh.pin.stop",
+                        "ssh.noauth.status",
+                        "ssh.noauth.start",
+                        "ssh.noauth.stop",
                         "camera.list",
                         "camera.status",
                         "camera.preview.start",
@@ -2226,6 +2239,7 @@ class BrainRuntime:
             "Do NOT ask the user 'should I continue' for routine multi-step work. Continue automatically unless you need missing info, "
             "a permission approval, or you are about to do an irreversible/destructive action. "
             "Common camera actions include: camera.list, camera.status, camera.preview.start, camera.preview.stop, camera.capture. "
+            "Common SSH actions include: ssh.status, ssh.config, ssh.keys.list/add/delete, ssh.keys.policy.get/set, ssh.pin.start/stop, ssh.noauth.start/stop. "
             "Common location actions include: location.status, location.get. "
             "Common sensors actions include: sensors.list and sensors.ws.contract. "
             "For realtime sensors, use WebSocket /ws/sensors based on sensors.ws.contract instead of old polling stream endpoints. "

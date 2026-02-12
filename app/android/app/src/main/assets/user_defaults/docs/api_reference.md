@@ -43,9 +43,14 @@ See [permissions.md](permissions.md) for scopes, identity model, and USB special
 | `ssh.keys.list` | GET | `/ssh/keys` **[no perm]** |
 | `ssh.keys.add` | POST | `/ssh/keys/add` |
 | `ssh.keys.delete` | POST | `/ssh/keys/delete` |
+| `ssh.keys.policy.get` | GET | `/ssh/keys/policy` **[no perm]** |
+| `ssh.keys.policy.set` | POST | `/ssh/keys/policy` |
 | `ssh.pin.status` | GET | `/ssh/pin/status` **[no perm]** |
 | `ssh.pin.start` | POST | `/ssh/pin/start` |
 | `ssh.pin.stop` | POST | `/ssh/pin/stop` |
+| `ssh.noauth.status` | GET | `/ssh/noauth/status` **[no perm]** |
+| `ssh.noauth.start` | POST | `/ssh/noauth/start` |
+| `ssh.noauth.stop` | POST | `/ssh/noauth/stop` |
 
 Details: [ssh.md](ssh.md)
 

@@ -105,6 +105,22 @@ When you are inside the app's SSH shell prompt (it looks like `methings>`), a fe
 Notes:
 - `scp` exists but may stall against some OpenSSH-for-Windows targets. Prefer `put/get` when `scp` stalls.
 - Node.js may be available as `node` plus JS tools `npm`/`npx` (if the runtime is bundled).
+- These outbound commands are available in the interactive SSH shell prompt (`methings>`), not via `device_api`.
+- `device_api` action `shell.exec` only allows `python`/`pip`/`curl` and cannot run `ssh`/`put`/`get`.
+
+### SSH Device API Quickstart
+
+For SSHD and authorized key management, use `device_api` actions:
+
+- `ssh.status`, `ssh.config`
+- `ssh.keys.list`, `ssh.keys.add`, `ssh.keys.delete`
+- `ssh.keys.policy.get`, `ssh.keys.policy.set`
+- `ssh.pin.status`, `ssh.pin.start`, `ssh.pin.stop`
+- `ssh.noauth.status`, `ssh.noauth.start`, `ssh.noauth.stop`
+
+Delete key tips:
+- Prefer `ssh.keys.list` first and delete by returned `fingerprint`.
+- `ssh.keys.delete` also accepts `key` in payload when fingerprint is unknown.
 
 ---
 

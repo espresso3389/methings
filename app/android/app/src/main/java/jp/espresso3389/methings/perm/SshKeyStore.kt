@@ -37,6 +37,12 @@ class SshKeyStore(context: Context) {
         dao.deleteByFingerprint(fingerprint)
     }
 
+    fun findByPublicKey(key: String): SshKeyEntity? {
+        val normalized = key.trim()
+        if (normalized.isEmpty()) return null
+        return dao.listAll().firstOrNull { it.key.trim() == normalized }
+    }
+
     fun listActive(now: Long = System.currentTimeMillis()): List<SshKeyEntity> {
         return dao.listAll().filter { it.expiresAt == null || it.expiresAt > now }
     }

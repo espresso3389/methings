@@ -11,9 +11,14 @@ This document covers SSH-related APIs: SSHD state/config, PIN auth mode, and aut
 | `ssh.keys.list` | GET | `/ssh/keys` | No permission required |
 | `ssh.keys.add` | POST | `/ssh/keys/add` | Add one public key |
 | `ssh.keys.delete` | POST | `/ssh/keys/delete` | Remove by fingerprint or key |
+| `ssh.keys.policy.get` | GET | `/ssh/keys/policy` | No permission required |
+| `ssh.keys.policy.set` | POST | `/ssh/keys/policy` | Update key policy flags |
 | `ssh.pin.status` | GET | `/ssh/pin/status` | No permission required |
 | `ssh.pin.start` | POST | `/ssh/pin/start` | Start temporary PIN auth mode |
 | `ssh.pin.stop` | POST | `/ssh/pin/stop` | Stop PIN auth mode |
+| `ssh.noauth.status` | GET | `/ssh/noauth/status` | No permission required |
+| `ssh.noauth.start` | POST | `/ssh/noauth/start` | Start temporary notification/no-auth mode |
+| `ssh.noauth.stop` | POST | `/ssh/noauth/stop` | Stop notification/no-auth mode |
 
 ## HTTP endpoints (direct)
 

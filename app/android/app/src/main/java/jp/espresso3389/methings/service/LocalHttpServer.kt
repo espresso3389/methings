@@ -1295,13 +1295,23 @@ class LocalHttpServer(
             }
             uri == "/ssh/keys/delete" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val fingerprint = payload.optString("fingerprint", "")
+                var fingerprint = payload.optString("fingerprint", "").trim()
+                val keyRaw = payload.optString("key", "")
                 val permissionId = payload.optString("permission_id", "")
                 if (!isPermissionApproved(permissionId, consume = true)) {
                     return forbidden("permission_required")
                 }
+                if (fingerprint.isBlank() && keyRaw.isNotBlank()) {
+                    val parsed = parseSshPublicKey(keyRaw)
+                    if (parsed != null) {
+                        val keyEntity = sshKeyStore.findByPublicKey(parsed.canonicalNoComment())
+                        if (keyEntity != null) {
+                            fingerprint = keyEntity.fingerprint
+                        }
+                    }
+                }
                 if (fingerprint.isBlank()) {
-                    return badRequest("fingerprint_required")
+                    return badRequest("fingerprint_or_key_required")
                 }
                 sshKeyStore.delete(fingerprint)
                 syncAuthorizedKeys()
