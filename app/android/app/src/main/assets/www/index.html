@@ -1263,6 +1263,7 @@
       import marpBrowser from 'https://esm.sh/@marp-team/marp-core@4/browser?bundle';
       window._Marp = Marp;
       window._marpBrowser = marpBrowser;
+      window.dispatchEvent(new Event("marp-ready"));
     </script>
   </head>
   <body>
@@ -2155,6 +2156,15 @@
         return deck;
       }
 
+      const _marpPendingPreviews = [];
+      window.addEventListener("marp-ready", function () {
+        _marpPendingPreviews.forEach(function (item) {
+          item.container.innerHTML = "";
+          renderMarpPreview(item.container, item.text);
+        });
+        _marpPendingPreviews.length = 0;
+      });
+
       function renderMarpPreview(container, text) {
         if (window._Marp) {
           try {
@@ -2170,7 +2180,8 @@
             return;
           } catch (_) {}
         }
-        // Fallback: render first slide with marked.js
+        // Fallback: render first slide with marked.js; re-render when Marp loads
+        _marpPendingPreviews.push({ container, text });
         const stripped = text.replace(/^---\s*\n[\s\S]*?\n---\n?/, "");
         const firstSlide = stripped.split(/\n---\n/)[0] || "";
         const thumb = document.createElement("div");
