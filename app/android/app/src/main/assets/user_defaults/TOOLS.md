@@ -252,6 +252,19 @@ User UX notes:
 
 To fetch the image onto your dev machine: `GET /user/file?path=<rel_path>`
 
+#### Marp Slide Navigation (`#page=N`)
+
+For Marp presentation files, append `#page=N` (0-indexed) to navigate to a specific slide:
+
+```
+rel_path: presentations/demo.md#page=3
+```
+
+- The inline preview thumbnail shows the specified slide instead of the first.
+- Tapping the card opens the viewer scrolled to that slide.
+- For non-Marp files and plain markdown, the fragment is silently ignored.
+- The viewer control API (`/ui/viewer/open`) also supports this fragment.
+
 ### Open Agent HTML From Chat
 
 If your reply includes `html_path: ...`, the app will show an OPEN card.
@@ -340,6 +353,7 @@ Read the relevant doc when working in that domain:
 - [docs/stt.md](docs/stt.md) — Android SpeechRecognizer
 - [docs/llama.md](docs/llama.md) — local llama.cpp model execution
 - [docs/sensors.md](docs/sensors.md) — realtime sensor streams via WebSocket
+- [docs/viewer.md](docs/viewer.md) — viewer control API, file info, Marp presentation
 - [docs/vision.md](docs/vision.md) — RGBA8888 + TFLite inference
 - [docs/permissions.md](docs/permissions.md) — permission scopes and identity
 - [examples/README.md](examples/README.md) — copy/paste golden paths

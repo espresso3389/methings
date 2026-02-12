@@ -345,6 +345,19 @@ User UX notes:
 To fetch the image onto your dev machine, use the local file endpoint (permission-gated under `device.files`):
 - `GET /user/file?path=<rel_path>` (example: `/user/file?path=captures/latest.jpg`)
 
+#### Marp Slide Navigation (`#page=N`)
+
+For Marp presentation files, append `#page=N` (0-indexed) to navigate to a specific slide:
+
+```
+rel_path: presentations/demo.md#page=3
+```
+
+- The inline preview thumbnail shows the specified slide instead of the first.
+- Tapping the card opens the viewer scrolled to that slide.
+- For non-Marp files and plain markdown, the fragment is silently ignored.
+- The viewer control API (`/ui/viewer/open`) also supports this fragment.
+
 ### Open Agent HTML From Chat
 
 If your reply includes `html_path: ...`, the app will show an OPEN card.
@@ -379,6 +392,7 @@ What happens:
 
 Read the relevant doc when working in that domain:
 - `docs/api_reference.md` (local HTTP APIs + device_api action map)
+- `docs/viewer.md` (viewer control API, file info, Marp presentation)
 - `docs/vision.md` (RGBA8888 + TFLite)
 - `docs/usb.md` (USB/UVC control + streaming)
 - `docs/uvc.md` (UVC MJPEG capture + PTZ)
