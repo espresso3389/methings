@@ -6,6 +6,10 @@ This folder documents the local control plane, hardware access, and on-device ML
 
 - **API Reference**: `docs/api_reference.md` - canonical action map for `device_api`.
 - **Permissions**: `docs/permissions.md` - permission scopes and request flow.
+- **File Endpoints**: `docs/file_endpoints.md` - upload/list/file/info APIs.
+- **Viewer Control**: `docs/viewer.md` - fullscreen viewer/open/close/slide APIs.
+- **Brain Journal**: `docs/brain_journal.md` - per-session journal APIs.
+- **Cloud Broker**: `docs/cloud_broker.md` - placeholder expansion + cloud prefs.
 
 ## Media + ML
 

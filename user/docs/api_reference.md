@@ -103,45 +103,48 @@ Common patterns:
 
 ## File Endpoints (User Root)
 
-- `POST /user/upload` (multipart)
-  - Stores the uploaded file under `files/user/<dir>/...`
-  - Returns `path` which is the user-root relative path to reference in chat as `rel_path: <path>`
-- `GET /user/file?path=<rel_path>`
-  - Serves bytes from user-root.
-  - Used by the WebView to render inline previews:
-    - **Images**: png, jpg, jpeg, gif, webp, bmp, svg (tap to fullscreen zoom)
-    - **Video**: mp4, mkv, mov, m4v, 3gp, webm
-    - **Audio**: mp3, wav, ogg, m4a, aac, flac, webm
-    - **Text/Code**: txt, md, json, log, py, js, ts, html, css, sh, yaml, yml, toml, xml, csv, cfg, ini, conf, kt, java, c, cpp, h, rs, go, rb, pl — syntax highlighted; tap to fullscreen viewer
-    - **Markdown** (`.md`): rendered as formatted text by default, with a toggle to view syntax-highlighted source
-  - Do not duplicate file content in the message body; the preview card already displays it.
+| Method | Endpoint | Body / Query | Effect |
+|--------|----------|--------------|--------|
+| `POST` | `/user/upload` | `multipart/form-data` (`file`, optional `dir`) | Store uploaded file under `files/user/<dir>/...`; returns `path` |
+| `GET` | `/user/file` | `path=<rel_path>` | Serve bytes from user-root for preview/render/open |
+| `GET` | `/user/file/info` | `path=<rel_path>` | Return metadata + image/Marp extras |
+
+Details: [file_endpoints.md](file_endpoints.md)
+
+## Viewer Control
+
+Programmatic control of the WebView fullscreen viewer via 5 POST endpoints (`/ui/viewer/open`, `close`, `immersive`, `slideshow`, `goto`). Supports `#page=N` fragment for Marp slide navigation.
+
+Endpoints:
+
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `POST` | `/ui/viewer/open` | `{"path":"rel/path.md"}` | Open user-root file in fullscreen viewer (auto-detect type) |
+| `POST` | `/ui/viewer/close` | `{}` | Close viewer |
+| `POST` | `/ui/viewer/immersive` | `{"enabled":true}` | Enter/exit immersive mode |
+| `POST` | `/ui/viewer/slideshow` | `{"enabled":true}` | Enter/exit Marp slideshow mode |
+| `POST` | `/ui/viewer/goto` | `{"page":0}` | Navigate to slide index |
+
+Details: [viewer.md](viewer.md)
 
 ## Brain Journal (Per-Session Notes)
 
-These endpoints store small, file-backed notes under `files/user/journal/<session_id>/...`.
+| Method | Endpoint | Body / Query | Effect |
+|--------|----------|--------------|--------|
+| `GET` | `/brain/journal/config` | — | Return journal limits and root path |
+| `GET` | `/brain/journal/current` | `session_id=<sid>` | Return current per-session note |
+| `POST` | `/brain/journal/current` | `{"session_id":"<sid>","text":"..."}` | Replace current note |
+| `POST` | `/brain/journal/append` | `{"session_id":"<sid>","kind":"milestone","title":"...","text":"...","meta":{...}}` | Append journal entry |
+| `GET` | `/brain/journal/list` | `session_id=<sid>&limit=30` | Return recent entries |
 
-- `GET /brain/journal/config`
-  - Returns journal size limits and the root path.
-- `GET /brain/journal/current?session_id=<sid>`
-  - Returns the current per-session journal note (`CURRENT.md`).
-- `POST /brain/journal/current`
-  - Body: `{ "session_id": "<sid>", "text": "..." }`
-  - Replaces `CURRENT.md` (auto-rotates to `CURRENT.<ts>.md` if too large).
-- `POST /brain/journal/append`
-  - Body: `{ "session_id": "<sid>", "kind": "milestone", "title": "...", "text": "...", "meta": {...} }`
-  - Appends to `entries.jsonl` (auto-rotates to `entries.<ts>.jsonl` if too large).
-  - If entry text is too large, it is stored as `entry.<ts>.<title>.md` and `stored_path` is set.
-- `GET /brain/journal/list?session_id=<sid>&limit=30`
-  - Returns recent journal entries for the session.
+Details: [brain_journal.md](brain_journal.md)
 
 ## Cloud Broker (Placeholder Expansion + Secrets)
 
-- `POST /cloud/request`
-  - Expands placeholders like `${config:brain.api_key}` and `${file:captures/latest.jpg:base64}`.
-  - Injects secrets from the secure vault (do not embed API keys in messages).
-  - Enforces `cloud.media_upload` permission for requests that include file placeholders.
-- `GET /cloud/prefs`, `POST /cloud/prefs`
-  - Includes image downscale config for `${file:...:base64}` uploads:
-    - `image_resize_enabled`, `image_resize_max_dim_px`, `image_resize_jpeg_quality`
-  - Large payload confirm thresholds:
-    - `auto_upload_no_confirm_mb` (alias: `allow_auto_upload_payload_size_less_than_mb`)
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `POST` | `/cloud/request` | Provider-specific request JSON | Expand placeholders, inject secrets, enforce media-upload permission |
+| `GET` | `/cloud/prefs` | — | Read cloud broker preferences |
+| `POST` | `/cloud/prefs` | Preferences JSON | Update resize/threshold preferences |
+
+Details: [cloud_broker.md](cloud_broker.md)

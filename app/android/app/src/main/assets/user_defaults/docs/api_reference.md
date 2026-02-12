@@ -264,57 +264,81 @@ These endpoints are accessed directly via HTTP, not through `device_api`.
 
 ### File Endpoints (User Root)
 
-- `POST /user/upload` (multipart)
-  - Stores the uploaded file under `files/user/<dir>/...`
-  - Returns `path` which is the user-root relative path to reference in chat as `rel_path: <path>`
-- `GET /user/file?path=<rel_path>`
-  - Serves bytes from user-root.
-  - Used by the WebView to render previews (image/video/audio).
-- `GET /user/list?path=<rel_path>`
-  - Lists files in a user-root directory.
+| Method | Endpoint | Body / Query | Effect |
+|--------|----------|--------------|--------|
+| `POST` | `/user/upload` | `multipart/form-data` (`file`, optional `dir`) | Store uploaded file under `files/user/<dir>/...`; returns `path` |
+| `GET` | `/user/file` | `path=<rel_path>` | Serve bytes from user-root |
+| `GET` | `/user/file/info` | `path=<rel_path>` | Return metadata + image/Marp extras |
+| `GET` | `/user/list` | `path=<rel_path>` | List files under a user-root directory |
+
+Details: [file_endpoints.md](file_endpoints.md)
+
+### Viewer Control **[no perm]**
+
+Programmatic control of the WebView fullscreen viewer via 5 POST endpoints (`/ui/viewer/open`, `close`, `immersive`, `slideshow`, `goto`). Supports `#page=N` fragment for Marp slide navigation.
+
+Endpoints:
+
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `POST` | `/ui/viewer/open` | `{"path":"rel/path.md"}` | Open user-root file in fullscreen viewer (auto-detect type) |
+| `POST` | `/ui/viewer/close` | `{}` | Close viewer |
+| `POST` | `/ui/viewer/immersive` | `{"enabled":true}` | Enter/exit immersive mode |
+| `POST` | `/ui/viewer/slideshow` | `{"enabled":true}` | Enter/exit Marp slideshow mode |
+| `POST` | `/ui/viewer/goto` | `{"page":0}` | Navigate to slide index |
+
+Details: [viewer.md](viewer.md)
 
 ### Brain Journal (Per-Session Notes)
 
-File-backed notes under `files/user/journal/<session_id>/...`.
+| Method | Endpoint | Body / Query | Effect |
+|--------|----------|--------------|--------|
+| `GET` | `/brain/journal/config` | — | Return journal limits and root path |
+| `GET` | `/brain/journal/current` | `session_id=<sid>` | Return current per-session note |
+| `POST` | `/brain/journal/current` | `{"session_id":"<sid>","text":"..."}` | Replace current note |
+| `POST` | `/brain/journal/append` | `{"session_id":"<sid>","kind":"milestone","title":"...","text":"...","meta":{...}}` | Append journal entry |
+| `GET` | `/brain/journal/list` | `session_id=<sid>&limit=30` | Return recent entries |
 
-- `GET /brain/journal/config` — journal size limits and root path.
-- `GET /brain/journal/current?session_id=<sid>` — current per-session note (`CURRENT.md`).
-- `POST /brain/journal/current` — replace `CURRENT.md` (auto-rotates if too large).
-  - Body: `{ "session_id": "<sid>", "text": "..." }`
-- `POST /brain/journal/append` — append to `entries.jsonl` (auto-rotates if too large).
-  - Body: `{ "session_id": "<sid>", "kind": "milestone", "title": "...", "text": "...", "meta": {...} }`
-- `GET /brain/journal/list?session_id=<sid>&limit=30` — recent journal entries.
+Details: [brain_journal.md](brain_journal.md)
 
 ### Cloud Broker
 
-- `POST /cloud/request`
-  - Expands placeholders like `${config:brain.api_key}` and `${file:captures/latest.jpg:base64}`.
-  - Injects secrets from the secure vault (do not embed API keys in messages).
-  - Enforces `cloud.media_upload` permission for requests that include file placeholders.
-- `GET /cloud/prefs`, `POST /cloud/prefs`
-  - Image downscale config for `${file:...:base64}` uploads:
-    - `image_resize_enabled`, `image_resize_max_dim_px`, `image_resize_jpeg_quality`
-  - Large payload confirm thresholds:
-    - `auto_upload_no_confirm_mb` (alias: `allow_auto_upload_payload_size_less_than_mb`)
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `POST` | `/cloud/request` | Provider-specific request JSON | Expand placeholders, inject secrets, enforce media-upload permission |
+| `GET` | `/cloud/prefs` | — | Read cloud broker preferences |
+| `POST` | `/cloud/prefs` | Preferences JSON | Update resize/threshold preferences |
+
+Details: [cloud_broker.md](cloud_broker.md)
 
 ### Permissions
 
-- `POST /permissions/request` — request a device permission.
-  - Body: `{ "tool", "detail", "scope", "identity", "capability" }`
-- `GET /permissions/pending` — list pending requests.
-- `GET /permissions/{id}` — check request status.
-- `POST /permissions/{id}` — approve/deny.
-- `POST /permissions/clear` — clear all grants.
-- `GET /permissions/prefs`, `POST /permissions/prefs` — permission preferences.
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `POST` | `/permissions/request` | `{"tool","detail","scope","identity","capability"}` | Create permission request |
+| `GET` | `/permissions/pending` | — | List pending permission requests |
+| `GET` | `/permissions/{id}` | — | Return request status |
+| `POST` | `/permissions/{id}` | `{"approved": true or false}` | Approve or deny request |
+| `POST` | `/permissions/clear` | — | Clear grants |
+| `GET` | `/permissions/prefs` | — | Read permission preferences |
+| `POST` | `/permissions/prefs` | Preferences JSON | Update permission preferences |
 
 Details: [permissions.md](permissions.md)
 
 ### Vault
 
-- `GET /vault/credentials` — list stored credential names.
-- `POST /vault/credentials/get` — retrieve a credential value.
-- `POST /vault/credentials/has` — check if a credential exists.
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `GET` | `/vault/credentials` | — | List stored credential names |
+| `POST` | `/vault/credentials/get` | `{"name":"..."}` | Retrieve credential value |
+| `POST` | `/vault/credentials/has` | `{"name":"..."}` | Check if credential exists |
+
+Details: [vault.md](vault.md)
 
 ### Health
 
-- `GET /health` — server health check.
+| Method | Endpoint | Effect |
+|--------|----------|--------|
+| `GET` | `/health` | Server health check |
+
+Details: [health.md](health.md)
