@@ -12,6 +12,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
 import androidx.fragment.app.FragmentActivity
 import jp.espresso3389.methings.AppForegroundState
+import jp.espresso3389.methings.R
 import jp.espresso3389.methings.ui.MainActivity
 
 class PermissionBroker(private val context: Context) {
@@ -115,7 +116,7 @@ class PermissionBroker(private val context: Context) {
         val notification = NotificationCompat.Builder(context, channelId)
             .setContentTitle("Permission request")
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pending)
             .setAutoCancel(true)
             .build()

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.app.PendingIntent
 import androidx.core.app.NotificationCompat
+import jp.espresso3389.methings.R
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -121,7 +122,7 @@ class SshNoAuthPromptManager(private val context: Context) {
         val notification = NotificationCompat.Builder(context, channelId)
             .setContentTitle(title)
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setSmallIcon(R.drawable.ic_notification)
             .setAutoCancel(true)
             .addAction(android.R.drawable.ic_input_add, "Allow", allowPending)
             .addAction(android.R.drawable.ic_delete, "Deny", denyPending)

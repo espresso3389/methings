@@ -1,0 +1,47 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- Robot icon from me.things.svg, scaled to 24dp with 2.5x stroke for notification visibility -->
+    <group
+        android:scaleX="0.014577"
+        android:scaleY="0.014577"
+        android:translateX="-19.7055"
+        android:translateY="-6.0394">
+
+        <!-- Head + side blocks + body + base -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="114.583"
+            android:strokeMiterLimit="8"
+            android:fillColor="#00000000"
+            android:pathData="M2175,745C2346.84,745 2496.31,840.726 2572.95,981.737L2583.56,1003.74 2666,1003.74 2666,934.458 2861,934.458 2861,1329.64 2666,1329.64 2666,1264.62 2622.03,1264.62 2618.38,1288.52C2600.29,1376.87 2556.44,1455.83 2495.02,1517.22L2473.66,1536.63 2495.02,1541.37C2576.92,1561.36 2627.57,1588.99 2627.57,1619.5L2627.57,1730 1722.43,1730 1722.43,1619.5C1722.43,1588.99 1773.09,1561.36 1854.98,1541.37L1876.35,1536.63 1854.98,1517.22C1793.56,1455.83 1749.71,1376.87 1731.62,1288.52L1727.97,1264.62 1684,1264.62 1684,1329.64 1489,1329.64 1489,934.458 1684,934.458 1684,1003.74 1766.45,1003.74 1777.05,981.737C1853.69,840.726 2003.16,745 2175,745Z"/>
+
+        <!-- Visor band -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="114.583"
+            android:strokeMiterLimit="8"
+            android:fillColor="#00000000"
+            android:pathData="M1683,1004L2667,1004 2667,1265 1683,1265Z"/>
+
+        <!-- Left eye -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="114.583"
+            android:strokeMiterLimit="8"
+            android:fillColor="#00000000"
+            android:pathData="M1939,1132C1939,1106.04 1960.04,1085 1986,1085 2011.96,1085 2033,1106.04 2033,1132 2033,1157.96 2011.96,1179 1986,1179 1960.04,1179 1939,1157.96 1939,1132Z"/>
+
+        <!-- Right eye -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="114.583"
+            android:strokeMiterLimit="8"
+            android:fillColor="#00000000"
+            android:pathData="M2331,1132C2331,1106.04 2352.04,1085 2378,1085 2403.96,1085 2425,1106.04 2425,1132 2425,1157.96 2403.96,1179 2378,1179 2352.04,1179 2331,1157.96 2331,1132Z"/>
+
+    </group>
+</vector>
