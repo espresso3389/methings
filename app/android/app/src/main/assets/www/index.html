@@ -387,6 +387,9 @@
       .viewer-text { width: 100%; height: 100%; overflow: auto; padding: 16px; font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace; font-size: 13px; line-height: 1.5; -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; align-self: stretch; justify-self: stretch; }
       .viewer-text pre { margin: 0; }
       .viewer-text pre code.hljs { padding: 0; background: transparent; }
+      .viewer-lined { display: flex; width: 100%; }
+      .viewer-line-nums { flex-shrink: 0; padding-right: 12px; text-align: right; color: var(--ink-muted); -webkit-user-select: none; user-select: none; opacity: 0.5; border-right: 1px solid var(--border); margin-right: 12px; white-space: pre; font: inherit; }
+      .viewer-lined pre { flex: 1; min-width: 0; overflow-x: auto; }
       .viewer-text .attach-md { max-height: none; overflow: visible; background: transparent; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 15px; }
       .viewer-md-toggle { margin-right: 4px; }
       .viewer.immersive .viewer-top { display: none; }
@@ -2584,13 +2587,14 @@
         viewerIframe.src = src;
         viewerIframe.style.display = "";
         const srcPre = document.createElement("pre");
-        srcPre.style.display = "none";
         const srcCode = document.createElement("code");
         srcCode.className = "language-html";
         srcCode.textContent = "";
         srcPre.appendChild(srcCode);
+        const srcLined = wrapWithLineNumbers(srcPre, "");
+        srcLined.style.display = "none";
         viewerText.innerHTML = "";
-        viewerText.appendChild(srcPre);
+        viewerText.appendChild(srcLined);
         viewerSourceToggle.style.display = "";
         viewerSourceToggle.innerHTML = ICON.code;
         viewerSourceToggle.title = "View source";
@@ -2605,6 +2609,14 @@
             const txt = await res.text();
             srcCode.textContent = String(txt || "");
             try { hljs.highlightElement(srcCode); } catch (_) {}
+            // Rebuild line numbers now that content is loaded.
+            const nums = srcLined.querySelector(".viewer-line-nums");
+            if (nums) {
+              const lineCount = String(txt || "").split("\n").length;
+              let s = "";
+              for (let i = 1; i <= lineCount; i++) s += i + "\n";
+              nums.textContent = s.trimEnd();
+            }
           } catch (_) {
             srcCode.textContent = "<!-- Failed to load source -->";
           }
@@ -2615,12 +2627,12 @@
             await loadSourceOnce();
             viewerIframe.style.display = "none";
             viewerText.style.display = "block";
-            srcPre.style.display = "";
+            srcLined.style.display = "";
             viewerSourceToggle.innerHTML = ICON.doc;
             viewerSourceToggle.title = "View rendered";
           } else {
             viewerText.style.display = "none";
-            srcPre.style.display = "none";
+            srcLined.style.display = "none";
             viewerIframe.style.display = "";
             viewerSourceToggle.innerHTML = ICON.code;
             viewerSourceToggle.title = "View source";
@@ -2658,6 +2670,20 @@
         await setViewerImage(viewerPaths[viewerIndex]);
       }
 
+      function wrapWithLineNumbers(pre, content) {
+        const lineCount = content.split("\n").length;
+        const nums = document.createElement("div");
+        nums.className = "viewer-line-nums";
+        let s = "";
+        for (let i = 1; i <= lineCount; i++) s += i + "\n";
+        nums.textContent = s.trimEnd();
+        const wrap = document.createElement("div");
+        wrap.className = "viewer-lined";
+        wrap.appendChild(nums);
+        wrap.appendChild(pre);
+        return wrap;
+      }
+
       function openTextViewer(path, content, ext) {
         const rel = safeRelPath(path);
         if (!rel) return;
@@ -2676,12 +2702,13 @@
           mdDiv.innerHTML = renderMarkdown(content);
           viewerText.appendChild(mdDiv);
           const srcPre = document.createElement("pre");
-          srcPre.style.display = "none";
           const srcCode = document.createElement("code");
           srcCode.className = "language-markdown";
           srcCode.textContent = content;
           srcPre.appendChild(srcCode);
-          viewerText.appendChild(srcPre);
+          const srcLined = wrapWithLineNumbers(srcPre, content);
+          srcLined.style.display = "none";
+          viewerText.appendChild(srcLined);
           let srcHighlighted = false;
           let showSource = false;
           const toggleBtn = document.createElement("button");
@@ -2693,13 +2720,13 @@
             showSource = !showSource;
             if (showSource) {
               mdDiv.style.display = "none";
-              srcPre.style.display = "";
+              srcLined.style.display = "";
               if (!srcHighlighted) { try { hljs.highlightElement(srcCode); } catch (_) {} srcHighlighted = true; }
               toggleBtn.innerHTML = ICON.doc;
               toggleBtn.title = "View rendered";
             } else {
               mdDiv.style.display = "";
-              srcPre.style.display = "none";
+              srcLined.style.display = "none";
               toggleBtn.innerHTML = ICON.code;
               toggleBtn.title = "View source";
             }
@@ -2714,7 +2741,7 @@
           code.className = "language-" + (langMap[ext] || ext);
           code.textContent = content;
           pre.appendChild(code);
-          viewerText.appendChild(pre);
+          viewerText.appendChild(wrapWithLineNumbers(pre, content));
           try { hljs.highlightElement(code); } catch (_) {}
         }
         viewer.classList.add("show");
