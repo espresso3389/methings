@@ -313,11 +313,42 @@ jobs:
           name: app-release-apk
           path: release-apk
 
+      - name: Prepare release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp -v release-apk/*.apk release-assets/
+          cp -v release-apk/output-metadata.json release-assets/
+          (
+            cd release-assets
+            sha256sum *.apk > SHA256SUMS.txt
+          )
+
+      - name: Build release notes body
+        run: |
+          set -euo pipefail
+          {
+            echo "## APK Downloads"
+            echo
+            for apk in release-assets/*.apk; do
+              base="$(basename "$apk")"
+              echo "- \`$base\`"
+            done
+            echo
+            echo "## SHA-256"
+            echo
+            echo '```text'
+            cat release-assets/SHA256SUMS.txt
+            echo '```'
+          } > release-notes.md
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
+          body_path: release-notes.md
           files: |
-            release-apk/*.apk
-            release-apk/output-metadata.json
+            release-assets/*.apk
+            release-assets/output-metadata.json
+            release-assets/SHA256SUMS.txt
