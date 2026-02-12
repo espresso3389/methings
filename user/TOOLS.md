@@ -319,19 +319,28 @@ Notes:
 - `seq` is a monotonically increasing sequence number per stream
 - Old HTTP stream endpoints (`sensor.stream.*`, `sensors.stream.*`) are deprecated and return `gone`.
 
-### Show Media Inline In Chat (Required)
+### Show Media / Text Inline In Chat (Required)
 
-The WebView chat UI auto-renders media previews when a message contains one or more lines like:
+The WebView chat UI auto-renders inline previews when a message contains one or more lines like:
 
 ```
 rel_path: captures/latest.jpg
+rel_path: uploads/chat/script.py
 ```
 
-So when you take a picture (or upload/record a file), you MUST include `rel_path: <path>` in your assistant message to show it inline.
+So when you take a picture, upload/record a file, or create/reference a text file, you MUST include `rel_path: <path>` in your assistant message to show it inline.
+
+Supported preview types:
+- **Images**: png, jpg, jpeg, gif, webp, bmp, svg
+- **Video**: mp4, mkv, mov, m4v, 3gp, webm
+- **Audio**: mp3, wav, ogg, m4a, aac, flac, webm (audio recordings)
+- **Text / Code**: txt, md, json, log, py, js, ts, html, css, sh, yaml, yml, toml, xml, csv, cfg, ini, conf, kt, java, c, cpp, h, rs, go, rb, pl — rendered with syntax highlighting; markdown files render as formatted text
 
 User UX notes:
 - Tapping an image opens a fullscreen viewer (swipe between images, pinch zoom).
+- Tapping a text/code card opens a fullscreen scrollable viewer with syntax highlighting.
 - Media cards include a Share icon.
+- **Do NOT duplicate file content in your message.** When you use `rel_path:` for a text/code file, the preview card already shows the content with syntax highlighting. Do not also quote or paste the file content in the message body.
 
 To fetch the image onto your dev machine, use the local file endpoint (permission-gated under `device.files`):
 - `GET /user/file?path=<rel_path>` (example: `/user/file?path=captures/latest.jpg`)

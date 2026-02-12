@@ -94,7 +94,7 @@ Practical flow:
 ## Camera: Take Picture + Show Inline + Recognize
 
 - Take a picture with `device_api` action `camera.capture` (usually `lens=back`) and save it under `captures/`.
-- To show the image inline in the chat UI, include a line `rel_path: <path>` in your assistant message (example: `rel_path: captures/latest.jpg`). The WebView chat UI will preview it automatically.
+- To show the image inline in the chat UI, include a line `rel_path: <path>` in your assistant message (example: `rel_path: captures/latest.jpg`). The WebView chat UI will preview it automatically. This also works for text/code files (e.g. `rel_path: uploads/chat/notes.md`) — they render with syntax highlighting.
 - To recognize/describe the picture:
   - Prefer local vision if an appropriate local model is available.
   - Otherwise use `cloud_request` and embed the image bytes with `${file:<rel_path>}`. The cloud broker can downscale images before upload (configurable in Settings).

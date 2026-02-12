@@ -108,7 +108,13 @@ Common patterns:
   - Returns `path` which is the user-root relative path to reference in chat as `rel_path: <path>`
 - `GET /user/file?path=<rel_path>`
   - Serves bytes from user-root.
-  - Used by the WebView to render previews (image/video/audio).
+  - Used by the WebView to render inline previews:
+    - **Images**: png, jpg, jpeg, gif, webp, bmp, svg (tap to fullscreen zoom)
+    - **Video**: mp4, mkv, mov, m4v, 3gp, webm
+    - **Audio**: mp3, wav, ogg, m4a, aac, flac, webm
+    - **Text/Code**: txt, md, json, log, py, js, ts, html, css, sh, yaml, yml, toml, xml, csv, cfg, ini, conf, kt, java, c, cpp, h, rs, go, rb, pl — syntax highlighted; tap to fullscreen viewer
+    - **Markdown** (`.md`): rendered as formatted text by default, with a toggle to view syntax-highlighted source
+  - Do not duplicate file content in the message body; the preview card already displays it.
 
 ## Brain Journal (Per-Session Notes)
 

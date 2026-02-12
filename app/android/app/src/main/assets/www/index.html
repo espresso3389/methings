@@ -366,6 +366,14 @@
       }
       .attach-body audio { width: 100%; }
       .attach-hint { color: var(--ink-muted); font-size: 12px; margin-top: 6px; }
+      .attach-body pre { max-height: 200px; overflow: auto; margin: 0; font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace; font-size: 12px; line-height: 1.45; border-radius: var(--radius-sm); }
+      .attach-body pre code.hljs { padding: 12px; }
+      .attach-md { max-height: 200px; overflow: auto; font-size: 13px; line-height: 1.55; padding: 10px; background: var(--surface); border-radius: var(--radius-sm); }
+      .viewer-text { width: 100%; height: 100%; overflow: auto; padding: 16px; font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace; font-size: 13px; line-height: 1.5; -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; align-self: stretch; justify-self: stretch; }
+      .viewer-text pre { margin: 0; }
+      .viewer-text pre code.hljs { padding: 0; background: transparent; }
+      .viewer-text .attach-md { max-height: none; overflow: visible; background: transparent; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 15px; }
+      .viewer-md-toggle { margin-right: 4px; }
 
       /* Thinking indicator */
       .thinking-dots { display: inline-flex; gap: 4px; align-items: center; padding: 4px 0; }
@@ -1175,6 +1183,8 @@
       .perm-card-footer .btn { font-size: 12px; padding: 6px 14px; }
       .perm-card.resolved { opacity: 0.6; }
     </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
   </head>
   <body>
     <!-- ===== Chat Page ===== -->
@@ -1506,13 +1516,14 @@
 
     <!-- Fullscreen Media Viewer (images) -->
     <div class="viewer" id="viewer" role="dialog" aria-modal="true">
-      <div class="viewer-top">
+      <div class="viewer-top" id="viewerTop">
         <button class="icon-btn secondary" id="viewerClose" title="Close" aria-label="Close"></button>
         <div class="viewer-title" id="viewerTitle"></div>
         <button class="icon-btn" id="viewerShare" title="Share" aria-label="Share"></button>
       </div>
       <div class="viewer-body" id="viewerBody">
         <img class="viewer-img" id="viewerImg" alt="" />
+        <div class="viewer-text" id="viewerText" style="display:none;"></div>
       </div>
     </div>
 
@@ -1536,6 +1547,8 @@
         plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>',
         refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>',
         externalLink: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+        code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+        doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
       };
 
       // Set static button icons (record button is handled by setRecordUi()).
@@ -1948,7 +1961,7 @@
         if (e === "webm") return isLikelyAudioWebm(name) ? "audio" : "video";
         if (["mp4","mkv","mov","m4v","3gp"].includes(e)) return "video";
         if (["mp3","wav","ogg","m4a","aac","flac"].includes(e)) return "audio";
-        if (["txt","md","json","log","py","js","html","css"].includes(e)) return "text";
+        if (["txt","md","json","log","py","js","ts","html","css","sh","yaml","yml","toml","xml","csv","cfg","ini","conf","kt","java","c","cpp","h","rs","go","rb","pl"].includes(e)) return "text";
         return "bin";
       }
 
@@ -1969,7 +1982,7 @@
         if (["m4a","aac"].includes(e)) return "audio/aac";
         if (["flac"].includes(e)) return "audio/flac";
         if (["json"].includes(e)) return "application/json";
-        if (["txt","md","log","py","js","html","css"].includes(e)) return "text/plain";
+        if (["txt","md","log","py","js","ts","html","css","sh","yaml","yml","toml","xml","csv","cfg","ini","conf","kt","java","c","cpp","h","rs","go","rb","pl"].includes(e)) return "text/plain";
         return "application/octet-stream";
       }
 
@@ -2048,14 +2061,14 @@
           const p = safeRelPath(m[1]);
           if (p && !seen.has(p)) { out.push(p); seen.add(p); }
         }
-        const rePlainEol = /\brel_path\b\s*[:=]\s*([^\r\n]+)/gi;
+        const rePlainEol = /\brel_path\b\s*[:=]\s*([a-zA-Z0-9._\-\/][a-zA-Z0-9._\-\/ ]*\.[a-zA-Z0-9]+)/gi;
         while ((m = rePlainEol.exec(t)) !== null) {
           const p = safeRelPath(m[1]);
           if (p && !seen.has(p)) { out.push(p); seen.add(p); }
         }
 
         // Loose fallback (common folders + media extensions).
-        const reLoose = /\b(?:captures|uploads|downloads)\/[a-zA-Z0-9._\-\/]+\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|webm|mkv|mov|m4v|3gp|mp3|wav|ogg|m4a|aac|flac)\b/gi;
+        const reLoose = /\b(?:captures|uploads|downloads)\/[a-zA-Z0-9._\-\/]+\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|webm|mkv|mov|m4v|3gp|mp3|wav|ogg|m4a|aac|flac|txt|md|json|log|py|js|ts|html|css|sh|yaml|yml|toml|xml|csv|cfg|ini|conf|kt|java|c|cpp|h|rs|go|rb|pl)\b/gi;
         while ((m = reLoose.exec(t)) !== null) {
           const p = safeRelPath(m[0]);
           if (p && !seen.has(p)) { out.push(p); seen.add(p); }
@@ -2266,6 +2279,69 @@
                 watchInlineMedia(a);
                 // Audio attachments are rendered as a minimal player; the card header/hint are hidden by CSS.
                 hint.textContent = "Audio";
+              } else if (kind === "text") {
+                const ext = extOf(p);
+                try {
+                  const res = await fetch(src);
+                  const content = await res.text();
+                  if (ext === "md") {
+                    const mdDiv = document.createElement("div");
+                    mdDiv.className = "attach-md";
+                    mdDiv.innerHTML = renderMarkdown(content);
+                    body.appendChild(mdDiv);
+                    const srcPre = document.createElement("pre");
+                    srcPre.style.display = "none";
+                    const srcCode = document.createElement("code");
+                    srcCode.className = "language-markdown";
+                    srcCode.textContent = content;
+                    srcPre.appendChild(srcCode);
+                    body.appendChild(srcPre);
+                    let srcHighlighted = false;
+                    let showSource = false;
+                    const toggleBtn = document.createElement("button");
+                    toggleBtn.className = "attach-icon-btn";
+                    toggleBtn.title = "View source";
+                    toggleBtn.setAttribute("aria-label", "View source");
+                    toggleBtn.innerHTML = ICON.code;
+                    toggleBtn.addEventListener("click", (ev) => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      showSource = !showSource;
+                      if (showSource) {
+                        mdDiv.style.display = "none";
+                        srcPre.style.display = "";
+                        if (!srcHighlighted) { try { hljs.highlightElement(srcCode); } catch (_) {} srcHighlighted = true; }
+                        toggleBtn.innerHTML = ICON.doc;
+                        toggleBtn.title = "View rendered";
+                      } else {
+                        mdDiv.style.display = "";
+                        srcPre.style.display = "none";
+                        toggleBtn.innerHTML = ICON.code;
+                        toggleBtn.title = "View source";
+                      }
+                    });
+                    actions.appendChild(toggleBtn);
+                    hint.textContent = "Markdown (tap to view)";
+                  } else {
+                    const pre = document.createElement("pre");
+                    const code = document.createElement("code");
+                    const langMap = { py:"python", js:"javascript", ts:"typescript", kt:"kotlin", sh:"bash", yml:"yaml", rs:"rust", rb:"ruby", pl:"perl", h:"c", cpp:"cpp" };
+                    code.className = "language-" + (langMap[ext] || ext);
+                    code.textContent = content;
+                    pre.appendChild(code);
+                    body.appendChild(pre);
+                    try { hljs.highlightElement(code); } catch (_) {}
+                    hint.textContent = ext.toUpperCase() + " (tap to view)";
+                  }
+                  card.style.cursor = "pointer";
+                  card.addEventListener("click", (ev) => {
+                    if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
+                    try { openTextViewer(p, content, ext); } catch (_) {}
+                  });
+                  try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {}
+                } catch (_) {
+                  hint.textContent = "Preview failed.";
+                }
               } else {
                 hint.textContent = "No inline preview for this file type.";
               }
@@ -2290,6 +2366,7 @@
       const viewerTitle = $("viewerTitle");
       const viewerImg = $("viewerImg");
       const viewerBody = $("viewerBody");
+      const viewerText = $("viewerText");
 
       let viewerPaths = [];
       let viewerIndex = 0;
@@ -2342,9 +2419,14 @@
         viewer.classList.add("show");
         await setViewerImage(rel);
       }
+      let _viewerMdToggle = null;
       function closeViewer() {
         viewer.classList.remove("show");
         viewerImg.src = "";
+        viewerImg.style.display = "";
+        viewerText.style.display = "none";
+        viewerText.innerHTML = "";
+        if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
         viewerPaths = [];
         viewerIndex = 0;
         resetViewerTransform();
@@ -2353,6 +2435,64 @@
         if (!viewerPaths.length) return;
         viewerIndex = (viewerIndex + dir + viewerPaths.length) % viewerPaths.length;
         await setViewerImage(viewerPaths[viewerIndex]);
+      }
+
+      function openTextViewer(path, content, ext) {
+        const rel = safeRelPath(path);
+        if (!rel) return;
+        viewerTitle.textContent = rel;
+        viewerImg.style.display = "none";
+        viewerText.style.display = "block";
+        viewerText.innerHTML = "";
+        if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
+        if (ext === "md") {
+          const mdDiv = document.createElement("div");
+          mdDiv.className = "attach-md";
+          mdDiv.innerHTML = renderMarkdown(content);
+          viewerText.appendChild(mdDiv);
+          const srcPre = document.createElement("pre");
+          srcPre.style.display = "none";
+          const srcCode = document.createElement("code");
+          srcCode.className = "language-markdown";
+          srcCode.textContent = content;
+          srcPre.appendChild(srcCode);
+          viewerText.appendChild(srcPre);
+          let srcHighlighted = false;
+          let showSource = false;
+          const toggleBtn = document.createElement("button");
+          toggleBtn.className = "icon-btn viewer-md-toggle";
+          toggleBtn.title = "View source";
+          toggleBtn.setAttribute("aria-label", "View source");
+          toggleBtn.innerHTML = ICON.code;
+          toggleBtn.addEventListener("click", () => {
+            showSource = !showSource;
+            if (showSource) {
+              mdDiv.style.display = "none";
+              srcPre.style.display = "";
+              if (!srcHighlighted) { try { hljs.highlightElement(srcCode); } catch (_) {} srcHighlighted = true; }
+              toggleBtn.innerHTML = ICON.doc;
+              toggleBtn.title = "View rendered";
+            } else {
+              mdDiv.style.display = "";
+              srcPre.style.display = "none";
+              toggleBtn.innerHTML = ICON.code;
+              toggleBtn.title = "View source";
+            }
+          });
+          const viewerTop = $("viewerTop");
+          viewerTop.insertBefore(toggleBtn, viewerShare);
+          _viewerMdToggle = toggleBtn;
+        } else {
+          const pre = document.createElement("pre");
+          const code = document.createElement("code");
+          const langMap = { py:"python", js:"javascript", ts:"typescript", kt:"kotlin", sh:"bash", yml:"yaml", rs:"rust", rb:"ruby", pl:"perl", h:"c", cpp:"cpp" };
+          code.className = "language-" + (langMap[ext] || ext);
+          code.textContent = content;
+          pre.appendChild(code);
+          viewerText.appendChild(pre);
+          try { hljs.highlightElement(code); } catch (_) {}
+        }
+        viewer.classList.add("show");
       }
 
       viewerClose.addEventListener("click", closeViewer);
@@ -2382,6 +2522,7 @@
 
       viewerBody.addEventListener("touchstart", (ev) => {
         if (!viewer.classList.contains("show")) return;
+        if (viewerText.style.display !== "none") return;
         if (!ev.touches || ev.touches.length === 0) return;
         if (ev.touches.length === 2) {
           vTouchMode = "pinch";
@@ -2403,6 +2544,7 @@
 
       viewerBody.addEventListener("touchmove", (ev) => {
         if (!viewer.classList.contains("show")) return;
+        if (viewerText.style.display !== "none") return;
         if (!ev.touches || ev.touches.length === 0) return;
         ev.preventDefault();
         if (ev.touches.length === 2) {
@@ -2431,6 +2573,7 @@
 
       viewerBody.addEventListener("touchend", async (ev) => {
         if (!viewer.classList.contains("show")) return;
+        if (viewerText.style.display !== "none") return;
         const now = Date.now();
         if (vTouchMode === "swipe") {
           const dx = vTx;
