@@ -3731,11 +3731,27 @@
         let pttBusy = false;   // session in progress
         let pttWs = null;
         let pttFinals = [];
+        let micPermissionGranted = false;
 
-        pttBtn.addEventListener("click", () => {
-          pttActive = !pttActive;
-          pttPanel.style.display = pttActive ? "flex" : "none";
-          pttBtn.classList.toggle("active", pttActive);
+        function showPanel(show) {
+          pttActive = show;
+          pttPanel.style.display = show ? "flex" : "none";
+          pttBtn.classList.toggle("active", show);
+        }
+
+        pttBtn.addEventListener("click", async () => {
+          if (pttActive) { showPanel(false); return; }
+          if (!micPermissionGranted) {
+            try {
+              const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              stream.getTracks().forEach(t => t.stop());
+              micPermissionGranted = true;
+            } catch (e) {
+              showToast("Microphone permission denied", 2400);
+              return;
+            }
+          }
+          showPanel(true);
         });
 
         function cleanupSession() {
@@ -3810,6 +3826,7 @@
 
         async function stopSession() {
           if (!pttBusy) return;
+          showPanel(false);
           try {
             await fetch(API + "/stt/stop", { method: "POST" });
           } catch (_) {}
