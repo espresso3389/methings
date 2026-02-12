@@ -1,12 +1,10 @@
 # API Reference (Local Control Plane)
 
-me.things exposes a local HTTP control plane on `http://127.0.0.1:8765`.
+methings exposes a local HTTP control plane on `http://127.0.0.1:8765`.
 
 The agent should use the `device_api(action, payload, detail)` tool instead of calling these endpoints directly.
 
-See also: [TOOLS.md](../TOOLS.md) for agent tool usage and quickstart examples.
-
-## Identity + Permissions
+## Identity + Permissions (High Level)
 
 - Most device actions require user approval via the permission broker.
 - Approvals are remembered per `(identity, capability)` for the configured scope.
@@ -16,236 +14,94 @@ Common patterns:
 - If a `device_api` action returns `permission_required`, ask the user to approve the prompt and then retry the same action.
 - Uploaded files (`/user/upload`) are treated as an explicit read grant for those uploaded files.
 
-See [permissions.md](permissions.md) for scopes, identity model, and USB special cases.
-
----
-
 ## device_api Action Map
 
-`device_api` action names map to Kotlin HTTP endpoints. Actions marked **[no perm]** do not require user approval; all others are permission-gated.
+`device_api` action names map to Kotlin endpoints:
 
 ### System / Services
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `python.status` | GET | `/python/status` **[no perm]** |
-| `python.restart` | POST | `/python/restart` |
-| `screen.status` | GET | `/screen/status` **[no perm]** |
-| `screen.keep_on` | POST | `/screen/keep_on` |
-| `shell.exec` | POST | `/shell/exec` |
-
-### SSH
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `ssh.status` | GET | `/ssh/status` **[no perm]** |
-| `ssh.config` | POST | `/ssh/config` |
-| `ssh.keys.list` | GET | `/ssh/keys` **[no perm]** |
-| `ssh.keys.add` | POST | `/ssh/keys/add` |
-| `ssh.keys.delete` | POST | `/ssh/keys/delete` |
-| `ssh.pin.status` | GET | `/ssh/pin/status` **[no perm]** |
-| `ssh.pin.start` | POST | `/ssh/pin/start` |
-| `ssh.pin.stop` | POST | `/ssh/pin/stop` |
-
-### Camera
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `camera.list` | GET | `/camera/list` |
-| `camera.status` | GET | `/camera/status` |
-| `camera.capture` | POST | `/camera/capture` |
-| `camera.preview.start` | POST | `/camera/preview/start` |
-| `camera.preview.stop` | POST | `/camera/preview/stop` |
-
-Preview stream is delivered over WebSocket `/ws/camera/preview` (binary JPEG frames).
-
-Details: [camera.md](camera.md)
+- `python.status` -> `GET /python/status`
+- `python.restart` -> `POST /python/restart`
+- `screen.status` -> `GET /screen/status`
+- `screen.keep_on` -> `POST /screen/keep_on`
+- `ssh.status` -> `GET /ssh/status`
+- `ssh.config` -> `POST /ssh/config`
+- `ssh.pin.status` -> `GET /ssh/pin/status`
+- `ssh.pin.start` -> `POST /ssh/pin/start`
+- `ssh.pin.stop` -> `POST /ssh/pin/stop`
 
 ### Media Playback
+- `media.audio.status` -> `GET /media/audio/status`
+- `media.audio.play` -> `POST /media/audio/play`
+- `media.audio.stop` -> `POST /media/audio/stop`
+  - `media.audio.play` accepts either:
+    - `path`: user-root relative audio file path
+    - `audio_b64`: base64 audio bytes (+ optional `ext`, e.g. `wav`, `mp3`, `m4a`)
 
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `media.audio.status` | GET | `/media/audio/status` |
-| `media.audio.play` | POST | `/media/audio/play` |
-| `media.audio.stop` | POST | `/media/audio/stop` |
+### Camera (on-device)
+- `camera.list` -> `GET /camera/list`
+- `camera.status` -> `GET /camera/status`
+- `camera.preview.start` -> `POST /camera/preview/start`
+- `camera.preview.stop` -> `POST /camera/preview/stop`
+- `camera.capture` -> `POST /camera/capture`
 
-`media.audio.play` accepts either:
-- `path`: user-root relative audio file path
-- `audio_b64`: base64 audio bytes (+ optional `ext`, e.g. `wav`, `mp3`, `m4a`)
+### USB (generic)
+- `usb.list` -> `GET /usb/list`
+- `usb.status` -> `GET /usb/status`
+- `usb.open` -> `POST /usb/open`
+- `usb.close` -> `POST /usb/close`
+- `usb.raw_descriptors` -> `POST /usb/raw_descriptors`
+- `usb.claim_interface` -> `POST /usb/claim_interface`
+- `usb.release_interface` -> `POST /usb/release_interface`
+- `usb.control_transfer` -> `POST /usb/control_transfer`
+- `usb.bulk_transfer` -> `POST /usb/bulk_transfer`
+- `usb.iso_transfer` -> `POST /usb/iso_transfer`
+- `usb.stream.start` -> `POST /usb/stream/start`
+- `usb.stream.stop` -> `POST /usb/stream/stop`
+- `usb.stream.status` -> `GET /usb/stream/status`
 
-### Android TTS (Text-to-Speech)
+### UVC (USB Webcam helpers)
+- `uvc.mjpeg.capture` -> `POST /uvc/mjpeg/capture`
+  - Captures one MJPEG frame from a connected UVC webcam and saves a JPEG under `captures/`.
+  - Supports both `transfer_mode=iso` and `transfer_mode=bulk` depending on the camera endpoints.
+- `uvc.diagnose` -> `POST /uvc/diagnose`
+  - Runs a step-by-step USB/UVC diagnostic and returns a structured `steps[]` report:
+    - USB device listing + matching
+    - OS-level USB permission
+    - Open device
+    - Read raw descriptors + parse VC interface / camera terminal IDs / extension units
+    - PTZ GET_CUR probes (including a known-good `wIndex=0x0100` probe for Insta360 Link)
+- `uvc.ptz.*` -> implemented client-side via `usb.control_transfer` (CameraTerminal PTZ selectors)
 
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `tts.init` | POST | `/tts/init` |
-| `tts.voices` | GET | `/tts/voices` |
-| `tts.speak` | POST | `/tts/speak` |
-| `tts.stop` | POST | `/tts/stop` |
+### Vision (local TFLite pipeline)
+- `vision.model.load` -> `POST /vision/model/load`
+- `vision.model.unload` -> `POST /vision/model/unload`
+- `vision.image.load` -> `POST /vision/image/load`
+- `vision.frame.put` -> `POST /vision/frame/put`
+- `vision.frame.get` -> `POST /vision/frame/get`
+- `vision.frame.delete` -> `POST /vision/frame/delete`
+- `vision.frame.save` -> `POST /vision/frame/save`
+- `vision.run` -> `POST /vision/run`
 
-This is Android's built-in TextToSpeech. For local llama.cpp TTS (MioTTS etc.), see [Llama.cpp](#llamacpp-local-gguf-models) / [llama.md](llama.md).
+### Llama.cpp (local GGUF models)
+- `llama.status` -> `GET /llama/status`
+- `llama.models` -> `GET /llama/models`
+- `llama.run` -> `POST /llama/run`
+- `llama.generate` -> `POST /llama/generate`
+- `llama.tts` -> `POST /llama/tts`
+- `llama.tts.plugins.list` -> `GET /llama/tts/plugins`
+- `llama.tts.plugins.upsert` -> `POST /llama/tts/plugins/upsert`
+- `llama.tts.plugins.delete` -> `POST /llama/tts/plugins/delete`
+- `llama.tts.speak` -> `POST /llama/tts/speak`
+- `llama.tts.speak.status` -> `POST /llama/tts/speak/status`
+- `llama.tts.speak.stop` -> `POST /llama/tts/speak/stop`
 
-Details: [tts.md](tts.md)
+### Network / Radio status
+- `network.status` -> `GET /network/status`
+- `wifi.status` -> `GET /wifi/status`
+- `mobile.status` -> `GET /mobile/status`
+- `ble.status` -> `GET /ble/status`
 
-### STT (Speech Recognition)
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `stt.status` | GET | `/stt/status` |
-| `stt.start` | POST | `/stt/start` |
-| `stt.stop` | POST | `/stt/stop` |
-
-Recognition events are delivered over WebSocket `/ws/stt/events`.
-
-Details: [stt.md](stt.md)
-
-### Llama.cpp (Local GGUF Models)
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `llama.status` | GET | `/llama/status` |
-| `llama.models` | GET | `/llama/models` |
-| `llama.run` | POST | `/llama/run` |
-| `llama.generate` | POST | `/llama/generate` |
-| `llama.tts` | POST | `/llama/tts` |
-| `llama.tts.plugins.list` | GET | `/llama/tts/plugins` |
-| `llama.tts.plugins.upsert` | POST | `/llama/tts/plugins/upsert` |
-| `llama.tts.plugins.delete` | POST | `/llama/tts/plugins/delete` |
-| `llama.tts.speak` | POST | `/llama/tts/speak` |
-| `llama.tts.speak.status` | POST | `/llama/tts/speak/status` |
-| `llama.tts.speak.stop` | POST | `/llama/tts/speak/stop` |
-
-Notes:
-- `llama.tts` / `llama.tts.speak` support `min_output_duration_ms` (default `400`).
-- Set `min_output_duration_ms: 0` to disable short-output validation.
-
-Details: [llama.md](llama.md)
-
-### Sensors
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `sensor.list` / `sensors.list` | GET | `/sensor/list` / `/sensors/list` |
-| `sensors.ws.contract` | GET | `/sensors/ws/contract` |
-
-Realtime sensor data is delivered over WebSocket `/ws/sensors`.
-
-Details: [sensors.md](sensors.md)
-
-### Location
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `location.status` | GET | `/location/status` |
-| `location.get` | POST | `/location/get` |
-
-`location.get` payload: `{ "high_accuracy": true, "timeout_ms": 12000 }`
-
-### Network / Radio
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `network.status` | GET | `/network/status` |
-| `wifi.status` | GET | `/wifi/status` |
-| `mobile.status` | GET | `/mobile/status` |
-
-### BLE (Bluetooth Low Energy)
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `ble.status` | GET | `/ble/status` |
-| `ble.scan.start` | POST | `/ble/scan/start` |
-| `ble.scan.stop` | POST | `/ble/scan/stop` |
-| `ble.connect` | POST | `/ble/connect` |
-| `ble.disconnect` | POST | `/ble/disconnect` |
-| `ble.gatt.services` | POST | `/ble/gatt/services` |
-| `ble.gatt.read` | POST | `/ble/gatt/read` |
-| `ble.gatt.write` | POST | `/ble/gatt/write` |
-| `ble.gatt.notify.start` | POST | `/ble/gatt/notify/start` |
-| `ble.gatt.notify.stop` | POST | `/ble/gatt/notify/stop` |
-
-BLE events are delivered over WebSocket `/ws/ble/events`.
-
-Details: [ble.md](ble.md)
-
-### USB (Generic)
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `usb.list` | GET | `/usb/list` |
-| `usb.status` | GET | `/usb/status` |
-| `usb.open` | POST | `/usb/open` |
-| `usb.close` | POST | `/usb/close` |
-| `usb.raw_descriptors` | POST | `/usb/raw_descriptors` |
-| `usb.claim_interface` | POST | `/usb/claim_interface` |
-| `usb.release_interface` | POST | `/usb/release_interface` |
-| `usb.control_transfer` | POST | `/usb/control_transfer` |
-| `usb.bulk_transfer` | POST | `/usb/bulk_transfer` |
-| `usb.iso_transfer` | POST | `/usb/iso_transfer` |
-| `usb.stream.start` | POST | `/usb/stream/start` |
-| `usb.stream.stop` | POST | `/usb/stream/stop` |
-| `usb.stream.status` | GET | `/usb/stream/status` |
-
-Details: [usb.md](usb.md)
-
-### UVC (USB Webcam)
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `uvc.mjpeg.capture` | POST | `/uvc/mjpeg/capture` |
-| `uvc.diagnose` | POST | `/uvc/diagnose` |
-| `uvc.ptz.get_abs` | — | virtual (via `usb.control_transfer`) |
-| `uvc.ptz.get_limits` | — | virtual (via `usb.control_transfer`) |
-| `uvc.ptz.set_abs` | — | virtual (via `usb.control_transfer`) |
-| `uvc.ptz.nudge` | — | virtual (via `usb.control_transfer`) |
-
-Details: [uvc.md](uvc.md)
-
-### Vision (TFLite)
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `vision.model.load` | POST | `/vision/model/load` |
-| `vision.model.unload` | POST | `/vision/model/unload` |
-| `vision.image.load` | POST | `/vision/image/load` |
-| `vision.frame.put` | POST | `/vision/frame/put` |
-| `vision.frame.get` | POST | `/vision/frame/get` |
-| `vision.frame.delete` | POST | `/vision/frame/delete` |
-| `vision.frame.save` | POST | `/vision/frame/save` |
-| `vision.run` | POST | `/vision/run` |
-
-Details: [vision.md](vision.md)
-
-### Brain / Config
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `brain.config.get` | GET | `/brain/config` **[no perm]** |
-| `brain.memory.get` | GET | `/brain/memory` **[no perm]** |
-| `brain.memory.set` | POST | `/brain/memory` |
-| `cloud.prefs.get` | GET | `/cloud/prefs` **[no perm]** |
-
-`brain.config.get` returns `{vendor, base_url, model, has_api_key}` (never returns the key itself).
-
----
-
-## WebSocket Endpoints
-
-Raw WebSocket connections on the same `127.0.0.1:8765` host.
-
-| Path | Description | Details |
-|------|-------------|---------|
-| `/ws/sensors` | Realtime sensor data stream | [sensors.md](sensors.md) |
-| `/ws/ble/events` | BLE scan results, connect/disconnect, GATT notifications | [ble.md](ble.md) |
-| `/ws/stt/events` | Speech recognition partial/final results | [stt.md](stt.md) |
-| `/ws/camera/preview` | Camera preview (binary JPEG frames) | [camera.md](camera.md) |
-
----
-
-## HTTP-Only Endpoints
-
-These endpoints are accessed directly via HTTP, not through `device_api`.
-
-### File Endpoints (User Root)
+## File Endpoints (User Root)
 
 - `POST /user/upload` (multipart)
   - Stores the uploaded file under `files/user/<dir>/...`
@@ -253,51 +109,33 @@ These endpoints are accessed directly via HTTP, not through `device_api`.
 - `GET /user/file?path=<rel_path>`
   - Serves bytes from user-root.
   - Used by the WebView to render previews (image/video/audio).
-- `GET /user/list?path=<rel_path>`
-  - Lists files in a user-root directory.
 
-### Brain Journal (Per-Session Notes)
+## Brain Journal (Per-Session Notes)
 
-File-backed notes under `files/user/journal/<session_id>/...`.
+These endpoints store small, file-backed notes under `files/user/journal/<session_id>/...`.
 
-- `GET /brain/journal/config` — journal size limits and root path.
-- `GET /brain/journal/current?session_id=<sid>` — current per-session note (`CURRENT.md`).
-- `POST /brain/journal/current` — replace `CURRENT.md` (auto-rotates if too large).
+- `GET /brain/journal/config`
+  - Returns journal size limits and the root path.
+- `GET /brain/journal/current?session_id=<sid>`
+  - Returns the current per-session journal note (`CURRENT.md`).
+- `POST /brain/journal/current`
   - Body: `{ "session_id": "<sid>", "text": "..." }`
-- `POST /brain/journal/append` — append to `entries.jsonl` (auto-rotates if too large).
+  - Replaces `CURRENT.md` (auto-rotates to `CURRENT.<ts>.md` if too large).
+- `POST /brain/journal/append`
   - Body: `{ "session_id": "<sid>", "kind": "milestone", "title": "...", "text": "...", "meta": {...} }`
-- `GET /brain/journal/list?session_id=<sid>&limit=30` — recent journal entries.
+  - Appends to `entries.jsonl` (auto-rotates to `entries.<ts>.jsonl` if too large).
+  - If entry text is too large, it is stored as `entry.<ts>.<title>.md` and `stored_path` is set.
+- `GET /brain/journal/list?session_id=<sid>&limit=30`
+  - Returns recent journal entries for the session.
 
-### Cloud Broker
+## Cloud Broker (Placeholder Expansion + Secrets)
 
 - `POST /cloud/request`
   - Expands placeholders like `${config:brain.api_key}` and `${file:captures/latest.jpg:base64}`.
   - Injects secrets from the secure vault (do not embed API keys in messages).
   - Enforces `cloud.media_upload` permission for requests that include file placeholders.
 - `GET /cloud/prefs`, `POST /cloud/prefs`
-  - Image downscale config for `${file:...:base64}` uploads:
+  - Includes image downscale config for `${file:...:base64}` uploads:
     - `image_resize_enabled`, `image_resize_max_dim_px`, `image_resize_jpeg_quality`
   - Large payload confirm thresholds:
     - `auto_upload_no_confirm_mb` (alias: `allow_auto_upload_payload_size_less_than_mb`)
-
-### Permissions
-
-- `POST /permissions/request` — request a device permission.
-  - Body: `{ "tool", "detail", "scope", "identity", "capability" }`
-- `GET /permissions/pending` — list pending requests.
-- `GET /permissions/{id}` — check request status.
-- `POST /permissions/{id}` — approve/deny.
-- `POST /permissions/clear` — clear all grants.
-- `GET /permissions/prefs`, `POST /permissions/prefs` — permission preferences.
-
-Details: [permissions.md](permissions.md)
-
-### Vault
-
-- `GET /vault/credentials` — list stored credential names.
-- `POST /vault/credentials/get` — retrieve a credential value.
-- `POST /vault/credentials/has` — check if a credential exists.
-
-### Health
-
-- `GET /health` — server health check.

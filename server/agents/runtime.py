@@ -253,13 +253,14 @@ class BrainRuntime:
                 "When a request includes a checklist (A/B/C or numbered steps), execute all items unless explicitly told to stop early. "
                 "Do NOT ask the user for 'continue/go ahead/should I proceed' confirmations for routine multi-step work. "
                 "If the user said 'continue'/'go ahead'/'どうぞ'/'続けて', treat it as implicit permission to proceed with the current plan. "
-                "Only ask the user a question when: (1) you need missing information, (2) a tool returns permission_required/permission_expired and you need the user to approve the in-app prompt, "
-                "or (3) you are about to do an irreversible/destructive action (delete/reset/uninstall). "
+                "Only ask the user a question when: (1) you need missing information, "
+                "or (2) you are about to do an irreversible/destructive action (delete/reset/uninstall). "
                 "User consent is required for device/resource access: when a tool returns permission_required/permission_expired, "
-                "the system has already created a permission request. Ask the user (briefly) to approve the in-app prompt, then retry automatically (approvals are remembered for the session). "
+                "the system has already created a permission request and a UI permission card. "
+                "Do not add a separate chat reminder; wait for approval and then retry automatically (approvals are remembered for the session). "
                 "NEVER ask the user for any permission_id; that is handled by the system. "
-                "Do NOT pre-emptively tell the user \"please allow\" before attempting the tool call. Attempt the tool call first; only if it returns a permission gate, ask for approval. "
-                "Keep permission-related messages to one short sentence, and never ask the user to approve the same action twice. "
+                "Do NOT pre-emptively tell the user \"please allow\" before attempting the tool call. "
+                "Never ask the user to approve the same action twice. "
                 "Prefer device_api for device controls exposed by the Kotlin control plane. "
                 "When you create an HTML app/page under user files and want the user to open it, include a line `html_path: <relative_path>.html` in your response. "
                 "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. "
@@ -733,10 +734,30 @@ class BrainRuntime:
     def status(self) -> Dict:
         with self._lock:
             running = self._thread is not None and self._thread.is_alive()
+            current_session_id = ""
+            if self._current_item:
+                try:
+                    current_session_id = self._session_id_for_item(self._current_item)
+                except Exception:
+                    current_session_id = ""
+            queued_session_ids: List[str] = []
+            seen = set()
+            for it in self._queue:
+                try:
+                    sid = self._session_id_for_item(it)
+                except Exception:
+                    sid = ""
+                sid = str(sid or "").strip() or "default"
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                queued_session_ids.append(sid)
             return {
                 "running": running,
                 "enabled": bool(self._config.get("enabled")),
                 "busy": self._busy,
+                "current_session_id": current_session_id,
+                "queued_session_ids": queued_session_ids,
                 "queue_size": len(self._queue),
                 "last_error": self._last_error,
                 "last_processed_at": self._last_processed_at,
@@ -1749,11 +1770,7 @@ class BrainRuntime:
                             "item": item,
                             "created_at": int(time.time() * 1000),
                         }
-                    self._record_message(
-                        "assistant",
-                        f"Permission required for '{tool}'. Please approve the in-app prompt/notification to continue.",
-                        {"item_id": item.get("id"), "session_id": session_id},
-                    )
+                    # UI renders a dedicated PERMISSION REQUIRED card; avoid duplicate chat noise.
                     self._emit_log("brain_response", {"item_id": item.get("id"), "text": "permission_required"})
                     return
                 # If the tool is blocked by policy, stop the loop and surface it clearly. Otherwise models
@@ -2199,7 +2216,7 @@ class BrainRuntime:
             "The authoritative allowlist of device_api actions is Input.constraints.device_api_actions. "
             "Do not claim an action is missing if it appears in that list. "
             "Permission flow: do NOT pre-emptively ask the user to grant permissions. Trigger the tool call first; "
-            "if the tool returns permission_required/permission_expired, ask the user (briefly) to approve the in-app prompt and then retry. "
+            "if the tool returns permission_required/permission_expired, rely on the in-app permission card, wait for approval, then retry automatically. "
             "Do NOT ask the user 'should I continue' for routine multi-step work. Continue automatically unless you need missing info, "
             "a permission approval, or you are about to do an irreversible/destructive action. "
             "Common camera actions include: camera.list, camera.status, camera.preview.start, camera.preview.stop, camera.capture. "
@@ -2209,7 +2226,7 @@ class BrainRuntime:
             "Common vision actions include: vision.model.load, vision.image.load, vision.run. "
             "For cloud calls, use tool='cloud_request' and args shape: {request:{url,method,headers,json/body,...}}. "
             "Do NOT use shell_exec(curl) to call /cloud/request or /permissions/*; use cloud_request so requests are validated/audit-logged and placeholders are expanded safely. "
-            "If cloud_request returns permission_required, ask the user to approve, then retry the same cloud_request with permission_id=request.id. "
+            "If cloud_request returns permission_required, do not add confirmation text; wait for approval and retry the same cloud_request with permission_id=request.id. "
             "If user asks to check status, include at least one device_api status action. "
             "If user asks to change device state, include one device_api mutating action with minimal payload. "
             "Example output for status request: "
@@ -2434,7 +2451,7 @@ class BrainRuntime:
             capability = "web.search"
             permission_id = self._capability_permissions.get(capability, "")
 
-            def do_request(pid: str) -> tuple[int, Dict[str, Any]]:
+            def do_request(pid: str, provider_name: str) -> tuple[int, Dict[str, Any]]:
                 headers = {}
                 if self._active_identity:
                     headers["X-Methings-Identity"] = self._active_identity
@@ -2444,7 +2461,7 @@ class BrainRuntime:
                     json={
                         "query": query,
                         "max_results": max_results,
-                        "provider": provider,
+                        "provider": provider_name,
                         "permission_id": (pid or ""),
                         "identity": self._active_identity,
                     },
@@ -2455,7 +2472,7 @@ class BrainRuntime:
                 return resp.status_code, body if isinstance(body, dict) else {"raw": body}
 
             try:
-                http_status, body = do_request(permission_id)
+                http_status, body = do_request(permission_id, provider)
             except Exception as ex:
                 return {"status": "error", "error": "search_failed", "detail": str(ex)}
 
@@ -2467,7 +2484,7 @@ class BrainRuntime:
                     wait_status = self._wait_for_permission(req_id, timeout_s=float(self._config.get("permission_timeout_s", 45)))
                     if wait_status == "approved":
                         try:
-                            http_status, body = do_request(req_id)
+                            http_status, body = do_request(req_id, provider)
                         except Exception as ex:
                             return {"status": "error", "error": "search_failed", "detail": str(ex)}
                     elif wait_status == "denied":
@@ -2484,6 +2501,28 @@ class BrainRuntime:
                         "error": "permission_required",
                         "detail": "Web search requires permission. Please approve the prompt/notification in the app and retry.",
                     }
+
+            # In auto mode, Brave can intermittently return 5xx (including 503). Fall back to
+            # DuckDuckGo once so web_search remains usable instead of surfacing upstream_error.
+            is_auto = provider.strip().lower() in {"", "auto"}
+            if (
+                is_auto
+                and http_status in {500, 502, 503, 504}
+                and isinstance(body, dict)
+            ):
+                try:
+                    fb_status, fb_body = do_request(permission_id, "duckduckgo")
+                    if fb_status in (200, 201) and isinstance(fb_body, dict) and fb_body.get("status") == "ok":
+                        fallback = dict(fb_body)
+                        fallback["fallback"] = {
+                            "from_provider": "auto",
+                            "to_provider": "duckduckgo",
+                            "reason": "upstream_5xx",
+                            "upstream_http_status": http_status,
+                        }
+                        return fallback
+                except Exception:
+                    pass
 
             if http_status not in (200, 201) or not isinstance(body, dict) or body.get("status") != "ok":
                 return {"status": "error", "error": "upstream_error", "http_status": http_status, "body": body}
