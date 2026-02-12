@@ -99,6 +99,11 @@ class DeviceApiTool:
         "shell.exec": {"method": "POST", "path": "/shell/exec", "permission": True},
         "brain.memory.get": {"method": "GET", "path": "/brain/memory", "permission": False},
         "brain.memory.set": {"method": "POST", "path": "/brain/memory", "permission": True},
+        "viewer.open": {"method": "POST", "path": "/ui/viewer/open", "permission": False},
+        "viewer.close": {"method": "POST", "path": "/ui/viewer/close", "permission": False},
+        "viewer.immersive": {"method": "POST", "path": "/ui/viewer/immersive", "permission": False},
+        "viewer.slideshow": {"method": "POST", "path": "/ui/viewer/slideshow", "permission": False},
+        "viewer.goto": {"method": "POST", "path": "/ui/viewer/goto", "permission": False},
         # Non-sensitive configuration helpers (do not return secrets).
         "brain.config.get": {"method": "GET", "path": "/brain/config", "permission": False},
         "cloud.prefs.get": {"method": "GET", "path": "/cloud/prefs", "permission": False},
