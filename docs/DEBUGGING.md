@@ -67,6 +67,32 @@ Notes:
 - This changes the *device* UI only. To make changes permanent, also commit them in the repo and later rebuild/install normally.
 - `Reset UI` in the app settings overwrites `files/www` from the APK assets.
 
+## Sync user defaults (device <-> repo)
+
+Normal builds do not auto-sync `user/` into APK assets anymore. This prevents surprise git changes.
+
+If you intentionally edit agent docs or examples directly on device (`files/user/...`) and want to keep them,
+use explicit sync:
+
+```bash
+# Pull device files/user -> repo user/
+scripts/user_defaults_sync.sh pull <serial>
+
+# Push repo user/ -> device files/user
+scripts/user_defaults_sync.sh push <serial>
+```
+
+Build-time opt-in (only when you want APK `assets/user_defaults` refreshed from `repo/user`):
+
+```bash
+cd app/android
+METHINGS_SYNC_USER_DEFAULTS=1 ./gradlew assembleDebug
+# or
+./gradlew -Pmethings.syncUserDefaults=1 assembleDebug
+# or run only the explicit helper task
+./gradlew :app:syncUserDefaultsOnBuild
+```
+
 ## See The Actual Chat Transcript
 
 `/brain/messages` is session-scoped. First discover which sessions exist:
