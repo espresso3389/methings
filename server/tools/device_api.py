@@ -116,6 +116,8 @@ class DeviceApiTool:
             "camera.capture": 45.0,
             "camera.preview.start": 25.0,
             "camera.preview.stop": 25.0,
+            "ssh.exec": 300.0,
+            "ssh.scp": 600.0,
             "vision.run": 75.0,
             "usb.open": 60.0,
             "usb.stream.start": 25.0,
