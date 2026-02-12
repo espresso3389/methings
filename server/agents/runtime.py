@@ -1240,22 +1240,22 @@ class BrainRuntime:
                             "enum": [
                                 "python.status",
                                 "python.restart",
-                                "ssh.status",
-                                "ssh.config",
+                                "sshd.status",
+                                "sshd.config",
                                 "ssh.exec",
                                 "ssh.scp",
                                 "ssh.ws.contract",
-                                "ssh.keys.list",
-                                "ssh.keys.add",
-                                "ssh.keys.delete",
-                                "ssh.keys.policy.get",
-                                "ssh.keys.policy.set",
-                                "ssh.pin.status",
-                                "ssh.pin.start",
-                                "ssh.pin.stop",
-                                "ssh.noauth.status",
-                                "ssh.noauth.start",
-                                "ssh.noauth.stop",
+                                "sshd.keys.list",
+                                "sshd.keys.add",
+                                "sshd.keys.delete",
+                                "sshd.keys.policy.get",
+                                "sshd.keys.policy.set",
+                                "sshd.pin.status",
+                                "sshd.pin.start",
+                                "sshd.pin.stop",
+                                "sshd.noauth.status",
+                                "sshd.noauth.start",
+                                "sshd.noauth.stop",
                                 "camera.list",
                                 "camera.status",
                                 "camera.preview.start",
@@ -2010,7 +2010,7 @@ class BrainRuntime:
                     "type": "tool_invoke",
                     "tool": "device_api",
                     "args": {
-                        "action": "ssh.status",
+                        "action": "sshd.status",
                         "payload": {},
                         "detail": "Check SSH service status",
                     },
@@ -2052,7 +2052,7 @@ class BrainRuntime:
                     "type": "tool_invoke",
                     "tool": "device_api",
                     "args": {
-                        "action": "ssh.config",
+                        "action": "sshd.config",
                         "payload": {"enabled": True},
                         "detail": "Enable SSH service from agent request",
                     },
@@ -2065,7 +2065,7 @@ class BrainRuntime:
                     "type": "tool_invoke",
                     "tool": "device_api",
                     "args": {
-                        "action": "ssh.pin.start",
+                        "action": "sshd.pin.start",
                         "payload": {"seconds": 20},
                         "detail": "Start SSH PIN auth",
                     },
@@ -2123,22 +2123,22 @@ class BrainRuntime:
                     "device_api_actions": [
                         "python.status",
                         "python.restart",
-                        "ssh.status",
-                        "ssh.config",
+                        "sshd.status",
+                        "sshd.config",
                         "ssh.exec",
                         "ssh.scp",
                         "ssh.ws.contract",
-                        "ssh.keys.list",
-                        "ssh.keys.add",
-                        "ssh.keys.delete",
-                        "ssh.keys.policy.get",
-                        "ssh.keys.policy.set",
-                        "ssh.pin.status",
-                        "ssh.pin.start",
-                        "ssh.pin.stop",
-                        "ssh.noauth.status",
-                        "ssh.noauth.start",
-                        "ssh.noauth.stop",
+                        "sshd.keys.list",
+                        "sshd.keys.add",
+                        "sshd.keys.delete",
+                        "sshd.keys.policy.get",
+                        "sshd.keys.policy.set",
+                        "sshd.pin.status",
+                        "sshd.pin.start",
+                        "sshd.pin.stop",
+                        "sshd.noauth.status",
+                        "sshd.noauth.start",
+                        "sshd.noauth.stop",
                         "camera.list",
                         "camera.status",
                         "camera.preview.start",
@@ -2239,7 +2239,7 @@ class BrainRuntime:
             "Do NOT ask the user 'should I continue' for routine multi-step work. Continue automatically unless you need missing info, "
             "a permission approval, or you are about to do an irreversible/destructive action. "
             "Common camera actions include: camera.list, camera.status, camera.preview.start, camera.preview.stop, camera.capture. "
-            "Common SSH actions include: ssh.status, ssh.config, ssh.keys.list/add/delete, ssh.keys.policy.get/set, ssh.pin.start/stop, ssh.noauth.start/stop. "
+            "Common SSHD actions include: sshd.status, sshd.config, sshd.keys.list/add/delete, sshd.keys.policy.get/set, sshd.pin.start/stop, sshd.noauth.start/stop. "
             "Common location actions include: location.status, location.get. "
             "Common sensors actions include: sensors.list and sensors.ws.contract. "
             "For realtime sensors, use WebSocket /ws/sensors based on sensors.ws.contract instead of old polling stream endpoints. "
@@ -2251,7 +2251,7 @@ class BrainRuntime:
             "If user asks to change device state, include one device_api mutating action with minimal payload. "
             "Example output for status request: "
             "{\"responses\":[\"Checking current SSH and Python status.\"],"
-            "\"actions\":[{\"type\":\"tool_invoke\",\"tool\":\"device_api\",\"args\":{\"action\":\"ssh.status\",\"payload\":{},\"detail\":\"Check SSH service status\"}},"
+            "\"actions\":[{\"type\":\"tool_invoke\",\"tool\":\"device_api\",\"args\":{\"action\":\"sshd.status\",\"payload\":{},\"detail\":\"Check SSH service status\"}},"
             "{\"type\":\"tool_invoke\",\"tool\":\"device_api\",\"args\":{\"action\":\"python.status\",\"payload\":{},\"detail\":\"Check Python worker status\"}}]}. "
             "If Input.tool_results is non-empty, use those results to decide next actions or final responses. "
             "Set actions=[] when the task is complete. "

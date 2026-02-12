@@ -34,23 +34,33 @@ See [permissions.md](permissions.md) for scopes, identity model, and USB special
 | `screen.keep_on` | POST | `/screen/keep_on` |
 | `shell.exec` | POST | `/shell/exec` |
 
-### SSH
+### SSHD (On-device SSH Server)
 
 | Action | Method | Endpoint |
 |--------|--------|----------|
-| `ssh.status` | GET | `/ssh/status` **[no perm]** |
-| `ssh.config` | POST | `/ssh/config` |
-| `ssh.keys.list` | GET | `/ssh/keys` **[no perm]** |
-| `ssh.keys.add` | POST | `/ssh/keys/add` |
-| `ssh.keys.delete` | POST | `/ssh/keys/delete` |
-| `ssh.keys.policy.get` | GET | `/ssh/keys/policy` **[no perm]** |
-| `ssh.keys.policy.set` | POST | `/ssh/keys/policy` |
-| `ssh.pin.status` | GET | `/ssh/pin/status` **[no perm]** |
-| `ssh.pin.start` | POST | `/ssh/pin/start` |
-| `ssh.pin.stop` | POST | `/ssh/pin/stop` |
-| `ssh.noauth.status` | GET | `/ssh/noauth/status` **[no perm]** |
-| `ssh.noauth.start` | POST | `/ssh/noauth/start` |
-| `ssh.noauth.stop` | POST | `/ssh/noauth/stop` |
+| `sshd.status` | GET | `/sshd/status` **[no perm]** |
+| `sshd.config` | POST | `/sshd/config` |
+| `sshd.keys.list` | GET | `/sshd/keys` **[no perm]** |
+| `sshd.keys.add` | POST | `/sshd/keys/add` |
+| `sshd.keys.delete` | POST | `/sshd/keys/delete` |
+| `sshd.keys.policy.get` | GET | `/sshd/keys/policy` **[no perm]** |
+| `sshd.keys.policy.set` | POST | `/sshd/keys/policy` |
+| `sshd.pin.status` | GET | `/sshd/pin/status` **[no perm]** |
+| `sshd.pin.start` | POST | `/sshd/pin/start` |
+| `sshd.pin.stop` | POST | `/sshd/pin/stop` |
+| `sshd.noauth.status` | GET | `/sshd/noauth/status` **[no perm]** |
+| `sshd.noauth.start` | POST | `/sshd/noauth/start` |
+| `sshd.noauth.stop` | POST | `/sshd/noauth/stop` |
+
+Details: [sshd.md](sshd.md)
+
+### SSH (Remote Host Client)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `ssh.exec` | POST | `/ssh/exec` |
+| `ssh.scp` | POST | `/ssh/scp` |
+| `ssh.ws.contract` | GET | `/ssh/ws/contract` **[no perm]** |
 
 Details: [ssh.md](ssh.md)
 

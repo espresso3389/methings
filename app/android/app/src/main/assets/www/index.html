@@ -4220,7 +4220,7 @@
 
       async function refreshSsh() {
         try {
-          const res = await fetch(API + "/ssh/status");
+          const res = await fetch(API + "/sshd/status");
           if (!res.ok) throw 0;
           const data = await res.json();
           setStatus(sshStatus, data.running ? "ok" : "offline");
@@ -4288,7 +4288,7 @@
             if (!await appConfirm("Remove SSH key", "Remove this authorized key?")) return;
             try {
               const permission_id = await requestPermission("ssh_keys", "Remove SSH authorized key " + shortFp(fp));
-              const res = await fetch(API + "/ssh/keys/delete", {
+              const res = await fetch(API + "/sshd/keys/delete", {
                 method: "POST",
                 headers: { "Content-Type": "application/json; charset=utf-8" },
                 body: JSON.stringify({ permission_id, fingerprint: fp }),
@@ -4305,7 +4305,7 @@
 
       async function refreshSshKeys() {
         try {
-          const res = await fetch(API + "/ssh/keys");
+          const res = await fetch(API + "/sshd/keys");
           if (!res.ok) throw 0;
           const data = await res.json();
           const items = Array.isArray(data.items) ? data.items : [];
@@ -4353,7 +4353,7 @@
 
       async function refreshPin() {
         try {
-          const res = await fetch(API + "/ssh/pin/status");
+          const res = await fetch(API + "/sshd/pin/status");
           if (!res.ok) throw 0;
           const data = await res.json();
           if (data.active) {
@@ -4572,7 +4572,7 @@
       async function updateSshConfig() {
         const enabled = sshEnabled.checked;
         try {
-          const res = await fetch(API + "/ssh/config", {
+          const res = await fetch(API + "/sshd/config", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ enabled }),
@@ -4592,7 +4592,7 @@
         const label = String(await appPrompt("Key label", "Label (optional)", "") || "").trim();
         try {
           const permission_id = await requestPermission("ssh_keys", "Add SSH authorized key" + (label ? (" (" + label + ")") : ""));
-          const res = await fetch(API + "/ssh/keys/add", {
+          const res = await fetch(API + "/sshd/keys/add", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ permission_id, key, label }),
@@ -4614,7 +4614,7 @@
           const u = await requestSettingsUnlock();
           if (!u || !u.ok) { showToast("Unlock failed", 1400); return; }
           const permission_id = await requestPermission("ssh_noauth", "Enable SSH notification auth");
-          const res = await fetch(API + "/ssh/noauth/start", {
+          const res = await fetch(API + "/sshd/noauth/start", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ permission_id, seconds: 30 }),
@@ -4636,7 +4636,7 @@
           const u = await requestSettingsUnlock();
           if (!u || !u.ok) { showToast("Unlock failed", 1400); pinModal.classList.remove("show"); return; }
           const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
-          const res = await fetch(API + "/ssh/pin/start", {
+          const res = await fetch(API + "/sshd/pin/start", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ permission_id, seconds: 20 }),
@@ -4669,7 +4669,7 @@
 
       pinClose.addEventListener("click", async () => {
         try {
-          await fetch(API + "/ssh/pin/stop", {
+          await fetch(API + "/sshd/pin/stop", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({}),

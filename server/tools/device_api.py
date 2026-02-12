@@ -14,22 +14,22 @@ class DeviceApiTool:
         "python.restart": {"method": "POST", "path": "/python/restart", "permission": True},
         "screen.status": {"method": "GET", "path": "/screen/status", "permission": False},
         "screen.keep_on": {"method": "POST", "path": "/screen/keep_on", "permission": True},
-        "ssh.status": {"method": "GET", "path": "/ssh/status", "permission": False},
-        "ssh.config": {"method": "POST", "path": "/ssh/config", "permission": True},
+        "sshd.status": {"method": "GET", "path": "/sshd/status", "permission": False},
+        "sshd.config": {"method": "POST", "path": "/sshd/config", "permission": True},
         "ssh.exec": {"method": "POST", "path": "/ssh/exec", "permission": True},
         "ssh.scp": {"method": "POST", "path": "/ssh/scp", "permission": True},
         "ssh.ws.contract": {"method": "GET", "path": "/ssh/ws/contract", "permission": False},
-        "ssh.keys.list": {"method": "GET", "path": "/ssh/keys", "permission": False},
-        "ssh.keys.add": {"method": "POST", "path": "/ssh/keys/add", "permission": True},
-        "ssh.keys.delete": {"method": "POST", "path": "/ssh/keys/delete", "permission": True},
-        "ssh.keys.policy.get": {"method": "GET", "path": "/ssh/keys/policy", "permission": False},
-        "ssh.keys.policy.set": {"method": "POST", "path": "/ssh/keys/policy", "permission": True},
-        "ssh.pin.status": {"method": "GET", "path": "/ssh/pin/status", "permission": False},
-        "ssh.pin.start": {"method": "POST", "path": "/ssh/pin/start", "permission": True},
-        "ssh.pin.stop": {"method": "POST", "path": "/ssh/pin/stop", "permission": True},
-        "ssh.noauth.status": {"method": "GET", "path": "/ssh/noauth/status", "permission": False},
-        "ssh.noauth.start": {"method": "POST", "path": "/ssh/noauth/start", "permission": True},
-        "ssh.noauth.stop": {"method": "POST", "path": "/ssh/noauth/stop", "permission": True},
+        "sshd.keys.list": {"method": "GET", "path": "/sshd/keys", "permission": False},
+        "sshd.keys.add": {"method": "POST", "path": "/sshd/keys/add", "permission": True},
+        "sshd.keys.delete": {"method": "POST", "path": "/sshd/keys/delete", "permission": True},
+        "sshd.keys.policy.get": {"method": "GET", "path": "/sshd/keys/policy", "permission": False},
+        "sshd.keys.policy.set": {"method": "POST", "path": "/sshd/keys/policy", "permission": True},
+        "sshd.pin.status": {"method": "GET", "path": "/sshd/pin/status", "permission": False},
+        "sshd.pin.start": {"method": "POST", "path": "/sshd/pin/start", "permission": True},
+        "sshd.pin.stop": {"method": "POST", "path": "/sshd/pin/stop", "permission": True},
+        "sshd.noauth.status": {"method": "GET", "path": "/sshd/noauth/status", "permission": False},
+        "sshd.noauth.start": {"method": "POST", "path": "/sshd/noauth/start", "permission": True},
+        "sshd.noauth.stop": {"method": "POST", "path": "/sshd/noauth/stop", "permission": True},
         "camera.list": {"method": "GET", "path": "/camera/list", "permission": True},
         "camera.status": {"method": "GET", "path": "/camera/status", "permission": True},
         "camera.preview.start": {"method": "POST", "path": "/camera/preview/start", "permission": True},
@@ -547,11 +547,13 @@ class DeviceApiTool:
         a = (action or "").strip()
         if a.startswith("screen."):
             return "device.screen", "screen", "session"
-        if a.startswith("ssh.keys."):
+        if a.startswith("sshd.keys."):
             # Kotlin forces scope to once for ssh_keys; still group by session identity.
             return "ssh_keys", "ssh_keys", "once"
-        if a.startswith("ssh.pin."):
-            return "ssh_pin", "ssh.pin", "session"
+        if a.startswith("sshd.pin."):
+            return "ssh_pin", "sshd.pin", "session"
+        if a.startswith("sshd."):
+            return "device.sshd", "sshd", "session"
         if a.startswith("ssh."):
             return "device.ssh", "ssh", "session"
         if a.startswith("camera."):

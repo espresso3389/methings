@@ -1222,7 +1222,7 @@ class LocalHttpServer(
             (uri == "/sensor/stream/status" || uri == "/sensor/stream/status/") && session.method == Method.POST -> {
                 return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
             }
-            uri == "/ssh/status" -> {
+            uri == "/sshd/status" -> {
                 val status = sshdManager.status()
                 jsonResponse(
                     JSONObject()
@@ -1236,7 +1236,7 @@ class LocalHttpServer(
                         .put("client_key_public", status.clientKeyPublic)
                 )
             }
-            uri == "/ssh/keys" -> {
+            uri == "/sshd/keys" -> {
                 // If the authorized_keys file was edited externally (e.g., via SSH), the DB-backed
                 // key list can get out of sync. Import any valid keys from the file so the UI
                 // reflects reality and future syncs won't accidentally drop them.
@@ -1256,19 +1256,19 @@ class LocalHttpServer(
                 }
                 jsonResponse(JSONObject().put("items", arr))
             }
-            uri == "/ssh/keys/policy" -> {
+            uri == "/sshd/keys/policy" -> {
                 jsonResponse(
                     JSONObject()
                         .put("require_biometric", sshKeyPolicy.isBiometricRequired())
                 )
             }
-            uri == "/ssh/keys/policy" && session.method == Method.POST -> {
+            uri == "/sshd/keys/policy" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val requireBio = payload.optBoolean("require_biometric", sshKeyPolicy.isBiometricRequired())
                 sshKeyPolicy.setBiometricRequired(requireBio)
                 jsonResponse(JSONObject().put("require_biometric", sshKeyPolicy.isBiometricRequired()))
             }
-            uri == "/ssh/keys/add" && session.method == Method.POST -> {
+            uri == "/sshd/keys/add" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val key = payload.optString("key", "")
                 val label = payload.optString("label", "")
@@ -1293,7 +1293,7 @@ class LocalHttpServer(
                         .put("status", "ok")
                 )
             }
-            uri == "/ssh/keys/delete" && session.method == Method.POST -> {
+            uri == "/sshd/keys/delete" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 var fingerprint = payload.optString("fingerprint", "").trim()
                 val keyRaw = payload.optString("key", "")
@@ -1317,7 +1317,7 @@ class LocalHttpServer(
                 syncAuthorizedKeys()
                 jsonResponse(JSONObject().put("status", "ok"))
             }
-            uri == "/ssh/pin/status" -> {
+            uri == "/sshd/pin/status" -> {
                 val state = sshPinManager.status()
                 if (state.expired) {
                     sshPinManager.stopPin()
@@ -1332,7 +1332,7 @@ class LocalHttpServer(
                         .put("expires_at", state.expiresAt ?: JSONObject.NULL)
                 )
             }
-            uri == "/ssh/pin/start" && session.method == Method.POST -> {
+            uri == "/sshd/pin/start" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val permissionId = payload.optString("permission_id", "")
                 val seconds = payload.optInt("seconds", 10)
@@ -1350,13 +1350,13 @@ class LocalHttpServer(
                         .put("expires_at", state.expiresAt ?: JSONObject.NULL)
                 )
             }
-            uri == "/ssh/pin/stop" && session.method == Method.POST -> {
+            uri == "/sshd/pin/stop" && session.method == Method.POST -> {
                 Log.i(TAG, "PIN auth stop requested")
                 sshPinManager.stopPin()
                 sshdManager.exitPinMode()
                 jsonResponse(JSONObject().put("active", false))
             }
-            uri == "/ssh/noauth/status" -> {
+            uri == "/sshd/noauth/status" -> {
                 val state = sshNoAuthModeManager.status()
                 if (state.expired) {
                     sshNoAuthModeManager.stop()
@@ -1370,7 +1370,7 @@ class LocalHttpServer(
                         .put("expires_at", state.expiresAt ?: JSONObject.NULL)
                 )
             }
-            uri == "/ssh/noauth/start" && session.method == Method.POST -> {
+            uri == "/sshd/noauth/start" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val permissionId = payload.optString("permission_id", "")
                 val seconds = payload.optInt("seconds", 30)
@@ -1386,13 +1386,13 @@ class LocalHttpServer(
                         .put("expires_at", state.expiresAt ?: JSONObject.NULL)
                 )
             }
-            uri == "/ssh/noauth/stop" && session.method == Method.POST -> {
+            uri == "/sshd/noauth/stop" && session.method == Method.POST -> {
                 Log.i(TAG, "Notification auth stop requested")
                 sshNoAuthModeManager.stop()
                 sshdManager.exitNotificationMode()
                 jsonResponse(JSONObject().put("active", false))
             }
-            uri == "/ssh/config" && session.method == Method.POST -> {
+            uri == "/sshd/config" && session.method == Method.POST -> {
                 val body = postBody ?: ""
                 val payload = JSONObject(body.ifBlank { "{}" })
                 val enabled = payload.optBoolean("enabled", sshdManager.isEnabled())
