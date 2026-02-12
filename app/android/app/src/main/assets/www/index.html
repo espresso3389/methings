@@ -395,6 +395,36 @@
       .viewer.immersive .viewer-top { display: none; }
       .viewer.immersive.show-controls .viewer-top { display: flex; }
 
+      /* Marp slide deck — normal mode: all slides vertical scroll */
+      .viewer-text.marp-active { padding: 0; }
+      .marp-deck { width: 100%; }
+      .marp-slide-wrap { width: 100%; }
+      .marp-slide-wrap .marpit { width: 100%; }
+      .marp-slide-wrap .marpit svg { display: block; width: 100%; height: auto; border-bottom: 1px solid rgba(255,255,255,0.06); }
+      .marp-slide-wrap .marp-fallback { width: 100%; }
+      .marp-slide-wrap .marp-fallback section { padding: 24px; color: var(--ink); border-bottom: 1px solid rgba(255,255,255,0.06); }
+      .marp-nav { display: none; }
+      .marp-nav button { width: 38px; height: 38px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); cursor: pointer; display: grid; place-items: center; font-size: 18px; color: var(--ink-secondary); transition: background var(--transition), border-color var(--transition), color var(--transition); }
+      .marp-nav button:hover { background: var(--bg-overlay); border-color: var(--border-focus); color: var(--ink); }
+      .marp-nav button:disabled { opacity: 0.35; cursor: not-allowed; }
+      .marp-counter { color: var(--ink-secondary); font-size: 13px; font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; }
+      /* Marp — immersive/presentation mode: single slide + nav */
+      .viewer.immersive .viewer-text.marp-active { display: flex; flex-direction: column; }
+      .viewer.immersive .marp-deck { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      .viewer.immersive .marp-slide-wrap { flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+      .viewer.immersive .marp-slide-wrap .marpit svg { display: none; border-bottom: none; }
+      .viewer.immersive .marp-slide-wrap .marpit svg.active { display: block; }
+      .viewer.immersive .marp-slide-wrap .marp-fallback section { display: none; border-bottom: none; }
+      .viewer.immersive .marp-slide-wrap .marp-fallback section.active { display: block; }
+      .viewer.immersive .marp-nav { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 10px; flex-shrink: 0; border-top: 1px solid rgba(255,255,255,0.08); }
+      .viewer.immersive.show-controls .marp-nav { display: flex; }
+      /* Inline Marp preview */
+      .attach-marp-preview { max-height: 200px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000; border-radius: var(--radius-sm); }
+      .attach-marp-preview > .marpit { width: 100%; }
+      .attach-marp-preview > .marpit > svg { width: 100%; height: auto; }
+      .attach-marp-preview > .marpit > svg:not(:first-child) { display: none; }
+      .attach-marp-preview > .marp-fallback-thumb { padding: 16px; color: var(--ink); font-size: 13px; }
+
       /* Rendered markdown elements (inside .attach-md) */
       .attach-md h1 { font-size: 1.6em; font-weight: 700; margin: 16px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
       .attach-md h2 { font-size: 1.35em; font-weight: 700; margin: 14px 0 6px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
@@ -1228,6 +1258,12 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
+    <script type="module">
+      import { Marp } from 'https://esm.sh/@marp-team/marp-core@4?bundle';
+      import marpBrowser from 'https://esm.sh/@marp-team/marp-core@4/browser?bundle';
+      window._Marp = Marp;
+      window._marpBrowser = marpBrowser;
+    </script>
   </head>
   <body>
     <!-- ===== Chat Page ===== -->
@@ -1981,6 +2017,217 @@
       }
 
       // ==============================
+      // Marp presentation helpers
+      // ==============================
+      function isMarpMarkdown(text) {
+        const m = text.match(/^---\s*\n([\s\S]*?)\n---/);
+        return m != null && /^marp\s*:\s*true\s*$/m.test(m[1]);
+      }
+
+      function renderMarpSlides(container, text) {
+        const deck = document.createElement("div");
+        deck.className = "marp-deck";
+        const slideWrap = document.createElement("div");
+        slideWrap.className = "marp-slide-wrap";
+        deck.appendChild(slideWrap);
+
+        let slides;
+        let usedMarp = false;
+
+        // Try Marp-core first
+        if (window._Marp) {
+          try {
+            const marp = new window._Marp({ script: false, html: true });
+            const result = marp.render(text);
+            const wrapper = document.createElement("div");
+            wrapper.className = "marpit";
+            wrapper.innerHTML = "<style>" + result.css + "</style>" + result.html;
+            slideWrap.appendChild(wrapper);
+            if (window._marpBrowser) {
+              try { window._marpBrowser(slideWrap); } catch (_) {}
+            }
+            // Marp output may nest SVGs in various ways; try multiple selectors
+            slides = wrapper.querySelectorAll("svg[data-marpit-svg]");
+            if (!slides.length) slides = wrapper.querySelectorAll("svg");
+            if (slides.length) usedMarp = true;
+            else { slideWrap.removeChild(wrapper); }
+          } catch (e) {
+            console.warn("Marp render failed, using fallback:", e);
+            usedMarp = false;
+          }
+        }
+
+        // Fallback: split on --- and render with marked.js
+        if (!usedMarp) {
+          const stripped = text.replace(/^---\s*\n[\s\S]*?\n---\n?/, "");
+          const parts = stripped.split(/\n---\n/);
+          const fb = document.createElement("div");
+          fb.className = "marp-fallback";
+          parts.forEach(function(part) {
+            const trimmed = part.trim();
+            if (!trimmed) return;
+            const sec = document.createElement("section");
+            sec.className = "attach-md";
+            sec.innerHTML = renderMarkdown(trimmed);
+            fb.appendChild(sec);
+          });
+          slideWrap.appendChild(fb);
+          slides = fb.querySelectorAll("section");
+        }
+
+        if (!slides || slides.length === 0) return null;
+
+        let current = 0;
+        const total = slides.length;
+
+        function show(idx) {
+          current = Math.max(0, Math.min(total - 1, idx));
+          for (let i = 0; i < total; i++) {
+            slides[i].classList.toggle("active", i === current);
+          }
+          counter.textContent = (current + 1) + " / " + total;
+          prevBtn.disabled = current === 0;
+          nextBtn.disabled = current === total - 1;
+        }
+
+        // Navigation bar
+        const nav = document.createElement("div");
+        nav.className = "marp-nav";
+        const prevBtn = document.createElement("button");
+        prevBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>';
+        prevBtn.title = "Previous slide";
+        prevBtn.setAttribute("aria-label", "Previous slide");
+        prevBtn.addEventListener("click", function() { show(current - 1); });
+        const counter = document.createElement("span");
+        counter.className = "marp-counter";
+        const nextBtn = document.createElement("button");
+        nextBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+        nextBtn.title = "Next slide";
+        nextBtn.setAttribute("aria-label", "Next slide");
+        nextBtn.addEventListener("click", function() { show(current + 1); });
+        nav.appendChild(prevBtn);
+        nav.appendChild(counter);
+        nav.appendChild(nextBtn);
+        deck.appendChild(nav);
+
+        show(0);
+
+        // Swipe navigation
+        let swX0 = 0, swY0 = 0, swT0 = 0;
+        slideWrap.addEventListener("touchstart", function(ev) {
+          if (!ev.touches || ev.touches.length !== 1) return;
+          swX0 = ev.touches[0].clientX;
+          swY0 = ev.touches[0].clientY;
+          swT0 = Date.now();
+        }, { passive: true });
+        slideWrap.addEventListener("touchend", function(ev) {
+          if (!ev.changedTouches || ev.changedTouches.length === 0) return;
+          const dx = ev.changedTouches[0].clientX - swX0;
+          const dy = ev.changedTouches[0].clientY - swY0;
+          const dt = Date.now() - swT0;
+          if (dt < 400 && Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+            if (dx < 0) show(current + 1);
+            else show(current - 1);
+          }
+        }, { passive: true });
+
+        // Keyboard navigation
+        deck._marpKeyHandler = function(ev) {
+          if (ev.key === "ArrowLeft" || ev.key === "ArrowUp") { show(current - 1); ev.preventDefault(); }
+          else if (ev.key === "ArrowRight" || ev.key === "ArrowDown" || ev.key === " ") { show(current + 1); ev.preventDefault(); }
+        };
+
+        container.appendChild(deck);
+        return deck;
+      }
+
+      function renderMarpPreview(container, text) {
+        if (window._Marp) {
+          try {
+            const marp = new window._Marp({ script: false, html: true });
+            const result = marp.render(text);
+            const wrapper = document.createElement("div");
+            wrapper.className = "marpit";
+            wrapper.innerHTML = "<style>" + result.css + "</style>" + result.html;
+            container.appendChild(wrapper);
+            return;
+          } catch (_) {}
+        }
+        // Fallback: render first slide with marked.js
+        const stripped = text.replace(/^---\s*\n[\s\S]*?\n---\n?/, "");
+        const firstSlide = stripped.split(/\n---\n/)[0] || "";
+        const thumb = document.createElement("div");
+        thumb.className = "marp-fallback-thumb attach-md";
+        thumb.innerHTML = renderMarkdown(firstSlide.trim());
+        container.appendChild(thumb);
+      }
+
+      function openMarpViewer(path, content) {
+        const rel = safeRelPath(path);
+        if (!rel) return;
+        viewerSourceToggle.style.display = "none";
+        viewerSourceToggle.onclick = null;
+        viewerCurrentRel = rel;
+        viewerMode = "text";
+        viewerTitle.textContent = rel;
+        resetViewerPanels();
+        viewerText.style.display = "block";
+        viewerText.innerHTML = "";
+        viewerText.classList.add("marp-active");
+        if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
+
+        const marpDeck = renderMarpSlides(viewerText, content);
+
+        // Source toggle
+        const srcPre = document.createElement("pre");
+        const srcCode = document.createElement("code");
+        srcCode.className = "language-markdown";
+        srcCode.textContent = content;
+        srcPre.appendChild(srcCode);
+        const srcLined = wrapWithLineNumbers(srcPre, content);
+        srcLined.style.display = "none";
+        viewerText.appendChild(srcLined);
+
+        let srcHighlighted = false;
+        let showSource = false;
+        const toggleBtn = document.createElement("button");
+        toggleBtn.className = "icon-btn viewer-md-toggle";
+        toggleBtn.title = "View source";
+        toggleBtn.setAttribute("aria-label", "View source");
+        toggleBtn.innerHTML = ICON.code;
+        toggleBtn.addEventListener("click", function() {
+          showSource = !showSource;
+          if (showSource) {
+            if (marpDeck) marpDeck.style.display = "none";
+            srcLined.style.display = "";
+            viewerText.classList.remove("marp-active");
+            if (!srcHighlighted) { try { hljs.highlightElement(srcCode); } catch (_) {} srcHighlighted = true; }
+            toggleBtn.innerHTML = ICON.doc;
+            toggleBtn.title = "View slides";
+            if (_marpKeyHandler) { document.removeEventListener("keydown", _marpKeyHandler); _marpKeyHandler = null; }
+          } else {
+            if (marpDeck) marpDeck.style.display = "";
+            srcLined.style.display = "none";
+            viewerText.classList.add("marp-active");
+            toggleBtn.innerHTML = ICON.code;
+            toggleBtn.title = "View source";
+            if (marpDeck && marpDeck._marpKeyHandler) { _marpKeyHandler = marpDeck._marpKeyHandler; document.addEventListener("keydown", _marpKeyHandler); }
+          }
+        });
+        const viewerTop = $("viewerTop");
+        viewerTop.insertBefore(toggleBtn, viewerShare);
+        _viewerMdToggle = toggleBtn;
+
+        // Keyboard support
+        if (marpDeck && marpDeck._marpKeyHandler) {
+          _marpKeyHandler = marpDeck._marpKeyHandler;
+          document.addEventListener("keydown", _marpKeyHandler);
+        }
+
+        viewer.classList.add("show");
+      }
+
+      // ==============================
       // Media helpers
       // ==============================
       function extOf(name) {
@@ -2388,7 +2635,45 @@
                 try {
                   const res = await fetch(src);
                   const content = await res.text();
-                  if (ext === "md") {
+                  if (ext === "md" && isMarpMarkdown(content)) {
+                    const preview = document.createElement("div");
+                    preview.className = "attach-marp-preview";
+                    renderMarpPreview(preview, content);
+                    body.appendChild(preview);
+                    const srcPre = document.createElement("pre");
+                    srcPre.style.display = "none";
+                    const srcCode = document.createElement("code");
+                    srcCode.className = "language-markdown";
+                    srcCode.textContent = content;
+                    srcPre.appendChild(srcCode);
+                    body.appendChild(srcPre);
+                    let srcHighlighted = false;
+                    let showSource = false;
+                    const toggleBtn = document.createElement("button");
+                    toggleBtn.className = "attach-icon-btn";
+                    toggleBtn.title = "View source";
+                    toggleBtn.setAttribute("aria-label", "View source");
+                    toggleBtn.innerHTML = ICON.code;
+                    toggleBtn.addEventListener("click", (ev) => {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      showSource = !showSource;
+                      if (showSource) {
+                        preview.style.display = "none";
+                        srcPre.style.display = "";
+                        if (!srcHighlighted) { try { hljs.highlightElement(srcCode); } catch (_) {} srcHighlighted = true; }
+                        toggleBtn.innerHTML = ICON.doc;
+                        toggleBtn.title = "View rendered";
+                      } else {
+                        preview.style.display = "";
+                        srcPre.style.display = "none";
+                        toggleBtn.innerHTML = ICON.code;
+                        toggleBtn.title = "View source";
+                      }
+                    });
+                    actions.appendChild(toggleBtn);
+                    hint.textContent = "Marp deck (tap to present)";
+                  } else if (ext === "md") {
                     const mdDiv = document.createElement("div");
                     mdDiv.className = "attach-md";
                     mdDiv.innerHTML = renderMarkdown(content);
@@ -2641,7 +2926,10 @@
         viewer.classList.add("show");
       }
       let _viewerMdToggle = null;
+      let _marpKeyHandler = null;
       function closeViewer() {
+        if (_marpKeyHandler) { document.removeEventListener("keydown", _marpKeyHandler); _marpKeyHandler = null; }
+        viewerText.classList.remove("marp-active");
         if (_immersive) exitImmersiveMode();
         viewer.classList.remove("show");
         viewer.classList.remove("show-controls");
@@ -2685,6 +2973,10 @@
       }
 
       function openTextViewer(path, content, ext) {
+        if (ext === "md" && isMarpMarkdown(content)) {
+          openMarpViewer(path, content);
+          return;
+        }
         const rel = safeRelPath(path);
         if (!rel) return;
         viewerSourceToggle.style.display = "none";
