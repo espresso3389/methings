@@ -33,6 +33,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 import jp.espresso3389.methings.perm.PermissionStoreFacade
 import jp.espresso3389.methings.perm.CredentialStore
@@ -58,6 +59,7 @@ import android.graphics.BitmapFactory
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.UUID
 import jp.espresso3389.methings.device.UsbPermissionWaiter
 
 class LocalHttpServer(
@@ -1397,6 +1399,41 @@ class LocalHttpServer(
                         .put("running", status.running)
                         .put("port", status.port)
                         .put("noauth_enabled", status.noauthEnabled)
+                )
+            }
+            uri == "/ssh/exec" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ssh", capability = "ssh.exec", detail = "Run one-shot SSH command")
+                if (!ok.first) return ok.second!!
+                return handleSshExec(payload)
+            }
+            uri == "/ssh/scp" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.ssh", capability = "ssh.scp", detail = "Transfer files with SCP")
+                if (!ok.first) return ok.second!!
+                return handleSshScp(payload)
+            }
+            uri == "/ssh/ws/contract" && session.method == Method.GET -> {
+                return jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("ws_path", "/ws/ssh/interactive")
+                        .put("query", JSONObject()
+                            .put("host", "required hostname or IP")
+                            .put("user", "optional user")
+                            .put("port", "optional port (default 22)")
+                            .put("permission_id", "optional approved permission id")
+                            .put("identity", "optional stable identity for permission reuse"))
+                        .put("client_messages", org.json.JSONArray()
+                            .put(JSONObject().put("type", "stdin").put("data", "utf-8 text"))
+                            .put(JSONObject().put("type", "stdin").put("data_b64", "base64 bytes"))
+                            .put(JSONObject().put("type", "signal").put("name", "interrupt|terminate")))
+                        .put("server_messages", org.json.JSONArray()
+                            .put(JSONObject().put("type", "hello").put("session_id", "uuid"))
+                            .put(JSONObject().put("type", "stdout").put("data_b64", "base64 bytes"))
+                            .put(JSONObject().put("type", "stderr").put("data_b64", "base64 bytes"))
+                            .put(JSONObject().put("type", "exit").put("code", 0))
+                            .put(JSONObject().put("type", "error").put("code", "reason")))
                 )
             }
             uri == "/brain/config" && session.method == Method.GET -> handleBrainConfigGet()
@@ -3164,6 +3201,150 @@ class LocalHttpServer(
             }
         }
 
+        if (uri == "/ws/ssh/interactive") {
+            val params = handshake.parameters
+            val host = (params["host"]?.firstOrNull() ?: "").trim()
+            val user = (params["user"]?.firstOrNull() ?: "").trim()
+            val port = (params["port"]?.firstOrNull() ?: "22").trim().toIntOrNull()?.coerceIn(1, 65535) ?: 22
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
+            val sessionId = "sshws-" + UUID.randomUUID().toString()
+
+            return object : NanoWSD.WebSocket(handshake) {
+                private var proc: Process? = null
+                private val closed = AtomicBoolean(false)
+
+                override fun onOpen() {
+                    if (host.isBlank()) {
+                        runCatching {
+                            send(JSONObject().put("type", "error").put("code", "host_required").toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "host_required", false)
+                        }
+                        return
+                    }
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.ssh",
+                        capability = "ssh.interactive",
+                        detail = "Open interactive SSH websocket"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
+
+                    val dbclient = findDbclientBinary()
+                    if (dbclient == null) {
+                        runCatching {
+                            send(JSONObject().put("type", "error").put("code", "ssh_client_missing").toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.InternalServerError, "ssh_client_missing", false)
+                        }
+                        return
+                    }
+
+                    val args = mutableListOf(dbclient.absolutePath, "-y", "-t")
+                    if (port != 22) {
+                        args.add("-p")
+                        args.add(port.toString())
+                    }
+                    args.add(sshTarget(user, host))
+
+                    try {
+                        proc = buildSshProcess(args).start()
+                    } catch (ex: Exception) {
+                        Log.e(TAG, "Failed to start interactive ssh websocket", ex)
+                        runCatching {
+                            send(JSONObject().put("type", "error").put("code", "ssh_start_failed").put("detail", ex.message ?: "").toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.InternalServerError, "ssh_start_failed", false)
+                        }
+                        return
+                    }
+
+                    runCatching {
+                        send(
+                            JSONObject()
+                                .put("type", "hello")
+                                .put("session_id", sessionId)
+                                .put("target", sshTarget(user, host))
+                                .put("port", port)
+                                .toString()
+                        )
+                    }
+
+                    val running = proc ?: return
+                    startSshWsPump(running.inputStream, "stdout", this, closed)
+                    startSshWsPump(running.errorStream, "stderr", this, closed)
+                    Thread {
+                        val code = runCatching { running.waitFor() }.getOrElse { -1 }
+                        if (closed.compareAndSet(false, true)) {
+                            runCatching {
+                                send(JSONObject().put("type", "exit").put("code", code).toString())
+                                close(NanoWSD.WebSocketFrame.CloseCode.NormalClosure, "done", false)
+                            }
+                        }
+                    }.start()
+                }
+
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    closeProcess()
+                }
+
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {
+                    val txt = runCatching { message?.textPayload ?: "" }.getOrDefault("")
+                    if (txt.isBlank()) return
+                    val payload = runCatching { JSONObject(txt) }.getOrNull() ?: return
+                    val p = proc ?: return
+                    when (payload.optString("type", "").trim()) {
+                        "stdin" -> {
+                            val dataB64 = payload.optString("data_b64", "").trim()
+                            val bytes = if (dataB64.isNotBlank()) {
+                                runCatching { Base64.decode(dataB64, Base64.DEFAULT) }.getOrNull()
+                            } else {
+                                payload.optString("data", "").toByteArray(StandardCharsets.UTF_8)
+                            } ?: return
+                            runCatching {
+                                p.outputStream.write(bytes)
+                                p.outputStream.flush()
+                            }
+                        }
+                        "signal" -> {
+                            when (payload.optString("name", "").trim().lowercase(Locale.US)) {
+                                "interrupt" -> runCatching { p.outputStream.write(byteArrayOf(3)); p.outputStream.flush() }
+                                "terminate" -> closeProcess()
+                            }
+                        }
+                    }
+                }
+
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+
+                override fun onException(exception: java.io.IOException?) {
+                    closeProcess()
+                }
+
+                private fun closeProcess() {
+                    if (!closed.compareAndSet(false, true)) return
+                    val p = proc
+                    proc = null
+                    if (p != null) {
+                        runCatching { p.outputStream.close() }
+                        runCatching { p.destroy() }
+                        try {
+                            if (!p.waitFor(600, TimeUnit.MILLISECONDS)) {
+                                p.destroyForcibly()
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+            }
+        }
+
         return object : NanoWSD.WebSocket(handshake) {
             override fun onOpen() {
                 runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "unknown_ws_path", false) }
@@ -3448,6 +3629,294 @@ class LocalHttpServer(
         val response = newFixedLengthResponse(status, "application/json", payload.toString())
         response.addHeader("Cache-Control", "no-cache")
         return response
+    }
+
+    private fun handleSshExec(payload: JSONObject): Response {
+        val host = payload.optString("host", "").trim()
+        if (host.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "host_required")
+        val user = payload.optString("user", "").trim()
+        val port = payload.optInt("port", 22).coerceIn(1, 65535)
+        val timeoutS = payload.optDouble("timeout_s", 30.0).coerceIn(2.0, 300.0)
+        val maxOutputBytes = payload.optInt("max_output_bytes", 64 * 1024).coerceIn(4 * 1024, 512 * 1024)
+        val pty = payload.optBoolean("pty", false)
+        val acceptNewHostKey = payload.optBoolean("accept_new_host_key", true)
+
+        val argv = payload.optJSONArray("argv")
+        val remoteArgs = mutableListOf<String>()
+        if (argv != null) {
+            for (i in 0 until argv.length()) {
+                val v = argv.optString(i, "").trim()
+                if (v.isNotBlank()) remoteArgs.add(v)
+            }
+        } else {
+            val command = payload.optString("command", "").trim()
+            if (command.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "command_required")
+            remoteArgs.add("sh")
+            remoteArgs.add("-lc")
+            remoteArgs.add(command)
+        }
+        if (remoteArgs.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "command_required")
+
+        val dbclient = findDbclientBinary() ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "ssh_client_missing")
+        val args = mutableListOf(dbclient.absolutePath)
+        if (acceptNewHostKey) args.add("-y")
+        if (pty) args.add("-t")
+        if (port != 22) {
+            args.add("-p")
+            args.add(port.toString())
+        }
+        args.add(sshTarget(user, host))
+        args.addAll(remoteArgs)
+
+        val result = runProcessCapture(args, timeoutS, maxOutputBytes)
+        val out = JSONObject()
+            .put("status", if (result.timedOut) "timeout" else "ok")
+            .put("target", sshTarget(user, host))
+            .put("port", port)
+            .put("argv", org.json.JSONArray(args))
+            .put("exit_code", result.exitCode ?: JSONObject.NULL)
+            .put("timed_out", result.timedOut)
+            .put("stdout", result.stdout)
+            .put("stderr", result.stderr)
+            .put("truncated", result.truncated)
+        return if (result.timedOut) {
+            newFixedLengthResponse(Response.Status.REQUEST_TIMEOUT, "application/json", out.toString())
+        } else {
+            jsonResponse(out)
+        }
+    }
+
+    private fun handleSshScp(payload: JSONObject): Response {
+        val direction = payload.optString("direction", "").trim().lowercase(Locale.US)
+        if (direction != "upload" && direction != "download") {
+            return jsonError(Response.Status.BAD_REQUEST, "direction_required")
+        }
+        val host = payload.optString("host", "").trim()
+        if (host.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "host_required")
+        val user = payload.optString("user", "").trim()
+        val port = payload.optInt("port", 22).coerceIn(1, 65535)
+        val remotePath = payload.optString("remote_path", "").trim()
+        if (remotePath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "remote_path_required")
+        val localPath = payload.optString("local_path", "").trim()
+        if (localPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "local_path_required")
+        val recursive = payload.optBoolean("recursive", false)
+        val timeoutS = payload.optDouble("timeout_s", 90.0).coerceIn(2.0, 600.0)
+        val maxOutputBytes = payload.optInt("max_output_bytes", 64 * 1024).coerceIn(4 * 1024, 512 * 1024)
+
+        val localRoot = File(context.filesDir, "user").canonicalFile
+        val localFile = resolveUserPath(localRoot, localPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        if (direction == "upload" && !localFile.exists()) {
+            return jsonError(Response.Status.NOT_FOUND, "local_path_not_found")
+        }
+        if (direction == "upload" && localFile.isDirectory && !recursive) {
+            return jsonError(Response.Status.BAD_REQUEST, "recursive_required_for_directory")
+        }
+        if (direction == "download") {
+            runCatching { localFile.parentFile?.mkdirs() }
+        }
+
+        val scp = findScpBinary() ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "scp_client_missing")
+        val dbclientWrapper = ensureDbclientWrapper() ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "ssh_wrapper_missing")
+
+        val args = mutableListOf(scp.absolutePath, "-S", dbclientWrapper.absolutePath, "-y")
+        if (port != 22) {
+            args.add("-P")
+            args.add(port.toString())
+        }
+        if (recursive) args.add("-r")
+
+        val remote = "${sshTarget(user, host)}:$remotePath"
+        when (direction) {
+            "upload" -> {
+                args.add(localFile.absolutePath)
+                args.add(remote)
+            }
+            "download" -> {
+                args.add(remote)
+                args.add(localFile.absolutePath)
+            }
+        }
+
+        val result = runProcessCapture(args, timeoutS, maxOutputBytes)
+        val out = JSONObject()
+            .put("status", if (result.timedOut) "timeout" else "ok")
+            .put("direction", direction)
+            .put("target", sshTarget(user, host))
+            .put("port", port)
+            .put("local_path", localPath)
+            .put("remote_path", remotePath)
+            .put("exit_code", result.exitCode ?: JSONObject.NULL)
+            .put("timed_out", result.timedOut)
+            .put("stdout", result.stdout)
+            .put("stderr", result.stderr)
+            .put("truncated", result.truncated)
+        return if (result.timedOut) {
+            newFixedLengthResponse(Response.Status.REQUEST_TIMEOUT, "application/json", out.toString())
+        } else {
+            jsonResponse(out)
+        }
+    }
+
+    private fun findDbclientBinary(): File? {
+        val lib = File(context.applicationInfo.nativeLibraryDir, "libdbclient.so")
+        return if (lib.exists()) lib else null
+    }
+
+    private fun findScpBinary(): File? {
+        val lib = File(context.applicationInfo.nativeLibraryDir, "libscp.so")
+        return if (lib.exists()) lib else null
+    }
+
+    private fun ensureDbclientWrapper(): File? {
+        val wrapper = File(File(context.filesDir, "bin"), "methings-dbclient")
+        return try {
+            if (!wrapper.exists() || wrapper.length() == 0L) {
+                wrapper.parentFile?.mkdirs()
+                wrapper.writeText(
+                    "#!/system/bin/sh\n" +
+                        "exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" -y \"${'$'}@\"\n"
+                )
+            }
+            wrapper.setExecutable(true, true)
+            wrapper.setReadable(true, true)
+            wrapper.setWritable(true, true)
+            wrapper
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to ensure dbclient wrapper", ex)
+            null
+        }
+    }
+
+    private fun sshTarget(user: String, host: String): String {
+        return if (user.isBlank()) host else "$user@$host"
+    }
+
+    private fun buildSshProcess(argv: List<String>): ProcessBuilder {
+        val pb = ProcessBuilder(argv)
+        val userHome = File(context.filesDir, "user")
+        val nativeLibDir = context.applicationInfo.nativeLibraryDir
+        val binDir = File(context.filesDir, "bin")
+        pb.directory(userHome)
+        pb.environment()["HOME"] = userHome.absolutePath
+        pb.environment()["USER"] = "methings"
+        pb.environment()["METHINGS_NATIVELIB"] = nativeLibDir
+        pb.environment()["METHINGS_BINDIR"] = binDir.absolutePath
+        val existingPath = pb.environment()["PATH"] ?: "/usr/bin:/bin"
+        pb.environment()["PATH"] = "${binDir.absolutePath}:$nativeLibDir:$existingPath"
+        return pb
+    }
+
+    private data class ProcessCaptureResult(
+        val exitCode: Int?,
+        val timedOut: Boolean,
+        val stdout: String,
+        val stderr: String,
+        val truncated: Boolean
+    )
+
+    private fun runProcessCapture(argv: List<String>, timeoutS: Double, maxOutputBytes: Int): ProcessCaptureResult {
+        return try {
+            val proc = buildSshProcess(argv).start()
+            val stdoutBuf = ByteArrayOutputStream()
+            val stderrBuf = ByteArrayOutputStream()
+            val stdoutState = AtomicBoolean(false)
+            val stderrState = AtomicBoolean(false)
+            val stdoutThread = Thread {
+                copyLimited(proc.inputStream, stdoutBuf, maxOutputBytes, stdoutState)
+            }
+            val stderrThread = Thread {
+                copyLimited(proc.errorStream, stderrBuf, maxOutputBytes, stderrState)
+            }
+            stdoutThread.start()
+            stderrThread.start()
+
+            val finished = proc.waitFor((timeoutS * 1000.0).toLong(), TimeUnit.MILLISECONDS)
+            if (!finished) {
+                runCatching { proc.destroy() }
+                if (!proc.waitFor(300, TimeUnit.MILLISECONDS)) {
+                    runCatching { proc.destroyForcibly() }
+                }
+            }
+
+            runCatching { stdoutThread.join(600) }
+            runCatching { stderrThread.join(600) }
+            ProcessCaptureResult(
+                exitCode = if (finished) runCatching { proc.exitValue() }.getOrNull() else null,
+                timedOut = !finished,
+                stdout = stdoutBuf.toString(StandardCharsets.UTF_8.name()),
+                stderr = stderrBuf.toString(StandardCharsets.UTF_8.name()),
+                truncated = stdoutState.get() || stderrState.get()
+            )
+        } catch (ex: Exception) {
+            ProcessCaptureResult(
+                exitCode = -1,
+                timedOut = false,
+                stdout = "",
+                stderr = ex.message ?: "process_failed",
+                truncated = false
+            )
+        }
+    }
+
+    private fun copyLimited(
+        input: java.io.InputStream,
+        out: ByteArrayOutputStream,
+        maxBytes: Int,
+        truncated: AtomicBoolean
+    ) {
+        val buf = ByteArray(8192)
+        var total = 0
+        while (true) {
+            val n = try {
+                input.read(buf)
+            } catch (_: Exception) {
+                -1
+            }
+            if (n <= 0) break
+            val remaining = maxBytes - total
+            if (remaining <= 0) {
+                truncated.set(true)
+                continue
+            }
+            if (n <= remaining) {
+                out.write(buf, 0, n)
+                total += n
+            } else {
+                out.write(buf, 0, remaining)
+                total += remaining
+                truncated.set(true)
+            }
+        }
+    }
+
+    private fun startSshWsPump(
+        input: java.io.InputStream,
+        streamType: String,
+        ws: NanoWSD.WebSocket,
+        closed: AtomicBoolean
+    ) {
+        Thread {
+            val buf = ByteArray(4096)
+            while (!closed.get()) {
+                val n = try {
+                    input.read(buf)
+                } catch (_: Exception) {
+                    -1
+                }
+                if (n <= 0) break
+                val chunk = ByteArray(n)
+                java.lang.System.arraycopy(buf, 0, chunk, 0, n)
+                val b64 = Base64.encodeToString(chunk, Base64.NO_WRAP)
+                runCatching {
+                    ws.send(
+                        JSONObject()
+                            .put("type", streamType)
+                            .put("data_b64", b64)
+                            .toString()
+                    )
+                }
+            }
+        }.start()
     }
 
     private fun handleShellExec(payload: JSONObject): Response {

@@ -16,6 +16,9 @@ class DeviceApiTool:
         "screen.keep_on": {"method": "POST", "path": "/screen/keep_on", "permission": True},
         "ssh.status": {"method": "GET", "path": "/ssh/status", "permission": False},
         "ssh.config": {"method": "POST", "path": "/ssh/config", "permission": True},
+        "ssh.exec": {"method": "POST", "path": "/ssh/exec", "permission": True},
+        "ssh.scp": {"method": "POST", "path": "/ssh/scp", "permission": True},
+        "ssh.ws.contract": {"method": "GET", "path": "/ssh/ws/contract", "permission": False},
         "ssh.keys.list": {"method": "GET", "path": "/ssh/keys", "permission": False},
         "ssh.keys.add": {"method": "POST", "path": "/ssh/keys/add", "permission": True},
         "ssh.keys.delete": {"method": "POST", "path": "/ssh/keys/delete", "permission": True},
@@ -544,6 +547,8 @@ class DeviceApiTool:
             return "ssh_keys", "ssh_keys", "once"
         if a.startswith("ssh.pin."):
             return "ssh_pin", "ssh.pin", "session"
+        if a.startswith("ssh."):
+            return "device.ssh", "ssh", "session"
         if a.startswith("camera."):
             return "device.camera", "camera", "session"
         if a.startswith("ble."):

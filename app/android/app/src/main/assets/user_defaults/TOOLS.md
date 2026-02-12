@@ -51,6 +51,48 @@ ssh <user>@<device-ip> -p <ssh-port> -L 8765:127.0.0.1:8765
 
 Then `http://127.0.0.1:8765` on the remote machine gives full access to the WebView UI and all local HTTP APIs.
 
+SSH actions through `device_api`:
+- `ssh.exec`: one-shot remote command.
+- `ssh.scp`: upload/download files via SCP.
+- `ssh.ws.contract`: websocket contract for interactive SSH (`/ws/ssh/interactive`).
+
+Examples:
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "ssh.exec",
+    "payload": {
+      "host": "192.168.1.20",
+      "user": "kawasaki",
+      "port": 22,
+      "command": "uname -a"
+    },
+    "detail": "Run uname on remote host"
+  }
+}
+```
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "ssh.scp",
+    "payload": {
+      "direction": "upload",
+      "host": "192.168.1.20",
+      "user": "kawasaki",
+      "local_path": "captures/latest.jpg",
+      "remote_path": "/tmp/latest.jpg"
+    },
+    "detail": "Upload capture to remote host"
+  }
+}
+```
+
 ## App SSH Shell Commands (Outbound)
 
 When you are inside the app's SSH shell prompt (it looks like `methings>`), a few outbound SSH helpers are available:
