@@ -3775,13 +3775,9 @@
           autoResize();
         }
 
-        async function startSession() {
-          if (pttBusy) return;
-          pttBusy = true;
-          pttFinals = [];
-          pttPartial.textContent = "";
-          pttMicBtn.classList.add("active");
+        let pttHeld = false; // true while pointer is down
 
+        async function sttStart() {
           try {
             const res = await fetch(API + "/stt/start", {
               method: "POST",
@@ -3794,26 +3790,41 @@
             }
           } catch (e) {
             showToast(e.message || "STT start failed", 2400);
-            cleanupSession();
-            return;
+            return false;
           }
+          return true;
+        }
 
+        async function startSession() {
+          if (pttBusy) return;
+          pttBusy = true;
+          pttHeld = true;
+          pttFinals = [];
+          pttPartial.textContent = "";
+          pttMicBtn.classList.add("active");
+
+          // Connect WS first so we don't miss early events.
           try {
             pttWs = new WebSocket(WS_BASE + "/ws/stt/events");
             pttWs.onmessage = (ev) => {
               try {
                 const msg = JSON.parse(ev.data);
-                if (msg.type === "partial" && typeof msg.text === "string") {
-                  pttPartial.textContent = msg.text;
-                } else if (msg.type === "final" && typeof msg.text === "string") {
-                  if (msg.text.trim()) pttFinals.push(msg.text.trim());
+                if (msg.type !== "stt" || !msg.event) return;
+                const top = Array.isArray(msg.results) && msg.results.length ? String(msg.results[0]) : "";
+                if (msg.event === "partial" && top) {
+                  pttPartial.textContent = top;
+                } else if (msg.event === "final") {
+                  if (top.trim()) pttFinals.push(top.trim());
                   pttPartial.textContent = "";
+                  // Android SpeechRecognizer stops after final; restart while held.
+                  if (pttHeld) sttStart();
+                } else if (msg.event === "error") {
+                  // No-speech timeout or transient error; restart while held.
+                  if (pttHeld) sttStart();
                 }
               } catch (_) {}
             };
-            pttWs.onclose = () => {
-              pttWs = null;
-            };
+            pttWs.onclose = () => { pttWs = null; };
             pttWs.onerror = () => {
               try { pttWs.close(); } catch (_) {}
               pttWs = null;
@@ -3821,17 +3832,23 @@
           } catch (e) {
             showToast("STT WebSocket failed", 2000);
             cleanupSession();
+            return;
+          }
+
+          if (!(await sttStart())) {
+            cleanupSession();
           }
         }
 
         async function stopSession() {
           if (!pttBusy) return;
+          pttHeld = false;
           showPanel(false);
           try {
             await fetch(API + "/stt/stop", { method: "POST" });
           } catch (_) {}
           // Brief delay to let final events arrive before closing WS
-          await new Promise(r => setTimeout(r, 200));
+          await new Promise(r => setTimeout(r, 300));
           commitText();
           cleanupSession();
         }
