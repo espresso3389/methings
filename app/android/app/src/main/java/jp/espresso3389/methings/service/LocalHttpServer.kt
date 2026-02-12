@@ -1160,21 +1160,15 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(stt.status()))
             }
-            (uri == "/stt/start" || uri == "/stt/start/") && session.method == Method.POST -> {
+            (uri == "/stt/record" || uri == "/stt/record/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Start speech recognition")
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Start one-shot speech recognition")
                 if (!ok.first) return ok.second!!
                 val locale = payload.optString("locale", "").trim().ifBlank { null }
                 val partial = payload.optBoolean("partial", true)
                 val maxResults = payload.optInt("max_results", 5)
                 val resp = JSONObject(stt.start(locale, partial, maxResults)).put("ws_path", "/ws/stt/events")
                 return jsonResponse(resp)
-            }
-            (uri == "/stt/stop" || uri == "/stt/stop/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Stop speech recognition")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(stt.stop()))
             }
             (uri == "/location/status" || uri == "/location/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.gps", capability = "location", detail = "Location status")
@@ -3211,22 +3205,6 @@ class LocalHttpServer(
             }
         }
 
-        if (uri == "/ws/stt/events") {
-            return object : NanoWSD.WebSocket(handshake) {
-                override fun onOpen() {
-                    stt.addWsClient(this)
-                }
-                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
-                    stt.removeWsClient(this)
-                }
-                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
-                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
-                override fun onException(exception: java.io.IOException?) {
-                    stt.removeWsClient(this)
-                }
-            }
-        }
-
         if (uri == "/ws/camera/preview") {
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {
@@ -3239,6 +3217,22 @@ class LocalHttpServer(
                 override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
                 override fun onException(exception: java.io.IOException?) {
                     camera.removeWsClient(this)
+                }
+            }
+        }
+
+        if (uri == "/ws/stt/events") {
+            return object : NanoWSD.WebSocket(handshake) {
+                override fun onOpen() {
+                    stt.addWsClient(this)
+                }
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    stt.removeWsClient(this)
+                }
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+                override fun onException(exception: java.io.IOException?) {
+                    stt.removeWsClient(this)
                 }
             }
         }

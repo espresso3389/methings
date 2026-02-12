@@ -449,6 +449,11 @@
         border-color: rgba(99,102,241,0.35);
         color: #c7d2fe;
       }
+      .chat-left .icon-btn.danger {
+        background: rgba(239,68,68,0.12);
+        border-color: rgba(239,68,68,0.35);
+        color: #fecaca;
+      }
       .chat-input-area textarea {
         flex: 1;
         border: 1px solid var(--border);
@@ -485,64 +490,6 @@
       .send-btn:hover { background: var(--accent-hover); }
       .send-btn:active { transform: scale(0.95); }
       .send-btn:disabled { opacity: 0.35; cursor: default; }
-
-      .ptt-btn {
-        border: 1px solid var(--border);
-        border-radius: 50%;
-        width: 42px;
-        height: 42px;
-        background: var(--surface);
-        color: var(--ink-secondary);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        transition: background var(--transition), border-color var(--transition), color var(--transition);
-      }
-      .ptt-btn svg { width: 20px; height: 20px; display: block; }
-      .ptt-btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
-      .ptt-btn:active { transform: scale(0.95); }
-      .ptt-btn.active { background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.35); color: #a5b4fc; }
-
-      .ptt-panel {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        gap: 10px;
-        padding: 16px 12px;
-        border-bottom: 1px solid var(--border);
-      }
-      .ptt-label { font-size: 13px; color: var(--ink-muted); }
-      .ptt-partial {
-        font-size: 14px;
-        color: var(--ink-secondary);
-        min-height: 20px;
-        text-align: center;
-        word-break: break-word;
-        max-width: 100%;
-      }
-      .ptt-mic-btn {
-        width: 64px;
-        height: 64px;
-        border-radius: 50%;
-        border: 2px solid var(--border);
-        background: var(--surface);
-        color: var(--ink);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background var(--transition), border-color var(--transition);
-        touch-action: none;
-      }
-      .ptt-mic-btn svg { width: 36px; height: 36px; display: block; }
-      .ptt-mic-btn:hover { border-color: var(--ink-muted); }
-      .ptt-mic-btn.active {
-        background: rgba(239,68,68,0.15);
-        border-color: rgba(239,68,68,0.5);
-        color: #fecaca;
-      }
 
       .composer-attachments {
         display: none;
@@ -1247,18 +1194,16 @@
       </div>
       <div class="chat-input-area">
         <div class="composer-attachments" id="composerAttachments"></div>
-        <div id="pttPanel" class="ptt-panel" style="display:none;">
-          <div class="ptt-label">Push to Talk</div>
-          <div class="ptt-partial" id="pttPartial"></div>
-          <button class="ptt-mic-btn" id="pttMicBtn"></button>
+        <div class="muted" id="recordingStatus" style="display:none;margin-top:-6px;margin-bottom:2px;">
+          Recording...
         </div>
         <div class="chat-input-row">
           <div class="chat-left">
             <button class="icon-btn primary" id="chatUploadBtn" title="Attach file(s)" aria-label="Attach file(s)"></button>
+            <button class="icon-btn" id="chatRecordBtn" title="Record audio" aria-label="Record audio"></button>
           </div>
           <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
           <button class="send-btn" id="chatSend" title="Send" aria-label="Send"></button>
-          <button class="ptt-btn" id="pttBtn" title="Push to Talk" aria-label="Push to Talk"></button>
         </div>
       </div>
       <input type="file" id="chatUploadInput" multiple style="display:none" />
@@ -1593,7 +1538,7 @@
         externalLink: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
       };
 
-      // Set static button icons.
+      // Set static button icons (record button is handled by setRecordUi()).
       try { $("openSettingsBtn").innerHTML = ICON.settings; } catch (_) {}
       try { $("chatUploadBtn").innerHTML = ICON.attach; } catch (_) {}
       try { $("chatSend").innerHTML = ICON.send; } catch (_) {}
@@ -1603,8 +1548,6 @@
       try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
       try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
-      try { $("pttBtn").innerHTML = ICON.mic; } catch (_) {}
-      try { $("pttMicBtn").innerHTML = ICON.mic; } catch (_) {}
 
       function showToast(msg, ms) {
         const t = $("toast");
@@ -3590,6 +3533,7 @@
       const composerAttachments = $("composerAttachments");
       let pendingAttachments = [];
       let uploadBusy = false;
+      let recordingBusy = false;
 
       function fmtBytes(n) {
         const v = Number(n || 0);
@@ -3642,6 +3586,17 @@
           name: String(f.name || "file"),
           size: Number(f.size || 0),
           file: f,
+        });
+        renderComposerAttachments();
+      }
+
+      function addPendingRecording(blob, name) {
+        if (!blob) return;
+        pendingAttachments.push({
+          kind: "recording",
+          name: String(name || ("recording_" + Date.now() + ".webm")),
+          size: Number(blob.size || 0),
+          blob: blob,
         });
         renderComposerAttachments();
       }
@@ -3704,10 +3659,17 @@
         return finalText || "(sent)";
       }
 
-      // Chat-left upload button
-      (function initChatUpload() {
+      // Chat-left media buttons (attach + record)
+      (function initChatAttachAndRecord() {
         const uploadBtn = $("chatUploadBtn");
         const uploadInput = $("chatUploadInput");
+        const recBtn = $("chatRecordBtn");
+        const recStatus = $("recordingStatus");
+        let rStream = null;
+        let rRec = null;
+        let rChunks = [];
+        let recStartedAtMs = 0;
+        let recTimer = null;
         if (uploadBtn && uploadInput) {
           uploadBtn.addEventListener("click", () => uploadInput.click());
           uploadInput.addEventListener("change", () => {
@@ -3716,154 +3678,127 @@
             uploadInput.value = "";
           });
         }
-      })();
-
-      // Push-to-talk (STT)
-      (function initPushToTalk() {
-        const pttBtn = $("pttBtn");
-        const pttPanel = $("pttPanel");
-        const pttMicBtn = $("pttMicBtn");
-        const pttPartial = $("pttPartial");
-        if (!pttBtn || !pttPanel || !pttMicBtn || !pttPartial) return;
-
-        let pttActive = false; // panel visible
-        let pttBusy = false;   // session in progress
-        let pttWs = null;
-        let pttFinals = [];
-        let micPermissionGranted = false;
-
-        function showPanel(show) {
-          pttActive = show;
-          pttPanel.style.display = show ? "flex" : "none";
-          pttBtn.classList.toggle("active", show);
+        function setRecordUi(recording) {
+          if (!recBtn) return;
+          try {
+            if (recStatus) {
+              recStatus.style.display = recording ? "block" : "none";
+              if (!recording) recStatus.textContent = "Recording...";
+            }
+          } catch (_) {}
+          if (recording) {
+            recBtn.classList.add("danger");
+            recBtn.title = "Stop recording";
+            recBtn.setAttribute("aria-label", "Stop recording");
+            recBtn.innerHTML = ICON.stop;
+          } else {
+            recBtn.classList.remove("danger");
+            recBtn.title = "Record audio";
+            recBtn.setAttribute("aria-label", "Record audio");
+            recBtn.innerHTML = ICON.mic;
+          }
         }
 
-        pttBtn.addEventListener("click", async () => {
-          if (pttActive) { showPanel(false); return; }
-          if (!micPermissionGranted) {
+        if (recBtn) {
+          setRecordUi(false);
+          function stopRecTimer() {
+            try { if (recTimer) clearInterval(recTimer); } catch (_) {}
+            recTimer = null;
+          }
+          function startRecTimer() {
+            stopRecTimer();
+            recStartedAtMs = Date.now();
+            recTimer = setInterval(() => {
+              try {
+                if (!recStatus) return;
+                const sec = Math.max(0, Math.floor((Date.now() - recStartedAtMs) / 1000));
+                const mm = String(Math.floor(sec / 60)).padStart(2, "0");
+                const ss = String(sec % 60).padStart(2, "0");
+                recStatus.textContent = "Recording " + mm + ":" + ss + " (tap stop to finish)";
+              } catch (_) {}
+            }, 250);
+          }
+
+          async function getMicStreamWithFallback() {
             try {
-              const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-              stream.getTracks().forEach(t => t.stop());
-              micPermissionGranted = true;
+              return await navigator.mediaDevices.getUserMedia({ audio: true });
             } catch (e) {
-              showToast("Microphone permission denied", 2400);
+              const name = (e && e.name) ? String(e.name) : "";
+              const msg = (e && e.message) ? String(e.message) : "";
+              const isNotReadable = name === "NotReadableError" || /start audio source/i.test(msg);
+              if (!isNotReadable) throw e;
+              await new Promise(r => setTimeout(r, 250));
+              return await navigator.mediaDevices.getUserMedia({
+                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+              });
+            }
+          }
+          recBtn.addEventListener("click", async () => {
+            if (rRec && rRec.state !== "inactive") {
+              try { rRec.stop(); } catch (_) {
+                try { if (rStream) rStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+                rStream = null;
+                rRec = null;
+                rChunks = [];
+                stopRecTimer();
+                setRecordUi(false);
+              }
               return;
             }
-          }
-          showPanel(true);
-        });
-
-        function cleanupSession() {
-          pttBusy = false;
-          pttMicBtn.classList.remove("active");
-          if (pttWs) {
-            try { pttWs.close(); } catch (_) {}
-            pttWs = null;
-          }
-        }
-
-        function commitText() {
-          const text = pttFinals.join(" ").trim();
-          pttFinals = [];
-          pttPartial.textContent = "";
-          if (!text) return;
-          const input = $("chatInput");
-          if (!input) return;
-          const cur = input.value.trim();
-          input.value = cur ? cur + " " + text : text;
-          autoResize();
-        }
-
-        let pttHeld = false; // true while pointer is down
-
-        async function sttStart() {
-          try {
-            const res = await fetch(API + "/stt/start", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ partial: true }),
-            });
-            if (!res.ok) {
-              const body = await res.text().catch(() => "");
-              throw new Error("STT start failed: " + (body || res.status));
-            }
-          } catch (e) {
-            showToast(e.message || "STT start failed", 2400);
-            return false;
-          }
-          return true;
-        }
-
-        async function startSession() {
-          if (pttBusy) return;
-          pttBusy = true;
-          pttHeld = true;
-          pttFinals = [];
-          pttPartial.textContent = "";
-          pttMicBtn.classList.add("active");
-
-          // Connect WS first so we don't miss early events.
-          try {
-            pttWs = new WebSocket(WS_BASE + "/ws/stt/events");
-            pttWs.onmessage = (ev) => {
+            if (recordingBusy) return;
+            try {
+              recordingBusy = true;
+              if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                throw new Error("mediaDevices.getUserMedia unavailable");
+              }
+              if (typeof MediaRecorder === "undefined") {
+                throw new Error("MediaRecorder unavailable");
+              }
+              rChunks = [];
+              rStream = await getMicStreamWithFallback();
+              rRec = new MediaRecorder(rStream);
+              rRec.ondataavailable = (e) => { if (e.data && e.data.size) rChunks.push(e.data); };
+              rRec.onstop = () => {
+                const blob = new Blob(rChunks, { type: rRec.mimeType || "audio/webm" });
+                try { if (rStream) rStream.getTracks().forEach(t => t.stop()); } catch (_) {}
+                rStream = null;
+                rRec = null;
+                rChunks = [];
+                recordingBusy = false;
+                stopRecTimer();
+                setRecordUi(false);
+                try {
+                  const ts = new Date().toISOString().replace(/[:.]/g, "-");
+                  addPendingRecording(blob, "audio_recording_" + ts + ".webm");
+                } catch (_) {}
+              };
+              rRec.start();
+              recordingBusy = false;
+              setRecordUi(true);
+              startRecTimer();
+              showToast("Recording... tap again to stop", 1400);
+            } catch (e) {
+              setRecordUi(false);
+              recordingBusy = false;
+              stopRecTimer();
+              let msg = "Record failed";
               try {
-                const msg = JSON.parse(ev.data);
-                if (msg.type !== "stt" || !msg.event) return;
-                const top = Array.isArray(msg.results) && msg.results.length ? String(msg.results[0]) : "";
-                if (msg.event === "partial" && top) {
-                  pttPartial.textContent = top;
-                } else if (msg.event === "final") {
-                  if (top.trim()) pttFinals.push(top.trim());
-                  pttPartial.textContent = "";
-                  // Android SpeechRecognizer stops after final; restart while held.
-                  if (pttHeld) sttStart();
-                } else if (msg.event === "error") {
-                  // No-speech timeout or transient error; restart while held.
-                  if (pttHeld) sttStart();
+                const n = (e && e.name) ? String(e.name) : "";
+                const m = (e && e.message) ? String(e.message) : String(e);
+                const s = (n ? (n + ": ") : "") + (m || "");
+                if (s.trim() && s.trim() !== "undefined") {
+                  msg = "Record failed: " + s.trim();
+                } else {
+                  msg = "Record failed: (no detail) Try closing other apps using the mic and retry.";
                 }
               } catch (_) {}
-            };
-            pttWs.onclose = () => { pttWs = null; };
-            pttWs.onerror = () => {
-              try { pttWs.close(); } catch (_) {}
-              pttWs = null;
-            };
-          } catch (e) {
-            showToast("STT WebSocket failed", 2000);
-            cleanupSession();
-            return;
-          }
-
-          if (!(await sttStart())) {
-            cleanupSession();
-          }
+              try { console.log("record error", e); } catch (_) {}
+              showToast(msg, 2400);
+              try { addMsg("assistant", msg, { debug: true }); } catch (_) {}
+            }
+          });
         }
-
-        async function stopSession() {
-          if (!pttBusy) return;
-          pttHeld = false;
-          showPanel(false);
-          try {
-            await fetch(API + "/stt/stop", { method: "POST" });
-          } catch (_) {}
-          // Brief delay to let final events arrive before closing WS
-          await new Promise(r => setTimeout(r, 300));
-          commitText();
-          cleanupSession();
-        }
-
-        pttMicBtn.addEventListener("pointerdown", (e) => {
-          e.preventDefault();
-          startSession();
-        });
-        pttMicBtn.addEventListener("pointerup", (e) => {
-          e.preventDefault();
-          stopSession();
-        });
-        pttMicBtn.addEventListener("pointercancel", () => stopSession());
-        pttMicBtn.addEventListener("pointerleave", () => stopSession());
       })();
-
       async function waitForAgentReply(itemId) {
         // SSE-primary: register a waiter resolved by the brain_message handler.
         const ssePromise = new Promise(resolve => {

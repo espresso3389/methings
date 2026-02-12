@@ -73,13 +73,13 @@ class MethingsClient:
     def usb_status(self) -> Dict[str, Any]:
         return self.device_api("usb.status", {}, detail="USB status")
 
-    def stt_transcribe(self, *, rel_path: str = "", audio_b64: str = "") -> Dict[str, Any]:
+    def stt_record(self, *, locale: str = "", partial: bool = True, max_results: int = 5) -> Dict[str, Any]:
         payload: Dict[str, Any] = {}
-        if rel_path:
-            payload["rel_path"] = rel_path
-        if audio_b64:
-            payload["audio_b64"] = audio_b64
-        return self.device_api("stt.transcribe", payload, detail="STT transcribe (file)")
+        if locale:
+            payload["locale"] = locale
+        payload["partial"] = bool(partial)
+        payload["max_results"] = int(max_results)
+        return self.device_api("stt.record", payload, detail="STT one-shot record")
 
     def uvc_mjpeg_capture(
         self,

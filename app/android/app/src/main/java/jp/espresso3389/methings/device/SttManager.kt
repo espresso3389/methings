@@ -7,33 +7,57 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import fi.iki.elonen.NanoWSD
 import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 class SttManager(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private var recognizer: SpeechRecognizer? = null
     private val active = AtomicBoolean(false)
     private val wsClients = CopyOnWriteArrayList<NanoWSD.WebSocket>()
+    private val wsClientCount = AtomicInteger(0)
+    private val lastEvent = AtomicReference("")
+    private val lastTopResult = AtomicReference("")
+    private val lastErrorCode = AtomicInteger(0)
+    private val lastEventTsMs = AtomicLong(0L)
 
     fun addWsClient(ws: NanoWSD.WebSocket) {
         wsClients.add(ws)
+        wsClientCount.set(wsClients.size)
+        Log.d(TAG, "STT ws connected count=${wsClients.size}")
     }
 
     fun removeWsClient(ws: NanoWSD.WebSocket) {
         wsClients.remove(ws)
+        wsClientCount.set(wsClients.size)
+        Log.d(TAG, "STT ws disconnected count=${wsClients.size}")
     }
 
     fun status(): Map<String, Any> {
-        return mapOf("status" to "ok", "active" to active.get())
+        return mapOf(
+            "status" to "ok",
+            "active" to active.get(),
+            "ws_clients" to wsClientCount.get(),
+            "last_event" to lastEvent.get(),
+            "last_top_result" to lastTopResult.get(),
+            "last_error_code" to lastErrorCode.get(),
+            "last_event_ts_ms" to lastEventTsMs.get()
+        )
     }
 
     fun start(localeTag: String? = null, partial: Boolean = true, maxResults: Int = 5): Map<String, Any> {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             return mapOf("status" to "error", "error" to "recognition_not_available")
+        }
+        if (active.get()) {
+            return mapOf("status" to "error", "error" to "already_active")
         }
 
         val loc = if (!localeTag.isNullOrBlank()) Locale.forLanguageTag(localeTag) else null
@@ -60,17 +84,20 @@ class SttManager(private val context: Context) {
 
                         override fun onError(error: Int) {
                             active.set(false)
+                            lastErrorCode.set(error)
                             emit("error", JSONObject().put("code", error))
                         }
 
                         override fun onResults(results: Bundle?) {
                             active.set(false)
                             val arr = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
+                            lastTopResult.set(arr.firstOrNull() ?: "")
                             emit("final", JSONObject().put("results", arr))
                         }
 
                         override fun onPartialResults(partialResults: Bundle?) {
                             val arr = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: arrayListOf()
+                            lastTopResult.set(arr.firstOrNull() ?: "")
                             emit("partial", JSONObject().put("results", arr))
                         }
 
@@ -122,6 +149,20 @@ class SttManager(private val context: Context) {
     }
 
     private fun emit(kind: String, data: JSONObject) {
+        lastEvent.set(kind)
+        lastEventTsMs.set(System.currentTimeMillis())
+        try {
+            val top = if (data.has("results")) {
+                val a = data.optJSONArray("results")
+                if (a != null && a.length() > 0) a.optString(0, "") else ""
+            } else ""
+            if (top.isNotBlank()) {
+                lastTopResult.set(top)
+            }
+            Log.d(TAG, "STT event=$kind active=${active.get()} ws=${wsClients.size} top='${(top.take(80))}'")
+        } catch (_: Exception) {
+            Log.d(TAG, "STT event=$kind active=${active.get()} ws=${wsClients.size}")
+        }
         val msg = JSONObject()
             .put("type", "stt")
             .put("event", kind)
@@ -139,6 +180,10 @@ class SttManager(private val context: Context) {
             }
         }
         for (ws in dead) wsClients.remove(ws)
+        wsClientCount.set(wsClients.size)
+    }
+
+    companion object {
+        private const val TAG = "MethingsStt"
     }
 }
-

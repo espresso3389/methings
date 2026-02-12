@@ -50,6 +50,7 @@ Build an Android 14+ app that provides a Python development environment with:
 - Add concise comments only when logic is non-obvious.
 - Keep security prompts minimal but explicit.
 - No silent elevation or background actions.
+- API docs policy: when updating `docs/api_reference.md` (and mirrored `user_defaults/docs/api_reference.md`), edit only the section(s) related to the current feature; do not rewrite formatting, reorder unrelated sections, or replace the whole file style.
 - On-device Python tooling: use venv + pip (avoid system pip). Host-side app development must use uv.
 - WSL usage is allowed but only when the user explicitly opts in for that session.
 
