@@ -2174,7 +2174,17 @@
           openBtn.setAttribute("aria-label", "Open");
           openBtn.innerHTML = ICON.externalLink;
           const open = () => {
-            try { location.href = "methings://open_user_html?path=" + encodeURIComponent(p); } catch (_) {}
+            if (typeof AndroidBridge !== "undefined") {
+              try { location.href = "methings://open_user_html?path=" + encodeURIComponent(p); } catch (_) {}
+              return;
+            }
+            try {
+              openHtmlViewer(p);
+            } catch (_) {
+              try {
+                window.open(API + "/user/file?path=" + encodeURIComponent(p), "_blank", "noopener,noreferrer");
+              } catch (_) {}
+            }
           };
           openBtn.addEventListener("click", (ev) => {
             ev.preventDefault();
