@@ -374,6 +374,29 @@
       .viewer-text pre code.hljs { padding: 0; background: transparent; }
       .viewer-text .attach-md { max-height: none; overflow: visible; background: transparent; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 15px; }
       .viewer-md-toggle { margin-right: 4px; }
+      .viewer.immersive .viewer-top { display: none; }
+
+      /* Rendered markdown elements (inside .attach-md) */
+      .attach-md h1 { font-size: 1.6em; font-weight: 700; margin: 16px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+      .attach-md h2 { font-size: 1.35em; font-weight: 700; margin: 14px 0 6px; border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+      .attach-md h3 { font-size: 1.15em; font-weight: 600; margin: 12px 0 4px; }
+      .attach-md h4 { font-size: 1.05em; font-weight: 600; margin: 10px 0 4px; }
+      .attach-md h5 { font-size: 0.95em; font-weight: 600; margin: 8px 0 4px; }
+      .attach-md h6 { font-size: 0.88em; font-weight: 600; margin: 8px 0 4px; color: var(--ink-secondary); }
+      .attach-md p { margin: 6px 0; }
+      .attach-md ul, .attach-md ol { margin: 6px 0; padding-left: 22px; }
+      .attach-md li { margin: 2px 0; }
+      .attach-md li > ul, .attach-md li > ol { margin: 2px 0; }
+      .attach-md blockquote { border-left: 3px solid var(--accent); margin: 8px 0; padding: 4px 0 4px 12px; color: var(--ink-secondary); }
+      .attach-md hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+      .attach-md a { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 2px; }
+      .attach-md img { max-width: 100%; border-radius: var(--radius-sm); margin: 6px 0; }
+      .attach-md table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
+      .attach-md th, .attach-md td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+      .attach-md th { background: var(--surface); font-weight: 600; }
+      .attach-md pre { background: #0d0d0f; border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; overflow-x: auto; margin: 8px 0; font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace; font-size: 13px; line-height: 1.5; }
+      .attach-md code:not(pre code) { background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace; font-size: 0.88em; }
+      .attach-md input[type="checkbox"] { margin-right: 6px; pointer-events: none; }
 
       /* Thinking indicator */
       .thinking-dots { display: inline-flex; gap: 4px; align-items: center; padding: 4px 0; }
@@ -1185,6 +1208,7 @@
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/15.0.7/marked.min.js"></script>
   </head>
   <body>
     <!-- ===== Chat Page ===== -->
@@ -1519,6 +1543,7 @@
       <div class="viewer-top" id="viewerTop">
         <button class="icon-btn secondary" id="viewerClose" title="Close" aria-label="Close"></button>
         <div class="viewer-title" id="viewerTitle"></div>
+        <button class="icon-btn" id="viewerImmersive" title="Immersive mode" aria-label="Immersive mode" style="display:none;"></button>
         <button class="icon-btn" id="viewerShare" title="Share" aria-label="Share"></button>
       </div>
       <div class="viewer-body" id="viewerBody">
@@ -1549,6 +1574,8 @@
         externalLink: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
         code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
         doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
+        expand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
+        collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
       };
 
       // Set static button icons (record button is handled by setRecordUi()).
@@ -1561,6 +1588,7 @@
       try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
       try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
+      try { $("viewerImmersive").innerHTML = ICON.expand; } catch (_) {}
 
       function showToast(msg, ms) {
         const t = $("toast");
@@ -1895,41 +1923,39 @@
       // ==============================
       function escapeHtml(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 
-      function renderMarkdown(text) {
+      function renderMarkdownFallback(text) {
         let h = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-        // Fenced code blocks
         h = h.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
           return "<pre><code>" + code.replace(/<br\s*\/?>/g, "\n") + "</code></pre>";
         });
-
-        // Inline code
         h = h.replace(/`([^`\n]+)`/g, "<code>$1</code>");
-
-        // Bold
         h = h.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-
-        // Italic
         h = h.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
-
-        // Blockquote lines
         h = h.replace(/(^|\n)&gt; (.+)/g, "$1<blockquote>$2</blockquote>");
-
-        // Paragraphs
         h = h.replace(/\n\n+/g, "</p><p>");
         h = "<p>" + h + "</p>";
         h = h.replace(/<p><\/p>/g, "");
-
-        // Single newlines -> <br> (not inside <pre>)
         const parts = h.split(/(<pre[\s\S]*?<\/pre>)/g);
         for (let i = 0; i < parts.length; i++) {
-          if (!parts[i].startsWith("<pre")) {
-            parts[i] = parts[i].replace(/\n/g, "<br>");
-          }
+          if (!parts[i].startsWith("<pre")) parts[i] = parts[i].replace(/\n/g, "<br>");
         }
-        h = parts.join("");
+        return parts.join("");
+      }
 
-        return h;
+      function renderMarkdown(text) {
+        if (typeof marked !== "undefined" && marked.parse) {
+          try {
+            const html = marked.parse(text, { gfm: true, breaks: true });
+            // Apply hljs to code blocks in a temporary container
+            const tmp = document.createElement("div");
+            tmp.innerHTML = html;
+            tmp.querySelectorAll("pre code[class*='language-']").forEach(function(el) {
+              try { hljs.highlightElement(el); } catch (_) {}
+            });
+            return tmp.innerHTML;
+          } catch (_) {}
+        }
+        return renderMarkdownFallback(text);
       }
 
       // ==============================
@@ -2420,17 +2446,20 @@
         viewerPaths = collectViewerPaths();
         const idx = viewerPaths.indexOf(rel);
         viewerIndex = idx >= 0 ? idx : 0;
+        viewerImmersiveBtn.style.display = "";
         viewer.classList.add("show");
         await setViewerImage(rel);
       }
       let _viewerMdToggle = null;
       function closeViewer() {
+        if (_immersive) exitImmersiveMode();
         viewer.classList.remove("show");
         viewerImg.src = "";
         viewerImg.style.display = "";
         viewerText.style.display = "none";
         viewerText.innerHTML = "";
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
+        viewerImmersiveBtn.style.display = "none";
         viewerPaths = [];
         viewerIndex = 0;
         resetViewerTransform();
@@ -2448,6 +2477,7 @@
         viewerImg.style.display = "none";
         viewerText.style.display = "block";
         viewerText.innerHTML = "";
+        viewerImmersiveBtn.style.display = "";
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
         if (ext === "md") {
           const mdDiv = document.createElement("div");
@@ -2606,6 +2636,34 @@
       viewerImg.addEventListener("dblclick", (ev) => {
         ev.preventDefault();
         resetViewerTransform();
+      });
+
+      // ==============================
+      // Immersive mode
+      // ==============================
+      const viewerImmersiveBtn = $("viewerImmersive");
+      let _immersive = false;
+
+      function enterImmersiveMode() {
+        _immersive = true;
+        viewer.classList.add("immersive");
+        viewerImmersiveBtn.innerHTML = ICON.collapse;
+        viewerImmersiveBtn.title = "Exit immersive";
+        try { if (typeof AndroidBridge !== "undefined" && AndroidBridge.enterImmersiveMode) AndroidBridge.enterImmersiveMode(); } catch (_) {}
+      }
+      function exitImmersiveMode() {
+        _immersive = false;
+        viewer.classList.remove("immersive");
+        viewerImmersiveBtn.innerHTML = ICON.expand;
+        viewerImmersiveBtn.title = "Immersive mode";
+        try { if (typeof AndroidBridge !== "undefined" && AndroidBridge.exitImmersiveMode) AndroidBridge.exitImmersiveMode(); } catch (_) {}
+      }
+      // Callback from Android notification "Exit full screen" action.
+      window.onExitImmersiveMode = function() {
+        if (_immersive) exitImmersiveMode();
+      };
+      viewerImmersiveBtn.addEventListener("click", () => {
+        if (_immersive) exitImmersiveMode(); else enterImmersiveMode();
       });
 
       // ==============================

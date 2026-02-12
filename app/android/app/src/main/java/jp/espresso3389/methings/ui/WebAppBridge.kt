@@ -276,6 +276,16 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun enterImmersiveMode() {
+        handler.post { activity.enterImmersiveMode() }
+    }
+
+    @JavascriptInterface
+    fun exitImmersiveMode() {
+        handler.post { activity.exitImmersiveMode() }
+    }
+
+    @JavascriptInterface
     fun openAppOpenByDefaultSettings() {
         handler.post {
             // Some OEM builds don't support this action; fail soft back to app details.

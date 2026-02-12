@@ -80,6 +80,9 @@
         <receiver
             android:name=".service.BrainInterruptReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".ui.ImmersiveExitReceiver"
+            android:exported="false" />
 
     </application>
 </manifest>

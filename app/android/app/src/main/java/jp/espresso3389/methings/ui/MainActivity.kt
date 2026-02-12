@@ -7,9 +7,14 @@ import android.content.IntentFilter
 import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.widget.FrameLayout
 import android.widget.Toast
 import android.webkit.PermissionRequest
@@ -22,9 +27,11 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import jp.espresso3389.methings.AppForegroundState
+import jp.espresso3389.methings.R
 import jp.espresso3389.methings.device.UsbPermissionResultReceiver
 import jp.espresso3389.methings.device.UsbPermissionWaiter
 import jp.espresso3389.methings.service.AgentService
@@ -235,6 +242,11 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (intent.getBooleanExtra(ImmersiveExitReceiver.EXTRA_EXIT_IMMERSIVE, false)) {
+            intent.removeExtra(ImmersiveExitReceiver.EXTRA_EXIT_IMMERSIVE)
+            exitImmersiveMode()
+            return
+        }
         maybeHandlePermissionIntent(intent)
     }
 
@@ -284,6 +296,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        if (isImmersive) exitImmersiveMode()
         unregisterReceiver(pythonHealthReceiver)
         unregisterReceiver(permissionPromptReceiver)
         unregisterReceiver(uiReloadReceiver)
@@ -582,6 +595,88 @@ class MainActivity : AppCompatActivity() {
             arrayOf(Manifest.permission.POST_NOTIFICATIONS),
             1001
         )
+    }
+
+    // ==============================
+    // Immersive mode
+    // ==============================
+    private var isImmersive = false
+    private val immersiveNotifId = 82020
+
+    fun enterImmersiveMode() {
+        if (isImmersive) return
+        isImmersive = true
+        hideSystemBars()
+        showImmersiveNotification()
+    }
+
+    fun exitImmersiveMode() {
+        if (!isImmersive) return
+        isImmersive = false
+        showSystemBars()
+        cancelImmersiveNotification()
+        evalJs("window.onExitImmersiveMode && window.onExitImmersiveMode()")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun hideSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.let { ctrl ->
+                ctrl.hide(WindowInsets.Type.systemBars())
+                ctrl.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            window.decorView.systemUiVisibility = (
+                android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                    or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            )
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun showSystemBars() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            window.insetsController?.show(WindowInsets.Type.systemBars())
+        } else {
+            window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
+    }
+
+    private fun showImmersiveNotification() {
+        val nm = getSystemService(NotificationManager::class.java)
+        val channelId = "immersive_mode"
+        if (nm.getNotificationChannel(channelId) == null) {
+            val ch = NotificationChannel(channelId, "Immersive mode", NotificationManager.IMPORTANCE_LOW)
+            ch.description = "Shown while the viewer is in immersive mode"
+            nm.createNotificationChannel(ch)
+        }
+        val exitIntent = Intent(this, ImmersiveExitReceiver::class.java).apply {
+            action = ImmersiveExitReceiver.ACTION_EXIT_IMMERSIVE
+        }
+        val exitPi = PendingIntent.getBroadcast(
+            this, immersiveNotifId, exitIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle("me.things")
+            .setContentText("Tap to exit full screen")
+            .setOngoing(true)
+            .setSilent(true)
+            .addAction(0, "Exit full screen", exitPi)
+            .setContentIntent(exitPi)
+            .build()
+        nm.notify(immersiveNotifId, notif)
+    }
+
+    private fun cancelImmersiveNotification() {
+        try {
+            getSystemService(NotificationManager::class.java).cancel(immersiveNotifId)
+        } catch (_: Exception) {}
     }
 
 }
