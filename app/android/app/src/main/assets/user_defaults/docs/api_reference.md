@@ -47,6 +47,8 @@ See [permissions.md](permissions.md) for scopes, identity model, and USB special
 | `ssh.pin.start` | POST | `/ssh/pin/start` |
 | `ssh.pin.stop` | POST | `/ssh/pin/stop` |
 
+Details: [ssh.md](ssh.md)
+
 ### Camera
 
 | Action | Method | Endpoint |
