@@ -9,6 +9,9 @@
 - `llama.run` -> `POST /llama/run`
 - `llama.generate` -> `POST /llama/generate`
 - `llama.tts` -> `POST /llama/tts`
+- `llama.tts.plugins.list` -> `GET /llama/tts/plugins`
+- `llama.tts.plugins.upsert` -> `POST /llama/tts/plugins/upsert`
+- `llama.tts.plugins.delete` -> `POST /llama/tts/plugins/delete`
 - `llama.tts.speak` -> `POST /llama/tts/speak`
 - `llama.tts.speak.status` -> `POST /llama/tts/speak/status`
 - `llama.tts.speak.stop` -> `POST /llama/tts/speak/stop`
@@ -153,3 +156,59 @@ The response returns `speech_id`. Poll status and stop if needed:
 ```
 
 If you already have a generated audio file and only need playback, use `media.audio.play` with `path`.
+
+### 6) Generic TTS plugins (codec/vocoder presets)
+
+Register reusable templates so the agent can switch codec/vocoder stacks without hardcoding them into each request.
+
+Create/update plugin:
+
+```json
+{
+  "action": "llama.tts.plugins.upsert",
+  "payload": {
+    "plugin_id": "miotts_local_vocoder",
+    "description": "MioTTS with local gguf vocoder",
+    "args": [
+      "-m", "{{model}}",
+      "-p", "{{text}}",
+      "-o", "{{output_path}}",
+      "--model-vocoder", "{{vocoder_path}}"
+    ],
+    "defaults": {
+      "vocoder_path": "/data/user/0/jp.espresso3389.methings/files/user/.cache/llama.cpp/ggml-org_WavTokenizer_WavTokenizer-Large-75-F16.gguf"
+    },
+    "set_default": true
+  }
+}
+```
+
+Use plugin:
+
+```json
+{
+  "action": "llama.tts",
+  "payload": {
+    "plugin_id": "miotts_local_vocoder",
+    "model": "MioTTS-0.1B-Q4_K_M.gguf",
+    "text": "plugin based synthesis",
+    "output_path": "captures/miotts_plugin.wav"
+  }
+}
+```
+
+Override plugin variables per request:
+
+```json
+{
+  "action": "llama.tts.speak",
+  "payload": {
+    "plugin_id": "miotts_local_vocoder",
+    "model": "MioTTS-0.1B-Q4_K_M.gguf",
+    "text": "streaming speech",
+    "vars": {
+      "vocoder_path": "/custom/path/to/vocoder.gguf"
+    }
+  }
+}
+```

@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class LlamaCppManager(private val context: Context) {
     private val filesRoot: File = context.filesDir
     private val userRoot: File = File(filesRoot, "user")
+    private val ttsPluginFile: File = File(userRoot, ".config/llama_tts_plugins.json")
     private val defaultModelRoots: List<File> = listOf(
         File(filesRoot, "models"),
         File(filesRoot, "models/llama"),
@@ -124,21 +125,107 @@ class LlamaCppManager(private val context: Context) {
         }
     }
 
+    fun ttsPluginsList(payload: JSONObject): Map<String, Any?> {
+        val includeArgs = payload.optBoolean("include_args", true)
+        val doc = loadTtsPluginDoc()
+        val pluginsObj = doc.optJSONObject("plugins") ?: JSONObject()
+        val ids = ArrayList<String>()
+        val it = pluginsObj.keys()
+        while (it.hasNext()) ids.add(it.next())
+        ids.sort()
+        val items = JSONArray()
+        for (id in ids) {
+            val p = pluginsObj.optJSONObject(id) ?: continue
+            val item = JSONObject()
+                .put("plugin_id", id)
+                .put("description", p.optString("description", ""))
+                .put("created_at", p.optLong("created_at", 0L))
+                .put("updated_at", p.optLong("updated_at", 0L))
+                .put("defaults", p.optJSONObject("defaults") ?: JSONObject())
+            val preset = p.optJSONObject("preset")
+            if (preset != null) item.put("preset", preset)
+            if (includeArgs) item.put("args", p.optJSONArray("args") ?: JSONArray())
+            items.put(item)
+        }
+        return mapOf(
+            "status" to "ok",
+            "count" to items.length(),
+            "default_plugin_id" to doc.optString("default_plugin_id", ""),
+            "items" to items
+        )
+    }
+
+    fun ttsPluginsUpsert(payload: JSONObject): Map<String, Any?> {
+        val pluginId = payload.optString("plugin_id", "").trim()
+        if (pluginId.isEmpty()) return mapOf("status" to "error", "error" to "missing_plugin_id")
+        val args = payload.optJSONArray("args")
+            ?: return mapOf("status" to "error", "error" to "missing_args", "detail" to "Provide payload.args template.")
+        if (args.length() == 0) return mapOf("status" to "error", "error" to "missing_args")
+
+        val now = System.currentTimeMillis()
+        val doc = loadTtsPluginDoc()
+        val pluginsObj = doc.optJSONObject("plugins") ?: JSONObject()
+        val existing = pluginsObj.optJSONObject(pluginId)
+
+        val plugin = JSONObject()
+            .put("plugin_id", pluginId)
+            .put("args", JSONArray(jsonArrayToStringList(args)))
+            .put("description", payload.optString("description", "").trim())
+            .put("defaults", payload.optJSONObject("defaults") ?: JSONObject())
+            .put("created_at", existing?.optLong("created_at", now) ?: now)
+            .put("updated_at", now)
+
+        val presetIn = payload.optJSONObject("preset")
+        if (presetIn != null) {
+            val preset = JSONObject()
+            val allow = listOf("binary", "model", "model_path", "cwd", "timeout_ms", "max_output_bytes", "min_output_duration_ms")
+            for (k in allow) {
+                if (presetIn.has(k)) preset.put(k, presetIn.get(k))
+            }
+            plugin.put("preset", preset)
+        } else if (existing?.optJSONObject("preset") != null) {
+            plugin.put("preset", existing.optJSONObject("preset"))
+        }
+
+        pluginsObj.put(pluginId, plugin)
+        doc.put("plugins", pluginsObj)
+        if (payload.optBoolean("set_default", false)) doc.put("default_plugin_id", pluginId)
+        saveTtsPluginDoc(doc)
+        return mapOf("status" to "ok", "plugin" to plugin)
+    }
+
+    fun ttsPluginsDelete(payload: JSONObject): Map<String, Any?> {
+        val pluginId = payload.optString("plugin_id", "").trim()
+        if (pluginId.isEmpty()) return mapOf("status" to "error", "error" to "missing_plugin_id")
+        val doc = loadTtsPluginDoc()
+        val pluginsObj = doc.optJSONObject("plugins") ?: JSONObject()
+        if (!pluginsObj.has(pluginId)) return mapOf("status" to "ok", "deleted" to false, "plugin_id" to pluginId)
+        pluginsObj.remove(pluginId)
+        doc.put("plugins", pluginsObj)
+        if (doc.optString("default_plugin_id", "") == pluginId) doc.put("default_plugin_id", "")
+        saveTtsPluginDoc(doc)
+        return mapOf("status" to "ok", "deleted" to true, "plugin_id" to pluginId)
+    }
+
     fun tts(payload: JSONObject): Map<String, Any?> {
         if (payload.optBoolean("speak", false)) {
             return ttsSpeak(payload)
         }
-        val binary = resolveBinary(payload.optString("binary", ""), "llama-tts")
+        val resolved = resolveTtsPayload(payload)
+        if (resolved.error != null) return resolved.error
+        val req = resolved.payload
+
+        val binary = resolveBinary(req.optString("binary", ""), "llama-tts")
             ?: return mapOf("status" to "error", "error" to "binary_not_found", "detail" to "llama-tts not found")
-        val model = resolveModelFile(payload)
-        val text = payload.optString("text", "")
-        val outputRel = payload.optString("output_path", "").trim().ifBlank {
+        val model = resolveModelFile(req)
+        val text = req.optString("text", "")
+        val outputRel = req.optString("output_path", "").trim().ifBlank {
             "outputs/llama_tts_${System.currentTimeMillis()}.wav"
         }
         val outputFile = resolveUserPath(outputRel)
         outputFile.parentFile?.mkdirs()
 
-        val templateArgs = payload.optJSONArray("args")
+        val templateArgs = req.optJSONArray("args")
         if (templateArgs == null || templateArgs.length() == 0) {
             return mapOf(
                 "status" to "error",
@@ -147,29 +234,24 @@ class LlamaCppManager(private val context: Context) {
             )
         }
 
-        val substitutions = mapOf(
+        val substitutions = LinkedHashMap<String, String>()
+        substitutions.putAll(resolved.templateVars)
+        substitutions.putAll(mapOf(
             "model" to (model?.absolutePath ?: ""),
             "text" to text,
             "output_path" to outputFile.absolutePath
-        )
-        val args = jsonArrayToStringList(templateArgs).map { token ->
-            when (token) {
-                "{{model}}" -> substitutions["model"] ?: ""
-                "{{text}}" -> substitutions["text"] ?: ""
-                "{{output_path}}" -> substitutions["output_path"] ?: ""
-                else -> token
-            }
-        }.filter { it.isNotEmpty() }
+        ))
+        val args = renderTemplateArgs(jsonArrayToStringList(templateArgs), substitutions)
 
-        val cwd = resolveCwd(payload.optString("cwd", ""))
-        val timeoutMs = payload.optLong("timeout_ms", 300_000L).coerceIn(1_000L, 900_000L)
-        val maxOutputBytes = payload.optInt("max_output_bytes", 2_000_000).coerceIn(4096, 8_000_000)
+        val cwd = resolveCwd(req.optString("cwd", ""))
+        val timeoutMs = req.optLong("timeout_ms", 300_000L).coerceIn(1_000L, 900_000L)
+        val maxOutputBytes = req.optInt("max_output_bytes", 2_000_000).coerceIn(4096, 8_000_000)
         val result = exec(binary, args, cwd, null, timeoutMs, maxOutputBytes)
 
         val out = LinkedHashMap(result)
         if ((result["status"] == "ok") && outputFile.exists()) {
             attachOutputFileInfo(out, outputFile)
-            val validation = validateSpeechOutput(outputFile, payload.optLong("min_output_duration_ms", 400L))
+            val validation = validateSpeechOutput(outputFile, req.optLong("min_output_duration_ms", 400L))
             if (validation != null) {
                 out["status"] = "error"
                 out["error"] = validation["error"]
@@ -178,48 +260,48 @@ class LlamaCppManager(private val context: Context) {
             }
         }
         if (model != null) out["model_path"] = model.absolutePath
+        resolved.pluginId?.let { out["plugin_id"] = it }
         return out
     }
 
     fun ttsSpeak(payload: JSONObject): Map<String, Any?> {
-        val binary = resolveBinary(payload.optString("binary", ""), "llama-tts")
+        val resolved = resolveTtsPayload(payload)
+        if (resolved.error != null) return resolved.error
+        val req = resolved.payload
+
+        val binary = resolveBinary(req.optString("binary", ""), "llama-tts")
             ?: return mapOf("status" to "error", "error" to "binary_not_found", "detail" to "llama-tts not found")
-        val model = resolveModelFile(payload)
-        val text = payload.optString("text", "")
-        val outputRel = payload.optString("output_path", "").trim().ifBlank {
+        val model = resolveModelFile(req)
+        val text = req.optString("text", "")
+        val outputRel = req.optString("output_path", "").trim().ifBlank {
             "outputs/llama_tts_${System.currentTimeMillis()}.wav"
         }
         val outputFile = resolveUserPath(outputRel)
         outputFile.parentFile?.mkdirs()
 
-        val templateArgs = payload.optJSONArray("args")
+        val templateArgs = req.optJSONArray("args")
             ?: return mapOf("status" to "error", "error" to "missing_args", "detail" to "Provide payload.args for llama-tts.")
         if (templateArgs.length() == 0) {
             return mapOf("status" to "error", "error" to "missing_args", "detail" to "Provide payload.args for llama-tts.")
         }
-        val substitutions = mapOf(
+        val substitutions = LinkedHashMap<String, String>()
+        substitutions.putAll(resolved.templateVars)
+        substitutions.putAll(mapOf(
             "model" to (model?.absolutePath ?: ""),
             "text" to text,
             "output_path" to outputFile.absolutePath
-        )
-        val args = jsonArrayToStringList(templateArgs).map { token ->
-            when (token) {
-                "{{model}}" -> substitutions["model"] ?: ""
-                "{{text}}" -> substitutions["text"] ?: ""
-                "{{output_path}}" -> substitutions["output_path"] ?: ""
-                else -> token
-            }
-        }.filter { it.isNotEmpty() }
-        val cwd = resolveCwd(payload.optString("cwd", ""))
-        val timeoutMs = payload.optLong("timeout_ms", 300_000L).coerceIn(1_000L, 900_000L)
-        val maxOutputBytes = payload.optInt("max_output_bytes", 1_000_000).coerceIn(4096, 4_000_000)
+        ))
+        val args = renderTemplateArgs(jsonArrayToStringList(templateArgs), substitutions)
+        val cwd = resolveCwd(req.optString("cwd", ""))
+        val timeoutMs = req.optLong("timeout_ms", 300_000L).coerceIn(1_000L, 900_000L)
+        val maxOutputBytes = req.optInt("max_output_bytes", 1_000_000).coerceIn(4096, 4_000_000)
 
         val id = "tts_" + UUID.randomUUID().toString().replace("-", "")
         val task = SpeechTask(
             id = id,
             outputFile = outputFile,
             startedAt = System.currentTimeMillis(),
-            minOutputDurationMs = payload.optLong("min_output_duration_ms", 400L)
+            minOutputDurationMs = req.optLong("min_output_duration_ms", 400L)
         )
         speechTasks[id] = task
 
@@ -237,6 +319,7 @@ class LlamaCppManager(private val context: Context) {
             "output_path" to relativizeToUser(outputFile),
             "output_abs_path" to outputFile.absolutePath,
             "model_path" to model?.absolutePath,
+            "plugin_id" to resolved.pluginId,
         )
     }
 
@@ -622,6 +705,110 @@ class LlamaCppManager(private val context: Context) {
             out.add(arr.opt(i)?.toString() ?: "")
         }
         return out
+    }
+
+    private data class ResolvedTtsPayload(
+        val payload: JSONObject,
+        val templateVars: Map<String, String>,
+        val pluginId: String? = null,
+        val error: Map<String, Any?>? = null,
+    )
+
+    private fun resolveTtsPayload(payload: JSONObject): ResolvedTtsPayload {
+        val pluginIdRaw = payload.optString("plugin_id", "").trim()
+        val pluginId = when {
+            pluginIdRaw.isNotBlank() -> pluginIdRaw
+            payload.optBoolean("use_default_plugin", false) -> loadTtsPluginDoc().optString("default_plugin_id", "").trim()
+            else -> ""
+        }
+        if (pluginId.isBlank()) {
+            return ResolvedTtsPayload(
+                payload = JSONObject(payload.toString()),
+                templateVars = parseTemplateVars(payload.optJSONObject("vars")),
+            )
+        }
+
+        val doc = loadTtsPluginDoc()
+        val plugin = doc.optJSONObject("plugins")?.optJSONObject(pluginId)
+            ?: return ResolvedTtsPayload(
+                payload = JSONObject(),
+                templateVars = emptyMap(),
+                pluginId = pluginId,
+                error = mapOf("status" to "error", "error" to "plugin_not_found", "plugin_id" to pluginId)
+            )
+
+        val out = JSONObject()
+        val preset = plugin.optJSONObject("preset")
+        if (preset != null) {
+            val keys = preset.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                out.put(k, preset.get(k))
+            }
+        }
+
+        val inputKeys = payload.keys()
+        while (inputKeys.hasNext()) {
+            val k = inputKeys.next()
+            out.put(k, payload.get(k))
+        }
+
+        if (!out.has("args")) out.put("args", plugin.optJSONArray("args") ?: JSONArray())
+
+        val vars = LinkedHashMap<String, String>()
+        vars.putAll(parseTemplateVars(plugin.optJSONObject("defaults")))
+        vars.putAll(parseTemplateVars(payload.optJSONObject("vars")))
+        return ResolvedTtsPayload(payload = out, templateVars = vars, pluginId = pluginId)
+    }
+
+    private fun parseTemplateVars(obj: JSONObject?): Map<String, String> {
+        if (obj == null) return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            out[k] = obj.opt(k)?.toString() ?: ""
+        }
+        return out
+    }
+
+    private fun renderTemplateArgs(tokens: List<String>, substitutions: Map<String, String>): List<String> {
+        val out = ArrayList<String>(tokens.size)
+        val exact = Regex("^\\{\\{([A-Za-z0-9_.:-]+)}}$")
+        for (raw in tokens) {
+            var token = raw
+            val m = exact.matchEntire(token)
+            if (m != null) {
+                val key = m.groupValues[1]
+                token = substitutions[key] ?: ""
+            } else {
+                for ((k, v) in substitutions) {
+                    token = token.replace("{{${k}}}", v)
+                }
+            }
+            if (token.isNotEmpty()) out.add(token)
+        }
+        return out
+    }
+
+    private fun loadTtsPluginDoc(): JSONObject {
+        return runCatching {
+            if (!ttsPluginFile.exists()) return@runCatching JSONObject().put("version", 1).put("plugins", JSONObject())
+            val text = ttsPluginFile.readText(StandardCharsets.UTF_8)
+            val parsed = if (text.isBlank()) JSONObject() else JSONObject(text)
+            if (!parsed.has("version")) parsed.put("version", 1)
+            if (!parsed.has("plugins")) parsed.put("plugins", JSONObject())
+            parsed
+        }.getOrElse {
+            JSONObject().put("version", 1).put("plugins", JSONObject())
+        }
+    }
+
+    private fun saveTtsPluginDoc(doc: JSONObject) {
+        runCatching {
+            ttsPluginFile.parentFile?.mkdirs()
+            ttsPluginFile.writeText(doc.toString(2), StandardCharsets.UTF_8)
+        }
     }
 
     private fun attachOutputFileInfo(out: MutableMap<String, Any?>, outputFile: File) {

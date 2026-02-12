@@ -88,6 +88,9 @@ Common patterns:
 - `llama.run` -> `POST /llama/run`
 - `llama.generate` -> `POST /llama/generate`
 - `llama.tts` -> `POST /llama/tts`
+- `llama.tts.plugins.list` -> `GET /llama/tts/plugins`
+- `llama.tts.plugins.upsert` -> `POST /llama/tts/plugins/upsert`
+- `llama.tts.plugins.delete` -> `POST /llama/tts/plugins/delete`
 - `llama.tts.speak` -> `POST /llama/tts/speak`
 - `llama.tts.speak.status` -> `POST /llama/tts/speak/status`
 - `llama.tts.speak.stop` -> `POST /llama/tts/speak/stop`

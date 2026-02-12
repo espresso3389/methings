@@ -159,6 +159,7 @@ Use `device_api` actions (not raw shell) for local `llama.cpp` binaries:
 - `llama.run`: run arbitrary `llama.cpp` command-line args.
 - `llama.generate`: convenience text generation via `llama-cli`.
 - `llama.tts`: convenience wrapper for `llama-tts` with templated args.
+- `llama.tts.plugins.list` / `llama.tts.plugins.upsert` / `llama.tts.plugins.delete`: manage reusable TTS templates (codec/vocoder presets).
 - `llama.tts.speak`: dedicated fast path that streams generated WAV to the device speaker.
 - `llama.tts.speak.status` / `llama.tts.speak.stop`: task control.
 

@@ -1086,6 +1086,23 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(llama.tts(payload)))
             }
+            (uri == "/llama/tts/plugins" || uri == "/llama/tts/plugins/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.llama", capability = "llama", detail = "List local Llama.cpp TTS plugins")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(llama.ttsPluginsList(JSONObject())))
+            }
+            (uri == "/llama/tts/plugins/upsert" || uri == "/llama/tts/plugins/upsert/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Create or update local Llama.cpp TTS plugin")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(llama.ttsPluginsUpsert(payload)))
+            }
+            (uri == "/llama/tts/plugins/delete" || uri == "/llama/tts/plugins/delete/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Delete local Llama.cpp TTS plugin")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(llama.ttsPluginsDelete(payload)))
+            }
             (uri == "/llama/tts/speak" || uri == "/llama/tts/speak/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Synthesize and stream speech to speaker with local Llama.cpp model")
