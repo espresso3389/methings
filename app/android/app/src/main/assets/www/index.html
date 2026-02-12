@@ -2383,6 +2383,10 @@
       let vSwipeStartX = 0.0;
       let vSwipeStartY = 0.0;
       let vSwipeAt = 0;
+      let vPinchMidX = 0.0;
+      let vPinchMidY = 0.0;
+      let vOriginX = 0.0;
+      let vOriginY = 0.0;
 
       function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
       function applyViewerTransform() {
@@ -2530,6 +2534,11 @@
           vStartScale = vScale;
           vStartTx = vTx;
           vStartTy = vTy;
+          vPinchMidX = (ev.touches[0].clientX + ev.touches[1].clientX) / 2;
+          vPinchMidY = (ev.touches[0].clientY + ev.touches[1].clientY) / 2;
+          const rect = viewerImg.getBoundingClientRect();
+          vOriginX = rect.left - vTx;
+          vOriginY = rect.top - vTy;
         } else {
           vTouchMode = (vScale > 1.02) ? "pan" : "swipe";
           vStartX = ev.touches[0].clientX;
@@ -2552,6 +2561,11 @@
           const d = dist2(ev.touches[0], ev.touches[1]);
           const ratio = vStartDist > 0 ? (d / vStartDist) : 1.0;
           vScale = clamp(vStartScale * ratio, 1.0, 6.0);
+          const curMidX = (ev.touches[0].clientX + ev.touches[1].clientX) / 2;
+          const curMidY = (ev.touches[0].clientY + ev.touches[1].clientY) / 2;
+          const sr = vScale / vStartScale;
+          vTx = curMidX - vOriginX - (vPinchMidX - vOriginX - vStartTx) * sr;
+          vTy = curMidY - vOriginY - (vPinchMidY - vOriginY - vStartTy) * sr;
           applyViewerTransform();
           return;
         }
