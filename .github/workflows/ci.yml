@@ -38,7 +38,8 @@ jobs:
             echo "Falling back to dropbear default branch because pinned submodule commit is unavailable"
             rm -rf third_party/dropbear
             git clone https://github.com/espresso3389/dropbear.git third_party/dropbear
-            git -C third_party/dropbear checkout 900010829eaffba40542672bfa8b403d11ae4cb3
+            # Use a known Android-compatible commit when the pinned submodule SHA is not fetchable.
+            git -C third_party/dropbear checkout a07e6ff1f66dbf4e137a3a25e3f93e7e63dd60f8
           fi
       - uses: actions/setup-java@v4
         with:
