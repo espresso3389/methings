@@ -356,6 +356,21 @@
         transform-origin: 0 0;
         will-change: transform;
       }
+      .viewer-video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #000;
+      }
+      .viewer-audio {
+        width: min(92vw, 720px);
+      }
+      .viewer-iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+        background: #fff;
+      }
       .attach-body img,
       .attach-body video {
         width: 100%;
@@ -375,6 +390,7 @@
       .viewer-text .attach-md { max-height: none; overflow: visible; background: transparent; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; font-size: 15px; }
       .viewer-md-toggle { margin-right: 4px; }
       .viewer.immersive .viewer-top { display: none; }
+      .viewer.immersive.show-controls .viewer-top { display: flex; }
 
       /* Rendered markdown elements (inside .attach-md) */
       .attach-md h1 { font-size: 1.6em; font-weight: 700; margin: 16px 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
@@ -1538,16 +1554,18 @@
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
-    <!-- Fullscreen Media Viewer (images) -->
+    <!-- Fullscreen Media Viewer -->
     <div class="viewer" id="viewer" role="dialog" aria-modal="true">
       <div class="viewer-top" id="viewerTop">
         <button class="icon-btn secondary" id="viewerClose" title="Close" aria-label="Close"></button>
         <div class="viewer-title" id="viewerTitle"></div>
-        <button class="icon-btn" id="viewerImmersive" title="Immersive mode" aria-label="Immersive mode" style="display:none;"></button>
         <button class="icon-btn" id="viewerShare" title="Share" aria-label="Share"></button>
       </div>
       <div class="viewer-body" id="viewerBody">
         <img class="viewer-img" id="viewerImg" alt="" />
+        <video class="viewer-video" id="viewerVideo" controls playsinline style="display:none;"></video>
+        <audio class="viewer-audio" id="viewerAudio" controls style="display:none;"></audio>
+        <iframe class="viewer-iframe" id="viewerIframe" style="display:none;" referrerpolicy="no-referrer"></iframe>
         <div class="viewer-text" id="viewerText" style="display:none;"></div>
       </div>
     </div>
@@ -1588,7 +1606,6 @@
       try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
       try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
-      try { $("viewerImmersive").innerHTML = ICON.expand; } catch (_) {}
 
       function showToast(msg, ms) {
         const t = $("toast");
@@ -2281,7 +2298,13 @@
                   a.addEventListener("error", () => { try { card.remove(); } catch (_) {} });
                   body.appendChild(a);
                   watchInlineMedia(a);
-                  hint.textContent = "Audio";
+                  card.style.cursor = "pointer";
+                  card.addEventListener("click", (ev) => {
+                    if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
+                    if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
+                    try { openMediaViewer(p, "audio"); } catch (_) {}
+                  });
+                  hint.textContent = "Audio (tap to open)";
                   return;
                 }
                 const v = document.createElement("video");
@@ -2293,7 +2316,13 @@
                 v.addEventListener("error", () => { try { card.remove(); } catch (_) {} });
                 body.appendChild(v);
                 watchInlineMedia(v);
-                hint.textContent = "Video";
+                card.style.cursor = "pointer";
+                card.addEventListener("click", (ev) => {
+                  if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
+                  if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
+                  try { openMediaViewer(p, "video"); } catch (_) {}
+                });
+                hint.textContent = "Video (tap to open)";
               } else if (kind === "audio") {
                 const a = document.createElement("audio");
                 a.controls = true;
@@ -2303,8 +2332,14 @@
                 a.addEventListener("error", () => { try { card.remove(); } catch (_) {} });
                 body.appendChild(a);
                 watchInlineMedia(a);
+                card.style.cursor = "pointer";
+                card.addEventListener("click", (ev) => {
+                  if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
+                  if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
+                  try { openMediaViewer(p, "audio"); } catch (_) {}
+                });
                 // Audio attachments are rendered as a minimal player; the card header/hint are hidden by CSS.
-                hint.textContent = "Audio";
+                hint.textContent = "Audio (tap to open)";
               } else if (kind === "text") {
                 const ext = extOf(p);
                 try {
@@ -2362,8 +2397,15 @@
                   card.style.cursor = "pointer";
                   card.addEventListener("click", (ev) => {
                     if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
+                    if ((ext === "html" || ext === "htm") && !isEmbeddedWebView) {
+                      try { openHtmlViewer(p); } catch (_) {}
+                      return;
+                    }
                     try { openTextViewer(p, content, ext); } catch (_) {}
                   });
+                  if ((ext === "html" || ext === "htm") && !isEmbeddedWebView) {
+                    hint.textContent = "HTML (tap to open live view)";
+                  }
                   try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {}
                 } catch (_) {
                   hint.textContent = "Preview failed.";
@@ -2384,18 +2426,24 @@
       }
 
       // ==============================
-      // Fullscreen image viewer (tap image, pinch zoom, swipe)
+      // Fullscreen viewer (image/video/audio/text)
       // ==============================
       const viewer = $("viewer");
       const viewerClose = $("viewerClose");
       const viewerShare = $("viewerShare");
       const viewerTitle = $("viewerTitle");
       const viewerImg = $("viewerImg");
+      const viewerVideo = $("viewerVideo");
+      const viewerAudio = $("viewerAudio");
+      const viewerIframe = $("viewerIframe");
       const viewerBody = $("viewerBody");
       const viewerText = $("viewerText");
+      const isEmbeddedWebView = (typeof AndroidBridge !== "undefined");
 
       let viewerPaths = [];
       let viewerIndex = 0;
+      let viewerCurrentRel = "";
+      let viewerMode = "";
       let vScale = 1.0;
       let vTx = 0.0;
       let vTy = 0.0;
@@ -2422,6 +2470,13 @@
         vScale = 1.0; vTx = 0.0; vTy = 0.0;
         applyViewerTransform();
       }
+      function resetViewerPanels() {
+        viewerImg.style.display = "none";
+        viewerVideo.style.display = "none";
+        viewerAudio.style.display = "none";
+        viewerIframe.style.display = "none";
+        viewerText.style.display = "none";
+      }
       function collectViewerPaths() {
         const imgs = Array.from(document.querySelectorAll('.attach-body img[data-rel-path]'));
         const out = [];
@@ -2435,7 +2490,11 @@
       async function setViewerImage(p) {
         const rel = safeRelPath(p);
         if (!rel) return;
+        viewerCurrentRel = rel;
+        viewerMode = "image";
         viewerTitle.textContent = rel;
+        resetViewerPanels();
+        viewerImg.style.display = "";
         viewerImg.src = API + "/user/file?path=" + encodeURIComponent(rel);
         viewerImg.alt = rel;
         resetViewerTransform();
@@ -2446,20 +2505,56 @@
         viewerPaths = collectViewerPaths();
         const idx = viewerPaths.indexOf(rel);
         viewerIndex = idx >= 0 ? idx : 0;
-        viewerImmersiveBtn.style.display = "";
         viewer.classList.add("show");
         await setViewerImage(rel);
+      }
+      function openMediaViewer(path, kind) {
+        const rel = safeRelPath(path);
+        if (!rel) return;
+        viewerCurrentRel = rel;
+        viewerMode = (kind === "video") ? "video" : "audio";
+        viewerTitle.textContent = rel;
+        if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
+        resetViewerPanels();
+        resetViewerTransform();
+        const src = API + "/user/file?path=" + encodeURIComponent(rel);
+        if (kind === "video") {
+          viewerVideo.src = src;
+          viewerVideo.style.display = "";
+        } else {
+          viewerAudio.src = src;
+          viewerAudio.style.display = "";
+        }
+        viewer.classList.add("show");
+      }
+      function openHtmlViewer(path) {
+        const rel = safeRelPath(path);
+        if (!rel) return;
+        viewerCurrentRel = rel;
+        viewerMode = "html";
+        viewerTitle.textContent = rel;
+        if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
+        resetViewerPanels();
+        viewerIframe.src = API + "/user/file?path=" + encodeURIComponent(rel);
+        viewerIframe.style.display = "";
+        viewer.classList.add("show");
       }
       let _viewerMdToggle = null;
       function closeViewer() {
         if (_immersive) exitImmersiveMode();
         viewer.classList.remove("show");
+        viewer.classList.remove("show-controls");
+        viewerCurrentRel = "";
+        viewerMode = "";
         viewerImg.src = "";
-        viewerImg.style.display = "";
-        viewerText.style.display = "none";
+        viewerVideo.pause();
+        viewerVideo.src = "";
+        viewerAudio.pause();
+        viewerAudio.src = "";
+        viewerIframe.src = "about:blank";
+        resetViewerPanels();
         viewerText.innerHTML = "";
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
-        viewerImmersiveBtn.style.display = "none";
         viewerPaths = [];
         viewerIndex = 0;
         resetViewerTransform();
@@ -2473,11 +2568,12 @@
       function openTextViewer(path, content, ext) {
         const rel = safeRelPath(path);
         if (!rel) return;
+        viewerCurrentRel = rel;
+        viewerMode = "text";
         viewerTitle.textContent = rel;
-        viewerImg.style.display = "none";
+        resetViewerPanels();
         viewerText.style.display = "block";
         viewerText.innerHTML = "";
-        viewerImmersiveBtn.style.display = "";
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
         if (ext === "md") {
           const mdDiv = document.createElement("div");
@@ -2531,11 +2627,27 @@
 
       viewerClose.addEventListener("click", closeViewer);
       viewer.addEventListener("click", (ev) => {
-        if (ev.target === viewer) closeViewer();
+        const t = ev.target;
+        if (t && t.closest && t.closest(".viewer-top, .icon-btn, a, button, input, textarea, select, audio, video")) return;
+        const inTextContent = !!(viewerMode === "text" && t && viewerText.contains(t));
+        if (!(
+          t === viewer ||
+          t === viewerBody ||
+          t === viewerImg ||
+          t === viewerText ||
+          t === viewerIframe ||
+          inTextContent
+        )) {
+          return;
+        }
+        if (!_immersive) {
+          enterImmersiveMode();
+          return;
+        }
+        viewer.classList.toggle("show-controls");
       });
       viewerShare.addEventListener("click", async () => {
-        const p = viewerTitle.textContent || "";
-        const rel = safeRelPath(p);
+        const rel = safeRelPath(viewerCurrentRel || viewerTitle.textContent || "");
         if (!rel) return;
         try {
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.shareUserFile) {
@@ -2553,10 +2665,13 @@
         const dy = a.clientY - b.clientY;
         return Math.hypot(dx, dy);
       }
+      function viewerIsImageMode() {
+        return viewerImg.style.display !== "none";
+      }
 
       viewerBody.addEventListener("touchstart", (ev) => {
         if (!viewer.classList.contains("show")) return;
-        if (viewerText.style.display !== "none") return;
+        if (!viewerIsImageMode()) return;
         if (!ev.touches || ev.touches.length === 0) return;
         if (ev.touches.length === 2) {
           vTouchMode = "pinch";
@@ -2583,7 +2698,7 @@
 
       viewerBody.addEventListener("touchmove", (ev) => {
         if (!viewer.classList.contains("show")) return;
-        if (viewerText.style.display !== "none") return;
+        if (!viewerIsImageMode()) return;
         if (!ev.touches || ev.touches.length === 0) return;
         ev.preventDefault();
         if (ev.touches.length === 2) {
@@ -2617,7 +2732,7 @@
 
       viewerBody.addEventListener("touchend", async (ev) => {
         if (!viewer.classList.contains("show")) return;
-        if (viewerText.style.display !== "none") return;
+        if (!viewerIsImageMode()) return;
         const now = Date.now();
         if (vTouchMode === "swipe") {
           const dx = vTx;
@@ -2637,34 +2752,34 @@
         ev.preventDefault();
         resetViewerTransform();
       });
+      document.addEventListener("keydown", (ev) => {
+        if (!viewer.classList.contains("show")) return;
+        if (ev.key !== "Escape") return;
+        ev.preventDefault();
+        closeViewer();
+      });
 
       // ==============================
       // Immersive mode
       // ==============================
-      const viewerImmersiveBtn = $("viewerImmersive");
       let _immersive = false;
 
       function enterImmersiveMode() {
         _immersive = true;
         viewer.classList.add("immersive");
-        viewerImmersiveBtn.innerHTML = ICON.collapse;
-        viewerImmersiveBtn.title = "Exit immersive";
+        viewer.classList.remove("show-controls");
         try { if (typeof AndroidBridge !== "undefined" && AndroidBridge.enterImmersiveMode) AndroidBridge.enterImmersiveMode(); } catch (_) {}
       }
       function exitImmersiveMode() {
         _immersive = false;
         viewer.classList.remove("immersive");
-        viewerImmersiveBtn.innerHTML = ICON.expand;
-        viewerImmersiveBtn.title = "Immersive mode";
+        viewer.classList.remove("show-controls");
         try { if (typeof AndroidBridge !== "undefined" && AndroidBridge.exitImmersiveMode) AndroidBridge.exitImmersiveMode(); } catch (_) {}
       }
-      // Callback from Android notification "Exit full screen" action.
+      // Callback from Android (e.g. when activity exits immersive mode).
       window.onExitImmersiveMode = function() {
         if (_immersive) exitImmersiveMode();
       };
-      viewerImmersiveBtn.addEventListener("click", () => {
-        if (_immersive) exitImmersiveMode(); else enterImmersiveMode();
-      });
 
       // ==============================
       // Chat
