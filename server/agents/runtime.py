@@ -1103,6 +1103,30 @@ class BrainRuntime:
         if str(item.get("kind") or "") == "event":
             name = str(item.get("name") or "").strip()
             payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+            if name == "permission.auto_approved":
+                sid = str(payload.get("session_id") or payload.get("identity") or "default").strip() or "default"
+                tool = str(payload.get("tool") or "unknown").strip() or "unknown"
+                detail = str(payload.get("detail") or "").strip()
+                text = (
+                    f"Auto-approved permission for '{tool}' "
+                    "(dangerously-skip-permissions is enabled)."
+                )
+                if detail:
+                    text += f"\nReference: {detail[:200]}"
+                self._record_message(
+                    "assistant",
+                    text,
+                    {
+                        "item_id": item.get("id"),
+                        "session_id": sid,
+                        "actor": "system",
+                        "tag": "permission_auto_approved",
+                        "permission_id": str(payload.get("permission_id") or "").strip(),
+                        "permission_tool": tool,
+                    },
+                )
+                self._emit_log("brain_item_done", {"id": item.get("id"), "actions": "permission_auto_approved"})
+                return
             if name == "permission.resolved":
                 pid = str(payload.get("permission_id") or payload.get("id") or "").strip()
                 status = str(payload.get("status") or "").strip()

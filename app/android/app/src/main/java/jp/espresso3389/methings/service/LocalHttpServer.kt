@@ -237,8 +237,9 @@ class LocalHttpServer(
                     remember && requestedScope.trim() == "once" -> "persistent"
                     else -> requestedScope
                 }
+                val dangerousSkip = permissionPrefs.dangerouslySkipPermissions()
 
-                if (identity.isNotBlank() && scope != "once") {
+                if (!dangerousSkip && identity.isNotBlank() && scope != "once") {
                     val pending = permissionStore.findRecentPending(
                         tool = tool,
                         identity = identity,
@@ -283,6 +284,27 @@ class LocalHttpServer(
                     }
                 }
 
+                if (dangerousSkip) {
+                    val approved = autoApprovePermission(
+                        tool = tool,
+                        detail = detail,
+                        scope = scope,
+                        identity = identity,
+                        capability = capability
+                    )
+                    return jsonResponse(
+                        JSONObject()
+                            .put("id", approved.id)
+                            .put("status", approved.status)
+                            .put("tool", approved.tool)
+                            .put("detail", approved.detail)
+                            .put("scope", approved.scope)
+                            .put("identity", approved.identity)
+                            .put("capability", approved.capability)
+                            .put("auto_approved", true)
+                    )
+                }
+
                 val req = permissionStore.create(
                     tool = tool,
                     detail = detail,
@@ -315,14 +337,24 @@ class LocalHttpServer(
                 jsonResponse(
                     JSONObject()
                         .put("remember_approvals", permissionPrefs.rememberApprovals())
+                        .put("dangerously_skip_permissions", permissionPrefs.dangerouslySkipPermissions())
                         .put("identity", installIdentity.get())
                 )
             }
             uri == "/permissions/prefs" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val remember = payload.optBoolean("remember_approvals", true)
+                val dangerousSkip = payload.optBoolean(
+                    "dangerously_skip_permissions",
+                    permissionPrefs.dangerouslySkipPermissions()
+                )
                 permissionPrefs.setRememberApprovals(remember)
-                jsonResponse(JSONObject().put("remember_approvals", permissionPrefs.rememberApprovals()))
+                permissionPrefs.setDangerouslySkipPermissions(dangerousSkip)
+                jsonResponse(
+                    JSONObject()
+                        .put("remember_approvals", permissionPrefs.rememberApprovals())
+                        .put("dangerously_skip_permissions", permissionPrefs.dangerouslySkipPermissions())
+                )
             }
             uri == "/permissions/clear" && session.method == Method.POST -> {
                 permissionStore.clearAll()
@@ -3646,7 +3678,8 @@ class LocalHttpServer(
         if (host.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "host_required")
         val user = payload.optString("user", "").trim()
         val port = payload.optInt("port", 22).coerceIn(1, 65535)
-        val timeoutS = payload.optDouble("timeout_s", 30.0).coerceIn(2.0, 300.0)
+        val noTimeout = payload.optBoolean("no_timeout", false)
+        val timeoutS = if (noTimeout) null else payload.optDouble("timeout_s", 30.0).coerceIn(2.0, 300.0)
         val maxOutputBytes = payload.optInt("max_output_bytes", 64 * 1024).coerceIn(4 * 1024, 512 * 1024)
         val pty = payload.optBoolean("pty", false)
         val acceptNewHostKey = payload.optBoolean("accept_new_host_key", true)
@@ -3710,7 +3743,8 @@ class LocalHttpServer(
         val localPath = payload.optString("local_path", "").trim()
         if (localPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "local_path_required")
         val recursive = payload.optBoolean("recursive", false)
-        val timeoutS = payload.optDouble("timeout_s", 90.0).coerceIn(2.0, 600.0)
+        val noTimeout = payload.optBoolean("no_timeout", false)
+        val timeoutS = if (noTimeout) null else payload.optDouble("timeout_s", 90.0).coerceIn(2.0, 600.0)
         val maxOutputBytes = payload.optInt("max_output_bytes", 64 * 1024).coerceIn(4 * 1024, 512 * 1024)
 
         val localRoot = File(context.filesDir, "user").canonicalFile
@@ -3824,7 +3858,7 @@ class LocalHttpServer(
         val truncated: Boolean
     )
 
-    private fun runProcessCapture(argv: List<String>, timeoutS: Double, maxOutputBytes: Int): ProcessCaptureResult {
+    private fun runProcessCapture(argv: List<String>, timeoutS: Double?, maxOutputBytes: Int): ProcessCaptureResult {
         return try {
             val proc = buildSshProcess(argv).start()
             val stdoutBuf = ByteArrayOutputStream()
@@ -3840,7 +3874,12 @@ class LocalHttpServer(
             stdoutThread.start()
             stderrThread.start()
 
-            val finished = proc.waitFor((timeoutS * 1000.0).toLong(), TimeUnit.MILLISECONDS)
+            val finished = if (timeoutS == null) {
+                proc.waitFor()
+                true
+            } else {
+                proc.waitFor((timeoutS * 1000.0).toLong(), TimeUnit.MILLISECONDS)
+            }
             if (!finished) {
                 runCatching { proc.destroy() }
                 if (!proc.waitFor(300, TimeUnit.MILLISECONDS)) {
@@ -3977,6 +4016,16 @@ class LocalHttpServer(
         }
 
         if (!isPermissionApproved(permissionId, consume = true)) {
+            if (permissionPrefs.dangerouslySkipPermissions()) {
+                autoApprovePermission(
+                    tool = "pip",
+                    detail = detail,
+                    scope = scope,
+                    identity = identity,
+                    capability = capability
+                )
+                return Pair(true, null)
+            }
             val req = permissionStore.create(
                 tool = "pip",
                 detail = detail.take(240),
@@ -4030,6 +4079,16 @@ class LocalHttpServer(
         }
 
         if (!isPermissionApproved(permissionId, consume = true)) {
+            if (permissionPrefs.dangerouslySkipPermissions()) {
+                autoApprovePermission(
+                    tool = tool,
+                    detail = detail,
+                    scope = scope,
+                    identity = identity,
+                    capability = capability
+                )
+                return Pair(true, null)
+            }
             val req = permissionStore.create(
                 tool = tool,
                 detail = detail.take(240),
@@ -4082,6 +4141,17 @@ class LocalHttpServer(
             }
         }
         if (isPermissionApproved(pid, consume = true)) return null
+
+        if (permissionPrefs.dangerouslySkipPermissions()) {
+            autoApprovePermission(
+                tool = tool,
+                detail = detail,
+                scope = scope,
+                identity = identity,
+                capability = capability
+            )
+            return null
+        }
 
         val req = permissionStore.create(
             tool = tool,
@@ -4859,6 +4929,16 @@ class LocalHttpServer(
         }
 
         if (!isPermissionApproved(permissionId, consume = consume)) {
+            if (permissionPrefs.dangerouslySkipPermissions()) {
+                autoApprovePermission(
+                    tool = tool,
+                    detail = detail,
+                    scope = scope,
+                    identity = identity,
+                    capability = capability
+                )
+                return Pair(true, null)
+            }
             val req = permissionStore.create(
                 tool = tool,
                 detail = detail.take(240),
@@ -5897,6 +5977,30 @@ class LocalHttpServer(
         }
     }
 
+    private fun autoApprovePermission(
+        tool: String,
+        detail: String,
+        scope: String,
+        identity: String,
+        capability: String
+    ): jp.espresso3389.methings.perm.PermissionStore.PermissionRequest {
+        val req = permissionStore.create(
+            tool = tool,
+            detail = detail.take(240),
+            scope = scope,
+            identity = identity,
+            capability = capability
+        )
+        val updated = permissionStore.updateStatus(req.id, "approved")
+            ?: req.copy(status = "approved")
+        if (updated.status == "approved") {
+            maybeGrantDeviceCapability(updated)
+        }
+        sendPermissionResolved(updated.id, updated.status)
+        notifyBrainPermissionAutoApproved(updated)
+        return updated
+    }
+
     private fun sendPermissionPrompt(id: String, tool: String, detail: String, forceBiometric: Boolean) {
         // Throttle duplicate prompts: when permission requests are re-used (pending) the agent
         // may re-trigger the same request quickly. Avoid spamming, but ensure the user still
@@ -5951,6 +6055,30 @@ class LocalHttpServer(
         }
     }
 
+    private fun notifyBrainPermissionAutoApproved(req: jp.espresso3389.methings.perm.PermissionStore.PermissionRequest) {
+        // Best-effort: add a chat-visible reference entry when dangerous auto-approval is active.
+        try {
+            if (runtimeManager.getStatus() != "ok") return
+            val sid = req.identity.trim()
+            val body = JSONObject()
+                .put("name", "permission.auto_approved")
+                .put(
+                    "payload",
+                    JSONObject()
+                        .put("permission_id", req.id)
+                        .put("status", req.status)
+                        .put("tool", req.tool)
+                        .put("detail", req.detail)
+                        .put("identity", req.identity)
+                        .put("session_id", sid)
+                        .put("capability", req.capability)
+                )
+                .toString()
+            proxyWorkerRequest("/brain/inbox/event", "POST", body)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun maybeGrantDeviceCapability(req: jp.espresso3389.methings.perm.PermissionStore.PermissionRequest) {
         val tool = req.tool
         if (!tool.startsWith("device.")) {
@@ -5992,8 +6120,8 @@ class LocalHttpServer(
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
         private const val PORT = 8765
-        // NanoHTTPD default socket timeout (5s) is too short for WS sensor streams.
-        private const val SOCKET_READ_TIMEOUT = 600_000
+        // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
+        private const val SOCKET_READ_TIMEOUT = 0
         private const val BRAIN_SYSTEM_PROMPT = """You are the methings Brain, an AI assistant running on an Android device.
 
 Policies:

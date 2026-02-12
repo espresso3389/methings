@@ -1397,6 +1397,16 @@
             </label>
             <span class="toggle-label">Remember approvals</span>
           </div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="permDangerSkip" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Dangerously skip permissions (auto-allow all)</span>
+          </div>
+          <div class="muted" style="margin-top:6px;">
+            When enabled, all permission requests are granted automatically and logged in chat.
+          </div>
           <div class="btn-group">
             <button class="btn" id="permClear">Clear Saved Approvals</button>
           </div>
@@ -4405,16 +4415,21 @@
       // Permissions prefs
       // ==============================
       let permissionsRemember = true;
+      let permissionsDangerSkip = false;
       async function loadPermissionPrefs() {
         try {
           const res = await fetch(API + "/permissions/prefs");
           if (!res.ok) throw 0;
           const data = await res.json();
           permissionsRemember = !!data.remember_approvals;
+          permissionsDangerSkip = !!data.dangerously_skip_permissions;
           $("permRemember").checked = permissionsRemember;
+          $("permDangerSkip").checked = permissionsDangerSkip;
         } catch (_) {
           permissionsRemember = true;
+          permissionsDangerSkip = false;
           $("permRemember").checked = true;
+          $("permDangerSkip").checked = false;
         }
       }
 
@@ -4445,16 +4460,63 @@
 
       $("permRemember").addEventListener("change", async () => {
         const enabled = !!$("permRemember").checked;
+        const prevRemember = permissionsRemember;
         permissionsRemember = enabled;
         try {
           const res = await fetch(API + "/permissions/prefs", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ remember_approvals: enabled }),
+            body: JSON.stringify({
+              remember_approvals: enabled,
+              dangerously_skip_permissions: permissionsDangerSkip,
+            }),
           });
           if (!res.ok) throw 0;
+          const data = await res.json().catch(() => ({}));
+          permissionsRemember = !!data.remember_approvals;
+          permissionsDangerSkip = !!data.dangerously_skip_permissions;
+          $("permRemember").checked = permissionsRemember;
+          $("permDangerSkip").checked = permissionsDangerSkip;
           showToast("Permission preference saved", 1500);
         } catch (_) {
+          permissionsRemember = prevRemember;
+          $("permRemember").checked = prevRemember;
+          showToast("Failed to save preference", 2000);
+        }
+      });
+      $("permDangerSkip").addEventListener("change", async () => {
+        const enabled = !!$("permDangerSkip").checked;
+        const prevDanger = permissionsDangerSkip;
+        if (enabled) {
+          const ok = await appConfirm(
+            "Enable dangerous mode",
+            "This will auto-approve every permission request without prompting. Continue?"
+          );
+          if (!ok) {
+            $("permDangerSkip").checked = false;
+            return;
+          }
+        }
+        permissionsDangerSkip = enabled;
+        try {
+          const res = await fetch(API + "/permissions/prefs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              remember_approvals: permissionsRemember,
+              dangerously_skip_permissions: enabled,
+            }),
+          });
+          if (!res.ok) throw 0;
+          const data = await res.json().catch(() => ({}));
+          permissionsRemember = !!data.remember_approvals;
+          permissionsDangerSkip = !!data.dangerously_skip_permissions;
+          $("permRemember").checked = permissionsRemember;
+          $("permDangerSkip").checked = permissionsDangerSkip;
+          showToast("Dangerous permission mode " + (permissionsDangerSkip ? "enabled" : "disabled"), 1800);
+        } catch (_) {
+          permissionsDangerSkip = prevDanger;
+          $("permDangerSkip").checked = prevDanger;
           showToast("Failed to save preference", 2000);
         }
       });
