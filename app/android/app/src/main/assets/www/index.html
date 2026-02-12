@@ -3601,7 +3601,6 @@
         renderComposerAttachments();
       }
 
-
       async function finalizeAndUploadAttachments(comment, uDiv) {
         const text = String(comment || "").trim();
         if (!pendingAttachments.length) return text || "(no text)";
@@ -3678,6 +3677,7 @@
             uploadInput.value = "";
           });
         }
+
         function setRecordUi(recording) {
           if (!recBtn) return;
           try {
@@ -3720,6 +3720,8 @@
           }
 
           async function getMicStreamWithFallback() {
+            // Some Android builds/WebView versions intermittently throw NotReadableError
+            // ("Could not start audio source") on the first attempt depending on routing.
             try {
               return await navigator.mediaDevices.getUserMedia({ audio: true });
             } catch (e) {
@@ -3728,14 +3730,17 @@
               const isNotReadable = name === "NotReadableError" || /start audio source/i.test(msg);
               if (!isNotReadable) throw e;
               await new Promise(r => setTimeout(r, 250));
+              // Fallback: disable processing constraints (can help on some devices).
               return await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
               });
             }
           }
           recBtn.addEventListener("click", async () => {
+            // Toggle stop if active.
             if (rRec && rRec.state !== "inactive") {
               try { rRec.stop(); } catch (_) {
+                // Ensure we don't get stuck in "recording" UI if stop fails.
                 try { if (rStream) rStream.getTracks().forEach(t => t.stop()); } catch (_) {}
                 rStream = null;
                 rRec = null;
@@ -3745,9 +3750,12 @@
               }
               return;
             }
+            // Only block if we're in the middle of starting recording.
             if (recordingBusy) return;
             try {
               recordingBusy = true;
+              // Recording is a user-initiated UI action; rely on WebView/OS microphone permission prompts.
+              // Do not route through the agent permission broker, which would break the user-gesture chain.
               if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 throw new Error("mediaDevices.getUserMedia unavailable");
               }
@@ -3773,6 +3781,7 @@
                 } catch (_) {}
               };
               rRec.start();
+              // Starting has finished; allow stop-tap immediately.
               recordingBusy = false;
               setRecordUi(true);
               startRecTimer();
@@ -3799,6 +3808,7 @@
           });
         }
       })();
+
       async function waitForAgentReply(itemId) {
         // SSE-primary: register a waiter resolved by the brain_message handler.
         const ssePromise = new Promise(resolve => {
