@@ -2904,6 +2904,17 @@
         }
       }
 
+      function isSessionBusy(st, sid) {
+        if (!st || !st.busy) return false;
+        const cur = String(st.current_session_id || "").trim();
+        if (cur) return cur === String(sid || "").trim();
+        const queued = Array.isArray(st.queued_session_ids)
+          ? st.queued_session_ids.map(x => String(x || "").trim()).filter(Boolean)
+          : [];
+        if (queued.length) return queued.includes(String(sid || "").trim());
+        return false;
+      }
+
       async function pollServerMessages() {
         // Keep chat UI updated even when messages are injected by the system (e.g., debug comments).
         if (!chatSessionId) return;
@@ -2978,7 +2989,7 @@
           const sr = await fetch(API + "/brain/status");
           if (sr.ok) {
             const st = await sr.json();
-            if (st.busy) {
+            if (isSessionBusy(st, chatSessionId)) {
               // Agent is still working — ensure there's a visible indicator.
               // Self-heal: if tracked element was detached, clear reference.
               if (_thinking.el && !_thinking.el.isConnected) _thinking.el = null;
@@ -3087,7 +3098,7 @@
           const res = await fetch(API + "/brain/status");
           if (!res.ok) return;
           const st = await res.json();
-          if (!st.busy) return;
+          if (!isSessionBusy(st, chatSessionId)) return;
           // Agent is still processing — show thinking indicator with stop button.
           if (_thinking.el && _thinking.el.isConnected) return;
           streaming = true;

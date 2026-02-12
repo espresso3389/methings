@@ -3886,7 +3886,6 @@ class LocalHttpServer(
                     connectTimeout = 8000
                     readTimeout = 12000
                     setRequestProperty("Accept", "application/json")
-                    setRequestProperty("Accept-Encoding", "gzip")
                     setRequestProperty("X-Subscription-Token", braveKey)
                     setRequestProperty(
                         "Accept-Language",
@@ -3897,6 +3896,22 @@ class LocalHttpServer(
                     if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
                 val body = stream.bufferedReader().use { it.readText() }
                 if (conn.responseCode !in 200..299) {
+                    // In auto mode, Brave can intermittently fail (rate-limit/temporary errors).
+                    // Fall back to DuckDuckGo instead of returning upstream_error immediately.
+                    if (provider == "auto") {
+                        val retryPayload = JSONObject(payload.toString()).put("provider", "duckduckgo")
+                        if (permissionId.isNotBlank()) {
+                            retryPayload.put("permission_id", permissionId)
+                        }
+                        return handleWebSearch(session, retryPayload)
+                    }
+                    if (conn.responseCode == 429) {
+                        return jsonError(
+                            Response.Status.TOO_MANY_REQUESTS,
+                            "upstream_rate_limited",
+                            JSONObject().put("status", conn.responseCode).put("detail", body.take(400))
+                        )
+                    }
                     return jsonError(
                         Response.Status.SERVICE_UNAVAILABLE,
                         "upstream_error",
@@ -3975,6 +3990,13 @@ class LocalHttpServer(
                     if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
                 val body = stream.bufferedReader().use { it.readText() }
                 if (conn.responseCode !in 200..299) {
+                    if (conn.responseCode == 429) {
+                        return jsonError(
+                            Response.Status.TOO_MANY_REQUESTS,
+                            "upstream_rate_limited",
+                            JSONObject().put("status", conn.responseCode).put("detail", body.take(400))
+                        )
+                    }
                     return jsonError(
                         Response.Status.SERVICE_UNAVAILABLE,
                         "upstream_error",
@@ -4046,6 +4068,13 @@ class LocalHttpServer(
             val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
             val body = stream.bufferedReader().use { it.readText() }
             if (conn.responseCode !in 200..299) {
+                if (conn.responseCode == 429) {
+                    return jsonError(
+                        Response.Status.TOO_MANY_REQUESTS,
+                        "upstream_rate_limited",
+                        JSONObject().put("status", conn.responseCode).put("detail", body.take(400))
+                    )
+                }
                 return jsonError(
                     Response.Status.SERVICE_UNAVAILABLE,
                     "upstream_error",
