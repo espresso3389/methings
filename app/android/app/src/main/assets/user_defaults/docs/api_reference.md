@@ -4,6 +4,8 @@ me.things exposes a local HTTP control plane on `http://127.0.0.1:8765`.
 
 The agent should use the `device_api(action, payload, detail)` tool instead of calling these endpoints directly.
 
+See also: [TOOLS.md](../TOOLS.md) for agent tool usage and quickstart examples.
+
 ## Identity + Permissions
 
 - Most device actions require user approval via the permission broker.
@@ -79,6 +81,8 @@ Details: [camera.md](camera.md)
 | `tts.voices` | GET | `/tts/voices` |
 | `tts.speak` | POST | `/tts/speak` |
 | `tts.stop` | POST | `/tts/stop` |
+
+This is Android's built-in TextToSpeech. For local llama.cpp TTS (MioTTS etc.), see [Llama.cpp](#llamacpp-local-gguf-models) / [llama.md](llama.md).
 
 Details: [tts.md](tts.md)
 
