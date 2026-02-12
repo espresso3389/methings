@@ -1,6 +1,6 @@
 # Brain Prompt Pack
 
-This file contains starter prompts for methings so it can use local APIs, filesystem, and command-line tools consistently.
+This file contains starter prompts for me.things so it can use local APIs, filesystem, and command-line tools consistently.
 
 ## 1) Recommended System Prompt
 Use this as `system_prompt` in `POST /brain/config`.

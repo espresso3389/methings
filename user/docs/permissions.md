@@ -21,7 +21,7 @@ methings uses explicit user consent for device/resource access.
 
 If a USB API call fails with `error=usb_permission_required`, the fix is:
 
-- Bring methings to the foreground and retry (the OS may auto-deny requests started from background).
+- Bring me.things to the foreground and retry (the OS may auto-deny requests started from background).
 - Accept Android's system dialog "Allow access to USB device".
 - If the OS dialog never appears and it keeps auto-denying, Android may have remembered a default "deny" for that device.
   - Open app settings and clear defaults/USB associations.

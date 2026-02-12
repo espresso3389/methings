@@ -1,4 +1,4 @@
-# methings Local API
+# me.things Local API
 
 This document describes the current on-device APIs.
 

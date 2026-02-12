@@ -1,4 +1,4 @@
-# methings Tools (User Root)
+# me.things Tools (User Root)
 
 This file is a quick reference for the agent's tools and permission patterns.
 
@@ -102,7 +102,7 @@ USB permissions:
 
 - Approving `device.usb` in-app is necessary but not sufficient.
 - Android also requires an OS-level per-device USB permission. If a USB call fails with `error=usb_permission_required`, you must:
-  - Bring methings to the foreground and retry.
+  - Bring me.things to the foreground and retry.
   - Accept Android's system "Allow access to USB device" dialog.
   - If the OS dialog never appears and it keeps auto-denying, clear defaults/USB associations in app settings, replug, and retry.
 

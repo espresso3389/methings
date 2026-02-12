@@ -665,7 +665,7 @@ class DeviceApiTool:
             if isinstance(parsed, dict) and parsed.get("error") == "usb_permission_required":
                 parsed.setdefault(
                     "hint",
-                    "USB permission is required. Bring methings to the foreground and accept the system USB access dialog, then retry. "
+                    "USB permission is required. Bring me.things to the foreground and accept the system USB access dialog, then retry. "
                     "If Android auto-denies without showing a dialog, clear the app's defaults (App info -> Open by default -> Clear defaults), replug the device, and retry.",
                 )
             return {"status": "http_error", "http_status": int(ex.code), "body": parsed}

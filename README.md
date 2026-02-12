@@ -1,4 +1,4 @@
-# methings -- it thinks, it does
+# me.things -- it thinks, it does
 
 An AI agent framework that runs on Android devices. Cloud AI models (Claude, OpenAI, Kimi, etc.) act as autonomous agents with real access to device resources -- camera, Bluetooth, USB, filesystem, shell -- gated by explicit user consent.
 

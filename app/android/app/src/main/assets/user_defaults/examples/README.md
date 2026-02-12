@@ -1,6 +1,6 @@
 # Examples
 
-These scripts show the "golden path" usage patterns for methings tools.
+These scripts show the "golden path" usage patterns for me.things tools.
 
 Notes:
 - These are intended to be run on-device (Python worker) or via the agent using `run_python`.

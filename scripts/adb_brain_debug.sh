@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Debug methings via adb port-forward.
+# Debug me.things via adb port-forward.
 #
 # Usage:
 #   scripts/adb_brain_debug.sh [serial]

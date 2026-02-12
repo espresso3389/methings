@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression test for SSH curl support on methings device."""
+"""Regression test for SSH curl support on me.things device."""
 
 import argparse
 import json

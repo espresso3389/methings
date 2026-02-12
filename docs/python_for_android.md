@@ -1,6 +1,6 @@
 # Python/Pip on SSH Sessions
 
-This document describes how `python3` and `pip` work within methings SSH sessions on Android, and the technical challenges that were solved.
+This document describes how `python3` and `pip` work within me.things SSH sessions on Android, and the technical challenges that were solved.
 
 ## Overview
 
@@ -192,7 +192,7 @@ Packages requiring C compilation (e.g., `pyyaml`) fail because pip's build isola
 # Build standalone Python launcher
 ./scripts/build_methingspy_android.sh
 
-# Build Dropbear with methings patches
+# Build Dropbear with me.things patches
 ./scripts/build_dropbear.sh
 
 # Full APK build (includes all native builds)

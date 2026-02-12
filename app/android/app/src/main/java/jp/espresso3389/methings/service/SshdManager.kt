@@ -528,8 +528,8 @@ class SshdManager(private val context: Context) {
         // mksh startup file. We keep it in HOME so the path stays stable across updates.
         val envFile = File(userHome, ".mkshrc")
         val content =
-            "# methings mksh env (auto-generated)\n" +
-                "PS1='methings> '\n" +
+            "# me.things mksh env (auto-generated)\n" +
+                "PS1='me.things> '\n" +
                 // Override Android's built-in functions so they don't embed stale /data/app/... paths.
                 "ssh() {\n" +
                 "  want_t=1\n" +
@@ -594,7 +594,7 @@ class SshdManager(private val context: Context) {
         val envFile = File(userHome, ".mkshrc")
         if (!envFile.exists()) {
             envFile.parentFile?.mkdirs()
-            envFile.writeText("# methings mksh env\n")
+            envFile.writeText("# me.things mksh env\n")
         }
         return envFile
     }

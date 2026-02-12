@@ -1,6 +1,6 @@
 # Debugging Notes (App + Agent)
 
-This document collects practical debugging tips for methings app/agent behavior.
+This document collects practical debugging tips for me.things app/agent behavior.
 
 ## Quick Mental Model
 

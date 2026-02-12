@@ -81,9 +81,9 @@ For standard ecosystem packages (`pyusb`, `pyuvc`, `opencv-python`), prefer ship
 real wheels for those names rather than a facade.
 
 Note:
-- `pyuvc` is currently not on PyPI; methings ships a small facade wheel so `pip install pyuvc`
+- `pyuvc` is currently not on PyPI; me.things ships a small facade wheel so `pip install pyuvc`
   resolves offline from the bundled wheelhouse.
-- `pupil-labs-uvc` is a common distribution name for libuvc bindings; methings also ships a facade
+- `pupil-labs-uvc` is a common distribution name for libuvc bindings; me.things also ships a facade
   wheel so `pip install pupil-labs-uvc` resolves offline from the bundled wheelhouse.
 
 Facade wheel builder:

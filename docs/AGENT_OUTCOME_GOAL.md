@@ -11,7 +11,7 @@ Examples:
 - "Start SSHD": start the service and report status and connection details.
 
 ## Constraints
-- User consent is mandatory for device/resource access (Android permissions + methings permission broker).
+- User consent is mandatory for device/resource access (Android permissions + me.things permission broker).
 - Everything should run offline except explicit cloud calls.
 - Sensitive actions must be audit-logged.
 

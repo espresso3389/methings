@@ -42,7 +42,7 @@ def _wheel_metadata(dist_name: str, version: str) -> bytes:
         "Metadata-Version: 2.1",
         f"Name: {dist_name}",
         f"Version: {version}",
-        "Summary: Methings Android facade package (native .so bundled by app).",
+        "Summary: me.things Android facade package (native .so bundled by app).",
         "",
     ]
     return ("\n".join(lines)).encode("utf-8")

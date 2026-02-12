@@ -44,7 +44,7 @@ def _patch_ctypes_find_library():
     Make ctypes library resolution reliable under our embedded Python on Android.
 
     Some Python-for-Android builds ship a `ctypes.util.find_library()` that tries
-    to consult Kivy's `org.kivy.android.PythonActivity`, which methings doesn't use.
+    to consult Kivy's `org.kivy.android.PythonActivity`, which me.things doesn't use.
     That can throw a hard JVM exception and break pure-Python packages like `pyusb`.
 
     Prefer the app's native library directory (exported by Kotlin as

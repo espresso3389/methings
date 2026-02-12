@@ -2746,7 +2746,7 @@ class LocalHttpServer(
                     .put(
                         "hint",
                         "Android USB permission is required. Accept the system 'Allow access to USB device' dialog. " +
-                            "If no dialog appears, bring methings to foreground and retry. " +
+                            "If no dialog appears, bring me.things to foreground and retry. " +
                             "If it still auto-denies with no dialog, clear app defaults in Android settings, then replug and retry."
                     )
             )
@@ -6245,7 +6245,7 @@ class LocalHttpServer(
         private const val PORT = 8765
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
         private const val SOCKET_READ_TIMEOUT = 0
-        private const val BRAIN_SYSTEM_PROMPT = """You are the methings Brain, an AI assistant running on an Android device.
+        private const val BRAIN_SYSTEM_PROMPT = """You are the me.things Brain, an AI assistant running on an Android device.
 
 Policies:
 - For detailed operational rules and tool usage, read user-root docs: `AGENTS.md` and `TOOLS.md`.

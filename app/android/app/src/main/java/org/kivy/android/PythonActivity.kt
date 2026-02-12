@@ -7,7 +7,7 @@ import android.app.Activity
  *
  * Some stdlib / third-party Python code paths (notably ctypes.util on Android in
  * certain p4a builds) attempt to access `org.kivy.android.PythonActivity` to
- * locate the app's `nativeLibraryDir`. methings is not a Kivy app, but providing
+ * locate the app's `nativeLibraryDir`. me.things is not a Kivy app, but providing
  * this class avoids hard failures and lets pure-Python packages work normally.
  */
 class PythonActivity : Activity() {
