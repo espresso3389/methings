@@ -1494,6 +1494,63 @@ class LocalHttpServer(
                 writeMemory(payload.optString("content", ""))
                 jsonResponse(JSONObject().put("status", "ok"))
             }
+            (uri == "/ui/viewer/open" || uri == "/ui/viewer/open/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val path = payload.optString("path", "").trim()
+                if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                // Strip #page=N fragment for file validation; preserve full path for JS.
+                val filePath = path.replace(Regex("#.*$"), "")
+                val file = userPath(filePath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "open")
+                    putExtra(EXTRA_VIEWER_PATH, path)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            (uri == "/ui/viewer/close" || uri == "/ui/viewer/close/") && session.method == Method.POST -> {
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "close")
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            (uri == "/ui/viewer/immersive" || uri == "/ui/viewer/immersive/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val enabled = payload.optBoolean("enabled", true)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "immersive")
+                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            (uri == "/ui/viewer/slideshow" || uri == "/ui/viewer/slideshow/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val enabled = payload.optBoolean("enabled", true)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "slideshow")
+                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            (uri == "/ui/viewer/goto" || uri == "/ui/viewer/goto/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val page = payload.optInt("page", 0)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "goto")
+                    putExtra(EXTRA_VIEWER_PAGE, page)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
             uri == "/" || uri == "/ui" || uri == "/ui/" -> serveUiFile("index.html")
             uri.startsWith("/ui/") -> {
                 val raw = uri.removePrefix("/ui/")
@@ -1514,63 +1571,6 @@ class LocalHttpServer(
             }
             uri == "/user/file/info" && session.method == Method.GET -> {
                 handleUserFileInfo(session)
-            }
-            uri == "/ui/viewer/open" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val path = payload.optString("path", "").trim()
-                if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                // Strip #page=N fragment for file validation; preserve full path for JS.
-                val filePath = path.replace(Regex("#.*$"), "")
-                val file = userPath(filePath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-                if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "open")
-                    putExtra(EXTRA_VIEWER_PATH, path)
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/ui/viewer/close" && session.method == Method.POST -> {
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "close")
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/ui/viewer/immersive" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val enabled = payload.optBoolean("enabled", true)
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "immersive")
-                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/ui/viewer/slideshow" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val enabled = payload.optBoolean("enabled", true)
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "slideshow")
-                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/ui/viewer/goto" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val page = payload.optInt("page", 0)
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "goto")
-                    putExtra(EXTRA_VIEWER_PAGE, page)
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
             }
             else -> notFound()
         }
