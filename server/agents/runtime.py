@@ -62,6 +62,8 @@ class BrainRuntime:
         self._user_root_doc_cache: Dict[str, Dict[str, Any]] = {}
         # permission_id -> state for resuming a paused chat item once the user approves/denies.
         self._awaiting_permissions: Dict[str, Dict[str, Any]] = {}
+        # Best-effort model hint for per-model runtime tuning.
+        self._active_model_name: str = ""
 
         self._config = self._load_config()
         self._event_bus = None
@@ -271,6 +273,13 @@ class BrainRuntime:
                 "keep Journal (Current) short, update it at milestones, and append brief entries when you make key decisions or complete steps."
             ),
             "temperature": 0.2,
+            # Dialogue window controls:
+            # - dialogue_window_user_assistant: number of user/assistant turns provided to tool loop model input.
+            # - dialogue_raw_fetch_limit: number of raw messages fetched before role-filtering (prevents tool-log storms from crowding out dialogue).
+            # - planner_dialogue_window_user_assistant: dialogue turns provided to planner payload.
+            "dialogue_window_user_assistant": 40,
+            "dialogue_raw_fetch_limit": 320,
+            "planner_dialogue_window_user_assistant": 28,
             # Some tasks need a burst of tool calls (e.g. capture -> analyze -> postprocess).
             "max_actions": 10,
             # Max tool-loop rounds for providers that support responses-style tool calling.
@@ -282,8 +291,76 @@ class BrainRuntime:
             "provider_connect_timeout_s": 10,
             "provider_read_timeout_s": 80,
             "provider_max_retries": 1,
+            # Optional per-model overrides.
+            # Matching is substring-based against lowercased model name.
+            # Example:
+            # {
+            #   "gpt-5": {"dialogue_window_user_assistant": 60, "max_tool_rounds": 20},
+            #   "gpt-4.1-mini": {"dialogue_window_user_assistant": 28, "max_tool_output_chars": 9000}
+            # }
+            "model_profiles": {},
             "idle_sleep_ms": 800,
         }
+
+    def _default_model_profiles(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            # Larger context/loop budgets for stronger models.
+            "gpt-5": {
+                "dialogue_window_user_assistant": 64,
+                "dialogue_raw_fetch_limit": 520,
+                "planner_dialogue_window_user_assistant": 40,
+                "max_tool_rounds": 20,
+                "max_actions": 12,
+                "max_tool_output_chars": 16000,
+            },
+            # Conservative defaults for smaller/faster variants.
+            "gpt-4.1-mini": {
+                "dialogue_window_user_assistant": 28,
+                "dialogue_raw_fetch_limit": 220,
+                "planner_dialogue_window_user_assistant": 20,
+                "max_tool_rounds": 14,
+                "max_actions": 8,
+                "max_tool_output_chars": 9000,
+            },
+        }
+
+    def _model_profile_overrides(self, model_name: str, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        model = (model_name or "").strip().lower()
+        if not model:
+            return {}
+        merged: Dict[str, Any] = {}
+        # Built-in profiles first.
+        for key, vals in self._default_model_profiles().items():
+            if key in model and isinstance(vals, dict):
+                merged.update(vals)
+        # User-configured profiles take precedence.
+        conf = cfg if isinstance(cfg, dict) else self._config
+        profiles = conf.get("model_profiles") if isinstance(conf, dict) else {}
+        if not isinstance(profiles, dict):
+            profiles = {}
+        for key, vals in profiles.items():
+            if not isinstance(key, str) or not isinstance(vals, dict):
+                continue
+            if key.strip().lower() in model:
+                merged.update(vals)
+        return merged
+
+    def _int_with_profile(
+        self,
+        cfg: Dict[str, Any],
+        profile: Dict[str, Any],
+        key: str,
+        *,
+        default: int,
+        min_value: int,
+        max_value: int,
+    ) -> int:
+        val = profile.get(key, cfg.get(key, default))
+        try:
+            out = int(val)
+        except Exception:
+            out = int(default)
+        return max(min_value, min(out, max_value))
 
     def _fs_root_dir(self) -> Path:
         scope = str(self._config.get("fs_scope") or "user").strip().lower()
@@ -868,12 +945,15 @@ class BrainRuntime:
         sid = str((meta or {}).get("session_id") or "").strip()
         return sid or "default"
 
-    def _list_dialogue(self, *, session_id: str, limit: int = 24) -> List[Dict[str, str]]:
+    def _list_dialogue(self, *, session_id: str, limit: int = 24, raw_fetch_limit: Optional[int] = None) -> List[Dict[str, str]]:
         # Return only user/assistant messages for the given session_id.
         limit = max(1, min(int(limit or 24), 120))
-        msgs = self.list_messages_for_session(session_id=session_id, limit=max(limit, 1))
+        if raw_fetch_limit is None:
+            raw_fetch_limit = max(120, limit * 6)
+        raw_fetch_limit = max(limit, min(int(raw_fetch_limit or limit), 2000))
+        msgs = self.list_messages_for_session(session_id=session_id, limit=raw_fetch_limit)
         out: List[Dict[str, Any]] = []
-        for msg in msgs[-limit:]:
+        for msg in msgs:
             role = str(msg.get("role") or "")
             if role not in {"user", "assistant"}:
                 continue
@@ -882,7 +962,7 @@ class BrainRuntime:
                 continue
             meta = msg.get("meta") if isinstance(msg.get("meta"), dict) else {}
             out.append({"role": role, "text": text, "meta": meta})
-        return out
+        return out[-limit:]
 
     def _get_persistent_memory(self) -> str:
         # Stored on the Kotlin control-plane (LocalHttpServer) as a small text blob.
@@ -933,7 +1013,27 @@ class BrainRuntime:
                 notes["favorite_color"] = val
                 changed["favorite_color"] = val
 
+        # Keep a compact "current request" card to survive context truncation.
+        compact = t.replace("\n", " ").strip()
+        if compact:
+            compact = compact[:260]
+            if notes.get("latest_user_request") != compact:
+                notes["latest_user_request"] = compact
+                changed["latest_user_request"] = compact
+
+        # Common SSH target pattern: user@host[:port]
+        m = re.search(r"\b([a-zA-Z0-9._-]+)@([a-zA-Z0-9._-]+)(?::(\d{1,5}))?\b", t)
+        if m:
+            user = m.group(1).strip()
+            host = m.group(2).strip()
+            port = m.group(3).strip() if m.group(3) else "22"
+            target = f"{user}@{host}:{port}"
+            if notes.get("ssh_target") != target:
+                notes["ssh_target"] = target
+                changed["ssh_target"] = target
+
         if notes:
+            notes["updated_at_ms"] = str(int(time.time() * 1000))
             self._session_notes[session_id] = notes
 
         # Prevent unbounded growth.
@@ -941,6 +1041,57 @@ class BrainRuntime:
             for k in list(self._session_notes.keys())[:10]:
                 self._session_notes.pop(k, None)
         return changed
+
+    def _update_session_notes_from_tool(self, session_id: str, action: Dict[str, Any], result: Dict[str, Any]) -> None:
+        if not session_id:
+            return
+        notes = dict(self._session_notes.get(session_id) or {})
+        atype = str(action.get("type") or "").strip()
+        status = str((result or {}).get("status") or "").strip()
+
+        # Track last tool execution summary.
+        tool_name = atype
+        if atype == "tool_invoke":
+            tool_name = str(action.get("tool") or "tool_invoke")
+            args = action.get("args") if isinstance(action.get("args"), dict) else {}
+            action_name = str(args.get("action") or "").strip()
+            if action_name:
+                tool_name = f"{tool_name}:{action_name}"
+            payload = args.get("payload") if isinstance(args.get("payload"), dict) else {}
+            host = str(payload.get("host") or "").strip()
+            user = str(payload.get("user") or "").strip()
+            port = str(payload.get("port") or "22").strip() or "22"
+            if host:
+                target = f"{user + '@' if user else ''}{host}:{port}"
+                notes["active_ssh_target"] = target
+
+        notes["last_tool"] = tool_name[:120]
+        notes["last_tool_status"] = status[:32]
+        if status in {"error", "timeout"}:
+            err = str((result or {}).get("error") or "").strip()
+            detail = str((result or {}).get("detail") or "").strip()
+            merged = (err or detail or status)[:220]
+            notes["last_tool_error"] = merged
+        notes["updated_at_ms"] = str(int(time.time() * 1000))
+        self._session_notes[session_id] = notes
+
+    def _session_state_view(self, session_id: str) -> Dict[str, Any]:
+        notes = dict(self._session_notes.get(session_id) or {})
+        keys = [
+            "latest_user_request",
+            "ssh_target",
+            "active_ssh_target",
+            "last_tool",
+            "last_tool_status",
+            "last_tool_error",
+            "updated_at_ms",
+        ]
+        out: Dict[str, Any] = {}
+        for k in keys:
+            v = notes.get(k)
+            if isinstance(v, str) and v.strip():
+                out[k] = v
+        return out
 
     def _process_item(self, item: Dict) -> None:
         self._check_interrupt()
@@ -1514,14 +1665,22 @@ class BrainRuntime:
         self._check_interrupt()
         session_id = self._session_id_for_item(item)
         self._active_identity = session_id or "default"
+        cfg = self.get_config()
+        model = str(cfg.get("model") or "").strip()
+        self._active_model_name = model
+        profile = self._model_profile_overrides(model, cfg)
+        dialogue_limit = self._int_with_profile(
+            cfg, profile, "dialogue_window_user_assistant", default=40, min_value=10, max_value=120
+        )
+        dialogue_raw_limit = self._int_with_profile(
+            cfg, profile, "dialogue_raw_fetch_limit", default=320, min_value=40, max_value=2000
+        )
         persistent_memory = self._get_persistent_memory()
         journal_current = self._get_journal_current(session_id)
-        dialogue = self._list_dialogue(session_id=session_id, limit=30)
+        dialogue = self._list_dialogue(session_id=session_id, limit=dialogue_limit, raw_fetch_limit=dialogue_raw_limit)
         # _process_item already recorded the current user message; don't duplicate it in the prompt.
         if dialogue and dialogue[-1].get("role") == "user" and dialogue[-1].get("text") == str(item.get("text") or ""):
             dialogue = dialogue[:-1]
-        cfg = self.get_config()
-        model = str(cfg.get("model") or "").strip()
         provider_url = str(cfg.get("provider_url") or "").strip()
         key_name = str(cfg.get("api_key_credential") or "").strip()
         tool_policy = str(cfg.get("tool_policy") or "auto").strip().lower()
@@ -1547,9 +1706,9 @@ class BrainRuntime:
         tools = self._responses_tools()
         # Some models require several tool rounds before they "decide" to stop. Keep this
         # configurable so we can tune per-provider/model without shipping a new APK.
-        max_rounds = int(self._config.get("max_tool_rounds", 12) or 12)
+        max_rounds = self._int_with_profile(cfg, profile, "max_tool_rounds", default=18, min_value=1, max_value=24)
         max_rounds = max(1, min(max_rounds, 24))
-        max_actions = max(1, min(int(self._config.get("max_actions", 6) or 6), 12))
+        max_actions = self._int_with_profile(cfg, profile, "max_actions", default=10, min_value=1, max_value=12)
         connect_timeout_s = float(self._config.get("provider_connect_timeout_s", 10) or 10)
         read_timeout_s = float(self._config.get("provider_read_timeout_s", 80) or 80)
         max_retries = int(self._config.get("provider_max_retries", 1) or 1)
@@ -1577,6 +1736,8 @@ class BrainRuntime:
             + (journal_current.strip() or "(empty)")
             + "\n\nSession notes (ephemeral, no permissions required):\n"
             + json.dumps(self._session_notes.get(session_id) or {}, ensure_ascii=True)
+            + "\n\nSession state card (high-priority facts):\n"
+            + json.dumps(self._session_state_view(session_id), ensure_ascii=True)
             + "\n\nPersistent memory (may be empty; writing may require permission):\n"
             + (persistent_memory.strip() or "(empty)")
         )
@@ -1907,9 +2068,12 @@ class BrainRuntime:
 
         This should preserve enough detail for the model to continue, while capping payload size.
         """
-        MAX_CHARS = int(self._config.get("max_tool_output_chars", 12000) or 12000)
+        profile = self._model_profile_overrides(self._active_model_name, self._config)
+        max_chars_cfg = profile.get("max_tool_output_chars", self._config.get("max_tool_output_chars", 12000))
+        MAX_CHARS = int(max_chars_cfg or 12000)
         MAX_CHARS = max(2000, min(MAX_CHARS, 100000))
-        MAX_LIST_ITEMS = int(self._config.get("max_tool_output_list_items", 80) or 80)
+        max_items_cfg = profile.get("max_tool_output_list_items", self._config.get("max_tool_output_list_items", 80))
+        MAX_LIST_ITEMS = int(max_items_cfg or 80)
         MAX_LIST_ITEMS = max(10, min(MAX_LIST_ITEMS, 500))
 
         def _clip_str(s: str, n: int) -> str:
@@ -2090,6 +2254,7 @@ class BrainRuntime:
     def _plan_with_cloud(self, item: Dict, tool_results: Optional[List[Dict]] = None) -> Dict:
         cfg = self.get_config()
         model = str(cfg.get("model") or "").strip()
+        profile = self._model_profile_overrides(model, cfg)
         provider_url = str(cfg.get("provider_url") or "").strip()
         key_name = str(cfg.get("api_key_credential") or "").strip()
 
@@ -2113,12 +2278,19 @@ class BrainRuntime:
         session_id = self._session_id_for_item(item)
         persistent_memory = self._get_persistent_memory()
         journal_current = self._get_journal_current(session_id)
-        history = self._list_dialogue(session_id=session_id, limit=20)
+        planner_limit = self._int_with_profile(
+            cfg, profile, "planner_dialogue_window_user_assistant", default=28, min_value=8, max_value=120
+        )
+        raw_limit = self._int_with_profile(
+            cfg, profile, "dialogue_raw_fetch_limit", default=320, min_value=40, max_value=2000
+        )
+        history = self._list_dialogue(session_id=session_id, limit=planner_limit, raw_fetch_limit=raw_limit)
         user_payload = {
             "item": item,
             "recent_messages": history,
             "persistent_memory": persistent_memory,
             "journal_current": journal_current,
+            "session_state": self._session_state_view(session_id),
                 "constraints": {
                     "device_api_actions": [
                         "python.status",
@@ -2746,6 +2918,10 @@ class BrainRuntime:
             json.dumps({"action": action, "result": result}),
             {"item_id": item.get("id"), "session_id": session_id},
         )
+        try:
+            self._update_session_notes_from_tool(session_id, action, result)
+        except Exception:
+            pass
         self._emit_log(
             "brain_action",
             {
