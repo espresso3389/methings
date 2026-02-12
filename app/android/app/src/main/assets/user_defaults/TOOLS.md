@@ -127,6 +127,29 @@ Example:
 }
 ```
 
+### Network / Radio Signal Quickstart
+
+Use these actions to inspect current connectivity and radio conditions:
+
+- `network.status`: active transport summary (wifi/cellular/ethernet/vpn), internet validation, DNS/interface.
+- `wifi.status`: Wi-Fi state + SSID/BSSID/RSSI/link speed/frequency.
+- `mobile.status`: mobile network/operator + signal summaries when available.
+- `ble.status`: Bluetooth availability/enabled state.
+
+Example:
+
+```json
+{
+  "type": "tool_invoke",
+  "tool": "device_api",
+  "args": {
+    "action": "network.status",
+    "payload": {},
+    "detail": "Check current connectivity and active transports"
+  }
+}
+```
+
 ### Llama.cpp Quickstart (Local GGUF / MioTTS)
 
 Use `device_api` actions (not raw shell) for local `llama.cpp` binaries:

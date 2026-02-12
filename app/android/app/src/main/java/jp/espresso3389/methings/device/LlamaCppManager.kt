@@ -6,6 +6,9 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 import java.util.UUID
@@ -29,12 +32,15 @@ class LlamaCppManager(private val context: Context) {
         val id: String,
         val outputFile: File,
         val startedAt: Long,
+        val minOutputDurationMs: Long = 400L,
         val stopRequested: AtomicBoolean = AtomicBoolean(false),
         @Volatile var status: String = "running",
         @Volatile var process: Process? = null,
         @Volatile var processExitCode: Int? = null,
         @Volatile var processTimedOut: Boolean = false,
         @Volatile var playback: Map<String, Any?>? = null,
+        @Volatile var outputWav: Map<String, Any?>? = null,
+        @Volatile var validationError: Map<String, Any?>? = null,
         @Volatile var stdout: String = "",
         @Volatile var stderr: String = "",
         @Volatile var finishedAt: Long? = null,
@@ -162,9 +168,14 @@ class LlamaCppManager(private val context: Context) {
 
         val out = LinkedHashMap(result)
         if ((result["status"] == "ok") && outputFile.exists()) {
-            out["output_path"] = relativizeToUser(outputFile)
-            out["output_abs_path"] = outputFile.absolutePath
-            out["output_bytes"] = outputFile.length()
+            attachOutputFileInfo(out, outputFile)
+            val validation = validateSpeechOutput(outputFile, payload.optLong("min_output_duration_ms", 400L))
+            if (validation != null) {
+                out["status"] = "error"
+                out["error"] = validation["error"]
+                out["detail"] = validation["detail"]
+                out["validation"] = JSONObject(validation)
+            }
         }
         if (model != null) out["model_path"] = model.absolutePath
         return out
@@ -204,7 +215,12 @@ class LlamaCppManager(private val context: Context) {
         val maxOutputBytes = payload.optInt("max_output_bytes", 1_000_000).coerceIn(4096, 4_000_000)
 
         val id = "tts_" + UUID.randomUUID().toString().replace("-", "")
-        val task = SpeechTask(id = id, outputFile = outputFile, startedAt = System.currentTimeMillis())
+        val task = SpeechTask(
+            id = id,
+            outputFile = outputFile,
+            startedAt = System.currentTimeMillis(),
+            minOutputDurationMs = payload.optLong("min_output_duration_ms", 400L)
+        )
         speechTasks[id] = task
 
         Thread {
@@ -294,7 +310,22 @@ class LlamaCppManager(private val context: Context) {
             task.processExitCode = if (finished) process.exitValue() else null
             task.stdout = stdoutBuf.toString(StandardCharsets.UTF_8.name())
             task.stderr = stderrBuf.toString(StandardCharsets.UTF_8.name())
-            task.status = if (task.stopRequested.get()) "stopped" else if (finished && task.processExitCode == 0) "done" else "error"
+            if (task.outputFile.exists()) {
+                task.outputWav = parseWavSummary(task.outputFile)
+            }
+            val validation = if (finished && task.processExitCode == 0) {
+                validateSpeechOutput(task.outputFile, task.minOutputDurationMs)
+            } else {
+                null
+            }
+            task.validationError = validation
+            task.status = if (task.stopRequested.get()) {
+                "stopped"
+            } else if (finished && task.processExitCode == 0 && validation == null) {
+                "done"
+            } else {
+                "error"
+            }
         } catch (ex: Exception) {
             task.status = if (task.stopRequested.get()) "stopped" else "error"
             task.stderr = (task.stderr + "\n" + (ex.message ?: ex.javaClass.simpleName)).trim()
@@ -320,6 +351,8 @@ class LlamaCppManager(private val context: Context) {
             .put("output_bytes", if (task.outputFile.exists()) task.outputFile.length() else 0L)
             .put("stdout", task.stdout)
             .put("stderr", task.stderr)
+        task.outputWav?.let { out.put("output_wav", JSONObject(it)) }
+        task.validationError?.let { out.put("validation", JSONObject(it)) }
         val playback = task.playback
         if (playback != null) out.put("playback", JSONObject(playback))
         return out
@@ -589,6 +622,106 @@ class LlamaCppManager(private val context: Context) {
             out.add(arr.opt(i)?.toString() ?: "")
         }
         return out
+    }
+
+    private fun attachOutputFileInfo(out: MutableMap<String, Any?>, outputFile: File) {
+        out["output_path"] = relativizeToUser(outputFile)
+        out["output_abs_path"] = outputFile.absolutePath
+        out["output_bytes"] = outputFile.length()
+        parseWavSummary(outputFile)?.let { out["output_wav"] = JSONObject(it) }
+    }
+
+    private fun validateSpeechOutput(outputFile: File, minOutputDurationMs: Long): Map<String, Any?>? {
+        if (!outputFile.exists()) {
+            return mapOf(
+                "error" to "output_missing",
+                "detail" to "TTS finished but no output WAV file was created."
+            )
+        }
+        if (minOutputDurationMs <= 0L) return null
+        val wav = parseWavSummary(outputFile) ?: return null
+        val durationMs = (wav["duration_ms"] as? Long) ?: return null
+        if (durationMs >= minOutputDurationMs) return null
+        return mapOf(
+            "error" to "output_too_short",
+            "detail" to "Generated WAV is too short (${durationMs}ms < ${minOutputDurationMs}ms). Check model/vocoder args.",
+            "duration_ms" to durationMs,
+            "min_duration_ms" to minOutputDurationMs
+        )
+    }
+
+    private fun parseWavSummary(file: File): Map<String, Any?>? {
+        return runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                if (raf.length() < 44L) return null
+                val riff = ByteArray(4)
+                raf.readFully(riff)
+                if (String(riff, StandardCharsets.US_ASCII) != "RIFF") return null
+                raf.skipBytes(4)
+                val wave = ByteArray(4)
+                raf.readFully(wave)
+                if (String(wave, StandardCharsets.US_ASCII) != "WAVE") return null
+
+                var audioFormat = 0
+                var channels = 0
+                var sampleRate = 0
+                var bitsPerSample = 0
+                var dataOffset = -1L
+                var dataSize = -1L
+
+                while (raf.filePointer + 8L <= raf.length()) {
+                    val idBytes = ByteArray(4)
+                    raf.readFully(idBytes)
+                    val chunkId = String(idBytes, StandardCharsets.US_ASCII)
+                    val chunkSize = readU32LE(raf)
+                    val chunkPos = raf.filePointer
+                    when (chunkId) {
+                        "fmt " -> {
+                            if (chunkSize >= 16 && chunkPos + chunkSize <= raf.length()) {
+                                audioFormat = readU16LE(raf)
+                                channels = readU16LE(raf)
+                                sampleRate = readU32LE(raf).toInt()
+                                raf.skipBytes(6)
+                                bitsPerSample = readU16LE(raf)
+                            }
+                        }
+                        "data" -> {
+                            dataOffset = chunkPos
+                            dataSize = chunkSize
+                            break
+                        }
+                    }
+                    raf.seek(chunkPos + chunkSize + (chunkSize % 2))
+                }
+                if (channels <= 0 || sampleRate <= 0 || bitsPerSample <= 0 || dataOffset < 0L || dataSize < 0L) return null
+                val bytesPerFrame = (channels * bitsPerSample) / 8
+                if (bytesPerFrame <= 0) return null
+                val frames = dataSize / bytesPerFrame
+                val durationMs = (frames * 1000L) / sampleRate.toLong().coerceAtLeast(1L)
+                mapOf(
+                    "audio_format" to audioFormat,
+                    "channels" to channels,
+                    "sample_rate" to sampleRate,
+                    "bits_per_sample" to bitsPerSample,
+                    "data_offset" to dataOffset,
+                    "data_size" to dataSize,
+                    "frames" to frames,
+                    "duration_ms" to durationMs
+                )
+            }
+        }.getOrNull()
+    }
+
+    private fun readU16LE(raf: RandomAccessFile): Int {
+        val b = ByteArray(2)
+        raf.readFully(b)
+        return ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).short.toInt() and 0xFFFF
+    }
+
+    private fun readU32LE(raf: RandomAccessFile): Long {
+        val b = ByteArray(4)
+        raf.readFully(b)
+        return ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN).int.toLong() and 0xFFFFFFFFL
     }
 
     private fun pathOrNull(file: File?): String? = file?.absolutePath

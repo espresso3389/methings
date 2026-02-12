@@ -31,6 +31,8 @@ object DevicePermissionPolicy {
                             ),
                             "Location"
                         )
+                    d.contains("wifi") || d.contains("mobile") || d.contains("network") ->
+                        Required(emptyList(), "Network state")
                     d.contains("ble") || d.contains("bluetooth") ->
                         Required(bluetoothPermissions(), "Bluetooth")
                     d.contains("usb") ->
@@ -61,6 +63,8 @@ object DevicePermissionPolicy {
                     listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION),
                     "Location"
                 )
+            t == "device.network" || t.startsWith("device.network.") ->
+                Required(emptyList(), "Network state")
             t.startsWith("device.ble") || t.startsWith("device.bluetooth") ->
                 Required(bluetoothPermissions(), "Bluetooth")
             t.startsWith("device.usb") || t.startsWith("device.libusb") || t.startsWith("device.libuvc") ->

@@ -57,6 +57,9 @@ class DeviceApiTool:
         "stt.stop": {"method": "POST", "path": "/stt/stop", "permission": True},
         "location.status": {"method": "GET", "path": "/location/status", "permission": True},
         "location.get": {"method": "POST", "path": "/location/get", "permission": True},
+        "network.status": {"method": "GET", "path": "/network/status", "permission": True},
+        "wifi.status": {"method": "GET", "path": "/wifi/status", "permission": True},
+        "mobile.status": {"method": "GET", "path": "/mobile/status", "permission": True},
         "sensors.list": {"method": "GET", "path": "/sensors/list", "permission": True},
         "sensor.list": {"method": "GET", "path": "/sensor/list", "permission": True},
         "sensors.ws.contract": {"method": "GET", "path": "/sensors/ws/contract", "permission": True},
@@ -153,6 +156,24 @@ class DeviceApiTool:
             self.set_identity(identity)
 
         action = str(args.get("action") or "").strip()
+        payload = args.get("payload")
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, dict):
+            return {"status": "error", "error": "invalid_payload"}
+
+        # Compatibility shim: some plans accidentally nest a device_api call as:
+        #   {"action":"device_api","payload":{"action":"llama.status","payload":{...}}}
+        # Unwrap this shape so execution still succeeds.
+        if action == "device_api":
+            nested_action = str(payload.get("action") or "").strip()
+            nested_payload = payload.get("payload", {})
+            if not isinstance(nested_payload, dict):
+                return {"status": "error", "error": "invalid_payload"}
+            if nested_action:
+                action = nested_action
+                payload = nested_payload
+
         if not action:
             return {"status": "error", "error": "missing_action"}
         spec = self._ACTIONS.get(action)
@@ -161,12 +182,6 @@ class DeviceApiTool:
             if action.startswith("uvc."):
                 return self._run_uvc_action(action, args)
             return {"status": "error", "error": "unknown_action"}
-
-        payload = args.get("payload")
-        if payload is None:
-            payload = {}
-        if not isinstance(payload, dict):
-            return {"status": "error", "error": "invalid_payload"}
 
         if action == "shell.exec":
             cmd = str(payload.get("cmd") or "")
@@ -537,6 +552,8 @@ class DeviceApiTool:
             return "device.mic", "stt", "session"
         if a.startswith("location."):
             return "device.gps", "location", "session"
+        if a.startswith("network.") or a.startswith("wifi.") or a.startswith("mobile."):
+            return "device.network", "network", "session"
         if a.startswith("sensors."):
             return "device.sensors", "sensors", "session"
         if a.startswith("sensor."):

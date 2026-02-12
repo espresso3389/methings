@@ -92,6 +92,12 @@ Common patterns:
 - `llama.tts.speak.status` -> `POST /llama/tts/speak/status`
 - `llama.tts.speak.stop` -> `POST /llama/tts/speak/stop`
 
+### Network / Radio status
+- `network.status` -> `GET /network/status`
+- `wifi.status` -> `GET /wifi/status`
+- `mobile.status` -> `GET /mobile/status`
+- `ble.status` -> `GET /ble/status`
+
 ## File Endpoints (User Root)
 
 - `POST /user/upload` (multipart)

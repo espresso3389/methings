@@ -44,6 +44,7 @@ import jp.espresso3389.methings.device.BleManager
 import jp.espresso3389.methings.device.AudioPlaybackManager
 import jp.espresso3389.methings.device.CameraXManager
 import jp.espresso3389.methings.device.DeviceLocationManager
+import jp.espresso3389.methings.device.DeviceNetworkManager
 import jp.espresso3389.methings.device.LlamaCppManager
 import jp.espresso3389.methings.device.SensorsStreamManager
 import jp.espresso3389.methings.device.SttManager
@@ -98,6 +99,7 @@ class LocalHttpServer(
     private val tts = TtsManager(context)
     private val stt = SttManager(context)
     private val location = DeviceLocationManager(context)
+    private val network = DeviceNetworkManager(context)
     private val sensors = SensorsStreamManager(context)
     private val llama = LlamaCppManager(context)
 
@@ -1135,6 +1137,21 @@ class LocalHttpServer(
                 val high = payload.optBoolean("high_accuracy", true)
                 val timeoutMs = payload.optLong("timeout_ms", 12_000L).coerceIn(250L, 120_000L)
                 return jsonResponse(JSONObject(location.getCurrent(highAccuracy = high, timeoutMs = timeoutMs)))
+            }
+            (uri == "/network/status" || uri == "/network/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Network connectivity status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(network.status()))
+            }
+            (uri == "/wifi/status" || uri == "/wifi/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Wi-Fi status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(network.wifiStatus()))
+            }
+            (uri == "/mobile/status" || uri == "/mobile/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Mobile signal status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(network.mobileStatus()))
             }
             (uri == "/sensors/list" || uri == "/sensors/list/" || uri == "/sensor/list" || uri == "/sensor/list/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.sensors", capability = "sensors", detail = "List available sensors")
