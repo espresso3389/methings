@@ -99,6 +99,36 @@ class MainActivity : AppCompatActivity() {
             reloadUi()
         }
     }
+    private val viewerCommandReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != LocalHttpServer.ACTION_UI_VIEWER_COMMAND) return
+            val cmd = intent.getStringExtra(LocalHttpServer.EXTRA_VIEWER_COMMAND) ?: return
+            when (cmd) {
+                "open" -> {
+                    val path = intent.getStringExtra(LocalHttpServer.EXTRA_VIEWER_PATH) ?: return
+                    val escaped = path.replace("\\", "\\\\").replace("'", "\\'")
+                    evalJs("window.uiViewerOpen && window.uiViewerOpen('$escaped')")
+                }
+                "close" -> {
+                    if (isImmersive) exitImmersiveMode()
+                    evalJs("window.uiViewerClose && window.uiViewerClose()")
+                }
+                "immersive" -> {
+                    val enabled = intent.getBooleanExtra(LocalHttpServer.EXTRA_VIEWER_ENABLED, true)
+                    if (enabled) enterImmersiveMode() else exitImmersiveMode()
+                    evalJs("window.uiViewerImmersive && window.uiViewerImmersive($enabled)")
+                }
+                "slideshow" -> {
+                    val enabled = intent.getBooleanExtra(LocalHttpServer.EXTRA_VIEWER_ENABLED, true)
+                    evalJs("window.uiViewerSlideshow && window.uiViewerSlideshow($enabled)")
+                }
+                "goto" -> {
+                    val page = intent.getIntExtra(LocalHttpServer.EXTRA_VIEWER_PAGE, 0)
+                    evalJs("window.uiViewerGoto && window.uiViewerGoto($page)")
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -280,10 +310,16 @@ class MainActivity : AppCompatActivity() {
                 IntentFilter(LocalHttpServer.ACTION_UI_RELOAD),
                 Context.RECEIVER_NOT_EXPORTED
             )
+            registerReceiver(
+                viewerCommandReceiver,
+                IntentFilter(LocalHttpServer.ACTION_UI_VIEWER_COMMAND),
+                Context.RECEIVER_NOT_EXPORTED
+            )
         } else {
             registerReceiver(pythonHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
             registerReceiver(uiReloadReceiver, IntentFilter(LocalHttpServer.ACTION_UI_RELOAD))
+            registerReceiver(viewerCommandReceiver, IntentFilter(LocalHttpServer.ACTION_UI_VIEWER_COMMAND))
         }
     }
 
@@ -292,6 +328,7 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(pythonHealthReceiver)
         unregisterReceiver(permissionPromptReceiver)
         unregisterReceiver(uiReloadReceiver)
+        unregisterReceiver(viewerCommandReceiver)
         AppForegroundState.isForeground = false
         super.onStop()
     }

@@ -1512,6 +1512,66 @@ class LocalHttpServer(
             uri == "/user/upload" && session.method == Method.POST -> {
                 handleUserUpload(session)
             }
+            uri == "/user/file/info" && session.method == Method.GET -> {
+                handleUserFileInfo(session)
+            }
+            uri == "/ui/viewer/open" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val path = payload.optString("path", "").trim()
+                if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                // Strip #page=N fragment for file validation; preserve full path for JS.
+                val filePath = path.replace(Regex("#.*$"), "")
+                val file = userPath(filePath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "open")
+                    putExtra(EXTRA_VIEWER_PATH, path)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/ui/viewer/close" && session.method == Method.POST -> {
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "close")
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/ui/viewer/immersive" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val enabled = payload.optBoolean("enabled", true)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "immersive")
+                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/ui/viewer/slideshow" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val enabled = payload.optBoolean("enabled", true)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "slideshow")
+                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/ui/viewer/goto" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val page = payload.optInt("page", 0)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "goto")
+                    putExtra(EXTRA_VIEWER_PAGE, page)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
             else -> notFound()
         }
     }
@@ -1561,6 +1621,71 @@ class LocalHttpServer(
         response.addHeader("Cache-Control", "no-cache")
         response.addHeader("X-Content-Type-Options", "nosniff")
         return response
+    }
+
+    private fun handleUserFileInfo(session: IHTTPSession): Response {
+        val rel = firstParam(session, "path").replace(Regex("#.*$"), "")
+        if (rel.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+        val file = userPath(rel) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+
+        val ext = file.name.substringAfterLast('.', "").lowercase()
+        val mime = URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
+        val kind = when {
+            ext in listOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg") -> "image"
+            ext in listOf("mp4", "mkv", "mov", "m4v", "3gp", "webm") -> "video"
+            ext in listOf("mp3", "wav", "ogg", "m4a", "aac", "flac") -> "audio"
+            ext in listOf("txt", "md", "json", "log", "py", "js", "ts", "html", "css", "sh",
+                "yaml", "yml", "toml", "xml", "csv", "cfg", "ini", "conf",
+                "kt", "java", "c", "cpp", "h", "rs", "go", "rb", "pl") -> "text"
+            else -> "bin"
+        }
+
+        val json = JSONObject()
+            .put("name", file.name)
+            .put("size", file.length())
+            .put("mtime_ms", file.lastModified())
+            .put("mime", mime)
+            .put("kind", kind)
+            .put("ext", ext)
+
+        // Image dimensions
+        if (kind == "image" && ext != "svg") {
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.absolutePath, bounds)
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    json.put("width", bounds.outWidth)
+                    json.put("height", bounds.outHeight)
+                }
+            } catch (_: Exception) {}
+        }
+
+        // Marp detection for markdown files
+        if (ext == "md") {
+            try {
+                // Read only first 1KB for front matter check
+                val head = file.inputStream().use { inp ->
+                    val buf = ByteArray(1024)
+                    val n = inp.read(buf)
+                    if (n > 0) String(buf, 0, n, Charsets.UTF_8) else ""
+                }
+                val fmMatch = Regex("^---\\s*\\n([\\s\\S]*?)\\n---").find(head)
+                val isMarp = fmMatch != null && Regex("^marp\\s*:\\s*true\\s*$", RegexOption.MULTILINE).containsMatchIn(fmMatch.groupValues[1])
+                json.put("is_marp", isMarp)
+                if (isMarp) {
+                    // Read full file for slide count
+                    val fullText = file.readText(Charsets.UTF_8)
+                    val stripped = fullText.replace(Regex("^---\\s*\\n[\\s\\S]*?\\n---\\n?"), "")
+                    val slideCount = stripped.split("\n---\n").size
+                    json.put("slide_count", slideCount)
+                }
+            } catch (_: Exception) {
+                json.put("is_marp", false)
+            }
+        }
+
+        return jsonResponse(json)
     }
 
     private fun serveUserWww(session: IHTTPSession): Response {
@@ -6133,6 +6258,11 @@ Policies:
         const val ACTION_PERMISSION_PROMPT = "jp.espresso3389.methings.action.PERMISSION_PROMPT"
         const val ACTION_PERMISSION_RESOLVED = "jp.espresso3389.methings.action.PERMISSION_RESOLVED"
         const val ACTION_UI_RELOAD = "jp.espresso3389.methings.action.UI_RELOAD"
+        const val ACTION_UI_VIEWER_COMMAND = "jp.espresso3389.methings.action.UI_VIEWER_COMMAND"
+        const val EXTRA_VIEWER_COMMAND = "viewer_command"
+        const val EXTRA_VIEWER_PATH = "viewer_path"
+        const val EXTRA_VIEWER_ENABLED = "viewer_enabled"
+        const val EXTRA_VIEWER_PAGE = "viewer_page"
         const val EXTRA_PERMISSION_ID = "permission_id"
         const val EXTRA_PERMISSION_TOOL = "permission_tool"
         const val EXTRA_PERMISSION_DETAIL = "permission_detail"

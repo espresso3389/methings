@@ -2083,17 +2083,22 @@
         let current = 0;
         const total = slides.length;
 
-        function show(idx) {
+        function show(idx, scroll) {
           current = Math.max(0, Math.min(total - 1, idx));
           var isSlideMode = viewer.classList.contains("marp-slidemode");
           for (let i = 0; i < total; i++) {
             slides[i].classList.toggle("active", i === current);
             slides[i].style.display = isSlideMode ? ((i === current) ? "block" : "none") : "";
           }
+          if (!isSlideMode && scroll) {
+            try { slides[current].scrollIntoView({ behavior: "smooth", block: "start" }); } catch (_) {}
+          }
           counter.textContent = (current + 1) + " / " + total;
           prevBtn.disabled = current === 0;
           nextBtn.disabled = current === total - 1;
         }
+        deck._show = show;
+        deck._slideCount = total;
         deck._enterPresentation = function() {
           for (let i = 0; i < total; i++) {
             slides[i].style.display = (i === current) ? "block" : "none";
@@ -2160,12 +2165,13 @@
       window.addEventListener("marp-ready", function () {
         _marpPendingPreviews.forEach(function (item) {
           item.container.innerHTML = "";
-          renderMarpPreview(item.container, item.text);
+          renderMarpPreview(item.container, item.text, item.page);
         });
         _marpPendingPreviews.length = 0;
       });
 
-      function renderMarpPreview(container, text) {
+      function renderMarpPreview(container, text, page) {
+        const idx = (typeof page === "number" && page >= 0) ? page : 0;
         if (window._Marp) {
           try {
             const marp = new window._Marp({ script: false, html: true });
@@ -2173,25 +2179,27 @@
             const wrapper = document.createElement("div");
             wrapper.className = "marpit";
             wrapper.innerHTML = "<style>" + result.css + "</style>" + result.html;
-            // Keep only the first slide SVG for the preview thumbnail
+            // Keep only the target slide SVG for the preview thumbnail
             const svgs = wrapper.querySelectorAll("svg");
-            for (let i = 1; i < svgs.length; i++) svgs[i].remove();
+            const target = Math.min(idx, svgs.length - 1);
+            for (let i = 0; i < svgs.length; i++) { if (i !== target) svgs[i].remove(); }
             container.appendChild(wrapper);
             return;
           } catch (_) {}
         }
-        // Fallback: render first slide with marked.js; re-render when Marp loads
-        _marpPendingPreviews.push({ container, text });
+        // Fallback: render target slide with marked.js; re-render when Marp loads
+        _marpPendingPreviews.push({ container, text, page: idx });
         const stripped = text.replace(/^---\s*\n[\s\S]*?\n---\n?/, "");
-        const firstSlide = stripped.split(/\n---\n/)[0] || "";
+        const parts = stripped.split(/\n---\n/);
+        const slideText = parts[Math.min(idx, parts.length - 1)] || "";
         const thumb = document.createElement("div");
         thumb.className = "marp-fallback-thumb attach-md";
-        thumb.innerHTML = renderMarkdown(firstSlide.trim());
+        thumb.innerHTML = renderMarkdown(slideText.trim());
         container.appendChild(thumb);
       }
 
       let _viewerMarpExpand = null;
-      function openMarpViewer(path, content) {
+      function openMarpViewer(path, content, page) {
         const rel = safeRelPath(path);
         if (!rel) return;
         viewerSourceToggle.style.display = "none";
@@ -2209,6 +2217,7 @@
         if (_viewerMarpExpand) { try { _viewerMarpExpand.remove(); } catch (_) {} _viewerMarpExpand = null; }
 
         const marpDeck = renderMarpSlides(viewerText, content);
+        _currentMarpDeck = marpDeck;
 
         // Source toggle
         const srcPre = document.createElement("pre");
@@ -2232,6 +2241,7 @@
         expandBtn.innerHTML = ICON.slideSingle;
         expandBtn.addEventListener("click", function() {
           slideMode = !slideMode;
+          _currentSlideMode = slideMode;
           if (slideMode) {
             viewer.classList.add("marp-slidemode");
             if (marpDeck) marpDeck._enterPresentation();
@@ -2282,13 +2292,23 @@
         _viewerMdToggle = toggleBtn;
 
         viewer.classList.add("show");
+        // Navigate to requested page after viewer is visible so scrollIntoView works.
+        if (typeof page === "number" && page >= 0 && marpDeck && marpDeck._show) {
+          requestAnimationFrame(function() { marpDeck._show(page, true); });
+        }
       }
 
       // ==============================
       // Media helpers
       // ==============================
+      function parsePageFragment(p) {
+        const m = String(p || "").match(/^(.+?)#page=(\d+)$/);
+        if (m) return { path: m[1], page: parseInt(m[2], 10) };
+        return { path: String(p || ""), page: -1 };
+      }
+
       function extOf(name) {
-        const n = String(name || "").trim().toLowerCase();
+        const n = String(name || "").trim().toLowerCase().replace(/#.*$/, "");
         const i = n.lastIndexOf(".");
         const e = i >= 0 ? n.slice(i + 1) : "";
         // Be robust to invisible chars accidentally copied into paths (e.g. ZWSP).
@@ -2381,9 +2401,12 @@
         // Normalize common "rel_path:" render variants:
         // - Trailing punctuation: "captures/latest.jpg." or "...jpg," breaks ext detection.
         // - Wrapped in quotes/backticks/brackets.
+        // - Fragment like #page=3 (used for Marp slide navigation) is stripped here;
+        //   callers needing the page should use parsePageFragment() before safeRelPath().
         let s = String(p || "").trim();
         // Strip zero-width/invisible separators that can break ext detection.
         s = s.replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g, "");
+        s = s.replace(/#.*$/, "");
         s = s.replace(/^\/+/, "");
         s = s.replace(/^["'`<(\[]+/, "");
         s = s.replace(/["'`>\])]+$/, "");
@@ -2398,33 +2421,27 @@
         const out = [];
         const seen = new Set();
 
-        // JSON-ish: "rel_path":"captures/foo.jpg"
+        function add(raw) {
+          // Dedup on clean path (fragment-stripped) but preserve raw form for page info.
+          const p = safeRelPath(raw);
+          if (p && !seen.has(p)) { out.push(raw.trim()); seen.add(p); }
+        }
+
+        // JSON-ish: "rel_path":"captures/foo.jpg" or "captures/foo.jpg#page=3"
         const reJson = /"rel_path"\s*:\s*"([^"]+)"/gi;
         let m;
-        while ((m = reJson.exec(t)) !== null) {
-          const p = safeRelPath(m[1]);
-          if (p && !seen.has(p)) { out.push(p); seen.add(p); }
-        }
+        while ((m = reJson.exec(t)) !== null) add(m[1]);
 
         // Plain: rel_path: captures/foo.jpg
         // Also support spaces by capturing to end-of-line (common for uploaded filenames like "Slack - Ding.mp3").
         const rePlainQuoted = /\brel_path\b\s*[:=]\s*`([^`]+)`/gi;
-        while ((m = rePlainQuoted.exec(t)) !== null) {
-          const p = safeRelPath(m[1]);
-          if (p && !seen.has(p)) { out.push(p); seen.add(p); }
-        }
-        const rePlainEol = /\brel_path\b\s*[:=]\s*([a-zA-Z0-9._\-\/][a-zA-Z0-9._\-\/ ]*\.[a-zA-Z0-9]+)/gi;
-        while ((m = rePlainEol.exec(t)) !== null) {
-          const p = safeRelPath(m[1]);
-          if (p && !seen.has(p)) { out.push(p); seen.add(p); }
-        }
+        while ((m = rePlainQuoted.exec(t)) !== null) add(m[1]);
+        const rePlainEol = /\brel_path\b\s*[:=]\s*([a-zA-Z0-9._\-\/][a-zA-Z0-9._\-\/ ]*\.[a-zA-Z0-9]+(?:#page=\d+)?)/gi;
+        while ((m = rePlainEol.exec(t)) !== null) add(m[1]);
 
         // Loose fallback (common folders + media extensions).
-        const reLoose = /\b(?:captures|uploads|downloads)\/[a-zA-Z0-9._\-\/]+\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|webm|mkv|mov|m4v|3gp|mp3|wav|ogg|m4a|aac|flac|txt|md|json|log|py|js|ts|html|css|sh|yaml|yml|toml|xml|csv|cfg|ini|conf|kt|java|c|cpp|h|rs|go|rb|pl)\b/gi;
-        while ((m = reLoose.exec(t)) !== null) {
-          const p = safeRelPath(m[0]);
-          if (p && !seen.has(p)) { out.push(p); seen.add(p); }
-        }
+        const reLoose = /\b(?:captures|uploads|downloads)\/[a-zA-Z0-9._\-\/]+\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|webm|mkv|mov|m4v|3gp|mp3|wav|ogg|m4a|aac|flac|txt|md|json|log|py|js|ts|html|css|sh|yaml|yml|toml|xml|csv|cfg|ini|conf|kt|java|c|cpp|h|rs|go|rb|pl)\b(?:#page=\d+)?/gi;
+        while ((m = reLoose.exec(t)) !== null) add(m[0]);
 
         return out.slice(0, 4);
       }
@@ -2437,14 +2454,20 @@
 
         const re1 = /\bhtml_path\b\s*[:=]\s*([^\r\n]+)/gi;
         while ((m = re1.exec(t)) !== null) {
-          const p = safeRelPath(m[1]);
-          if (p && p.toLowerCase().endsWith(".html") && !seen.has(p)) { out.push(p); seen.add(p); }
+          const { path: rawPath, page } = parsePageFragment(m[1]);
+          const p = safeRelPath(rawPath);
+          if (!p || !p.toLowerCase().endsWith(".html")) continue;
+          const withPage = (page >= 0) ? (p + "#page=" + page) : p;
+          if (!seen.has(withPage)) { out.push(withPage); seen.add(withPage); }
         }
 
         const re2 = /\bopen_html\b\s*[:=]\s*([^\r\n]+)/gi;
         while ((m = re2.exec(t)) !== null) {
-          const p = safeRelPath(m[1]);
-          if (p && p.toLowerCase().endsWith(".html") && !seen.has(p)) { out.push(p); seen.add(p); }
+          const { path: rawPath, page } = parsePageFragment(m[1]);
+          const p = safeRelPath(rawPath);
+          if (!p || !p.toLowerCase().endsWith(".html")) continue;
+          const withPage = (page >= 0) ? (p + "#page=" + page) : p;
+          if (!seen.has(withPage)) { out.push(withPage); seen.add(withPage); }
         }
 
         return out.slice(0, 3);
@@ -2464,8 +2487,10 @@
         wrap.style.marginTop = "10px";
 
         for (const p0 of paths) {
-          const p = safeRelPath(p0);
+          const { path: pCleanRaw, page: pPage } = parsePageFragment(p0);
+          const p = safeRelPath(pCleanRaw);
           if (!p) continue;
+          const pWithPage = (pPage >= 0) ? (p + "#page=" + pPage) : p;
           const card = document.createElement("div");
           card.className = "attach-card";
           card.style.cursor = "pointer";
@@ -2510,7 +2535,7 @@
           openBtn.innerHTML = ICON.externalLink;
           const open = () => {
             try {
-              openHtmlViewer(p);
+              openHtmlViewer(pWithPage);
               return;
             } catch (_) {
               if (typeof AndroidBridge !== "undefined") {
@@ -2554,7 +2579,8 @@
         wrap.className = "attach-wrap";
 
         for (const p0 of paths) {
-          const p = safeRelPath(p0);
+          const { path: p0Clean, page: p0Page } = parsePageFragment(p0);
+          const p = safeRelPath(p0Clean);
           if (!p) continue;
           let kind = kindFor(p);
           const pLower = String(p).toLowerCase();
@@ -2695,7 +2721,7 @@
                   if (ext === "md" && isMarpMarkdown(content)) {
                     const preview = document.createElement("div");
                     preview.className = "attach-marp-preview";
-                    renderMarpPreview(preview, content);
+                    renderMarpPreview(preview, content, p0Page);
                     body.appendChild(preview);
                     const srcPre = document.createElement("pre");
                     srcPre.style.display = "none";
@@ -2783,10 +2809,11 @@
                   card.addEventListener("click", (ev) => {
                     if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
                     if (ext === "html" || ext === "htm") {
-                      try { openHtmlViewer(p); } catch (_) {}
+                      const pWithPage = (p0Page >= 0) ? (p + "#page=" + p0Page) : p;
+                      try { openHtmlViewer(pWithPage); } catch (_) {}
                       return;
                     }
-                    try { openTextViewer(p, content, ext); } catch (_) {}
+                    try { openTextViewer(p, content, ext, p0Page); } catch (_) {}
                   });
                   if (ext === "html" || ext === "htm") {
                     hint.textContent = "HTML (tap to open live view)";
@@ -2918,14 +2945,15 @@
         viewer.classList.add("show");
       }
       function openHtmlViewer(path) {
-        const rel = safeRelPath(path);
+        const { path: cleanPath, page } = parsePageFragment(path);
+        const rel = safeRelPath(cleanPath);
         if (!rel) return;
-        viewerCurrentRel = rel;
+        viewerCurrentRel = (page >= 0) ? (rel + "#page=" + page) : rel;
         viewerMode = "html";
         viewerTitle.textContent = rel;
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
         resetViewerPanels();
-        const src = API + "/user/file?path=" + encodeURIComponent(rel);
+        const src = API + "/user/file?path=" + encodeURIComponent(rel) + (page >= 0 ? ("#page=" + page) : "");
         viewerIframe.src = src;
         viewerIframe.style.display = "";
         const srcPre = document.createElement("pre");
@@ -2984,12 +3012,16 @@
       }
       let _viewerMdToggle = null;
       let _marpKeyHandler = null;
+      let _currentMarpDeck = null;
+      let _currentSlideMode = false;
       function closeViewer() {
         if (_marpKeyHandler) { document.removeEventListener("keydown", _marpKeyHandler); _marpKeyHandler = null; }
         viewerText.classList.remove("marp-active");
         viewer.classList.remove("marp-mode");
         viewer.classList.remove("marp-slidemode");
         if (_viewerMarpExpand) { try { _viewerMarpExpand.remove(); } catch (_) {} _viewerMarpExpand = null; }
+        _currentMarpDeck = null;
+        _currentSlideMode = false;
         if (_immersive) exitImmersiveMode();
         viewer.classList.remove("show");
         viewer.classList.remove("show-controls");
@@ -3032,9 +3064,9 @@
         return wrap;
       }
 
-      function openTextViewer(path, content, ext) {
+      function openTextViewer(path, content, ext, page) {
         if (ext === "md" && isMarpMarkdown(content)) {
-          openMarpViewer(path, content);
+          openMarpViewer(path, content, page);
           return;
         }
         const rel = safeRelPath(path);
@@ -3253,6 +3285,69 @@
       // Callback from Android (e.g. when activity exits immersive mode).
       window.onExitImmersiveMode = function() {
         if (_immersive) exitImmersiveMode();
+      };
+
+      // ==============================
+      // Viewer Control API (called from Android via evalJs)
+      // ==============================
+      window.uiViewerOpen = async function(path) {
+        const { path: cleanPath, page: fragPage } = parsePageFragment(path);
+        const rel = safeRelPath(cleanPath);
+        if (!rel) return;
+        // Close any existing viewer first
+        if (viewer.classList.contains("show")) closeViewer();
+        const ext = extOf(rel);
+        const kind = kindFor(rel);
+        if (kind === "image") {
+          viewerPaths = [rel];
+          viewerIndex = 0;
+          viewer.classList.add("show");
+          await setViewerImage(rel);
+        } else if (kind === "video" || kind === "audio") {
+          openMediaViewer(rel, kind);
+        } else if (ext === "html" || ext === "htm") {
+          openHtmlViewer(path);
+        } else if (kind === "text") {
+          try {
+            const res = await fetch(API + "/user/file?path=" + encodeURIComponent(rel));
+            const content = await res.text();
+            openTextViewer(rel, content, ext, fragPage);
+          } catch (_) {}
+        } else {
+          // Binary / unknown — attempt to show in iframe
+          openHtmlViewer(path);
+        }
+      };
+
+      window.uiViewerClose = function() {
+        closeViewer();
+      };
+
+      window.uiViewerImmersive = function(enabled) {
+        if (!viewer.classList.contains("show")) return;
+        if (enabled) enterImmersiveMode(); else exitImmersiveMode();
+      };
+
+      window.uiViewerSlideshow = function(enabled) {
+        if (!viewer.classList.contains("show")) return;
+        if (!_currentMarpDeck) return;
+        if (enabled && !_currentSlideMode) {
+          viewer.classList.add("marp-slidemode");
+          _currentMarpDeck._enterPresentation();
+          _currentSlideMode = true;
+          if (_currentMarpDeck._marpKeyHandler) { _marpKeyHandler = _currentMarpDeck._marpKeyHandler; document.addEventListener("keydown", _marpKeyHandler); }
+        } else if (!enabled && _currentSlideMode) {
+          viewer.classList.remove("marp-slidemode");
+          _currentMarpDeck._exitPresentation();
+          _currentSlideMode = false;
+          if (_marpKeyHandler) { document.removeEventListener("keydown", _marpKeyHandler); _marpKeyHandler = null; }
+        }
+      };
+
+      window.uiViewerGoto = function(page) {
+        if (!viewer.classList.contains("show")) return;
+        if (!_currentMarpDeck || !_currentMarpDeck._show) return;
+        _currentMarpDeck._show(page, true);
       };
 
       // ==============================
