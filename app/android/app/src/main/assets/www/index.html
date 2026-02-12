@@ -395,7 +395,8 @@
       .viewer.immersive .viewer-top { display: none; }
       .viewer.immersive.show-controls .viewer-top { display: flex; }
 
-      /* Marp slide deck — normal mode: all slides vertical scroll */
+      /* Marp — scroll mode (default): all slides vertical */
+      .viewer.marp-mode:not(.marp-slidemode) { touch-action: auto; }
       .viewer-text.marp-active { padding: 0; }
       .marp-deck { width: 100%; }
       .marp-slide-wrap { width: 100%; }
@@ -408,16 +409,15 @@
       .marp-nav button:hover { background: var(--bg-overlay); border-color: var(--border-focus); color: var(--ink); }
       .marp-nav button:disabled { opacity: 0.35; cursor: not-allowed; }
       .marp-counter { color: var(--ink-secondary); font-size: 13px; font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; }
-      /* Marp — immersive/presentation mode: single slide + nav */
-      .viewer.immersive .viewer-text.marp-active { display: flex; flex-direction: column; }
-      .viewer.immersive .marp-deck { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-      .viewer.immersive .marp-slide-wrap { flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-      .viewer.immersive .marp-slide-wrap .marpit svg { display: none; border-bottom: none; }
-      .viewer.immersive .marp-slide-wrap .marpit svg.active { display: block; }
-      .viewer.immersive .marp-slide-wrap .marp-fallback section { display: none; border-bottom: none; }
-      .viewer.immersive .marp-slide-wrap .marp-fallback section.active { display: block; }
-      .viewer.immersive .marp-nav { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 10px; flex-shrink: 0; border-top: 1px solid rgba(255,255,255,0.08); }
-      .viewer.immersive.show-controls .marp-nav { display: flex; }
+      /* Marp — slide mode (toggled): single slide, centered */
+      .viewer.marp-slidemode .viewer-text.marp-active { display: flex !important; flex-direction: column; }
+      .viewer.marp-slidemode .marp-deck { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      .viewer.marp-slidemode .marp-slide-wrap { flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+      .viewer.marp-slidemode .marp-slide-wrap .marp-fallback { display: flex; align-items: center; justify-content: center; height: 100%; }
+      /* Slide mode non-immersive: always show nav */
+      .viewer.marp-slidemode .marp-nav { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 10px; flex-shrink: 0; border-top: 1px solid rgba(255,255,255,0.08); }
+      /* Slide mode + immersive: hide nav */
+      .viewer.marp-slidemode.immersive .marp-nav { display: none; }
       /* Inline Marp preview */
       .attach-marp-preview { max-height: 200px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000; border-radius: var(--radius-sm); }
       .attach-marp-preview > .marpit { width: 100%; }
@@ -1634,6 +1634,8 @@
         doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
         expand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
         collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
+        slideSingle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="14" y2="12"/></svg>',
+        slideScroll: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="1" width="18" height="9" rx="1.5"/><line x1="7" y1="4" x2="15" y2="4"/><line x1="7" y1="7" x2="12" y2="7"/><rect x="3" y="14" width="18" height="9" rx="1.5"/><line x1="7" y1="17" x2="15" y2="17"/><line x1="7" y1="20" x2="12" y2="20"/></svg>',
       };
 
       // Set static button icons (record button is handled by setRecordUi()).
@@ -2082,13 +2084,25 @@
 
         function show(idx) {
           current = Math.max(0, Math.min(total - 1, idx));
+          var isSlideMode = viewer.classList.contains("marp-slidemode");
           for (let i = 0; i < total; i++) {
             slides[i].classList.toggle("active", i === current);
+            slides[i].style.display = isSlideMode ? ((i === current) ? "block" : "none") : "";
           }
           counter.textContent = (current + 1) + " / " + total;
           prevBtn.disabled = current === 0;
           nextBtn.disabled = current === total - 1;
         }
+        deck._enterPresentation = function() {
+          for (let i = 0; i < total; i++) {
+            slides[i].style.display = (i === current) ? "block" : "none";
+          }
+        };
+        deck._exitPresentation = function() {
+          for (let i = 0; i < total; i++) {
+            slides[i].style.display = "";
+          }
+        };
 
         // Navigation bar
         const nav = document.createElement("div");
@@ -2162,6 +2176,7 @@
         container.appendChild(thumb);
       }
 
+      let _viewerMarpExpand = null;
       function openMarpViewer(path, content) {
         const rel = safeRelPath(path);
         if (!rel) return;
@@ -2174,7 +2189,10 @@
         viewerText.style.display = "block";
         viewerText.innerHTML = "";
         viewerText.classList.add("marp-active");
+        viewer.classList.add("marp-mode");
+        viewer.classList.remove("marp-slidemode");
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
+        if (_viewerMarpExpand) { try { _viewerMarpExpand.remove(); } catch (_) {} _viewerMarpExpand = null; }
 
         const marpDeck = renderMarpSlides(viewerText, content);
 
@@ -2190,6 +2208,32 @@
 
         let srcHighlighted = false;
         let showSource = false;
+        let slideMode = false;
+
+        // Slide mode toggle
+        const expandBtn = document.createElement("button");
+        expandBtn.className = "icon-btn viewer-md-toggle";
+        expandBtn.title = "Slide mode";
+        expandBtn.setAttribute("aria-label", "Slide mode");
+        expandBtn.innerHTML = ICON.slideSingle;
+        expandBtn.addEventListener("click", function() {
+          slideMode = !slideMode;
+          if (slideMode) {
+            viewer.classList.add("marp-slidemode");
+            if (marpDeck) marpDeck._enterPresentation();
+            expandBtn.innerHTML = ICON.slideScroll;
+            expandBtn.title = "Scroll mode";
+            if (marpDeck && marpDeck._marpKeyHandler) { _marpKeyHandler = marpDeck._marpKeyHandler; document.addEventListener("keydown", _marpKeyHandler); }
+          } else {
+            viewer.classList.remove("marp-slidemode");
+            if (marpDeck) marpDeck._exitPresentation();
+            expandBtn.innerHTML = ICON.slideSingle;
+            expandBtn.title = "Slide mode";
+            if (_marpKeyHandler) { document.removeEventListener("keydown", _marpKeyHandler); _marpKeyHandler = null; }
+          }
+        });
+
+        // Source toggle
         const toggleBtn = document.createElement("button");
         toggleBtn.className = "icon-btn viewer-md-toggle";
         toggleBtn.title = "View source";
@@ -2201,6 +2245,7 @@
             if (marpDeck) marpDeck.style.display = "none";
             srcLined.style.display = "";
             viewerText.classList.remove("marp-active");
+            expandBtn.style.display = "none";
             if (!srcHighlighted) { try { hljs.highlightElement(srcCode); } catch (_) {} srcHighlighted = true; }
             toggleBtn.innerHTML = ICON.doc;
             toggleBtn.title = "View slides";
@@ -2209,20 +2254,18 @@
             if (marpDeck) marpDeck.style.display = "";
             srcLined.style.display = "none";
             viewerText.classList.add("marp-active");
+            expandBtn.style.display = "";
             toggleBtn.innerHTML = ICON.code;
             toggleBtn.title = "View source";
-            if (marpDeck && marpDeck._marpKeyHandler) { _marpKeyHandler = marpDeck._marpKeyHandler; document.addEventListener("keydown", _marpKeyHandler); }
+            if (slideMode && marpDeck && marpDeck._marpKeyHandler) { _marpKeyHandler = marpDeck._marpKeyHandler; document.addEventListener("keydown", _marpKeyHandler); }
           }
         });
-        const viewerTop = $("viewerTop");
-        viewerTop.insertBefore(toggleBtn, viewerShare);
-        _viewerMdToggle = toggleBtn;
 
-        // Keyboard support
-        if (marpDeck && marpDeck._marpKeyHandler) {
-          _marpKeyHandler = marpDeck._marpKeyHandler;
-          document.addEventListener("keydown", _marpKeyHandler);
-        }
+        const viewerTop = $("viewerTop");
+        viewerTop.insertBefore(expandBtn, viewerShare);
+        viewerTop.insertBefore(toggleBtn, viewerShare);
+        _viewerMarpExpand = expandBtn;
+        _viewerMdToggle = toggleBtn;
 
         viewer.classList.add("show");
       }
@@ -2930,6 +2973,9 @@
       function closeViewer() {
         if (_marpKeyHandler) { document.removeEventListener("keydown", _marpKeyHandler); _marpKeyHandler = null; }
         viewerText.classList.remove("marp-active");
+        viewer.classList.remove("marp-mode");
+        viewer.classList.remove("marp-slidemode");
+        if (_viewerMarpExpand) { try { _viewerMarpExpand.remove(); } catch (_) {} _viewerMarpExpand = null; }
         if (_immersive) exitImmersiveMode();
         viewer.classList.remove("show");
         viewer.classList.remove("show-controls");
