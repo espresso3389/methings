@@ -422,7 +422,7 @@
       .attach-marp-preview { max-height: 200px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000; border-radius: var(--radius-sm); }
       .attach-marp-preview > .marpit { width: 100%; }
       .attach-marp-preview > .marpit > svg { width: 100%; height: auto; }
-      .attach-marp-preview > .marpit > svg:not(:first-child) { display: none; }
+      .attach-marp-preview > .marpit > svg:not(:first-of-type) { display: none; }
       .attach-marp-preview > .marp-fallback-thumb { padding: 16px; color: var(--ink); font-size: 13px; }
 
       /* Rendered markdown elements (inside .attach-md) */
@@ -2163,6 +2163,9 @@
             const wrapper = document.createElement("div");
             wrapper.className = "marpit";
             wrapper.innerHTML = "<style>" + result.css + "</style>" + result.html;
+            // Keep only the first slide SVG for the preview thumbnail
+            const svgs = wrapper.querySelectorAll("svg");
+            for (let i = 1; i < svgs.length; i++) svgs[i].remove();
             container.appendChild(wrapper);
             return;
           } catch (_) {}
