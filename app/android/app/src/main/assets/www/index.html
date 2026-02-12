@@ -1559,6 +1559,7 @@
       <div class="viewer-top" id="viewerTop">
         <button class="icon-btn secondary" id="viewerClose" title="Close" aria-label="Close"></button>
         <div class="viewer-title" id="viewerTitle"></div>
+        <button class="icon-btn" id="viewerSourceToggle" title="View source" aria-label="View source" style="display:none;"></button>
         <button class="icon-btn" id="viewerShare" title="Share" aria-label="Share"></button>
       </div>
       <div class="viewer-body" id="viewerBody">
@@ -1603,6 +1604,7 @@
       try { $("backToChatBtn").innerHTML = ICON.back; } catch (_) {}
       try { $("viewerClose").innerHTML = ICON.close; } catch (_) {}
       try { $("viewerShare").innerHTML = ICON.share; } catch (_) {}
+      try { $("viewerSourceToggle").innerHTML = ICON.code; } catch (_) {}
       try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
       try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
@@ -2168,19 +2170,46 @@
           pathEl.textContent = p;
           const actions = document.createElement("div");
           actions.className = "attach-actions";
+          const shareBtn = document.createElement("button");
+          shareBtn.className = "attach-icon-btn";
+          shareBtn.title = "Share";
+          shareBtn.setAttribute("aria-label", "Share");
+          shareBtn.innerHTML = ICON.share;
+          shareBtn.addEventListener("click", async (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            try {
+              if (typeof AndroidBridge !== "undefined" && AndroidBridge.shareUserFile) {
+                AndroidBridge.shareUserFile(p, mimeForPath(p));
+                return;
+              }
+              const url = API + "/user/file?path=" + encodeURIComponent(p);
+              if (navigator.share) {
+                await navigator.share({ title: p, url });
+              } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(url);
+                showToast("Link copied", 1400);
+              } else {
+                showToast("Share not available", 1600);
+              }
+            } catch (_) {
+              showToast("Share failed", 1800);
+            }
+          });
           const openBtn = document.createElement("button");
           openBtn.className = "attach-icon-btn";
           openBtn.title = "Open";
           openBtn.setAttribute("aria-label", "Open");
           openBtn.innerHTML = ICON.externalLink;
           const open = () => {
-            if (typeof AndroidBridge !== "undefined") {
-              try { location.href = "methings://open_user_html?path=" + encodeURIComponent(p); } catch (_) {}
-              return;
-            }
             try {
               openHtmlViewer(p);
+              return;
             } catch (_) {
+              if (typeof AndroidBridge !== "undefined") {
+                try { location.href = "methings://open_user_html?path=" + encodeURIComponent(p); } catch (_) {}
+                return;
+              }
               try {
                 window.open(API + "/user/file?path=" + encodeURIComponent(p), "_blank", "noopener,noreferrer");
               } catch (_) {}
@@ -2191,6 +2220,7 @@
             ev.stopPropagation();
             open();
           });
+          actions.appendChild(shareBtn);
           actions.appendChild(openBtn);
           head.appendChild(pathEl);
           head.appendChild(actions);
@@ -2407,13 +2437,13 @@
                   card.style.cursor = "pointer";
                   card.addEventListener("click", (ev) => {
                     if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
-                    if ((ext === "html" || ext === "htm") && !isEmbeddedWebView) {
+                    if (ext === "html" || ext === "htm") {
                       try { openHtmlViewer(p); } catch (_) {}
                       return;
                     }
                     try { openTextViewer(p, content, ext); } catch (_) {}
                   });
-                  if ((ext === "html" || ext === "htm") && !isEmbeddedWebView) {
+                  if (ext === "html" || ext === "htm") {
                     hint.textContent = "HTML (tap to open live view)";
                   }
                   try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {}
@@ -2440,6 +2470,7 @@
       // ==============================
       const viewer = $("viewer");
       const viewerClose = $("viewerClose");
+      const viewerSourceToggle = $("viewerSourceToggle");
       const viewerShare = $("viewerShare");
       const viewerTitle = $("viewerTitle");
       const viewerImg = $("viewerImg");
@@ -2512,6 +2543,8 @@
       async function openViewerFor(p) {
         const rel = safeRelPath(p);
         if (!rel) return;
+        viewerSourceToggle.style.display = "none";
+        viewerSourceToggle.onclick = null;
         viewerPaths = collectViewerPaths();
         const idx = viewerPaths.indexOf(rel);
         viewerIndex = idx >= 0 ? idx : 0;
@@ -2521,6 +2554,8 @@
       function openMediaViewer(path, kind) {
         const rel = safeRelPath(path);
         if (!rel) return;
+        viewerSourceToggle.style.display = "none";
+        viewerSourceToggle.onclick = null;
         viewerCurrentRel = rel;
         viewerMode = (kind === "video") ? "video" : "audio";
         viewerTitle.textContent = rel;
@@ -2545,8 +2580,52 @@
         viewerTitle.textContent = rel;
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
         resetViewerPanels();
-        viewerIframe.src = API + "/user/file?path=" + encodeURIComponent(rel);
+        const src = API + "/user/file?path=" + encodeURIComponent(rel);
+        viewerIframe.src = src;
         viewerIframe.style.display = "";
+        const srcPre = document.createElement("pre");
+        srcPre.style.display = "none";
+        const srcCode = document.createElement("code");
+        srcCode.className = "language-html";
+        srcCode.textContent = "";
+        srcPre.appendChild(srcCode);
+        viewerText.innerHTML = "";
+        viewerText.appendChild(srcPre);
+        viewerSourceToggle.style.display = "";
+        viewerSourceToggle.innerHTML = ICON.code;
+        viewerSourceToggle.title = "View source";
+        viewerSourceToggle.setAttribute("aria-label", "View source");
+        let sourceLoaded = false;
+        let showSource = false;
+        const loadSourceOnce = async () => {
+          if (sourceLoaded) return;
+          sourceLoaded = true;
+          try {
+            const res = await fetch(src);
+            const txt = await res.text();
+            srcCode.textContent = String(txt || "");
+            try { hljs.highlightElement(srcCode); } catch (_) {}
+          } catch (_) {
+            srcCode.textContent = "<!-- Failed to load source -->";
+          }
+        };
+        viewerSourceToggle.onclick = async () => {
+          showSource = !showSource;
+          if (showSource) {
+            await loadSourceOnce();
+            viewerIframe.style.display = "none";
+            viewerText.style.display = "block";
+            srcPre.style.display = "";
+            viewerSourceToggle.innerHTML = ICON.doc;
+            viewerSourceToggle.title = "View rendered";
+          } else {
+            viewerText.style.display = "none";
+            srcPre.style.display = "none";
+            viewerIframe.style.display = "";
+            viewerSourceToggle.innerHTML = ICON.code;
+            viewerSourceToggle.title = "View source";
+          }
+        };
         viewer.classList.add("show");
       }
       let _viewerMdToggle = null;
@@ -2563,6 +2642,10 @@
         viewerAudio.src = "";
         viewerIframe.src = "about:blank";
         resetViewerPanels();
+        viewerSourceToggle.style.display = "none";
+        viewerSourceToggle.onclick = null;
+        viewerSourceToggle.innerHTML = ICON.code;
+        viewerSourceToggle.title = "View source";
         viewerText.innerHTML = "";
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
         viewerPaths = [];
@@ -2578,6 +2661,8 @@
       function openTextViewer(path, content, ext) {
         const rel = safeRelPath(path);
         if (!rel) return;
+        viewerSourceToggle.style.display = "none";
+        viewerSourceToggle.onclick = null;
         viewerCurrentRel = rel;
         viewerMode = "text";
         viewerTitle.textContent = rel;
