@@ -3694,9 +3694,9 @@ class LocalHttpServer(
         } else {
             val command = payload.optString("command", "").trim()
             if (command.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "command_required")
-            remoteArgs.add("sh")
-            remoteArgs.add("-lc")
-            remoteArgs.add(command)
+            // dbclient appends remote argv without shell quoting. If we pass ["sh","-lc","echo foo"],
+            // "echo" becomes the -c script and "foo" becomes $0. Pass one fully-quoted command string instead.
+            remoteArgs.add("sh -lc ${shellSingleQuote(command)}")
         }
         if (remoteArgs.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "command_required")
 
@@ -3833,6 +3833,10 @@ class LocalHttpServer(
 
     private fun sshTarget(user: String, host: String): String {
         return if (user.isBlank()) host else "$user@$host"
+    }
+
+    private fun shellSingleQuote(v: String): String {
+        return "'" + v.replace("'", "'\"'\"'") + "'"
     }
 
     private fun buildSshProcess(argv: List<String>): ProcessBuilder {
