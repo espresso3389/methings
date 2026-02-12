@@ -34,7 +34,7 @@
         --transition: 180ms ease;
       }
 
-      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+      * { box-sizing: border-box; margin: 0; padding: 0; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
       .msg, .msg *, textarea, input, [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
 
       body {
@@ -488,7 +488,7 @@
       .send-btn:disabled { opacity: 0.35; cursor: default; }
 
       .ptt-btn {
-        border: none;
+        border: 1px solid var(--border);
         border-radius: 50%;
         width: 42px;
         height: 42px;
@@ -499,12 +499,12 @@
         align-items: center;
         justify-content: center;
         flex-shrink: 0;
-        transition: background var(--transition);
+        transition: background var(--transition), border-color var(--transition), color var(--transition);
       }
       .ptt-btn svg { width: 20px; height: 20px; display: block; }
-      .ptt-btn:hover { background: var(--bg-overlay); color: var(--ink); }
+      .ptt-btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
       .ptt-btn:active { transform: scale(0.95); }
-      .ptt-btn.active { background: rgba(99,102,241,0.18); color: #a5b4fc; }
+      .ptt-btn.active { background: rgba(99,102,241,0.18); border-color: rgba(99,102,241,0.35); color: #a5b4fc; }
 
       .ptt-panel {
         display: flex;
@@ -537,7 +537,7 @@
         transition: background var(--transition), border-color var(--transition);
         touch-action: none;
       }
-      .ptt-mic-btn svg { width: 28px; height: 28px; display: block; }
+      .ptt-mic-btn svg { width: 36px; height: 36px; display: block; }
       .ptt-mic-btn:hover { border-color: var(--ink-muted); }
       .ptt-mic-btn.active {
         background: rgba(239,68,68,0.15);
