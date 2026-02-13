@@ -167,8 +167,7 @@ Details: [tts.md](tts.md)
 | Action | Method | Endpoint |
 |--------|--------|----------|
 | `stt.status` | GET | `/stt/status` |
-| `stt.start` | POST | `/stt/start` |
-| `stt.stop` | POST | `/stt/stop` |
+| `stt.record` | POST | `/stt/record` |
 
 Recognition events are delivered over WebSocket `/ws/stt/events`.
 
@@ -200,7 +199,8 @@ Details: [llama.md](llama.md)
 
 | Action | Method | Endpoint |
 |--------|--------|----------|
-| `sensor.list` / `sensors.list` | GET | `/sensor/list` / `/sensors/list` |
+| `sensor.list` | GET | `/sensor/list` |
+| `sensors.list` | GET | `/sensors/list` |
 | `sensors.ws.contract` | GET | `/sensors/ws/contract` |
 
 Realtime sensor data is delivered over WebSocket `/ws/sensors`.
@@ -299,15 +299,22 @@ Details: [vision.md](vision.md)
 | `brain.memory.get` | GET | `/brain/memory` **[no perm]** |
 | `brain.memory.set` | POST | `/brain/memory` |
 | `cloud.prefs.get` | GET | `/cloud/prefs` **[no perm]** |
+| `notifications.prefs.get` | GET | `/notifications/prefs` **[no perm]** |
+| `notifications.prefs.set` | POST | `/notifications/prefs` **[no perm]** |
 
 `brain.config.get` returns `{vendor, base_url, model, has_api_key}` (never returns the key itself).
 
-### Notifications
+### UI (Viewer & Settings) **[no perm]**
 
 | Action | Method | Endpoint |
 |--------|--------|----------|
-| `notifications.prefs.get` | GET | `/notifications/prefs` **[no perm]** |
-| `notifications.prefs.set` | POST | `/notifications/prefs` **[no perm]** |
+| `viewer.open` | POST | `/ui/viewer/open` |
+| `viewer.close` | POST | `/ui/viewer/close` |
+| `viewer.immersive` | POST | `/ui/viewer/immersive` |
+| `viewer.slideshow` | POST | `/ui/viewer/slideshow` |
+| `viewer.goto` | POST | `/ui/viewer/goto` |
+| `ui.settings.sections` | GET | `/ui/settings/sections` |
+| `ui.settings.navigate` | POST | `/ui/settings/navigate` |
 
 ---
 
