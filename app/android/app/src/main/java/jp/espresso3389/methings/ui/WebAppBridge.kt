@@ -456,4 +456,11 @@ class WebAppBridge(private val activity: MainActivity) {
     fun setVideoRecordMaxDurationS(v: Int) {
         videoRecordPrefs.edit().putInt("max_duration_s", v.coerceIn(5, 3600)).apply()
     }
+
+    @JavascriptInterface
+    fun setMeSyncQrDisplayMode(enabled: Boolean) {
+        handler.post {
+            activity.setMeSyncQrDisplayMode(enabled)
+        }
+    }
 }

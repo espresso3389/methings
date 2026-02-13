@@ -6868,7 +6868,11 @@ class LocalHttpServer(
                     .put("expires_at", tr.expiresAt)
                     .put("expired", tr.expiresAt in 1..now)
                     .put("download_count", tr.downloadCount)
-                    .put("size", tr.file.length())
+                    .put("transmitting", tr.transmitting)
+                    .put("bytes_sent", tr.bytesSent)
+                    .put("transfer_started_at", if (tr.transferStartedAt > 0L) tr.transferStartedAt else JSONObject.NULL)
+                    .put("transfer_completed_at", if (tr.transferCompletedAt > 0L) tr.transferCompletedAt else JSONObject.NULL)
+                    .put("size", if (tr.file != null) tr.file.length() else JSONObject.NULL)
                     .put("mode", if (tr.includeIdentity) "migration" else "export")
                     .put("me_sync_uri", tr.meSyncUri)
             )
@@ -6904,7 +6908,8 @@ class LocalHttpServer(
             val includeUser = payload.optBoolean("include_user", true)
             val includeProtectedDb = payload.optBoolean("include_protected_db", true)
             val includeIdentity = payload.optBoolean("include_identity", migrationMode)
-            val active = findReusableMeSyncTransfer(includeUser, includeProtectedDb, includeIdentity)
+            val forceRefresh = payload.optBoolean("force_refresh", false)
+            val active = if (forceRefresh) null else findReusableMeSyncTransfer(includeUser, includeProtectedDb, includeIdentity)
             val transfer = active ?: buildMeSyncExport(
                 includeUser = includeUser,
                 includeProtectedDb = includeProtectedDb,
@@ -6938,17 +6943,41 @@ class LocalHttpServer(
             releaseMeSyncTransfer(tr)
             return jsonError(Response.Status.GONE, "transfer_expired")
         }
-        if (!tr.file.exists() || !tr.file.isFile) {
+        synchronized(tr) {
+            if (tr.claimedOnce) {
+                return jsonError(Response.Status.GONE, "transfer_already_used")
+            }
+            // One-shot export: first importer claim expires QR immediately.
+            tr.claimedOnce = true
+            tr.expiresAt = System.currentTimeMillis()
+        }
+        if (tr.streamingHttp) {
+            markMeSyncTransferStart(tr)
+            val stream = withMeSyncTransferProgress(
+                streamMeSyncArchive(
+                includeUser = tr.includeUser,
+                includeProtectedDb = tr.includeProtectedDb,
+                includeIdentity = tr.includeIdentity
+                ),
+                tr
+            )
+            val response = newChunkedResponse(Response.Status.OK, "application/zip", stream)
+            response.addHeader("Cache-Control", "no-store")
+            response.addHeader("Content-Disposition", "attachment; filename=\"methings-me-sync-${tr.id}.zip\"")
+            return response
+        }
+        val trFile = tr.file
+        if (trFile == null || !trFile.exists() || !trFile.isFile) {
             meSyncTransfers.remove(id)
             cleanupMeSyncTempSshKey(tr.tempSshKeyFingerprint)
             return jsonError(Response.Status.NOT_FOUND, "package_not_found")
         }
-        tr.downloadCount += 1
-        val stream: InputStream = FileInputStream(tr.file)
+        markMeSyncTransferStart(tr)
+        val stream: InputStream = withMeSyncTransferProgress(FileInputStream(trFile), tr)
         val response = newChunkedResponse(Response.Status.OK, "application/zip", stream)
         response.addHeader("Cache-Control", "no-store")
         response.addHeader("Content-Disposition", "attachment; filename=\"methings-me-sync-${tr.id}.zip\"")
-        response.addHeader("X-Me-Sync-Sha256", tr.sha256)
+        if (!tr.sha256.isNullOrBlank()) response.addHeader("X-Me-Sync-Sha256", tr.sha256)
         return response
     }
 
@@ -7108,45 +7137,9 @@ class LocalHttpServer(
     }
 
     private fun buildMeSyncExport(includeUser: Boolean, includeProtectedDb: Boolean, includeIdentity: Boolean): MeSyncTransfer {
-        val tmpRoot = File(context.cacheDir, "me_sync")
-        tmpRoot.mkdirs()
         val id = "ms_" + System.currentTimeMillis() + "_" + Random.nextInt(1000, 9999)
         val token = randomToken(24)
-        val out = File(tmpRoot, "$id.zip")
-        ZipOutputStream(FileOutputStream(out)).use { zos ->
-            val manifest = JSONObject()
-                .put("schema", 1)
-                .put("created_at", System.currentTimeMillis())
-                .put("app_id", context.packageName)
-                .put("version_name", BuildConfig.VERSION_NAME)
-                .put("version_code", BuildConfig.VERSION_CODE)
-                .put("git_sha", BuildConfig.GIT_SHA)
-                .put("debug", BuildConfig.DEBUG)
-                .put("include_user", includeUser)
-                .put("include_protected_db", includeProtectedDb)
-                .put("include_identity", includeIdentity)
-            putZipBytes(zos, "manifest.json", manifest.toString(2).toByteArray(StandardCharsets.UTF_8))
-
-            if (includeProtectedDb) {
-                val dbFile = File(File(context.filesDir, "protected"), "app.db")
-                if (dbFile.exists() && dbFile.isFile) {
-                    putZipFile(zos, "protected/app.db", dbFile)
-                }
-            }
-            if (includeUser) {
-                val userRoot = File(context.filesDir, "user")
-                if (userRoot.exists() && userRoot.isDirectory) {
-                    zipDirectory(zos, userRoot, "user/") { rel ->
-                        !includeIdentity && (rel == ".ssh/id_dropbear" || rel == ".ssh/id_dropbear.pub")
-                    }
-                }
-            }
-
-            val roomState = exportRoomState()
-            putZipBytes(zos, "room/state.json", roomState.toString(2).toByteArray(StandardCharsets.UTF_8))
-        }
-        val sha = sha256Hex(out)
-        val expiresAt = System.currentTimeMillis() + 30L * 60L * 1000L
+        val expiresAt = System.currentTimeMillis() + ME_SYNC_QR_TTL_MS
         val hostIp = sshdManager.getHostIp().trim()
         val query = "id=" + URLEncoder.encode(id, "UTF-8") +
             "&token=" + URLEncoder.encode(token, "UTF-8")
@@ -7154,8 +7147,7 @@ class LocalHttpServer(
         val lanUrl = if (hostIp.isNotBlank() && meSyncLanServerStarted) {
             "http://$hostIp:$ME_SYNC_LAN_PORT/me/sync/download?$query"
         } else ""
-        val sshMeta = createMeSyncSshAccess(id, expiresAt)
-        val transport = if (sshMeta != null) "ssh_scp" else "http"
+        val transport = "http"
         val exportPayload = JSONObject()
             .put("type", "me.sync")
             .put("version", 2)
@@ -7165,17 +7157,6 @@ class LocalHttpServer(
             .put("url", if (lanUrl.isNotBlank()) lanUrl else localUrl)
             .put("expires_at", expiresAt)
             .put("http_url", if (lanUrl.isNotBlank()) lanUrl else localUrl)
-        if (sshMeta != null) {
-            exportPayload.put(
-                "ssh",
-                JSONObject()
-                    .put("host", sshMeta.host)
-                    .put("port", sshMeta.port)
-                    .put("user", sshMeta.user)
-                    .put("remote_path", sshMeta.remotePath)
-                    .put("private_key_b64", sshMeta.privateKeyB64)
-            )
-        }
         val meSyncUriPayload = JSONObject()
             .put("v", 1)
             .put("u", if (lanUrl.isNotBlank()) lanUrl else localUrl)
@@ -7190,10 +7171,10 @@ class LocalHttpServer(
         return MeSyncTransfer(
             id = id,
             token = token,
-            file = out,
+            file = null,
             createdAt = System.currentTimeMillis(),
             expiresAt = expiresAt,
-            sha256 = sha,
+            sha256 = null,
             includeUser = includeUser,
             includeProtectedDb = includeProtectedDb,
             includeIdentity = includeIdentity,
@@ -7203,12 +7184,13 @@ class LocalHttpServer(
             meSyncUri = meSyncUri,
             qrDataUrl = qrDataUrl,
             transport = transport,
-            sshHost = sshMeta?.host ?: "",
-            sshPort = sshMeta?.port ?: 22,
-            sshUser = sshMeta?.user ?: "",
-            sshRemotePath = sshMeta?.remotePath ?: "",
-            tempSshKeyFingerprint = sshMeta?.fingerprint ?: "",
-            requiresTempSshd = sshMeta?.requiresTempSshd ?: false
+            sshHost = "",
+            sshPort = 22,
+            sshUser = "",
+            sshRemotePath = "",
+            tempSshKeyFingerprint = "",
+            requiresTempSshd = false,
+            streamingHttp = true
         )
     }
 
@@ -7232,8 +7214,8 @@ class LocalHttpServer(
             .put("transfer_id", transfer.id)
             .put("reused", reused)
             .put("expires_at", transfer.expiresAt)
-            .put("size", transfer.file.length())
-            .put("sha256", transfer.sha256)
+            .put("size", if (transfer.file != null) transfer.file.length() else JSONObject.NULL)
+            .put("sha256", transfer.sha256 ?: JSONObject.NULL)
             .put("mode", if (transfer.includeIdentity) "migration" else "export")
             .put("include_identity", transfer.includeIdentity)
             .put("transport", transfer.transport)
@@ -7900,6 +7882,8 @@ class LocalHttpServer(
         meSyncTransfers.entries.removeIf { ent ->
             val tr = ent.value
             val expired = tr.expiresAt > 0L && now > tr.expiresAt
+            // Keep active transfer alive until stream completes.
+            if (expired && tr.transmitting) return@removeIf false
             if (expired) toDelete.add(tr)
             expired
         }
@@ -7907,11 +7891,122 @@ class LocalHttpServer(
     }
 
     private fun releaseMeSyncTransfer(transfer: MeSyncTransfer) {
-        runCatching { transfer.file.delete() }
+        runCatching { transfer.file?.delete() }
         cleanupMeSyncTempSshKey(transfer.tempSshKeyFingerprint)
         if (transfer.requiresTempSshd) {
             stopTemporaryMeSyncSshdIfIdle()
         }
+    }
+
+    private fun markMeSyncTransferStart(transfer: MeSyncTransfer) {
+        synchronized(transfer) {
+            transfer.downloadCount += 1
+            transfer.bytesSent = 0L
+            transfer.transmitting = true
+            transfer.transferStartedAt = System.currentTimeMillis()
+            transfer.transferCompletedAt = 0L
+            transfer.activeDownloads += 1
+        }
+    }
+
+    private fun withMeSyncTransferProgress(stream: InputStream, transfer: MeSyncTransfer): InputStream {
+        return object : java.io.FilterInputStream(stream) {
+            private var done = false
+
+            private fun onBytes(n: Int) {
+                if (n <= 0) return
+                synchronized(transfer) { transfer.bytesSent += n.toLong() }
+            }
+
+            private fun onDone() {
+                if (done) return
+                done = true
+                synchronized(transfer) {
+                    transfer.activeDownloads = (transfer.activeDownloads - 1).coerceAtLeast(0)
+                    if (transfer.activeDownloads == 0) {
+                        transfer.transmitting = false
+                        transfer.transferCompletedAt = System.currentTimeMillis()
+                    }
+                }
+            }
+
+            override fun read(): Int {
+                val r = super.read()
+                if (r >= 0) onBytes(1) else onDone()
+                return r
+            }
+
+            override fun read(b: ByteArray, off: Int, len: Int): Int {
+                val n = super.read(b, off, len)
+                if (n > 0) onBytes(n) else if (n < 0) onDone()
+                return n
+            }
+
+            override fun close() {
+                try {
+                    super.close()
+                } finally {
+                    onDone()
+                }
+            }
+        }
+    }
+
+    private fun streamMeSyncArchive(
+        includeUser: Boolean,
+        includeProtectedDb: Boolean,
+        includeIdentity: Boolean
+    ): InputStream {
+        val inPipe = java.io.PipedInputStream(256 * 1024)
+        val outPipe = java.io.PipedOutputStream(inPipe)
+        Thread({
+            try {
+                ZipOutputStream(java.io.BufferedOutputStream(outPipe, 256 * 1024)).use { zos ->
+                    writeMeSyncArchive(zos, includeUser, includeProtectedDb, includeIdentity)
+                }
+            } catch (_: Exception) {
+                runCatching { outPipe.close() }
+            }
+        }, "me-sync-stream").start()
+        return inPipe
+    }
+
+    private fun writeMeSyncArchive(
+        zos: ZipOutputStream,
+        includeUser: Boolean,
+        includeProtectedDb: Boolean,
+        includeIdentity: Boolean
+    ) {
+        val manifest = JSONObject()
+            .put("schema", 1)
+            .put("created_at", System.currentTimeMillis())
+            .put("app_id", context.packageName)
+            .put("version_name", BuildConfig.VERSION_NAME)
+            .put("version_code", BuildConfig.VERSION_CODE)
+            .put("git_sha", BuildConfig.GIT_SHA)
+            .put("debug", BuildConfig.DEBUG)
+            .put("include_user", includeUser)
+            .put("include_protected_db", includeProtectedDb)
+            .put("include_identity", includeIdentity)
+        putZipBytes(zos, "manifest.json", manifest.toString(2).toByteArray(StandardCharsets.UTF_8))
+
+        if (includeProtectedDb) {
+            val dbFile = File(File(context.filesDir, "protected"), "app.db")
+            if (dbFile.exists() && dbFile.isFile) {
+                putZipFile(zos, "protected/app.db", dbFile)
+            }
+        }
+        if (includeUser) {
+            val userRoot = File(context.filesDir, "user")
+            if (userRoot.exists() && userRoot.isDirectory) {
+                zipDirectory(zos, userRoot, "user/") { rel ->
+                    !includeIdentity && (rel == ".ssh/id_dropbear" || rel == ".ssh/id_dropbear.pub")
+                }
+            }
+        }
+
+        val roomState = exportRoomState()
+        putZipBytes(zos, "room/state.json", roomState.toString(2).toByteArray(StandardCharsets.UTF_8))
     }
 
     private fun cleanupMeSyncTempSshKey(fingerprint: String?) {
@@ -7973,10 +8068,10 @@ class LocalHttpServer(
     private data class MeSyncTransfer(
         val id: String,
         val token: String,
-        val file: File,
+        val file: File?,
         val createdAt: Long,
-        val expiresAt: Long,
-        val sha256: String,
+        @Volatile var expiresAt: Long,
+        val sha256: String?,
         val includeUser: Boolean,
         val includeProtectedDb: Boolean,
         val includeIdentity: Boolean,
@@ -7992,7 +8087,14 @@ class LocalHttpServer(
         val sshRemotePath: String,
         val tempSshKeyFingerprint: String,
         val requiresTempSshd: Boolean,
-        @Volatile var downloadCount: Int = 0
+        val streamingHttp: Boolean = false,
+        @Volatile var downloadCount: Int = 0,
+        @Volatile var transmitting: Boolean = false,
+        @Volatile var bytesSent: Long = 0L,
+        @Volatile var transferStartedAt: Long = 0L,
+        @Volatile var transferCompletedAt: Long = 0L,
+        @Volatile var activeDownloads: Int = 0,
+        @Volatile var claimedOnce: Boolean = false
     )
 
     private data class MeSyncImportSource(
@@ -8173,6 +8275,7 @@ class LocalHttpServer(
         private const val HOST = "127.0.0.1"
         private const val PORT = 8765
         private const val ME_SYNC_LAN_PORT = 8766
+        private const val ME_SYNC_QR_TTL_MS = 40L * 1000L
         private const val ME_SYNC_URI_PREFIX = "me.things:me.sync:"
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
         private const val SOCKET_READ_TIMEOUT = 0

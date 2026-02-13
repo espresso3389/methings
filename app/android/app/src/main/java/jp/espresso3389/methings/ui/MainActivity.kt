@@ -15,6 +15,7 @@ import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -57,6 +58,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private var backCallback: OnBackPressedCallback? = null
     private var startupBanner: View? = null
+    private var meSyncQrDisplayBoosted: Boolean = false
+    private var meSyncPrevKeepScreenOn: Boolean = false
     @Volatile private var pendingMeSyncDeepLink: String? = null
     @Volatile private var mainUiLoaded: Boolean = false
     private var mainFrameError = false
@@ -549,6 +552,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        setMeSyncQrDisplayMode(false)
         pendingFilePathCallback?.onReceiveValue(null)
         pendingFilePathCallback = null
         super.onDestroy()
@@ -576,6 +580,25 @@ class MainActivity : AppCompatActivity() {
         webView.post { webView.loadUrl(url) }
         if (showToast) {
             Toast.makeText(this, toastText, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun setMeSyncQrDisplayMode(enabled: Boolean) {
+        runOnUiThread {
+            val win = window ?: return@runOnUiThread
+            if (enabled) {
+                if (!meSyncQrDisplayBoosted) {
+                    meSyncPrevKeepScreenOn = win.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0
+                    meSyncQrDisplayBoosted = true
+                }
+                win.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                if (!meSyncQrDisplayBoosted) return@runOnUiThread
+                if (!meSyncPrevKeepScreenOn) {
+                    win.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+                meSyncQrDisplayBoosted = false
+            }
         }
     }
 
