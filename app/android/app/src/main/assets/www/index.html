@@ -1000,6 +1000,23 @@
         background: rgba(255,255,255,0.04);
       }
 
+      /* Dialog prompt input */
+      #dialogInput {
+        width: 100%;
+        padding: 9px 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        font-family: inherit;
+        font-size: 14px;
+        background: var(--surface);
+        color: var(--ink);
+        outline: none;
+        transition: border-color var(--transition);
+        box-sizing: border-box;
+      }
+      #dialogInput:focus { border-color: var(--border-focus); }
+      #dialogInput::placeholder { color: var(--ink-muted); }
+
       /* Toggle switch */
       .toggle-row {
         display: flex;
@@ -1257,6 +1274,22 @@
       .session-item .session-del svg { width: 14px; height: 14px; display: block; }
       .session-item .session-del:hover { background: var(--red-soft); color: var(--red); border-color: rgba(239,68,68,0.25); }
       .session-item .session-del:active { transform: scale(0.9); }
+      .session-item .session-edit {
+        width: 26px;
+        height: 26px;
+        flex-shrink: 0;
+        border-radius: var(--radius-sm);
+        border: 1px solid transparent;
+        background: transparent;
+        color: var(--ink-muted);
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        transition: background var(--transition), color var(--transition), border-color var(--transition);
+      }
+      .session-item .session-edit svg { width: 14px; height: 14px; display: block; }
+      .session-item .session-edit:hover { background: var(--accent-soft); color: var(--accent); border-color: rgba(99,102,241,0.25); }
+      .session-item .session-edit:active { transform: scale(0.9); }
 
       /* Permission card (inline in chat) */
       .perm-card {
@@ -1953,6 +1986,24 @@
       </div>
     </div>
 
+    <!-- me.sync Import Progress Modal -->
+    <div class="modal" id="meSyncImportModal" role="dialog" aria-modal="true" aria-labelledby="meSyncImportModalTitle">
+      <div class="modal-card" style="text-align:left; max-width:360px;">
+        <div class="card-header">
+          <div class="card-icon blue">&#10515;</div>
+          <div class="card-title" id="meSyncImportModalTitle" style="margin-bottom:0;">me.sync Import</div>
+          <button class="icon-btn secondary" id="meSyncImportModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
+        </div>
+        <div class="muted" id="meSyncImportModalStatus" style="margin-top:8px;">Starting import...</div>
+        <div id="meSyncImportProgressWrap" style="display:block; margin-top:10px;">
+          <div style="height:8px; border:1px solid var(--border); border-radius:999px; overflow:hidden; background:rgba(255,255,255,0.06);">
+            <div style="height:100%; width:40%; border-radius:999px; background:linear-gradient(90deg, rgba(34,197,94,0.35), rgba(34,197,94,0.95), rgba(34,197,94,0.35)); animation: meSyncPrepSlide 1.1s linear infinite;"></div>
+          </div>
+          <div class="muted" id="meSyncImportProgressText" style="margin-top:8px;">Elapsed 00:00</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div class="toast" id="toast"></div>
 
@@ -2002,6 +2053,7 @@
         slideSingle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="14" y2="12"/></svg>',
         slideScroll: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="1" width="18" height="9" rx="1.5"/><line x1="7" y1="4" x2="15" y2="4"/><line x1="7" y1="7" x2="12" y2="7"/><rect x="3" y="14" width="18" height="9" rx="1.5"/><line x1="7" y1="17" x2="15" y2="17"/><line x1="7" y1="20" x2="12" y2="20"/></svg>',
         search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+        edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
       };
 
       // Set static button icons (record button is handled by setRecordUi()).
@@ -2107,6 +2159,7 @@
           function addSid(s) { if (s && !uniq.includes(s)) uniq.push(s); }
           addSid("default");
           addSid(cur);
+          for (const s of loadKnownSessions()) addSid(s);
           for (const it of items) addSid(String(it.session_id || "").trim());
 
           const rows = [];
@@ -2135,6 +2188,7 @@
                   (meta.length ? "<div class='meta'>" + meta.join(" &middot; ") + "</div>" : "") +
                 "</div>" +
                 (isCur ? "<div style='font-size:10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--accent); background:var(--accent-soft); border:1px solid rgba(99,102,241,0.25); border-radius:var(--radius-full); padding:2px 8px;'>active</div>" : "") +
+                "<button class='session-edit' data-edit='" + eSid + "' title='Rename session'>" + ICON.edit + "</button>" +
                 "<button class='session-del' data-del='" + eSid + "' title='Delete session'>" + ICON.close + "</button>" +
               "</div>"
             );
@@ -2142,7 +2196,7 @@
           sessionList.innerHTML = rows.join("") || "<div class='muted'>(no sessions)</div>";
           for (const el of sessionList.querySelectorAll(".session-item[data-sid]")) {
             el.addEventListener("click", async (e) => {
-              if (e.target.closest(".session-del")) return;
+              if (e.target.closest(".session-del") || e.target.closest(".session-edit")) return;
               const sid = String(el.getAttribute("data-sid") || "").trim();
               if (!sid) return;
               await switchChatSession(sid);
@@ -2164,11 +2218,50 @@
                 if (!r.ok) showToast("Removed locally (app update needed to delete transcript)", 1800);
               } catch (_) {}
               try { localStorage.removeItem(CHAT_STORAGE_PREFIX + sid); } catch (_) {}
+              removeKnownSession(sid);
               if (sid === String(chatSessionId || "").trim()) {
                 await switchChatSession("default");
               }
               await refreshSessionMenu();
               showToast("Session deleted", 1100);
+            });
+          }
+          for (const btn of sessionList.querySelectorAll(".session-edit[data-edit]")) {
+            btn.addEventListener("click", async (e) => {
+              e.stopPropagation();
+              const oldSid = String(btn.getAttribute("data-edit") || "").trim();
+              if (!oldSid) return;
+              let prev = oldSid;
+              let newName = "";
+              while (true) {
+                newName = String(await appPrompt("Rename session", "New name for '" + oldSid + "'", prev) || "").trim();
+                if (!newName || newName === oldSid) return;
+                if (isSessionIdTaken(newName)) {
+                  const retry = await appConfirm("Name taken", "Session '" + newName + "' already exists. Please choose a different name.", { cancel: "Cancel", ok: "Retry", okClass: "primary" });
+                  if (!retry) return;
+                  prev = newName;
+                  continue;
+                }
+                break;
+              }
+              try {
+                const r = await fetch(API + "/brain/session/rename", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json; charset=utf-8" },
+                  body: JSON.stringify({ old_id: oldSid, new_id: newName }),
+                });
+                if (!r.ok) { showToast("Rename failed", 1400); return; }
+              } catch (_) { showToast("Rename failed", 1400); return; }
+              removeKnownSession(oldSid);
+              saveKnownSession(newName);
+              try { localStorage.removeItem(CHAT_STORAGE_PREFIX + oldSid); } catch (_) {}
+              if (oldSid === String(chatSessionId || "").trim()) {
+                chatSessionId = newName;
+                try { localStorage.setItem(CHAT_SESSION_KEY, newName); } catch (_) {}
+                setSessionChipText();
+              }
+              await refreshSessionMenu();
+              showToast("Session renamed", 900);
             });
           }
         } catch (_) {
@@ -4212,6 +4305,7 @@
       const chatWelcome = $("chatWelcome");
       const CHAT_STORAGE_PREFIX = "methings.chat.conversation.v1.";
       const CHAT_SESSION_KEY = "methings.chat.session_id.v1";
+      const CHAT_KNOWN_SESSIONS_KEY = "methings.chat.known_sessions.v1";
       let conversation = [];
       let streaming = false;
       let chatSessionId = "";
@@ -4368,6 +4462,28 @@
         return "s_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10);
       }
 
+      function loadKnownSessions() {
+        try {
+          const raw = localStorage.getItem(CHAT_KNOWN_SESSIONS_KEY);
+          if (raw) return JSON.parse(raw);
+        } catch (_) {}
+        return [];
+      }
+      function saveKnownSession(sid) {
+        const list = loadKnownSessions();
+        if (!list.includes(sid)) { list.push(sid); }
+        try { localStorage.setItem(CHAT_KNOWN_SESSIONS_KEY, JSON.stringify(list)); } catch (_) {}
+      }
+      function removeKnownSession(sid) {
+        const list = loadKnownSessions().filter(s => s !== sid);
+        try { localStorage.setItem(CHAT_KNOWN_SESSIONS_KEY, JSON.stringify(list)); } catch (_) {}
+      }
+      function isSessionIdTaken(sid) {
+        if (sid === "default" || sid === String(chatSessionId || "").trim()) return true;
+        if (loadKnownSessions().includes(sid)) return true;
+        return !!(sessionList && sessionList.querySelector("[data-sid='" + sid.replace(/'/g, "\\'") + "']"));
+      }
+
       function loadSessionId() {
         try {
           const existing = localStorage.getItem(CHAT_SESSION_KEY);
@@ -4427,6 +4543,54 @@
           }
         } catch (_) {}
       }
+
+      window.uiClearChatCache = async function(opts) {
+        const keepSid = String((opts && opts.preserve_session_id) || "").trim();
+        const quiet = !!(opts && opts.quiet);
+        const keepConvoKey = keepSid ? (CHAT_STORAGE_PREFIX + keepSid) : "";
+        try {
+          const toDelete = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i) || "";
+            if (!k.startsWith(CHAT_STORAGE_PREFIX)) continue;
+            if (keepConvoKey && k === keepConvoKey) continue;
+            toDelete.push(k);
+          }
+          for (const k of toDelete) {
+            try { localStorage.removeItem(k); } catch (_) {}
+          }
+          if (keepSid) {
+            try { localStorage.setItem(CHAT_KNOWN_SESSIONS_KEY, JSON.stringify([keepSid])); } catch (_) {}
+            try { localStorage.setItem(CHAT_SESSION_KEY, keepSid); } catch (_) {}
+          } else {
+            try { localStorage.removeItem(CHAT_KNOWN_SESSIONS_KEY); } catch (_) {}
+            try { localStorage.setItem(CHAT_SESSION_KEY, "default"); } catch (_) {}
+          }
+        } catch (_) {}
+        const targetSid = keepSid || "default";
+        if (quiet) {
+          try {
+            chatSessionId = targetSid;
+            setSessionChipText();
+          } catch (_) {}
+          return;
+        }
+        try {
+          if (String(chatSessionId || "").trim() === targetSid) {
+            try { localStorage.setItem(CHAT_SESSION_KEY, targetSid); } catch (_) {}
+            setSessionChipText();
+            conversation = [];
+            lastServerTs = 0;
+            try { chatMessages.textContent = ""; } catch (_) {}
+            _permState.knownIds.clear(); _permState.cardEl = null; _permState.items = {};
+            restoreConversation();
+            connectBrainSSE();
+            await syncConversationFromServer();
+          } else {
+            await switchChatSession(targetSid);
+          }
+        } catch (_) {}
+      };
 
       function isNearBottom(el, slackPx) {
         try {
@@ -5078,11 +5242,24 @@
       try { $("sessionRefresh").addEventListener("click", refreshSessionMenu); } catch (_) {}
       try {
         $("sessionNew").addEventListener("click", async () => {
-          const name = String(await appPrompt("New session", "Session name (optional)", "") || "").trim();
-          const sid = name || genSessionId();
-          await switchChatSession(sid);
-          await refreshSessionMenu();
-          showToast("Session created", 900);
+          let prev = "";
+          while (true) {
+            const name = String(await appPrompt("New session", "Session name (optional)", prev) || "").trim();
+            if (!name && !prev) { /* first attempt, user left blank → auto-generate */ }
+            else if (!name) return; /* cancelled after retry */
+            const sid = name || genSessionId();
+            if (name && isSessionIdTaken(sid)) {
+              await appConfirm("Name taken", "Session '" + sid + "' already exists. Please choose a different name.", { cancel: "Cancel", ok: "Retry", okClass: "primary" })
+                ? (prev = name, undefined) : undefined;
+              if (!prev) return;
+              continue;
+            }
+            saveKnownSession(sid);
+            await switchChatSession(sid);
+            await refreshSessionMenu();
+            showToast("Session created", 900);
+            break;
+          }
         });
       } catch (_) {}
       // Session delete is now handled per-item inside refreshSessionMenu().
@@ -6074,6 +6251,11 @@
       const meSyncExpireText = $("meSyncExpireText");
       const meSyncExportCancel = $("meSyncExportCancel");
       const meSyncCopyUri = $("meSyncCopyUri");
+      const meSyncImportModal = $("meSyncImportModal");
+      const meSyncImportModalClose = $("meSyncImportModalClose");
+      const meSyncImportModalStatus = $("meSyncImportModalStatus");
+      const meSyncImportProgressWrap = $("meSyncImportProgressWrap");
+      const meSyncImportProgressText = $("meSyncImportProgressText");
       const appVersionText = $("appVersionText");
       const appCommitLink = $("appCommitLink");
       const appRepoLink = $("appRepoLink");
@@ -6127,6 +6309,9 @@
       let meSyncExpireTimer = null;
       let meSyncPrepareTimer = null;
       let meSyncPrepareStartedAt = 0;
+      let meSyncImportTimer = null;
+      let meSyncImportStartedAt = 0;
+      let meSyncImportInFlight = false;
 
       function formatDurationMMSS(ms) {
         const totalSec = Math.max(0, Math.floor((Number(ms) || 0) / 1000));
@@ -6367,6 +6552,48 @@
         meSyncModal.classList.remove("show");
       }
 
+      function stopMeSyncImportTimer() {
+        try { if (meSyncImportTimer) clearInterval(meSyncImportTimer); } catch (_) {}
+        meSyncImportTimer = null;
+      }
+
+      function closeMeSyncImportModal(force) {
+        if (!force && meSyncImportInFlight) {
+          showToast("Import is still running", 1400);
+          return;
+        }
+        stopMeSyncImportTimer();
+        try { meSyncImportModal.classList.remove("show"); } catch (_) {}
+      }
+
+      function showMeSyncImportModal(initialStatus) {
+        meSyncImportModalStatus.textContent = String(initialStatus || "Importing...");
+        meSyncImportProgressWrap.style.display = "block";
+        meSyncImportProgressText.textContent = "Elapsed " + formatDurationMMSS(0);
+        meSyncImportInFlight = true;
+        meSyncImportModalClose.disabled = true;
+        meSyncImportStartedAt = Date.now();
+        stopMeSyncImportTimer();
+        meSyncImportTimer = setInterval(() => {
+          const elapsed = Date.now() - meSyncImportStartedAt;
+          meSyncImportProgressText.textContent = "Elapsed " + formatDurationMMSS(elapsed);
+        }, 500);
+        meSyncImportModal.classList.add("show");
+      }
+
+      function updateMeSyncImportPhase(label) {
+        if (!meSyncImportInFlight) return;
+        meSyncImportModalStatus.textContent = String(label || "Importing...");
+      }
+
+      function finishMeSyncImportModal(ok, msg) {
+        meSyncImportInFlight = false;
+        stopMeSyncImportTimer();
+        meSyncImportModalStatus.textContent = String(msg || (ok ? "Import completed." : "Import failed."));
+        meSyncImportProgressWrap.style.display = "none";
+        meSyncImportModalClose.disabled = false;
+      }
+
       function startMeSyncExpireTimer() {
         try { if (meSyncExpireTimer) clearInterval(meSyncExpireTimer); } catch (_) {}
         meSyncExpireTimer = setInterval(() => {
@@ -6430,21 +6657,36 @@
           if (!wipeOk) return;
         }
         meSyncImport.disabled = true;
+        showMeSyncImportModal("Starting import...");
+        setTimeout(() => updateMeSyncImportPhase("Downloading package..."), 600);
+        setTimeout(() => updateMeSyncImportPhase("Wiping existing data..."), 3000);
+        setTimeout(() => updateMeSyncImportPhase("Restoring imported data..."), 6500);
+        setTimeout(() => updateMeSyncImportPhase("Restarting local runtime..."), 10000);
+        let timeoutId = 0;
         try {
           const maybeUrl = (/^https?:\/\//i.test(payloadText)) ? payloadText : "";
+          const controller = new AbortController();
+          timeoutId = setTimeout(() => {
+            try { controller.abort(); } catch (_) {}
+          }, 180000);
           const res = await fetch(API + "/me/sync/import", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ url: maybeUrl, payload: payloadText, wipe_existing: true }),
+            signal: controller.signal,
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(String(data.error || "import_failed"));
           meSyncStatus.textContent = "Import completed.";
+          finishMeSyncImportModal(true, "Import completed.");
           showToast("me.sync import complete", 1800);
-        } catch (_) {
+        } catch (e) {
           meSyncStatus.textContent = "Import failed.";
+          const timedOut = String((e && e.name) || "") === "AbortError";
+          finishMeSyncImportModal(false, timedOut ? "Import timed out. Check source and retry." : "Import failed. Please retry.");
           showToast("me.sync import failed", 2000);
         } finally {
+          try { if (timeoutId) clearTimeout(timeoutId); } catch (_) {}
           meSyncImport.disabled = false;
         }
       }
@@ -7108,6 +7350,10 @@
 
       meSyncModalClose.addEventListener("click", () => {
         closeMeSyncModal();
+      });
+
+      meSyncImportModalClose.addEventListener("click", () => {
+        closeMeSyncImportModal(false);
       });
 
       meSyncExportCancel.addEventListener("click", () => {

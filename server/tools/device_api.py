@@ -276,6 +276,14 @@ class DeviceApiTool:
             timeout_s = 12.0
         timeout_s = max(3.0, min(timeout_s, 900.0))
 
+        # Keep me.sync wipe in-session by default. Callers can still override explicitly.
+        if action == "me.sync.wipe_all" and spec["method"] == "POST" and isinstance(payload, dict):
+            payload.setdefault("restart_app", False)
+            payload.setdefault("preserve_session", True)
+            sid = str(payload.get("session_id") or args.get("session_id") or self._identity or "").strip()
+            if sid:
+                payload.setdefault("session_id", sid)
+
         body = payload if spec["method"] == "POST" else None
         return self._request_json(spec["method"], spec["path"], body, timeout_s=timeout_s)
 

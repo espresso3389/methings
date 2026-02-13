@@ -123,7 +123,16 @@ class MainActivity : AppCompatActivity() {
     private val uiReloadReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != LocalHttpServer.ACTION_UI_RELOAD) return
-            reloadUi()
+            val toastText = intent.getStringExtra(LocalHttpServer.EXTRA_UI_RELOAD_TOAST)
+            reloadUi(showToast = !toastText.isNullOrBlank(), toastText = toastText ?: "")
+        }
+    }
+    private val uiChatCacheClearReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != LocalHttpServer.ACTION_UI_CHAT_CACHE_CLEAR) return
+            val preserve = intent.getStringExtra(LocalHttpServer.EXTRA_CHAT_PRESERVE_SESSION_ID) ?: ""
+            val escaped = jsString(preserve)
+            evalJs("window.uiClearChatCache && window.uiClearChatCache({ preserve_session_id: '$escaped', quiet: true })")
         }
     }
     private val viewerCommandReceiver = object : BroadcastReceiver() {
@@ -495,6 +504,11 @@ class MainActivity : AppCompatActivity() {
                 Context.RECEIVER_NOT_EXPORTED
             )
             registerReceiver(
+                uiChatCacheClearReceiver,
+                IntentFilter(LocalHttpServer.ACTION_UI_CHAT_CACHE_CLEAR),
+                Context.RECEIVER_NOT_EXPORTED
+            )
+            registerReceiver(
                 viewerCommandReceiver,
                 IntentFilter(LocalHttpServer.ACTION_UI_VIEWER_COMMAND),
                 Context.RECEIVER_NOT_EXPORTED
@@ -513,6 +527,7 @@ class MainActivity : AppCompatActivity() {
             registerReceiver(pythonHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
             registerReceiver(uiReloadReceiver, IntentFilter(LocalHttpServer.ACTION_UI_RELOAD))
+            registerReceiver(uiChatCacheClearReceiver, IntentFilter(LocalHttpServer.ACTION_UI_CHAT_CACHE_CLEAR))
             registerReceiver(viewerCommandReceiver, IntentFilter(LocalHttpServer.ACTION_UI_VIEWER_COMMAND))
             registerReceiver(settingsNavigateReceiver, IntentFilter(LocalHttpServer.ACTION_UI_SETTINGS_NAVIGATE))
             registerReceiver(meSyncExportShowReceiver, IntentFilter(LocalHttpServer.ACTION_UI_ME_SYNC_EXPORT_SHOW))
@@ -524,6 +539,7 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(pythonHealthReceiver)
         unregisterReceiver(permissionPromptReceiver)
         unregisterReceiver(uiReloadReceiver)
+        unregisterReceiver(uiChatCacheClearReceiver)
         unregisterReceiver(viewerCommandReceiver)
         unregisterReceiver(settingsNavigateReceiver)
         unregisterReceiver(meSyncExportShowReceiver)
@@ -554,10 +570,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun reloadUi() {
+    fun reloadUi(showToast: Boolean = true, toastText: String = "UI reset applied") {
         val url = "http://127.0.0.1:8765/ui/index.html?ts=${System.currentTimeMillis()}"
         webView.post { webView.loadUrl(url) }
-        Toast.makeText(this, "UI reset applied", Toast.LENGTH_SHORT).show()
+        if (showToast) {
+            Toast.makeText(this, toastText, Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun dismissStartupBanner() {

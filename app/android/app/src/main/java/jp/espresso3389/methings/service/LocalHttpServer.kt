@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.app.PendingIntent
 import android.content.pm.PackageManager
+import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import androidx.lifecycle.LifecycleOwner
 import fi.iki.elonen.NanoHTTPD
@@ -258,7 +259,7 @@ class LocalHttpServer(
                     payload,
                     tool = "device.me_sync",
                     capability = "me_sync.wipe_all",
-                    detail = "Wipe all local app data and restart app"
+                    detail = "Wipe local app data for me.sync"
                 )
                 if (!ok.first) return ok.second!!
                 handleMeSyncWipeAll(payload)
@@ -294,7 +295,11 @@ class LocalHttpServer(
             uri == "/ui/reload" && session.method == Method.POST -> {
                 // Dev helper: hot-reload WebView UI after adb pushing files into files/www.
                 // This avoids a full APK rebuild during UI iteration.
-                context.sendBroadcast(android.content.Intent(ACTION_UI_RELOAD))
+                context.sendBroadcast(
+                    android.content.Intent(ACTION_UI_RELOAD).apply {
+                        putExtra(EXTRA_UI_RELOAD_TOAST, "UI reloaded")
+                    }
+                )
                 jsonResponse(JSONObject().put("status", "ok"))
             }
             uri == "/ui/settings/sections" && session.method == Method.GET -> {
@@ -696,6 +701,7 @@ class LocalHttpServer(
                     uri == "/brain/inbox/chat" ||
                     uri == "/brain/inbox/event" ||
                     uri == "/brain/session/delete" ||
+                    uri == "/brain/session/rename" ||
                     uri == "/brain/debug/comment" ||
                     uri == "/brain/journal/current" ||
                     uri == "/brain/journal/append"
@@ -6985,14 +6991,28 @@ class LocalHttpServer(
 
     private fun handleMeSyncWipeAll(payload: JSONObject): Response {
         return try {
-            val restartApp = payload.optBoolean("restart_app", true)
-            wipeAllLocalState()
+            val restartApp = payload.optBoolean("restart_app", false)
+            val preserveSession = payload.optBoolean("preserve_session", true)
+            val preserveSessionId = if (preserveSession) {
+                payload.optString("session_id", "").trim()
+                    .ifBlank { payload.optString("identity", "").trim() }
+            } else {
+                ""
+            }
+            wipeAllLocalState(preserveSessionId = preserveSessionId)
+            runCatching {
+                context.sendBroadcast(
+                    Intent(ACTION_UI_CHAT_CACHE_CLEAR)
+                        .apply {
+                            setPackage(context.packageName)
+                            putExtra(EXTRA_CHAT_PRESERVE_SESSION_ID, preserveSessionId)
+                        }
+                )
+            }
             val restarted = if (restartApp) restartAppIfPossible() else false
+            var restartedPython = false
             if (!restarted) {
-                runCatching { runtimeManager.restartSoft() }
-                runCatching {
-                    context.sendBroadcast(Intent(ACTION_UI_RELOAD).apply { setPackage(context.packageName) })
-                }
+                restartedPython = runCatching { runtimeManager.restartSoft() }.getOrDefault(false)
             }
             jsonResponse(
                 JSONObject()
@@ -7000,6 +7020,8 @@ class LocalHttpServer(
                     .put("wiped", true)
                     .put("restart_requested", restartApp)
                     .put("restarted_app", restarted)
+                    .put("restarted_python", restartedPython)
+                    .put("preserved_session_id", if (preserveSessionId.isNotBlank()) preserveSessionId else JSONObject.NULL)
             )
         } catch (ex: Exception) {
             Log.e(TAG, "me.sync wipe_all failed", ex)
@@ -7312,6 +7334,7 @@ class LocalHttpServer(
                 .put("remember_approvals", permissionPrefs.rememberApprovals())
                 .put("dangerously_skip_permissions", permissionPrefs.dangerouslySkipPermissions())
         )
+        root.put("shared_prefs", exportMeSyncSharedPrefs())
         root.put("install_identity", installIdentity.get())
         return root
     }
@@ -7325,6 +7348,15 @@ class LocalHttpServer(
 
             if (wipeExisting) {
                 wipeMeSyncLocalState()
+                runCatching {
+                    context.sendBroadcast(
+                        Intent(ACTION_UI_CHAT_CACHE_CLEAR)
+                            .apply {
+                                setPackage(context.packageName)
+                                putExtra(EXTRA_CHAT_PRESERVE_SESSION_ID, "")
+                            }
+                    )
+                }
             }
 
             val roomStateFile = File(tmpDir, "room/state.json")
@@ -7353,7 +7385,12 @@ class LocalHttpServer(
             runCatching { syncAuthorizedKeys() }
             runCatching { runtimeManager.restartSoft() }
             runCatching {
-                context.sendBroadcast(Intent(ACTION_UI_RELOAD).apply { setPackage(context.packageName) })
+                context.sendBroadcast(
+                    Intent(ACTION_UI_RELOAD).apply {
+                        setPackage(context.packageName)
+                        putExtra(EXTRA_UI_RELOAD_TOAST, "me.sync import applied")
+                    }
+                )
             }
 
             return JSONObject()
@@ -7396,9 +7433,79 @@ class LocalHttpServer(
                 prefs.optBoolean("dangerously_skip_permissions", permissionPrefs.dangerouslySkipPermissions())
             )
         }
+        val sharedPrefs = state.optJSONObject("shared_prefs")
+        if (sharedPrefs != null) {
+            importMeSyncSharedPrefs(sharedPrefs)
+        }
     }
 
-    private fun wipeMeSyncLocalState() {
+    private fun exportMeSyncSharedPrefs(): JSONObject {
+        val out = JSONObject()
+        for (prefName in ME_SYNC_SHARED_PREFS_EXPORT) {
+            val sp = context.getSharedPreferences(prefName, Context.MODE_PRIVATE)
+            val prefObj = JSONObject()
+            for ((key, value) in sp.all) {
+                val encoded = encodeSharedPrefValue(value) ?: continue
+                prefObj.put(key, encoded)
+            }
+            out.put(prefName, prefObj)
+        }
+        return out
+    }
+
+    private fun importMeSyncSharedPrefs(root: JSONObject) {
+        for (prefName in ME_SYNC_SHARED_PREFS_EXPORT) {
+            val prefObj = root.optJSONObject(prefName) ?: continue
+            val sp = context.getSharedPreferences(prefName, Context.MODE_PRIVATE)
+            val ed = sp.edit()
+            ed.clear()
+            val keys = prefObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val encoded = prefObj.optJSONObject(key) ?: continue
+                val t = encoded.optString("t", "").trim()
+                when (t) {
+                    "b" -> ed.putBoolean(key, encoded.optBoolean("v", false))
+                    "i" -> ed.putInt(key, encoded.optInt("v", 0))
+                    "l" -> ed.putLong(key, encoded.optLong("v", 0L))
+                    "f" -> ed.putFloat(key, encoded.optDouble("v", 0.0).toFloat())
+                    "s" -> ed.putString(key, encoded.optString("v", ""))
+                    "ss" -> {
+                        val arr = encoded.optJSONArray("v")
+                        if (arr == null) {
+                            ed.putStringSet(key, emptySet())
+                        } else {
+                            val set = linkedSetOf<String>()
+                            for (i in 0 until arr.length()) {
+                                set.add(arr.optString(i, ""))
+                            }
+                            ed.putStringSet(key, set)
+                        }
+                    }
+                }
+            }
+            ed.apply()
+        }
+    }
+
+    private fun encodeSharedPrefValue(value: Any?): JSONObject? {
+        val obj = JSONObject()
+        return when (value) {
+            is Boolean -> obj.put("t", "b").put("v", value)
+            is Int -> obj.put("t", "i").put("v", value)
+            is Long -> obj.put("t", "l").put("v", value)
+            is Float -> obj.put("t", "f").put("v", value.toDouble())
+            is String -> obj.put("t", "s").put("v", value)
+            is Set<*> -> {
+                val arr = JSONArray()
+                value.forEach { arr.put((it as? String) ?: "") }
+                obj.put("t", "ss").put("v", arr)
+            }
+            else -> null
+        }
+    }
+
+    private fun wipeMeSyncLocalState(preserveSessionId: String = "") {
         runCatching { runtimeManager.requestShutdown() }
         runCatching { Thread.sleep(250) }
 
@@ -7406,8 +7513,7 @@ class LocalHttpServer(
         runCatching { deleteRecursively(userRoot) }
         runCatching { userRoot.mkdirs() }
 
-        val protectedDb = File(File(context.filesDir, "protected"), "app.db")
-        runCatching { if (protectedDb.exists()) protectedDb.delete() }
+        runCatching { wipeProtectedDb(preserveSessionId = preserveSessionId) }
 
         runCatching {
             credentialStore.list().forEach { row ->
@@ -7421,11 +7527,11 @@ class LocalHttpServer(
         }
     }
 
-    private fun wipeAllLocalState() {
+    private fun wipeAllLocalState(preserveSessionId: String = "") {
         runCatching { runtimeManager.requestShutdown() }
         runCatching { Thread.sleep(250) }
 
-        runCatching { wipeMeSyncLocalState() }
+        runCatching { wipeMeSyncLocalState(preserveSessionId = preserveSessionId) }
         runCatching { permissionStore.clearAll() }
         runCatching { deviceGrantStore.clearAll() }
         runCatching {
@@ -7442,6 +7548,39 @@ class LocalHttpServer(
             val stale = meSyncTransfers.values.toList()
             meSyncTransfers.clear()
             stale.forEach { tr -> releaseMeSyncTransfer(tr) }
+        }
+    }
+
+    private fun wipeProtectedDb(preserveSessionId: String = "") {
+        val protectedDb = File(File(context.filesDir, "protected"), "app.db")
+        if (!protectedDb.exists() || !protectedDb.isFile) return
+        val keepSid = preserveSessionId.trim()
+        if (keepSid.isBlank()) {
+            runCatching { protectedDb.delete() }
+            return
+        }
+        var db: SQLiteDatabase? = null
+        var inTx = false
+        try {
+            db = SQLiteDatabase.openDatabase(protectedDb.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+            db.beginTransaction()
+            inTx = true
+            db.execSQL("DELETE FROM permissions")
+            db.execSQL("DELETE FROM credentials")
+            db.execSQL("DELETE FROM services")
+            db.execSQL("DELETE FROM service_credentials")
+            db.execSQL("DELETE FROM audit_log")
+            db.execSQL("DELETE FROM settings")
+            db.execSQL("DELETE FROM chat_messages WHERE session_id <> ?", arrayOf(keepSid))
+            db.setTransactionSuccessful()
+        } catch (_: Exception) {
+            runCatching { db?.close() }
+            db = null
+            runCatching { protectedDb.delete() }
+            return
+        } finally {
+            if (inTx) runCatching { db?.endTransaction() }
+            runCatching { db?.close() }
         }
     }
 
@@ -7969,6 +8108,7 @@ Policies:
         const val ACTION_PERMISSION_PROMPT = "jp.espresso3389.methings.action.PERMISSION_PROMPT"
         const val ACTION_PERMISSION_RESOLVED = "jp.espresso3389.methings.action.PERMISSION_RESOLVED"
         const val ACTION_UI_RELOAD = "jp.espresso3389.methings.action.UI_RELOAD"
+        const val ACTION_UI_CHAT_CACHE_CLEAR = "jp.espresso3389.methings.action.UI_CHAT_CACHE_CLEAR"
         const val ACTION_UI_VIEWER_COMMAND = "jp.espresso3389.methings.action.UI_VIEWER_COMMAND"
         const val ACTION_UI_SETTINGS_NAVIGATE = "jp.espresso3389.methings.action.UI_SETTINGS_NAVIGATE"
         const val ACTION_UI_ME_SYNC_EXPORT_SHOW = "jp.espresso3389.methings.action.UI_ME_SYNC_EXPORT_SHOW"
@@ -7982,6 +8122,18 @@ Policies:
         const val EXTRA_PERMISSION_DETAIL = "permission_detail"
         const val EXTRA_PERMISSION_BIOMETRIC = "permission_biometric"
         const val EXTRA_PERMISSION_STATUS = "permission_status"
+        const val EXTRA_CHAT_PRESERVE_SESSION_ID = "chat_preserve_session_id"
+        const val EXTRA_UI_RELOAD_TOAST = "ui_reload_toast"
+        private val ME_SYNC_SHARED_PREFS_EXPORT = listOf(
+            "brain_config",
+            "cloud_prefs",
+            "task_completion_prefs",
+            "browser_prefs",
+            "audio_record_config",
+            "video_record_config",
+            "screen_record_config",
+            SshdManager.PREFS,
+        )
         private val SETTINGS_SECTIONS = listOf(
             "brain" to "Brain",
             "web_search" to "Web Search",
