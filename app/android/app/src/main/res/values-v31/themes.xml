@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.Methings" parent="Theme.AppCompat.Light.NoActionBar">
-        <!-- Match the Web UI topbar background. See docs/UI_THEME_MAPPING.md for the CSS var name. -->
         <item name="android:statusBarColor">@color/methings_system_bar</item>
         <item name="android:navigationBarColor">@color/methings_navigation_bar</item>
-        <!-- Dark window background to eliminate white flash before onCreate. -->
         <item name="android:windowBackground">@color/methings_bg</item>
-        <!-- White status bar icons/text on a dark background. -->
         <item name="android:windowLightStatusBar">false</item>
+        <!-- Android 12+ splash screen: dark background, no visible icon. -->
+        <item name="android:windowSplashScreenBackground">@color/methings_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
     </style>
 </resources>

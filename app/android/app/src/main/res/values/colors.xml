@@ -3,5 +3,7 @@
     <!-- Keep system bars aligned with the Web UI palette (assets/www/index.html). -->
     <color name="methings_system_bar">#18181B</color>
     <color name="methings_navigation_bar">#000000</color>
+    <!-- Main background color matching the CSS bg variable. -->
+    <color name="methings_bg">#0E0E10</color>
 </resources>
 

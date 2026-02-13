@@ -13,7 +13,10 @@ import android.os.Build
 import android.provider.Settings
 import android.view.WindowInsets
 import android.view.WindowInsetsController
+import android.view.Gravity
+import android.view.View
 import android.widget.FrameLayout
+import android.widget.TextView
 import android.widget.Toast
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -47,6 +50,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var webView: WebView
+    private var startupBanner: View? = null
+    private var mainFrameError = false
     private val pendingAndroidPermRequestId = AtomicReference<String?>(null)
     private val pendingAndroidPermAction = AtomicReference<((Boolean) -> Unit)?>(null)
     private val androidPermLauncher =
@@ -146,8 +151,29 @@ class MainActivity : AppCompatActivity() {
 
         val root = FrameLayout(this)
         webView = WebView(this)
+        webView.setBackgroundColor(0xFF0E0E10.toInt())
 
         root.addView(webView)
+
+        // Startup banner: dark overlay with centered app name, shown until the UI loads.
+        val banner = FrameLayout(this).apply {
+            setBackgroundColor(0xFF0E0E10.toInt())
+            val label = TextView(this@MainActivity).apply {
+                text = "me.things"
+                setTextColor(0xFFFFFFFF.toInt())
+                textSize = 22f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+            }
+            val lp = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.CENTER
+            )
+            addView(label, lp)
+        }
+        startupBanner = banner
+        root.addView(banner)
+
         setContentView(root)
 
         webView.settings.javaScriptEnabled = true
@@ -234,6 +260,10 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 android.util.Log.d("MethingsWeb", "page finished: $url")
                 view.evaluateJavascript("console.log('methings page loaded: ' + location.href)", null)
+                if (!mainFrameError) {
+                    dismissStartupBanner()
+                }
+                mainFrameError = false
             }
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -257,6 +287,7 @@ class MainActivity : AppCompatActivity() {
                 error: android.webkit.WebResourceError
             ) {
                 if (request.isForMainFrame) {
+                    mainFrameError = true
                     view.postDelayed({ view.reload() }, 1200)
                 }
             }
@@ -372,6 +403,16 @@ class MainActivity : AppCompatActivity() {
         val url = "http://127.0.0.1:8765/ui/index.html?ts=${System.currentTimeMillis()}"
         webView.post { webView.loadUrl(url) }
         Toast.makeText(this, "UI reset applied", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun dismissStartupBanner() {
+        val banner = startupBanner ?: return
+        startupBanner = null
+        banner.animate()
+            .alpha(0f)
+            .setDuration(250)
+            .withEndAction { (banner.parent as? FrameLayout)?.removeView(banner) }
+            .start()
     }
 
     fun evalJs(js: String) {
