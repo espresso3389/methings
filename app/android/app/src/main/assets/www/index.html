@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
     <title>me.things</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect x='6' y='10' width='20' height='12' rx='3' fill='none' stroke='%23ececf1' stroke-width='2'/><circle cx='12' cy='16' r='2' fill='%23ececf1'/><circle cx='20' cy='16' r='2' fill='%23ececf1'/><path d='M16 6v4' stroke='%23ececf1' stroke-width='2' stroke-linecap='round'/><circle cx='16' cy='4.5' r='1.5' fill='%23ececf1'/><rect x='1' y='13' width='3' height='6' rx='1.5' fill='none' stroke='%23ececf1' stroke-width='1.5'/><rect x='28' y='13' width='3' height='6' rx='1.5' fill='none' stroke='%23ececf1' stroke-width='1.5'/></svg>">
     <style>
       :root {
         color-scheme: dark;
@@ -1555,6 +1556,22 @@
 
         <!-- Python Packages section removed (agent can install via pip as needed) -->
 
+        <!-- User Interface -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon blue">&#9881;</div>
+            <div class="card-title">User Interface</div>
+          </div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="openLinksExternal" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Open links in external browser</span>
+          </div>
+          <div class="muted">When enabled, links open in the default browser instead of an in-app tab.</div>
+        </section>
+
         <!-- Reset & Restore -->
         <section class="card">
           <div class="card-header">
@@ -2425,6 +2442,7 @@
         _viewerMdToggle = toggleBtn;
 
         viewer.classList.add("show");
+        history.pushState({ viewer: true }, "");
         // Navigate to requested page after viewer is visible so scrollIntoView works.
         if (typeof page === "number" && page >= 0 && marpDeck && marpDeck._show) {
           requestAnimationFrame(function() { marpDeck._show(page, true); });
@@ -3060,6 +3078,7 @@
         const idx = viewerPaths.indexOf(rel);
         viewerIndex = idx >= 0 ? idx : 0;
         viewer.classList.add("show");
+        history.pushState({ viewer: true }, "");
         await setViewerImage(rel);
       }
       function openMediaViewer(path, kind) {
@@ -3082,6 +3101,7 @@
           viewerAudio.style.display = "";
         }
         viewer.classList.add("show");
+        history.pushState({ viewer: true }, "");
       }
       function openHtmlViewer(path) {
         const { path: cleanPath, page } = parsePageFragment(path);
@@ -3148,12 +3168,15 @@
           }
         };
         viewer.classList.add("show");
+        history.pushState({ viewer: true }, "");
       }
       let _viewerMdToggle = null;
       let _marpKeyHandler = null;
       let _currentMarpDeck = null;
       let _currentSlideMode = false;
+      let _viewerClosingFromPopstate = false;
       function closeViewer() {
+        if (!viewer.classList.contains("show")) return;
         if (_marpKeyHandler) { document.removeEventListener("keydown", _marpKeyHandler); _marpKeyHandler = null; }
         viewerText.classList.remove("marp-active");
         viewer.classList.remove("marp-mode");
@@ -3182,6 +3205,7 @@
         viewerPaths = [];
         viewerIndex = 0;
         resetViewerTransform();
+        if (!_viewerClosingFromPopstate) history.back();
       }
       async function viewerNext(dir) {
         if (!viewerPaths.length) return;
@@ -3268,6 +3292,7 @@
           try { hljs.highlightElement(code); } catch (_) {}
         }
         viewer.classList.add("show");
+        history.pushState({ viewer: true }, "");
       }
 
       viewerClose.addEventListener("click", closeViewer);
@@ -3403,6 +3428,13 @@
         ev.preventDefault();
         closeViewer();
       });
+      window.addEventListener("popstate", () => {
+        if (viewer.classList.contains("show")) {
+          _viewerClosingFromPopstate = true;
+          closeViewer();
+          _viewerClosingFromPopstate = false;
+        }
+      });
 
       // ==============================
       // Immersive mode
@@ -3433,14 +3465,19 @@
         const { path: cleanPath, page: fragPage } = parsePageFragment(path);
         const rel = safeRelPath(cleanPath);
         if (!rel) return;
-        // Close any existing viewer first
-        if (viewer.classList.contains("show")) closeViewer();
+        // Close any existing viewer first (suppress history.back since we'll push new state)
+        if (viewer.classList.contains("show")) {
+          _viewerClosingFromPopstate = true;
+          closeViewer();
+          _viewerClosingFromPopstate = false;
+        }
         const ext = extOf(rel);
         const kind = kindFor(rel);
         if (kind === "image") {
           viewerPaths = [rel];
           viewerIndex = 0;
           viewer.classList.add("show");
+          history.pushState({ viewer: true }, "");
           await setViewerImage(rel);
         } else if (kind === "video" || kind === "audio") {
           openMediaViewer(rel, kind);
@@ -5956,6 +5993,22 @@
         showToast("Not available on this build", 1600);
       });
 
+      // Browser link prefs
+      function loadBrowserPrefs() {
+        try {
+          if (typeof AndroidBridge === "undefined") return;
+          $("openLinksExternal").checked = !!AndroidBridge.getOpenLinksExternal();
+        } catch (_) {}
+      }
+      $("openLinksExternal").addEventListener("change", () => {
+        try {
+          if (typeof AndroidBridge === "undefined") { showToast("Not available", 1600); return; }
+          AndroidBridge.setOpenLinksExternal(!!$("openLinksExternal").checked);
+        } catch (_) {
+          showToast("Failed to save browser pref", 1800);
+        }
+      });
+
       $("resetUi").addEventListener("click", async () => {
         if (!await appConfirm("Reset UI", "Reset UI to defaults? This will overwrite any local changes.")) return;
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.resetUiToDefaults) {
@@ -6113,9 +6166,24 @@
         setStatus(pythonStatus, status);
       };
 
+      // When viewed in a normal browser (not Android WebView), open external
+      // links in a new tab so the UI page is not navigated away.
+      if (typeof AndroidBridge === "undefined") {
+        document.addEventListener("click", function(e) {
+          var a = e.target.closest("a[href]");
+          if (!a) return;
+          var href = a.getAttribute("href") || "";
+          if (/^https?:\/\//i.test(href)) {
+            e.preventDefault();
+            window.open(href, "_blank", "noopener,noreferrer");
+          }
+        });
+      }
+
       loadPermissionPrefs();
       loadCloudPrefs();
       loadNotifyPrefs();
+      loadBrowserPrefs();
       refreshPython();
       refreshAppUpdate(true);
       refreshSsh();

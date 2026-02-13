@@ -1,5 +1,6 @@
 package jp.espresso3389.methings.ui
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.Drawable
@@ -18,6 +19,8 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsIntent
 
 class AgentHtmlActivity : AppCompatActivity() {
     companion object {
@@ -119,7 +122,20 @@ class AgentHtmlActivity : AppCompatActivity() {
                     val host = (u.host ?: "").lowercase()
                     if (host != "127.0.0.1" && host != "localhost") {
                         try {
-                            startActivity(Intent(Intent.ACTION_VIEW, u))
+                            val useExternal = getSharedPreferences("browser_prefs", Context.MODE_PRIVATE)
+                                .getBoolean("open_links_external", false)
+                            if (useExternal) {
+                                startActivity(Intent(Intent.ACTION_VIEW, u))
+                            } else {
+                                val params = CustomTabColorSchemeParams.Builder()
+                                    .setToolbarColor(0xFF0e0e10.toInt())
+                                    .build()
+                                CustomTabsIntent.Builder()
+                                    .setDefaultColorSchemeParams(params)
+                                    .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+                                    .build()
+                                    .launchUrl(this@AgentHtmlActivity, u)
+                            }
                         } catch (_: Exception) {}
                         return true
                     }

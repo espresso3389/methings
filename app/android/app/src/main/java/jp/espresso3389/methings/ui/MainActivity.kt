@@ -27,6 +27,8 @@ import android.webkit.WebResourceRequest
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.core.app.ActivityCompat
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
@@ -277,6 +279,29 @@ class MainActivity : AppCompatActivity() {
                         startActivity(i)
                     } catch (_: Exception) {}
                     return true
+                }
+                val s = u.scheme ?: ""
+                if (s == "http" || s == "https") {
+                    val host = (u.host ?: "").lowercase()
+                    if (host != "127.0.0.1" && host != "localhost") {
+                        try {
+                            val useExternal = getSharedPreferences("browser_prefs", Context.MODE_PRIVATE)
+                                .getBoolean("open_links_external", false)
+                            if (useExternal) {
+                                startActivity(Intent(Intent.ACTION_VIEW, u))
+                            } else {
+                                val params = CustomTabColorSchemeParams.Builder()
+                                    .setToolbarColor(0xFF0e0e10.toInt())
+                                    .build()
+                                CustomTabsIntent.Builder()
+                                    .setDefaultColorSchemeParams(params)
+                                    .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+                                    .build()
+                                    .launchUrl(this@MainActivity, u)
+                            }
+                        } catch (_: Exception) {}
+                        return true
+                    }
                 }
                 return false
             }
