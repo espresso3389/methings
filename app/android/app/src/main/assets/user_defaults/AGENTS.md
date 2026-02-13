@@ -24,6 +24,12 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - Developer option: set brain config `fs_scope="app"` to allow filesystem tools to access the whole app private files dir (includes `protected/`, `server/`, etc). Use with care.
 - Do not try to run `ls`, `pwd`, `cat` via a shell. Use filesystem tools.
 
+## Agent Accessibility of App Features
+
+- Every app feature (settings, configuration, device actions) MUST be agent-accessible via the local HTTP API unless there is a concrete security risk.
+- If a feature poses a security risk (e.g. API keys, credentials), it should still be agent-accessible but gated behind the existing permission system — the agent requests access, the user approves via the app UI, and the agent proceeds.
+- Do not create UI-only settings that the agent cannot read or change programmatically.
+
 ## When Unsure About APIs
 
 - Do not guess or ask the user to "implement a new API" prematurely.
