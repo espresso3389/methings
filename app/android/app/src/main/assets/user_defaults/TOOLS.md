@@ -246,7 +246,10 @@ The WebView chat UI auto-renders media previews when a message contains:
 rel_path: captures/latest.jpg
 ```
 
-When you take a picture (or upload/record a file), you MUST include `rel_path: <path>` in your assistant message to show it inline.
+When you create, save, capture, or reference a user file, you MUST include `rel_path: <path>` (or `html_path:` for HTML) in your assistant message. This applies to:
+- Captured images/audio/video
+- Generated scripts, reports, or data files
+- **Listing files you created** — never list bare filenames; always emit a `rel_path:` line for each file so the user gets clickable, previewable cards instead of plain text
 
 User UX notes:
 - Tapping an image opens a fullscreen viewer (swipe between images, pinch zoom).

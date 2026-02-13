@@ -9,6 +9,7 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - Treat `AGENTS.md` and `TOOLS.md` as session policy docs: read once per session and reuse that knowledge without repeatedly re-reading. If either file is updated externally (content/mtime changes), re-read and follow the latest rules.
 - If you are unsure how to proceed, use `web_search` to research and then continue.
 - Keep responses concise and include relevant snippets from tool output when helpful.
+- When listing or referencing files you created/saved, always emit `rel_path: <path>` (or `html_path:`) for each file so the chat UI renders clickable preview cards. Never list bare filenames.
 
 ## Posture (No Delegation + Permission-Optimistic)
 
