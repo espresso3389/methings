@@ -1992,7 +1992,7 @@
         <div class="card-header">
           <div class="card-icon blue">&#10515;</div>
           <div class="card-title" id="meSyncImportModalTitle" style="margin-bottom:0;">me.sync Import</div>
-          <button class="icon-btn secondary" id="meSyncImportModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
+          <button class="icon-btn secondary" id="meSyncImportModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
         </div>
         <div class="muted" id="meSyncImportModalStatus" style="margin-top:8px;">Starting import...</div>
         <div id="meSyncImportProgressWrap" style="display:block; margin-top:10px;">
@@ -2069,6 +2069,8 @@
       try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
       try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
+      try { $("meSyncModalClose").innerHTML = ICON.close; } catch (_) {}
+      try { $("meSyncImportModalClose").innerHTML = ICON.close; } catch (_) {}
 
       function showToast(msg, ms) {
         const t = $("toast");
@@ -7277,15 +7279,6 @@
         meSyncExportReq = controller;
         showMeSyncExportModal(true);
         try {
-          let permission_id = "";
-          try {
-            const ssr = await fetch(API + "/sshd/status", { signal: controller.signal });
-            const ssd = await ssr.json().catch(() => ({}));
-            const needTempSshd = !!ssr.ok && !ssd.enabled && !ssd.running;
-            if (needTempSshd) {
-              permission_id = await requestPermission("device.me_sync", "Temporarily enable SSHD for me.sync export");
-            }
-          } catch (_) {}
           const res = await fetch(API + "/me/sync/prepare_export", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -7294,7 +7287,7 @@
               include_protected_db: true,
               include_identity: false,
               mode: "export",
-              permission_id,
+              ui_initiated: true,
             }),
             signal: controller.signal,
           });
@@ -7354,6 +7347,13 @@
 
       meSyncImportModalClose.addEventListener("click", () => {
         closeMeSyncImportModal(false);
+      });
+      meSyncImportModal.addEventListener("click", (e) => {
+        if (e.target === meSyncImportModal) closeMeSyncImportModal(false);
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key !== "Escape") return;
+        if (meSyncImportModal.classList.contains("show")) closeMeSyncImportModal(false);
       });
 
       meSyncExportCancel.addEventListener("click", () => {

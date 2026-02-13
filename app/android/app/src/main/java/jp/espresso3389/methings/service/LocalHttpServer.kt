@@ -233,7 +233,8 @@ class LocalHttpServer(
             }
             uri == "/me/sync/prepare_export" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                if (shouldRequestPermissionForTempMeSyncSshd()) {
+                val uiInitiated = payload.optBoolean("ui_initiated", false)
+                if (shouldRequestPermissionForTempMeSyncSshd() && !uiInitiated) {
                     val ok = ensureDevicePermission(
                         session,
                         payload,
@@ -7042,18 +7043,34 @@ class LocalHttpServer(
             return MeSyncImportSource(httpUrl = txt)
         }
         val obj = parseMeSyncPayloadObject(txt) ?: return MeSyncImportSource()
+        val compactSsh = obj.optJSONObject("s")
         val ssh = obj.optJSONObject("ssh")
-        val httpUrl = obj.optString("url", "").trim()
+        val httpUrl = obj.optString("u", "").trim()
+            .ifBlank { obj.optString("url", "").trim() }
             .ifBlank { obj.optString("download_url", "").trim() }
             .ifBlank { obj.optString("http_url", "").trim() }
             .takeIf { it.startsWith("http://") || it.startsWith("https://") }
             ?: ""
-        val sshHost = (ssh?.optString("host", "") ?: obj.optString("ssh_host", "")).trim()
-        val sshPort = (if (ssh?.has("port") == true) ssh.optInt("port", 22) else obj.optInt("ssh_port", 22))
+        val sshHost = (
+            compactSsh?.optString("h", "") ?: ssh?.optString("host", "") ?: obj.optString("ssh_host", "")
+        ).trim()
+        val sshPort = (
+            when {
+                compactSsh?.has("p") == true -> compactSsh.optInt("p", 22)
+                ssh?.has("port") == true -> ssh.optInt("port", 22)
+                else -> obj.optInt("ssh_port", 22)
+            }
+        )
             .coerceIn(1, 65535)
-        val sshUser = (ssh?.optString("user", "") ?: obj.optString("ssh_user", "")).trim().ifBlank { "methings" }
-        val sshRemotePath = (ssh?.optString("remote_path", "") ?: obj.optString("ssh_remote_path", "")).trim()
-        val sshPrivateKeyB64 = (ssh?.optString("private_key_b64", "") ?: obj.optString("ssh_private_key_b64", "")).trim()
+        val sshUser = (
+            compactSsh?.optString("u", "") ?: ssh?.optString("user", "") ?: obj.optString("ssh_user", "")
+        ).trim().ifBlank { "methings" }
+        val sshRemotePath = (
+            compactSsh?.optString("r", "") ?: ssh?.optString("remote_path", "") ?: obj.optString("ssh_remote_path", "")
+        ).trim()
+        val sshPrivateKeyB64 = (
+            compactSsh?.optString("k", "") ?: ssh?.optString("private_key_b64", "") ?: obj.optString("ssh_private_key_b64", "")
+        ).trim()
         return MeSyncImportSource(
             httpUrl = httpUrl,
             sshHost = sshHost,
@@ -7159,9 +7176,13 @@ class LocalHttpServer(
                     .put("private_key_b64", sshMeta.privateKeyB64)
             )
         }
+        val meSyncUriPayload = JSONObject()
+            .put("v", 1)
+            .put("u", if (lanUrl.isNotBlank()) lanUrl else localUrl)
+            .put("e", expiresAt)
         val payloadJson = exportPayload.toString()
         val encodedPayload = Base64.encodeToString(
-            payloadJson.toByteArray(Charsets.UTF_8),
+            meSyncUriPayload.toString().toByteArray(Charsets.UTF_8),
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
         val meSyncUri = ME_SYNC_URI_PREFIX + encodedPayload
@@ -7334,6 +7355,7 @@ class LocalHttpServer(
                 .put("remember_approvals", permissionPrefs.rememberApprovals())
                 .put("dangerously_skip_permissions", permissionPrefs.dangerouslySkipPermissions())
         )
+        root.put("chat_state", exportMeSyncChatState())
         root.put("shared_prefs", exportMeSyncSharedPrefs())
         root.put("install_identity", installIdentity.get())
         return root
@@ -7345,6 +7367,7 @@ class LocalHttpServer(
         tmpDir.mkdirs()
         try {
             unzipInto(pkgFile, tmpDir)
+            var importedActiveSessionId = ""
 
             if (wipeExisting) {
                 wipeMeSyncLocalState()
@@ -7362,6 +7385,7 @@ class LocalHttpServer(
             val roomStateFile = File(tmpDir, "room/state.json")
             if (roomStateFile.exists()) {
                 val state = JSONObject(roomStateFile.readText(Charsets.UTF_8))
+                importedActiveSessionId = readImportedActiveSessionId(state)
                 importRoomState(state)
             }
 
@@ -7380,10 +7404,20 @@ class LocalHttpServer(
                 protectedDir.mkdirs()
                 val targetDb = File(protectedDir, "app.db")
                 copyFile(importedProtectedDb, targetDb)
+                runCatching { clearPendingPermissionsInProtectedDb(targetDb) }
             }
 
             runCatching { syncAuthorizedKeys() }
             runCatching { runtimeManager.restartSoft() }
+            runCatching {
+                context.sendBroadcast(
+                    Intent(ACTION_UI_CHAT_CACHE_CLEAR)
+                        .apply {
+                            setPackage(context.packageName)
+                            putExtra(EXTRA_CHAT_PRESERVE_SESSION_ID, importedActiveSessionId)
+                        }
+                )
+            }
             runCatching {
                 context.sendBroadcast(
                     Intent(ACTION_UI_RELOAD).apply {
@@ -7398,9 +7432,44 @@ class LocalHttpServer(
                 .put("imported", true)
                 .put("wipe_existing", wipeExisting)
                 .put("restarted_python", true)
+                .put("active_session_id", if (importedActiveSessionId.isNotBlank()) importedActiveSessionId else JSONObject.NULL)
         } finally {
             runCatching { pkgFile.delete() }
             runCatching { deleteRecursively(tmpDir) }
+        }
+    }
+
+    private fun exportMeSyncChatState(): JSONObject {
+        val activeSessionId = readBrainActiveSessionId()
+        return JSONObject().put(
+            "active_session_id",
+            if (activeSessionId.isNotBlank()) activeSessionId else JSONObject.NULL
+        )
+    }
+
+    private fun readImportedActiveSessionId(state: JSONObject): String {
+        return state.optJSONObject("chat_state")
+            ?.optString("active_session_id", "")
+            ?.trim()
+            ?.ifBlank { "" }
+            ?: ""
+    }
+
+    private fun readBrainActiveSessionId(): String {
+        return try {
+            val conn = (java.net.URL("http://127.0.0.1:8776/brain/status").openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 1200
+                readTimeout = 2000
+            }
+            val body = if (conn.responseCode in 200..299) {
+                conn.inputStream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            } else {
+                conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            }
+            JSONObject(body).optString("current_session_id", "").trim()
+        } catch (_: Exception) {
+            ""
         }
     }
 
@@ -7580,6 +7649,18 @@ class LocalHttpServer(
             return
         } finally {
             if (inTx) runCatching { db?.endTransaction() }
+            runCatching { db?.close() }
+        }
+    }
+
+    private fun clearPendingPermissionsInProtectedDb(dbFile: File) {
+        if (!dbFile.exists() || !dbFile.isFile) return
+        var db: SQLiteDatabase? = null
+        try {
+            db = SQLiteDatabase.openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READWRITE)
+            db.execSQL("DELETE FROM permissions WHERE status = 'pending'")
+        } catch (_: Exception) {
+        } finally {
             runCatching { db?.close() }
         }
     }
