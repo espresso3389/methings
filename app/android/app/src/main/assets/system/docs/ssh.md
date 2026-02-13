@@ -19,6 +19,39 @@ This document covers SSH client APIs for connecting from the app to other hosts.
 - `GET /ssh/ws/contract`
   - Returns the contract for interactive SSH over WebSocket (`/ws/ssh/interactive`).
 
+## Examples
+
+### ssh.exec — run a remote command
+
+```json
+{
+  "action": "ssh.exec",
+  "payload": {
+    "host": "192.168.1.20",
+    "user": "kawasaki",
+    "port": 22,
+    "command": "uname -a"
+  }
+}
+```
+
+### ssh.scp — upload a file
+
+```json
+{
+  "action": "ssh.scp",
+  "payload": {
+    "direction": "upload",
+    "host": "192.168.1.20",
+    "user": "kawasaki",
+    "local_path": "captures/latest.jpg",
+    "remote_path": "/tmp/latest.jpg"
+  }
+}
+```
+
+For download, use `"direction": "download"` and swap the paths.
+
 ## Notes
 
 - These are outbound client operations (app -> remote host), not SSHD management.

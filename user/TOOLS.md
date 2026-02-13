@@ -54,46 +54,11 @@ ssh <user>@<device-ip> -p <ssh-port> -L 8765:127.0.0.1:8765
 Then `http://127.0.0.1:8765` on the remote machine gives full access to the WebView UI and all local HTTP APIs.
 
 SSH actions through `device_api`:
-- `ssh.exec`: one-shot remote command.
-- `ssh.scp`: upload/download files via SCP.
+- `ssh.exec`: one-shot remote command. Payload: `host`, `user`, `port`, `command`.
+- `ssh.scp`: upload/download files via SCP. Payload: `direction`, `host`, `user`, `local_path`, `remote_path`.
 - `ssh.ws.contract`: websocket contract for interactive SSH (`/ws/ssh/interactive`).
 
-Examples:
-
-```json
-{
-  "type": "tool_invoke",
-  "tool": "device_api",
-  "args": {
-    "action": "ssh.exec",
-    "payload": {
-      "host": "192.168.1.20",
-      "user": "kawasaki",
-      "port": 22,
-      "command": "uname -a"
-    },
-    "detail": "Run uname on remote host"
-  }
-}
-```
-
-```json
-{
-  "type": "tool_invoke",
-  "tool": "device_api",
-  "args": {
-    "action": "ssh.scp",
-    "payload": {
-      "direction": "upload",
-      "host": "192.168.1.20",
-      "user": "kawasaki",
-      "local_path": "captures/latest.jpg",
-      "remote_path": "/tmp/latest.jpg"
-    },
-    "detail": "Upload capture to remote host"
-  }
-}
-```
+Details and examples: `$sys/docs/ssh.md`
 
 ## App SSH Shell Commands (Outbound)
 
@@ -126,182 +91,50 @@ Delete key tips:
 
 ---
 
-## Quickstarts
+## Domain Quickref
 
-Minimal copy-paste examples for common tasks. For full payload docs and all actions, see `$sys/docs/api_reference.md` and the domain docs linked from there.
+For full payload docs, examples, and all actions, see `$sys/docs/api_reference.md` and the domain docs below. Read the relevant `$sys/docs/*.md` before using a domain for the first time.
 
-### Camera (Take a Picture)
+### Camera — `$sys/docs/camera.md`
+- `camera.capture`: take a still photo. Key payload: `lens` (back/front), `path`. Returns `rel_path`.
+- `camera.preview.start/stop`: JPEG preview stream via `/ws/camera/preview`.
+- Do not `pip install` camera bindings; use `device_api`.
 
-Use `device_api` (do not try to `pip install` camera bindings). Details: `$sys/docs/camera.md`
+### UVC (USB Webcam) — `$sys/docs/uvc.md`
+- `uvc.mjpeg.capture`: capture one frame. Key payload: `handle`, `width`, `height`, `fps`, `path`.
+- Requires both in-app `device.usb` permission and Android OS USB permission.
 
-```json
-{
-  "type": "tool_invoke",
-  "tool": "device_api",
-  "args": {
-    "action": "camera.capture",
-    "payload": { "path": "captures/latest.jpg", "lens": "back" },
-    "detail": "Take a picture"
-  }
-}
-```
+### Location
+- `location.get`: GPS fix. Key payload: `high_accuracy`, `timeout_ms`.
 
-On success, the response includes `rel_path`. Include `rel_path: <path>` in your message to show inline.
+### Sensors — `$sys/docs/sensors.md`
+- `sensor.list`: enumerate available sensors.
+- Realtime data via WebSocket `/ws/sensors?sensors=a,g,m&rate_hz=200`.
 
-### UVC (USB Webcam)
+### Llama.cpp (Local GGUF / MioTTS) — `$sys/docs/llama.md`
+- `llama.run`, `llama.generate`, `llama.tts`, `llama.tts.speak`: local model execution.
+- Use `-p` / `-o` for MioTTS (not `--text`). Set `min_output_duration_ms: 0` for very short clips.
 
-Capture a single MJPEG frame from a connected UVC camera. Details: `$sys/docs/uvc.md`
+### Media Playback
+- `media.audio.play`: play audio file (`path`) or base64 (`audio_b64` + `ext`).
 
-```json
-{
-  "type": "tool_invoke",
-  "tool": "device_api",
-  "args": {
-    "action": "uvc.mjpeg.capture",
-    "payload": { "handle": "<usb_handle>", "width": 1280, "height": 720, "fps": 30, "path": "captures/uvc_latest.jpg" },
-    "detail": "Capture one MJPEG frame from UVC camera"
-  }
-}
-```
+### Audio Recording & Streaming — `$sys/docs/recording.md`
+- `audio.record.start/stop`: record to AAC (.m4a). Returns `rel_path`, `duration_ms`, `size_bytes`.
+- `audio.stream.start/stop`: live PCM (s16le) via `/ws/audio/pcm`.
+- Optional start payload: `path`, `sample_rate`, `channels`, `bitrate`, `max_duration_s`.
 
-USB permissions: approving `device.usb` in-app is necessary but not sufficient. Android also requires an OS-level USB permission. See `$sys/docs/permissions.md`.
+### Video Recording & Streaming — `$sys/docs/recording.md`
+- `video.record.start/stop`: record to H.265/H.264 (.mp4). Key payload: `lens`, `resolution` (720p/1080p/4k).
+- `video.stream.start/stop`: live JPEG or RGBA frames via `/ws/video/frames`.
+- Returns `rel_path`, `duration_ms`, `size_bytes`, `codec`.
 
-### Location (GPS)
+### Screen Recording — `$sys/docs/recording.md`
+- `screenrec.start/stop`: record device screen to .mp4. Requires user consent dialog each time.
+- Optional start payload: `resolution` (720p/1080p), `bitrate`, `max_duration_s`.
 
-```json
-{
-  "type": "tool_invoke",
-  "tool": "device_api",
-  "args": {
-    "action": "location.get",
-    "payload": { "high_accuracy": true, "timeout_ms": 12000 },
-    "detail": "Get current device location"
-  }
-}
-```
-
-### Sensors (Realtime Streams)
-
-1. List available sensors:
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "sensor.list", "payload": {}, "detail": "List available sensors" } }
-```
-
-2. Connect to WebSocket `/ws/sensors?sensors=a,g,m&rate_hz=200` for realtime data.
-
-Full protocol (sensor keys, query params, message format): `$sys/docs/sensors.md`.
-
-### Llama.cpp (Local GGUF / MioTTS)
-
-Use `device_api` actions (not raw shell). Details: `$sys/docs/llama.md`
-
-```json
-{
-  "type": "tool_invoke",
-  "tool": "device_api",
-  "args": {
-    "action": "llama.tts",
-    "payload": {
-      "model": "MioTTS-0.1B-Q8_0.gguf",
-      "text": "Hello from me.things",
-      "output_path": "captures/miotts.wav",
-      "args": ["-m", "{{model}}", "-p", "{{text}}", "-o", "{{output_path}}"]
-    },
-    "detail": "Run llama-tts for local speech synthesis"
-  }
-}
-```
-
-Important:
-- Use `-p` / `-o` for this runtime. `--text` may fail.
-- Avoid `--tts-oute-default` by default; it may depend on remote preset files.
-- Prefer explicit local args for MioTTS and pass local `--model-vocoder` when needed.
-- `llama.tts` returns `output_wav` metadata and uses a short-output guard by default (`min_output_duration_ms=400`).
-- If you intentionally need very short clips, set `min_output_duration_ms: 0`.
-
-After synthesis, include `rel_path: captures/miotts.wav` in your assistant message to render audio inline.
-
-### Media Audio Playback
-
-Play from file:
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "media.audio.play", "payload": { "path": "captures/miotts.wav" }, "detail": "Play audio" } }
-```
-
-Play from base64: use `{ "audio_b64": "<base64>", "ext": "wav" }` in payload.
-
-### Audio Recording
-
-Record audio to AAC (.m4a). Details: `$sys/docs/recording.md`
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "audio.record.start", "payload": {}, "detail": "Start audio recording" } }
-```
-
-Stop and get the file:
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "audio.record.stop", "payload": {}, "detail": "Stop audio recording" } }
-```
-
-Returns `rel_path`, `duration_ms`, `size_bytes`. Optional start payload: `path`, `sample_rate`, `channels`, `bitrate`, `max_duration_s`.
-
-For live PCM streaming: `audio.stream.start` → connect WebSocket `/ws/audio/pcm`.
-
-### Video Recording
-
-Record video to H.265/H.264 (.mp4) using the device camera. Details: `$sys/docs/recording.md`
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "video.record.start", "payload": { "lens": "back" }, "detail": "Start video recording" } }
-```
-
-Stop:
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "video.record.stop", "payload": {}, "detail": "Stop video recording" } }
-```
-
-Returns `rel_path`, `duration_ms`, `size_bytes`, `codec`. Optional start payload: `lens`, `resolution` (720p/1080p/4k), `max_duration_s`.
-
-For live frame streaming: `video.stream.start` → connect WebSocket `/ws/video/frames`.
-
-### Screen Recording
-
-Record the device screen to H.265/H.264 (.mp4). Requires user consent dialog each time. Details: `$sys/docs/recording.md`
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "screenrec.start", "payload": {}, "detail": "Start screen recording" } }
-```
-
-Stop:
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "screenrec.stop", "payload": {}, "detail": "Stop screen recording" } }
-```
-
-Optional start payload: `resolution` (720p/1080p), `bitrate`, `max_duration_s`.
-
-### Media Decode Streaming
-
-Decode existing audio/video files to raw data over WebSocket. Details: `$sys/docs/media_stream.md`
-
-```json
-{ "type": "tool_invoke", "tool": "device_api",
-  "args": { "action": "media.stream.audio.start", "payload": { "source_file": "recordings/audio/rec.m4a" }, "detail": "Decode audio to PCM" } }
-```
-
-Returns `stream_id` and `ws_path`. Connect to `/ws/media/stream/<stream_id>` for decoded frames.
+### Media Decode Streaming — `$sys/docs/media_stream.md`
+- `media.stream.audio.start`, `media.stream.video.start`: decode files to PCM/JPEG/RGBA over WebSocket.
+- Returns `stream_id` + `ws_path` (`/ws/media/stream/<stream_id>`).
 
 ---
 
@@ -427,6 +260,8 @@ Read the relevant doc when working in that domain (use `read_file("$sys/docs/<na
 - `$sys/docs/stt.md` — Android SpeechRecognizer
 - `$sys/docs/llama.md` — local llama.cpp model execution
 - `$sys/docs/sensors.md` — realtime sensor streams via WebSocket
+- `$sys/docs/recording.md` — audio/video/screen recording + live streaming
+- `$sys/docs/media_stream.md` — file-based media decode streaming
 - `$sys/docs/viewer.md` — viewer control API, file info, Marp presentation
 - `$sys/docs/vision.md` — RGBA8888 + TFLite inference
 - `$sys/docs/permissions.md` — permission scopes and identity
