@@ -4199,7 +4199,10 @@ class LocalHttpServer(
                 )
                 return Pair(true, null)
             }
-            val req = permissionStore.create(
+            val existing = if (identity.isNotBlank()) permissionStore.findRecentPending(
+                tool = "pip", identity = identity, capability = capability
+            ) else null
+            val req = existing ?: permissionStore.create(
                 tool = "pip",
                 detail = detail.take(240),
                 scope = scope,
@@ -4262,7 +4265,11 @@ class LocalHttpServer(
                 )
                 return Pair(true, null)
             }
-            val req = permissionStore.create(
+            // Reuse an existing pending request for the same (identity, tool, capability) to avoid duplicates.
+            val existing = if (identity.isNotBlank()) permissionStore.findRecentPending(
+                tool = tool, identity = identity, capability = capability
+            ) else null
+            val req = existing ?: permissionStore.create(
                 tool = tool,
                 detail = detail.take(240),
                 scope = scope,
@@ -4326,7 +4333,11 @@ class LocalHttpServer(
             return null
         }
 
-        val req = permissionStore.create(
+        // Reuse an existing pending request for the same (identity, tool, capability) to avoid duplicates.
+        val existing = if (identity.isNotBlank()) permissionStore.findRecentPending(
+            tool = tool, identity = identity, capability = capability
+        ) else null
+        val req = existing ?: permissionStore.create(
             tool = tool,
             detail = detail.take(240),
             scope = scope,
@@ -4530,7 +4541,10 @@ class LocalHttpServer(
         }
 
         if (!isPermissionApproved(permissionId, consume = true)) {
-            val req = permissionStore.create(
+            val existing = if (identity.isNotBlank()) permissionStore.findRecentPending(
+                tool = "network", identity = identity, capability = "web.search"
+            ) else null
+            val req = existing ?: permissionStore.create(
                 tool = "network",
                 detail = "Search: " + q.take(200),
                 // Searching is typically iterative; don't re-prompt for every query.
@@ -5112,7 +5126,10 @@ class LocalHttpServer(
                 )
                 return Pair(true, null)
             }
-            val req = permissionStore.create(
+            val existing = if (identity.isNotBlank()) permissionStore.findRecentPending(
+                tool = tool, identity = identity, capability = capability
+            ) else null
+            val req = existing ?: permissionStore.create(
                 tool = tool,
                 detail = detail.take(240),
                 scope = scope,
