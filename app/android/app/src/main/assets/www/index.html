@@ -2311,6 +2311,7 @@
       function navigateTo(pageId) {
         document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
         $(pageId).classList.add("active");
+        try { syncPermOverlay(); } catch (_) {}
       }
       function handleHash() {
         try {
@@ -5216,8 +5217,11 @@
         const overlay = $("permOverlay");
         if (!overlay) return;
         const viewerOpen = viewer.classList.contains("show");
+        const chatActive = $("chatPage") && $("chatPage").classList.contains("active");
+        // Show dedicated overlay whenever chat page is not visible (or while viewer is open).
+        const shouldUseOverlay = viewerOpen || !chatActive;
         const pendingItems = Object.entries(_permState.items).filter(([, e]) => e.status === "pending");
-        if (!viewerOpen || pendingItems.length === 0) {
+        if (!shouldUseOverlay || pendingItems.length === 0) {
           overlay.classList.remove("show");
           overlay.innerHTML = "";
           return;
