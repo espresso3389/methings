@@ -893,6 +893,15 @@
         max-height: 360px;
         object-fit: contain;
       }
+      .media-preview video:fullscreen,
+      .media-preview video:-webkit-full-screen,
+      .viewer-video:fullscreen,
+      .viewer-video:-webkit-full-screen {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        background: #000;
+      }
       .media-preview audio { width: 100%; }
       .media-preview .hint { color: var(--ink-muted); font-size: 12px; margin-top: 6px; }
 
@@ -3226,6 +3235,7 @@
                 v.playsInline = true;
                 v.preload = "metadata";
                 v.src = src;
+                attachVideoFullscreenFix(v);
                 v.addEventListener("loadedmetadata", () => { try { if (stickToBottom) scrollToBottomSoon(); } catch (_) {} });
                 v.addEventListener("error", () => { try { card.remove(); } catch (_) {} });
                 body.appendChild(v);
@@ -3415,6 +3425,50 @@
       let vPinchMidY = 0.0;
       let vOriginX = 0.0;
       let vOriginY = 0.0;
+      let _lockedVideoOrientation = false;
+
+      function _isVideoFullscreen(videoEl) {
+        if (!videoEl) return false;
+        const fs = document.fullscreenElement || document.webkitFullscreenElement || null;
+        if (fs) return fs === videoEl;
+        return !!(document.webkitIsFullScreen && videoEl.webkitDisplayingFullscreen);
+      }
+
+      function _unlockVideoOrientation() {
+        if (!_lockedVideoOrientation) return;
+        _lockedVideoOrientation = false;
+        try {
+          if (screen && screen.orientation && screen.orientation.unlock) {
+            screen.orientation.unlock();
+          }
+        } catch (_) {}
+      }
+
+      async function _syncVideoFullscreenOrientation(videoEl) {
+        if (!videoEl) return;
+        if (!_isVideoFullscreen(videoEl)) {
+          _unlockVideoOrientation();
+          return;
+        }
+        try {
+          if (!screen || !screen.orientation || !screen.orientation.lock) return;
+          const vw = Number(videoEl.videoWidth || 0);
+          const vh = Number(videoEl.videoHeight || 0);
+          const target = (vw > 0 && vh > 0 && vw >= vh) ? "landscape" : "portrait";
+          try { screen.orientation.unlock(); } catch (_) {}
+          await screen.orientation.lock(target);
+          _lockedVideoOrientation = true;
+        } catch (_) {}
+      }
+
+      function attachVideoFullscreenFix(videoEl) {
+        if (!videoEl) return;
+        const onFsMaybeChanged = () => { _syncVideoFullscreenOrientation(videoEl); };
+        document.addEventListener("fullscreenchange", onFsMaybeChanged);
+        document.addEventListener("webkitfullscreenchange", onFsMaybeChanged);
+        videoEl.addEventListener("webkitbeginfullscreen", onFsMaybeChanged);
+        videoEl.addEventListener("webkitendfullscreen", onFsMaybeChanged);
+      }
 
       function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
       function applyViewerTransform() {
@@ -3909,6 +3963,8 @@
         if (!_currentMarpDeck || !_currentMarpDeck._show) return;
         _currentMarpDeck._show(page, true);
       };
+
+      attachVideoFullscreenFix(viewerVideo);
 
       // ==============================
       // Chat Search
@@ -5359,6 +5415,9 @@
         let rChunks = [];
         let recStartedAtMs = 0;
         let recTimer = null;
+        let recStartCountdownTimer = null;
+        let recStartCountdownActive = false;
+        let recMaxDurationS = 0;
         if (uploadBtn && uploadInput) {
           uploadBtn.addEventListener("click", () => uploadInput.click());
           uploadInput.addEventListener("change", () => {
@@ -5373,7 +5432,7 @@
           try {
             if (recStatus) {
               recStatus.style.display = recording ? "block" : "none";
-              if (!recording) recStatus.textContent = "Recording...";
+              if (!recording) recStatus.textContent = "";
             }
           } catch (_) {}
           if (recording) {
@@ -5395,6 +5454,33 @@
             try { if (recTimer) clearInterval(recTimer); } catch (_) {}
             recTimer = null;
           }
+          function stopStartCountdown() {
+            try { if (recStartCountdownTimer) clearInterval(recStartCountdownTimer); } catch (_) {}
+            recStartCountdownTimer = null;
+            recStartCountdownActive = false;
+          }
+          function startCountdown(seconds) {
+            stopStartCountdown();
+            const total = Math.max(1, Number(seconds) || 3);
+            let remain = total;
+            recStartCountdownActive = true;
+            try {
+              if (recStatus) {
+                recStatus.style.display = "block";
+                recStatus.textContent = "Recording starts in " + remain + "…";
+              }
+            } catch (_) {}
+            recStartCountdownTimer = setInterval(() => {
+              remain -= 1;
+              if (remain <= 0) {
+                stopStartCountdown();
+                return;
+              }
+              try {
+                if (recStatus) recStatus.textContent = "Recording starts in " + remain + "…";
+              } catch (_) {}
+            }, 1000);
+          }
           function startRecTimer() {
             stopRecTimer();
             recStartedAtMs = Date.now();
@@ -5404,7 +5490,17 @@
                 const sec = Math.max(0, Math.floor((Date.now() - recStartedAtMs) / 1000));
                 const mm = String(Math.floor(sec / 60)).padStart(2, "0");
                 const ss = String(sec % 60).padStart(2, "0");
-                recStatus.textContent = "Recording " + mm + ":" + ss + " (tap stop to finish)";
+                if (recMaxDurationS > 0) {
+                  const rem = Math.max(0, recMaxDurationS - sec);
+                  const rmm = String(Math.floor(rem / 60)).padStart(2, "0");
+                  const rss = String(rem % 60).padStart(2, "0");
+                  recStatus.textContent = "Recording " + mm + ":" + ss + " (left " + rmm + ":" + rss + ")";
+                  if (rem <= 0 && rRec && rRec.state !== "inactive") {
+                    try { rRec.stop(); } catch (_) {}
+                  }
+                } else {
+                  recStatus.textContent = "Recording " + mm + ":" + ss + " (tap stop to finish)";
+                }
               } catch (_) {}
             }, 250);
           }
@@ -5427,6 +5523,12 @@
             }
           }
           recBtn.addEventListener("click", async () => {
+            if (recStartCountdownActive) {
+              stopStartCountdown();
+              recordingBusy = false;
+              setRecordUi(false);
+              return;
+            }
             // Toggle stop if active.
             if (rRec && rRec.state !== "inactive") {
               try { rRec.stop(); } catch (_) {
@@ -5436,14 +5538,18 @@
                 rRec = null;
                 rChunks = [];
                 stopRecTimer();
+                stopStartCountdown();
                 setRecordUi(false);
               }
               return;
             }
             // Only block if we're in the middle of starting recording.
-            if (recordingBusy) return;
+            if (recordingBusy || recStartCountdownActive) return;
             try {
               recordingBusy = true;
+              startCountdown(3);
+              await new Promise(r => setTimeout(r, 3000));
+              stopStartCountdown();
               // Recording is a user-initiated UI action; rely on WebView/OS microphone permission prompts.
               // Do not route through the agent permission broker, which would break the user-gesture chain.
               if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -5453,6 +5559,15 @@
                 throw new Error("MediaRecorder unavailable");
               }
               rChunks = [];
+              try {
+                if (typeof AndroidBridge !== "undefined" && AndroidBridge.getAudioRecordMaxDurationS) {
+                  recMaxDurationS = Number(AndroidBridge.getAudioRecordMaxDurationS() || 0);
+                } else {
+                  recMaxDurationS = 0;
+                }
+              } catch (_) {
+                recMaxDurationS = 0;
+              }
               rStream = await getMicStreamWithFallback();
               rRec = new MediaRecorder(rStream);
               rRec.ondataavailable = (e) => { if (e.data && e.data.size) rChunks.push(e.data); };
@@ -5464,6 +5579,7 @@
                 rChunks = [];
                 recordingBusy = false;
                 stopRecTimer();
+                stopStartCountdown();
                 setRecordUi(false);
                 try {
                   const ts = new Date().toISOString().replace(/[:.]/g, "-");
@@ -5480,6 +5596,7 @@
               setRecordUi(false);
               recordingBusy = false;
               stopRecTimer();
+              stopStartCountdown();
               let msg = "Record failed";
               try {
                 const n = (e && e.name) ? String(e.name) : "";

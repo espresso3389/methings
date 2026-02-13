@@ -26,6 +26,7 @@ import android.webkit.WebViewClient
 import android.webkit.WebResourceRequest
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsIntent
@@ -333,6 +334,18 @@ class MainActivity : AppCompatActivity() {
             // Initial launch.
             webView.loadUrl("http://127.0.0.1:8765/ui/index.html")
         }
+
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (::webView.isInitialized && webView.canGoBack()) {
+                    webView.goBack()
+                    return
+                }
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
+        })
 
         // If launched from a permission notification, handle it immediately.
         maybeHandlePermissionIntent(intent)
