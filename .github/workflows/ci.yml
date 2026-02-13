@@ -372,6 +372,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout full git history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download release APK
         uses: actions/download-artifact@v4
         with:
@@ -392,7 +397,47 @@ jobs:
       - name: Build release notes body
         run: |
           set -euo pipefail
+          current_tag="${GITHUB_REF_NAME}"
+          prev_tag="$(git tag --list 'v*' --sort=-v:refname | awk -v cur="$current_tag" '$0 != cur { print; exit }')"
+          range_spec="${current_tag}"
+          if [ -n "${prev_tag}" ]; then
+            range_spec="${prev_tag}..${current_tag}"
+          fi
+
+          commit_count="$(git rev-list --count "${range_spec}")"
+          contributor_count="$(git log --format='%an' "${range_spec}" | sed '/^$/d' | sort -u | wc -l | tr -d ' ')"
+
           {
+            echo "## Release Summary"
+            echo
+            echo "- Tag: \`${current_tag}\`"
+            if [ -n "${prev_tag}" ]; then
+              echo "- Previous tag: \`${prev_tag}\`"
+              echo "- Compare: https://github.com/${GITHUB_REPOSITORY}/compare/${prev_tag}...${current_tag}"
+            else
+              echo "- Previous tag: none (first tagged release)"
+            fi
+            echo "- Commits in this release: ${commit_count}"
+            echo "- Contributors: ${contributor_count}"
+            echo
+            echo "## Contributors"
+            echo
+            git log --format='- %an' "${range_spec}" | sed '/^$/d' | sort -u
+            echo
+            echo "## Changed Components"
+            echo
+            git diff --name-only "${range_spec}" \
+              | awk -F/ '{print $1}' \
+              | sed '/^$/d' \
+              | sort \
+              | uniq -c \
+              | sort -nr \
+              | awk '{printf("- %s (%s files)\n", $2, $1)}'
+            echo
+            echo "## Commits"
+            echo
+            git log --pretty=format:'- `%h` %s (%an)' "${range_spec}"
+            echo
             echo "## APK Downloads"
             echo
             for apk in release-assets/*.apk; do
@@ -411,7 +456,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
           body_path: release-notes.md
           files: |
             release-assets/*.apk
