@@ -61,6 +61,10 @@ class PermissionStore(context: Context) {
         return dao.findLatestPending(ident, t, cap)?.toModel()
     }
 
+    fun listApproved(): List<PermissionRequest> {
+        return dao.listApproved().map { it.toModel() }
+    }
+
     fun clearAll() {
         dao.deleteAll()
     }

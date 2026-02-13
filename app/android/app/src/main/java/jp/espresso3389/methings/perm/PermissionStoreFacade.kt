@@ -107,6 +107,26 @@ class PermissionStoreFacade(context: Context) {
         }
     }
 
+    fun listApproved(): List<PermissionStore.PermissionRequest> {
+        val now = System.currentTimeMillis()
+        fun isStillValid(req: PermissionStore.PermissionRequest): Boolean {
+            val ttlMs = ttlMsForScope(req.scope)
+            return ttlMs <= 0L || (now - req.createdAt) <= ttlMs
+        }
+        return try {
+            val all = if (dbAvailable.get()) {
+                dbStore.listApproved()
+            } else {
+                fallback.listApproved()
+            }
+            all.filter { isStillValid(it) }
+        } catch (ex: Throwable) {
+            Log.e(TAG, "Permission DB unavailable, falling back", ex)
+            dbAvailable.set(false)
+            fallback.listApproved().filter { isStillValid(it) }
+        }
+    }
+
     fun updateStatus(id: String, status: String): PermissionStore.PermissionRequest? {
         return try {
             if (dbAvailable.get()) {
@@ -195,6 +215,10 @@ class PermissionStoreFacade(context: Context) {
 
         fun clearAll() {
             items.clear()
+        }
+
+        fun listApproved(): List<PermissionStore.PermissionRequest> {
+            return items.values.filter { it.status == "approved" }.sortedByDescending { it.createdAt }
         }
 
         fun findLatestApproved(

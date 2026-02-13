@@ -378,6 +378,24 @@ class LocalHttpServer(
                 }
                 jsonResponse(JSONObject().put("items", arr))
             }
+            uri == "/permissions/grants" -> {
+                val grants = permissionStore.listApproved()
+                val arr = org.json.JSONArray()
+                grants.forEach { req ->
+                    arr.put(
+                        JSONObject()
+                            .put("id", req.id)
+                            .put("tool", req.tool)
+                            .put("detail", req.detail)
+                            .put("scope", req.scope)
+                            .put("status", req.status)
+                            .put("created_at", req.createdAt)
+                            .put("identity", req.identity)
+                            .put("capability", req.capability)
+                    )
+                }
+                jsonResponse(JSONObject().put("items", arr))
+            }
             uri.startsWith("/permissions/") && session.method == Method.GET -> {
                 val id = uri.removePrefix("/permissions/").trim()
                 if (id.isBlank()) {

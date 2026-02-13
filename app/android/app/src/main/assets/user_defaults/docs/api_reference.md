@@ -333,6 +333,7 @@ Fields: `notify_android` (bool, default `true`), `notify_sound` (bool, default `
 |--------|----------|------|--------|
 | `POST` | `/permissions/request` | `{"tool","detail","scope","identity","capability"}` | Create permission request |
 | `GET` | `/permissions/pending` | — | List pending permission requests |
+| `GET` | `/permissions/grants` | — | List currently active (non-expired) approved grants |
 | `GET` | `/permissions/{id}` | — | Return request status |
 | `POST` | `/permissions/{id}` | `{"approved": true or false}` | Approve or deny request |
 | `POST` | `/permissions/clear` | — | Clear grants |
