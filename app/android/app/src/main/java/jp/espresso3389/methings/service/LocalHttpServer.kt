@@ -677,6 +677,38 @@ class LocalHttpServer(
                         .put("image_resize_jpeg_quality", imgJpegQ)
                 )
             }
+            uri == "/notifications/prefs" && session.method == Method.GET -> {
+                val android = taskCompletionPrefs.getBoolean("notify_android", true)
+                val sound = taskCompletionPrefs.getBoolean("notify_sound", false)
+                val webhook = taskCompletionPrefs.getString("notify_webhook_url", "") ?: ""
+                return jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("notify_android", android)
+                        .put("notify_sound", sound)
+                        .put("notify_webhook_url", webhook)
+                )
+            }
+            uri == "/notifications/prefs" && session.method == Method.POST -> {
+                val body = (postBody ?: "").ifBlank { "{}" }
+                val payload = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val android = if (payload.has("notify_android")) payload.optBoolean("notify_android", true) else taskCompletionPrefs.getBoolean("notify_android", true)
+                val sound = if (payload.has("notify_sound")) payload.optBoolean("notify_sound", false) else taskCompletionPrefs.getBoolean("notify_sound", false)
+                val webhook = if (payload.has("notify_webhook_url")) payload.optString("notify_webhook_url", "") else (taskCompletionPrefs.getString("notify_webhook_url", "") ?: "")
+                taskCompletionPrefs.edit()
+                    .putBoolean("notify_android", android)
+                    .putBoolean("notify_sound", sound)
+                    .putString("notify_webhook_url", webhook)
+                    .apply()
+                return jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("notify_android", android)
+                        .put("notify_sound", sound)
+                        .put("notify_webhook_url", webhook)
+                )
+            }
             (uri == "/screen/status" || uri == "/screen/status/") && session.method == Method.GET -> {
                 return handleScreenStatus()
             }
@@ -5384,6 +5416,11 @@ class LocalHttpServer(
     // --- Cloud request prefs ---
     private val cloudPrefs by lazy {
         context.getSharedPreferences("cloud_prefs", Context.MODE_PRIVATE)
+    }
+
+    // --- Task completion notification prefs ---
+    private val taskCompletionPrefs by lazy {
+        context.getSharedPreferences("task_completion_prefs", Context.MODE_PRIVATE)
     }
 
     private fun readMemory(): String {

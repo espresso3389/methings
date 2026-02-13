@@ -243,6 +243,13 @@ Details: [vision.md](vision.md)
 
 `brain.config.get` returns `{vendor, base_url, model, has_api_key}` (never returns the key itself).
 
+### Notifications
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `notifications.prefs.get` | GET | `/notifications/prefs` **[no perm]** |
+| `notifications.prefs.set` | POST | `/notifications/prefs` **[no perm]** |
+
 ---
 
 ## WebSocket Endpoints
@@ -310,6 +317,15 @@ Details: [brain_journal.md](brain_journal.md)
 | `POST` | `/cloud/prefs` | Preferences JSON | Update resize/threshold preferences |
 
 Details: [cloud_broker.md](cloud_broker.md)
+
+### Notifications
+
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `GET` | `/notifications/prefs` | — | Read task-completion notification preferences |
+| `POST` | `/notifications/prefs` | Partial prefs JSON | Update notification preferences (partial merge) |
+
+Fields: `notify_android` (bool, default `true`), `notify_sound` (bool, default `false`), `notify_webhook_url` (string, default `""`).
 
 ### Permissions
 
