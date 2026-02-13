@@ -12,6 +12,7 @@ import android.hardware.usb.UsbConstants
 import android.os.Build
 import android.os.PowerManager
 import android.app.PendingIntent
+import android.content.pm.PackageManager
 import android.util.Log
 import androidx.lifecycle.LifecycleOwner
 import fi.iki.elonen.NanoHTTPD
@@ -36,6 +37,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 import jp.espresso3389.methings.perm.PermissionStoreFacade
+import jp.espresso3389.methings.BuildConfig
 import jp.espresso3389.methings.perm.CredentialStore
 import jp.espresso3389.methings.perm.SshKeyStore
 import jp.espresso3389.methings.perm.SshKeyPolicy
@@ -173,6 +175,9 @@ class LocalHttpServer(
             }
             uri == "/app/update/install" && session.method == Method.POST -> {
                 handleAppUpdateInstall()
+            }
+            uri == "/app/info" -> {
+                handleAppInfo()
             }
             uri == "/agent/run" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -3929,6 +3934,49 @@ class LocalHttpServer(
             jsonError(
                 Response.Status.INTERNAL_ERROR,
                 "update_install_failed",
+                JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+            )
+        }
+    }
+
+    private fun handleAppInfo(): Response {
+        return try {
+            val pkg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(context.packageName, 0)
+            }
+            val versionName = pkg.versionName ?: ""
+            val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                pkg.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                pkg.versionCode.toLong()
+            }
+            val gitSha = BuildConfig.GIT_SHA
+            val commitUrl = if (gitSha.isNotBlank() && gitSha != "unknown") {
+                BuildConfig.REPO_URL.trimEnd('/') + "/commit/" + gitSha
+            } else {
+                ""
+            }
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("version_name", versionName)
+                    .put("version_code", versionCode)
+                    .put("git_sha", gitSha)
+                    .put("commit_url", commitUrl)
+                    .put("repo_url", BuildConfig.REPO_URL)
+            )
+        } catch (ex: Throwable) {
+            Log.w(TAG, "App info query failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "app_info_failed",
                 JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
             )
         }

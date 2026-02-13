@@ -1600,6 +1600,22 @@
           </div>
         </section>
 
+        <!-- About -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon blue">&#8505;</div>
+            <div class="card-title">About</div>
+          </div>
+          <div class="muted">Version and project information.</div>
+          <p class="muted" id="appVersionText" style="margin-top:8px;">Version: checking...</p>
+          <p class="muted">Commit: <a id="appCommitLink" href="#" target="_blank" rel="noopener">checking...</a></p>
+          <p class="muted">Repo: <a id="appRepoLink" href="https://github.com/espresso3389/methings" target="_blank" rel="noopener">https://github.com/espresso3389/methings</a></p>
+          <div class="btn-group">
+            <button class="btn" id="openProjectRepo">Open Repo</button>
+            <button class="btn" id="openLicensesPage">Licenses</button>
+          </div>
+        </section>
+
         <!-- Android -->
         <section class="card">
           <div class="card-header">
@@ -5475,6 +5491,11 @@
       const appUpdateDetail = $("appUpdateDetail");
       const checkAppUpdate = $("checkAppUpdate");
       const installAppUpdate = $("installAppUpdate");
+      const appVersionText = $("appVersionText");
+      const appCommitLink = $("appCommitLink");
+      const appRepoLink = $("appRepoLink");
+      const openProjectRepo = $("openProjectRepo");
+      const openLicensesPage = $("openLicensesPage");
       const sshStatus = $("sshStatus");
       const sshEnabled = $("sshEnabled");
       const authNotification = $("authNotification");
@@ -5574,6 +5595,30 @@
           setStatus(appUpdateStatus, "offline");
           appUpdateDetail.textContent = "Update install failed";
           showToast("Failed to install update", 1800);
+        }
+      }
+
+      async function refreshAppInfo() {
+        try {
+          const res = await fetch(API + "/app/info");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          const versionName = String(data.version_name || "").trim();
+          const versionCode = String(data.version_code || "").trim();
+          const gitSha = String(data.git_sha || "").trim();
+          const commitUrl = String(data.commit_url || "").trim();
+          const repoUrl = String(data.repo_url || "https://github.com/espresso3389/methings").trim();
+          appVersionText.textContent = "Version: " + (versionName || "unknown") + (versionCode ? (" (code " + versionCode + ")") : "");
+          appCommitLink.textContent = gitSha || "unknown";
+          appCommitLink.href = commitUrl || repoUrl;
+          appRepoLink.href = repoUrl;
+          appRepoLink.textContent = repoUrl;
+        } catch (_) {
+          appVersionText.textContent = "Version: unavailable";
+          appCommitLink.textContent = "unavailable";
+          appCommitLink.href = "https://github.com/espresso3389/methings";
+          appRepoLink.href = "https://github.com/espresso3389/methings";
+          appRepoLink.textContent = "https://github.com/espresso3389/methings";
         }
       }
 
@@ -6044,6 +6089,19 @@
         await installLatestUpdate();
       });
 
+      openProjectRepo.addEventListener("click", () => {
+        const href = String(appRepoLink.href || "https://github.com/espresso3389/methings");
+        try {
+          window.open(href, "_blank", "noopener");
+        } catch (_) {
+          location.href = href;
+        }
+      });
+
+      openLicensesPage.addEventListener("click", () => {
+        location.href = "licenses.html";
+      });
+
       async function updateSshConfig() {
         const enabled = sshEnabled.checked;
         try {
@@ -6189,6 +6247,7 @@
       loadBrowserPrefs();
       refreshPython();
       refreshAppUpdate(true);
+      refreshAppInfo();
       refreshSsh();
       refreshPin();
       setInterval(refreshPython, 5000);

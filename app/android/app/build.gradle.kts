@@ -4,6 +4,21 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
+val defaultAppVersionName = "0.1.0"
+val envVersionName = (System.getenv("METHINGS_VERSION_NAME") ?: "").trim()
+val appVersionName = if (envVersionName.isNotBlank()) envVersionName else defaultAppVersionName
+val appGitSha = (System.getenv("METHINGS_GIT_SHA") ?: "").trim().ifBlank {
+    runCatching {
+        val repoRoot = rootProject.projectDir.parentFile.parentFile
+        val p = ProcessBuilder("git", "rev-parse", "--short=12", "HEAD")
+            .directory(repoRoot)
+            .redirectErrorStream(true)
+            .start()
+        p.inputStream.bufferedReader().use { it.readText().trim() }.ifBlank { "unknown" }
+    }.getOrDefault("unknown")
+}
+val appRepoUrl = "https://github.com/espresso3389/methings"
+
 android {
     namespace = "jp.espresso3389.methings"
     compileSdk = 34
@@ -14,7 +29,9 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = appVersionName
+        buildConfigField("String", "GIT_SHA", "\"$appGitSha\"")
+        buildConfigField("String", "REPO_URL", "\"$appRepoUrl\"")
 
         // Target only arm64 for now (Android 14+ devices). This also keeps the
         // bundled native deps (libusb/libuvc/opencv) consistent and smaller.
@@ -50,6 +67,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         viewBinding = true
     }
 
