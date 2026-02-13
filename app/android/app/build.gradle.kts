@@ -132,6 +132,12 @@ val syncUserDefaultsOnBuild =
     ((System.getenv("METHINGS_SYNC_USER_DEFAULTS") ?: "").trim() == "1") ||
         ((findProperty("methings.syncUserDefaults") as? String)?.trim() == "1")
 
+val isCiBuild = (System.getenv("CI") ?: "").trim().lowercase() in setOf("1", "true", "yes")
+val updateFullLicensesOnBuild =
+    isCiBuild ||
+        ((System.getenv("METHINGS_UPDATE_FULL_LICENSES") ?: "").trim() == "1") ||
+        ((findProperty("methings.updateFullLicenses") as? String)?.trim() == "1")
+
 val verifyPythonRuntime by tasks.registering {
     val arch = "arm64-v8a"
     val jniLibsDir = projectDir.resolve("src/main/jniLibs/$arch")
@@ -226,11 +232,22 @@ val fetchNodeRuntime by tasks.registering(Exec::class) {
 val generateDependencyInventory by tasks.registering(Exec::class) {
     val repoRoot = rootProject.projectDir.parentFile.parentFile
     workingDir = repoRoot
+    val cmd =
+        if (updateFullLicensesOnBuild) {
+            "python3 ./scripts/generate_dependency_inventory.py --output ./licenses/dependency_inventory.json --licenses-output ./licenses/full_licenses.json"
+        } else {
+            "python3 ./scripts/generate_dependency_inventory.py --output ./licenses/dependency_inventory.json"
+        }
     commandLine(
         "bash",
         "-lc",
-        "python3 ./scripts/generate_dependency_inventory.py --output ./licenses/dependency_inventory.json --licenses-output ./licenses/full_licenses.json"
+        cmd
     )
+    doFirst {
+        logger.lifecycle(
+            "generateDependencyInventory: updateFullLicensesOnBuild=${updateFullLicensesOnBuild} (CI=${isCiBuild})"
+        )
+    }
 }
 
 val syncDependencyInventoryAsset by tasks.registering {
