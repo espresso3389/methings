@@ -104,6 +104,7 @@ class LocalHttpServer(
     private val network = DeviceNetworkManager(context)
     private val sensors = SensorsStreamManager(context)
     private val llama = LlamaCppManager(context)
+    private val appUpdateManager = AppUpdateManager(context)
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
@@ -166,6 +167,12 @@ class LocalHttpServer(
             uri == "/python/restart" -> {
                 runtimeManager.restartSoft()
                 jsonResponse(JSONObject().put("status", "starting"))
+            }
+            uri == "/app/update/check" -> {
+                handleAppUpdateCheck()
+            }
+            uri == "/app/update/install" && session.method == Method.POST -> {
+                handleAppUpdateInstall()
             }
             uri == "/agent/run" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -3899,6 +3906,32 @@ class LocalHttpServer(
         val response = newFixedLengthResponse(status, "application/json", payload.toString())
         response.addHeader("Cache-Control", "no-cache")
         return response
+    }
+
+    private fun handleAppUpdateCheck(): Response {
+        return try {
+            jsonResponse(appUpdateManager.checkLatestRelease())
+        } catch (ex: Throwable) {
+            Log.w(TAG, "App update check failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "update_check_failed",
+                JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+            )
+        }
+    }
+
+    private fun handleAppUpdateInstall(): Response {
+        return try {
+            jsonResponse(appUpdateManager.downloadAndStartInstall())
+        } catch (ex: Throwable) {
+            Log.w(TAG, "App update install failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "update_install_failed",
+                JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+            )
+        }
     }
 
     private fun handleSshExec(payload: JSONObject): Response {

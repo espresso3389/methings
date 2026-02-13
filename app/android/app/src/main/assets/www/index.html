@@ -1499,6 +1499,21 @@
           </div>
         </section>
 
+        <!-- App Update -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon blue">&#8635;</div>
+            <div class="card-title">App Update</div>
+            <div id="appUpdateStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
+          </div>
+          <div class="muted">Checks GitHub Releases and installs newer APKs.</div>
+          <p class="muted" id="appUpdateDetail" style="margin-top:8px;">Checking latest release...</p>
+          <div class="btn-group">
+            <button class="btn" id="checkAppUpdate">Check update</button>
+            <button class="btn" id="installAppUpdate">Install update</button>
+          </div>
+        </section>
+
         <!-- Android -->
         <section class="card">
           <div class="card-header">
@@ -5181,6 +5196,10 @@
       // ==============================
       const pythonStatus = $("pythonStatus");
       const pythonDetail = $("pythonDetail");
+      const appUpdateStatus = $("appUpdateStatus");
+      const appUpdateDetail = $("appUpdateDetail");
+      const checkAppUpdate = $("checkAppUpdate");
+      const installAppUpdate = $("installAppUpdate");
       const sshStatus = $("sshStatus");
       const sshEnabled = $("sshEnabled");
       const authNotification = $("authNotification");
@@ -5220,6 +5239,67 @@
         else if (value === "offline") el.classList.add("offline");
         else if (value === "stopping") el.classList.add("stopping");
         else el.classList.add("starting");
+      }
+
+      let appUpdateInfo = null;
+      let appUpdatePrompted = false;
+
+      async function refreshAppUpdate(autoPrompt) {
+        setStatus(appUpdateStatus, "starting");
+        appUpdateDetail.textContent = "Checking latest release...";
+        try {
+          const res = await fetch(API + "/app/update/check");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          appUpdateInfo = data || null;
+          const cur = String(data.current_version || "").trim();
+          const latest = String(data.latest_tag || "").trim();
+          const hasUpdate = !!data.has_update;
+          if (hasUpdate) {
+            setStatus(appUpdateStatus, "starting");
+            appUpdateStatus.textContent = "update";
+            appUpdateDetail.textContent = "New version: " + latest + " (current: " + cur + ")";
+            if (autoPrompt && !appUpdatePrompted) {
+              appUpdatePrompted = true;
+              const ok = await appConfirm("Update available", latest + " is available. Download and install now?");
+              if (ok) await installLatestUpdate();
+            }
+          } else {
+            setStatus(appUpdateStatus, "ok");
+            appUpdateDetail.textContent = "Up to date (" + cur + ")";
+          }
+        } catch (_) {
+          setStatus(appUpdateStatus, "offline");
+          appUpdateDetail.textContent = "Failed to check updates";
+        }
+      }
+
+      async function installLatestUpdate() {
+        setStatus(appUpdateStatus, "starting");
+        appUpdateDetail.textContent = "Downloading update APK...";
+        try {
+          const res = await fetch(API + "/app/update/install", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({}),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw 0;
+          if (data.status === "install_permission_required") {
+            setStatus(appUpdateStatus, "starting");
+            appUpdateDetail.textContent = "Allow installs from this app, then tap Install update again.";
+            showToast("Installer permission required", 2200);
+            return;
+          }
+          setStatus(appUpdateStatus, "starting");
+          appUpdateStatus.textContent = "installing";
+          appUpdateDetail.textContent = "Installer opened for " + String(data.latest_tag || "latest");
+          showToast("Installer opened", 1800);
+        } catch (_) {
+          setStatus(appUpdateStatus, "offline");
+          appUpdateDetail.textContent = "Update install failed";
+          showToast("Failed to install update", 1800);
+        }
       }
 
       async function refreshPython() {
@@ -5657,6 +5737,22 @@
         }
       });
 
+      checkAppUpdate.addEventListener("click", async () => {
+        await refreshAppUpdate(false);
+      });
+
+      installAppUpdate.addEventListener("click", async () => {
+        if (!appUpdateInfo || !appUpdateInfo.has_update) {
+          await refreshAppUpdate(false);
+          if (!appUpdateInfo || !appUpdateInfo.has_update) {
+            showToast("Already up to date", 1400);
+            return;
+          }
+        }
+        if (!await appConfirm("Install update", "Download and install " + String(appUpdateInfo.latest_tag || "latest") + "?")) return;
+        await installLatestUpdate();
+      });
+
       async function updateSshConfig() {
         const enabled = sshEnabled.checked;
         try {
@@ -5786,6 +5882,7 @@
       loadCloudPrefs();
       loadNotifyPrefs();
       refreshPython();
+      refreshAppUpdate(true);
       refreshSsh();
       refreshPin();
       setInterval(refreshPython, 5000);
