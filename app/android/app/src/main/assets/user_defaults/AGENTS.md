@@ -30,6 +30,12 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - If a feature poses a security risk (e.g. API keys, credentials), it should still be agent-accessible but gated behind the existing permission system — the agent requests access, the user approves via the app UI, and the agent proceeds.
 - Do not create UI-only settings that the agent cannot read or change programmatically.
 
+## Notification & Permission Preferences
+
+- **Notification prefs**: `GET /notifications/prefs` and `POST /notifications/prefs` control task-completion notifications (Android notification, sound, webhook URL).
+- **Permission prefs**: `GET /permissions/prefs` and `POST /permissions/prefs` control the permission broker (remember approvals, dangerously skip permissions).
+- **Permission state**: `GET /permissions/pending` lists pending requests; `GET /permissions/grants` lists active grants; `POST /permissions/clear` clears saved grants.
+
 ## When Unsure About APIs
 
 - Do not guess or ask the user to "implement a new API" prematurely.

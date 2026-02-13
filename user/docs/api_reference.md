@@ -148,3 +148,36 @@ Details: [brain_journal.md](brain_journal.md)
 | `POST` | `/cloud/prefs` | Preferences JSON | Update resize/threshold preferences |
 
 Details: [cloud_broker.md](cloud_broker.md)
+
+## Notification Preferences
+
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `GET` | `/notifications/prefs` | — | Read task-completion notification settings |
+| `POST` | `/notifications/prefs` | `{"notify_android":bool,"notify_sound":bool,"notify_webhook_url":"..."}` | Update notification settings (partial updates OK) |
+
+Response fields:
+- `notify_android` — show Android notification when agent finishes while backgrounded (default `true`)
+- `notify_sound` — play a sound with the notification (default `false`)
+- `notify_webhook_url` — optional webhook URL called on task completion (default `""`)
+
+## Permission Preferences
+
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `GET` | `/permissions/prefs` | — | Read permission broker preferences |
+| `POST` | `/permissions/prefs` | `{"remember_approvals":bool,"dangerously_skip_permissions":bool}` | Update permission preferences |
+| `GET` | `/permissions/pending` | — | List pending permission requests |
+| `GET` | `/permissions/grants` | — | List active approved permission grants |
+| `POST` | `/permissions/clear` | `{}` | Clear all saved approval grants |
+
+Preference fields:
+- `remember_approvals` — remember user approvals for the configured scope (default `true`)
+- `dangerously_skip_permissions` — auto-approve all permission requests without prompting (default `false`)
+
+## Maintenance (UI-only)
+
+The following operations are available only from the WebView settings UI (via `AndroidBridge`). They do not have HTTP API endpoints yet.
+
+- **Reset UI** — reverts `index.html` to the APK-bundled default
+- **Reset Agent Docs** — reverts `AGENTS.md`, `TOOLS.md`, and `docs/` to APK-bundled defaults
