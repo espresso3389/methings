@@ -426,6 +426,7 @@ class MainActivity : AppCompatActivity() {
         opts.setPrompt("Scan me.sync QR")
         opts.setBeepEnabled(false)
         opts.setOrientationLocked(false)
+        opts.setCaptureActivity(MeSyncQrScanActivity::class.java)
         opts.setBarcodeImageEnabled(false)
         opts.setCameraId(0)
         meSyncQrScanLauncher.launch(opts)

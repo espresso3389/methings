@@ -83,6 +83,11 @@
             android:excludeFromRecents="true"
             android:finishOnTaskLaunch="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <activity
+            android:name=".ui.MeSyncQrScanActivity"
+            android:exported="false"
+            android:screenOrientation="fullSensor"
+            android:theme="@style/zxing_CaptureTheme" />
         <receiver
             android:name=".device.UsbPermissionResultReceiver"
             android:exported="false" />
