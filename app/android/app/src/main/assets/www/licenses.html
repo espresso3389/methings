@@ -34,6 +34,19 @@
         background: rgba(255, 255, 255, 0.03);
         margin-top: 12px;
       }
+      .section {
+        margin-top: 14px;
+      }
+      .section h3 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+      .dep {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.45;
+        margin: 2px 0;
+      }
       pre {
         white-space: pre-wrap;
         margin: 0;
@@ -71,7 +84,7 @@
       <h2>Third-Party OSS</h2>
       <div class="card">
         <div id="depSummary" class="muted">Loading dependency inventory...</div>
-        <ul id="depList"></ul>
+        <div id="depSections"></div>
         <div class="muted">
           Source repository:
           <a href="https://github.com/espresso3389/methings" target="_blank" rel="noopener">https://github.com/espresso3389/methings</a>
@@ -81,7 +94,13 @@
     <script>
       (async function() {
         const summary = document.getElementById("depSummary");
-        const list = document.getElementById("depList");
+        const sections = document.getElementById("depSections");
+        const sectionLabel = {
+          "android-gradle": "Android (Gradle)",
+          "node": "Node.js",
+          "python-wheel": "Python Wheels",
+          "vendored-native": "Vendored Native",
+        };
         try {
           const res = await fetch("licenses/dependency_inventory.json", { cache: "no-store" });
           if (!res.ok) throw new Error("inventory not found");
@@ -89,28 +108,41 @@
           const deps = Array.isArray(data.dependencies) ? data.dependencies : [];
           summary.textContent = "Dependencies: " + deps.length;
           if (deps.length === 0) {
-            list.innerHTML = "<li>(empty)</li>";
+            sections.innerHTML = "<div class='muted'>(empty)</div>";
             return;
           }
-          const frag = document.createDocumentFragment();
+          const byEco = {};
           for (const d of deps) {
-            const li = document.createElement("li");
-            const name = String(d.name || "(unknown)");
-            const ver = String(d.version || "").trim();
-            const eco = String(d.ecosystem || "").trim();
-            const lic = String(d.license || "").trim();
-            let line = name;
-            if (ver) line += "@" + ver;
-            if (eco) line += " [" + eco + "]";
-            if (lic) line += " - " + lic;
-            li.textContent = line;
-            frag.appendChild(li);
+            const eco = String(d.ecosystem || "other").trim() || "other";
+            if (!byEco[eco]) byEco[eco] = [];
+            byEco[eco].push(d);
           }
-          list.innerHTML = "";
-          list.appendChild(frag);
+          const order = ["android-gradle", "node", "python-wheel", "vendored-native"];
+          const ecos = order.concat(Object.keys(byEco).filter((e) => !order.includes(e)).sort());
+          sections.innerHTML = "";
+          for (const eco of ecos) {
+            const items = byEco[eco] || [];
+            if (items.length === 0) continue;
+            const box = document.createElement("div");
+            box.className = "section";
+            const h3 = document.createElement("h3");
+            h3.textContent = sectionLabel[eco] || eco;
+            box.appendChild(h3);
+            items.sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+            for (const d of items) {
+              const row = document.createElement("div");
+              row.className = "dep";
+              const name = String(d.name || "(unknown)");
+              const ver = String(d.version || "").trim();
+              const lic = String(d.license || "").trim() || "unknown";
+              row.textContent = (ver ? (name + "@" + ver) : name) + " - " + lic;
+              box.appendChild(row);
+            }
+            sections.appendChild(box);
+          }
         } catch (_) {
           summary.textContent = "Dependency inventory is not available in this build.";
-          list.innerHTML = "";
+          sections.innerHTML = "";
         }
       })();
     </script>

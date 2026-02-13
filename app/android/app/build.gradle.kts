@@ -229,7 +229,7 @@ val generateDependencyInventory by tasks.registering(Exec::class) {
     commandLine(
         "bash",
         "-lc",
-        "python3 ./scripts/generate_dependency_inventory.py --output ./licenses/dependency_inventory.json"
+        "python3 ./scripts/generate_dependency_inventory.py --output ./licenses/dependency_inventory.json --licenses-output ./licenses/full_licenses.json"
     )
 }
 
@@ -244,6 +244,13 @@ val syncDependencyInventoryAsset by tasks.registering {
         val dst = projectDir.resolve("src/main/assets/www/licenses/dependency_inventory.json")
         dst.parentFile.mkdirs()
         src.copyTo(dst, overwrite = true)
+        val fullSrc = repoRoot.resolve("licenses/full_licenses.json")
+        if (!fullSrc.exists()) {
+            throw GradleException("Missing generated full licenses: ${fullSrc.absolutePath}")
+        }
+        val fullDst = projectDir.resolve("src/main/assets/www/licenses/full_licenses.json")
+        fullDst.parentFile.mkdirs()
+        fullSrc.copyTo(fullDst, overwrite = true)
     }
 }
 

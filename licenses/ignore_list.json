@@ -1,0 +1,14 @@
+{
+  "ignore_ecosystems": [
+    "python-wheel"
+  ],
+  "ignore_names": [
+    "libusb",
+    "libuvc",
+    "opencv-android",
+    "opencv-python"
+  ],
+  "ignore_name_patterns": [
+    "opencv"
+  ]
+}

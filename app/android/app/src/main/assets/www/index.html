@@ -1333,6 +1333,42 @@
         overflow-y: auto;
       }
       .perm-overlay.show { display: block; }
+
+      /* Licenses page */
+      .license-summary { margin-bottom: 8px; }
+      .license-section { margin-top: 10px; }
+      .license-section-title { font-size: 14px; font-weight: 700; margin-bottom: 6px; color: var(--ink-secondary); }
+      .license-dep {
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: rgba(255,255,255,0.02);
+        padding: 10px;
+        margin-bottom: 8px;
+      }
+      .license-dep-title { font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+      .license-doc-title { font-size: 12px; color: var(--ink-muted); margin: 8px 0 4px; }
+      .license-doc-text {
+        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        background: #0d0d0f;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 10px;
+        max-height: 240px;
+        overflow: auto;
+      }
+      .license-doc-md {
+        font-size: 13px;
+        line-height: 1.5;
+        background: #0d0d0f;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 10px;
+        max-height: 300px;
+        overflow: auto;
+      }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
@@ -1796,6 +1832,19 @@
       </div>
     </div>
 
+    <!-- ===== Licenses Page ===== -->
+    <div id="licensesPage" class="page">
+      <div class="topbar">
+        <button class="icon-btn secondary" id="backToSettingsFromLicenses" title="Back" aria-label="Back"></button>
+        <div class="title">Licenses</div>
+        <div style="width:38px; height:38px;" aria-hidden="true"></div>
+      </div>
+      <div class="settings-scroll">
+        <div class="muted license-summary" id="licensesSummary">Loading licenses...</div>
+        <div id="licensesSections"></div>
+      </div>
+    </div>
+
     <!-- PIN Modal -->
     <div class="modal" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
       <div class="modal-card">
@@ -1894,6 +1943,7 @@
       try { $("chatUploadBtn").innerHTML = ICON.attach; } catch (_) {}
       try { $("chatSend").innerHTML = ICON.send; } catch (_) {}
       try { $("backToChatBtn").innerHTML = ICON.back; } catch (_) {}
+      try { $("backToSettingsFromLicenses").innerHTML = ICON.back; } catch (_) {}
       try { $("viewerClose").innerHTML = ICON.close; } catch (_) {}
       try { $("viewerShare").innerHTML = ICON.share; } catch (_) {}
       try { $("viewerSourceToggle").innerHTML = ICON.code; } catch (_) {}
@@ -2073,6 +2123,8 @@
           if (h === "settings") {
             // Route-only. Keep it minimal; opening settings should not require unlock.
             openSettings();
+          } else if (h === "licenses") {
+            openLicensesPageView();
           } else {
             navigateTo("chatPage");
           }
@@ -2095,6 +2147,9 @@
       });
       $("backToChatBtn").addEventListener("click", () => {
         location.hash = "chat";
+      });
+      $("backToSettingsFromLicenses").addEventListener("click", () => {
+        location.hash = "settings";
       });
 
       let pendingSettingsUnlock = null;
@@ -2322,6 +2377,87 @@
           return { id: s.id, label: s.label, setting_keys: keys };
         });
       };
+
+      let _licensesLoaded = false;
+      async function loadLicensesData() {
+        const summary = $("licensesSummary");
+        const root = $("licensesSections");
+        summary.textContent = "Loading licenses...";
+        root.innerHTML = "";
+        try {
+          const res = await fetch("licenses/full_licenses.json", { cache: "no-store" });
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          const sections = Array.isArray(data.sections) ? data.sections : [];
+          let depCount = 0;
+          sections.forEach((s) => { depCount += (Array.isArray(s.dependencies) ? s.dependencies.length : 0); });
+          summary.textContent = "Dependencies with bundled licenses: " + depCount;
+          if (!sections.length) {
+            root.innerHTML = "<div class='muted'>(empty)</div>";
+            return;
+          }
+          const frag = document.createDocumentFragment();
+          for (const sec of sections) {
+            const deps = Array.isArray(sec.dependencies) ? sec.dependencies : [];
+            if (!deps.length) continue;
+            const secBox = document.createElement("div");
+            secBox.className = "license-section";
+            const h = document.createElement("div");
+            h.className = "license-section-title";
+            h.textContent = String(sec.label || sec.ecosystem || "Other");
+            secBox.appendChild(h);
+            for (const d of deps) {
+              const depBox = document.createElement("div");
+              depBox.className = "license-dep";
+              const title = document.createElement("div");
+              title.className = "license-dep-title";
+              const name = String(d.name || "(unknown)");
+              const ver = String(d.version || "").trim();
+              title.textContent = ver ? (name + "@" + ver) : name;
+              depBox.appendChild(title);
+              const docs = Array.isArray(d.documents) ? d.documents : [];
+              if (!docs.length) {
+                const miss = document.createElement("div");
+                miss.className = "muted";
+                miss.textContent = "No bundled license text found.";
+                depBox.appendChild(miss);
+              } else {
+                for (const doc of docs) {
+                  const dt = document.createElement("div");
+                  dt.className = "license-doc-title";
+                  dt.textContent = String(doc.title || "LICENSE");
+                  depBox.appendChild(dt);
+                  const body = document.createElement("div");
+                  const fmt = String(doc.format || "text").toLowerCase();
+                  const txt = String(doc.text || "");
+                  if (fmt === "markdown") {
+                    body.className = "license-doc-md";
+                    body.innerHTML = renderMarkdown(txt);
+                  } else {
+                    body.className = "license-doc-text";
+                    body.textContent = txt;
+                  }
+                  depBox.appendChild(body);
+                }
+              }
+              secBox.appendChild(depBox);
+            }
+            frag.appendChild(secBox);
+          }
+          root.innerHTML = "";
+          root.appendChild(frag);
+        } catch (_) {
+          summary.textContent = "Failed to load license data.";
+          root.innerHTML = "";
+        }
+      }
+
+      function openLicensesPageView() {
+        navigateTo("licensesPage");
+        if (_licensesLoaded) return;
+        _licensesLoaded = true;
+        loadLicensesData();
+      }
 
       function openSettings() {
         // Keep this minimal and robust. Heavy/permission-gated settings loaders run on demand.
@@ -6347,7 +6483,7 @@
       });
 
       openLicensesPage.addEventListener("click", () => {
-        location.href = "licenses.html";
+        location.hash = "licenses";
       });
 
       async function updateSshConfig() {

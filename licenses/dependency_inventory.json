@@ -149,76 +149,32 @@
       "source_path": "app/android/app/src/main/assets/node/usr/lib/node_modules/npm/package.json"
     },
     {
-      "ecosystem": "python-wheel",
-      "name": "libusb",
-      "version": "0.0.0+kugutz1-py3-none",
-      "source_path": "app/android/app/src/main/assets/wheels/_disabled/libusb-0.0.0+kugutz1-py3-none-any.whl"
-    },
-    {
-      "ecosystem": "python-wheel",
-      "name": "libuvc",
-      "version": "0.0.0+kugutz1-py3-none",
-      "source_path": "app/android/app/src/main/assets/wheels/_disabled/libuvc-0.0.0+kugutz1-py3-none-any.whl"
-    },
-    {
-      "ecosystem": "python-wheel",
-      "name": "opencv-android",
-      "version": "0.0.0+kugutz1-py3-none",
-      "source_path": "app/android/app/src/main/assets/wheels/_disabled/opencv_android-0.0.0+kugutz1-py3-none-any.whl"
-    },
-    {
-      "ecosystem": "python-wheel",
-      "name": "opencv-python",
-      "version": "4.12.0.88+kugutz1-py3-none",
-      "source_path": "app/android/app/src/main/assets/wheels/common/opencv_python-4.12.0.88+kugutz1-py3-none-any.whl"
-    },
-    {
-      "ecosystem": "python-wheel",
-      "name": "opencv-python",
-      "version": "4.12.0.88+methings1-py3-none",
-      "source_path": "app/android/app/src/main/assets/wheels/common/opencv_python-4.12.0.88+methings1-py3-none-any.whl"
-    },
-    {
-      "ecosystem": "python-wheel",
-      "name": "pupil-labs-uvc",
-      "version": "0.0.0+kugutz1-py3-none",
-      "source_path": "app/android/app/src/main/assets/wheels/common/pupil_labs_uvc-0.0.0+kugutz1-py3-none-any.whl"
-    },
-    {
-      "ecosystem": "python-wheel",
-      "name": "pyusb",
-      "version": "1.3.1-py3-none",
-      "source_path": "app/android/app/src/main/assets/wheels/common/pyusb-1.3.1-py3-none-any.whl"
-    },
-    {
-      "ecosystem": "python-wheel",
-      "name": "pyuvc",
-      "version": "0.0.0+kugutz1-py3-none",
-      "source_path": "app/android/app/src/main/assets/wheels/common/pyuvc-0.0.0+kugutz1-py3-none-any.whl"
-    },
-    {
       "ecosystem": "vendored-native",
       "name": "dropbear",
       "version": "",
+      "license": "",
       "source_path": "third_party/dropbear"
-    },
-    {
-      "ecosystem": "vendored-native",
-      "name": "libusb",
-      "version": "",
-      "source_path": "third_party/libusb"
-    },
-    {
-      "ecosystem": "vendored-native",
-      "name": "libuvc",
-      "version": "",
-      "source_path": "third_party/libuvc"
     },
     {
       "ecosystem": "vendored-native",
       "name": "llama.cpp",
       "version": "",
+      "license": "MIT",
       "source_path": "third_party/llama.cpp"
     }
-  ]
+  ],
+  "ignore_config": {
+    "ignore_ecosystems": [
+      "python-wheel"
+    ],
+    "ignore_names": [
+      "libusb",
+      "libuvc",
+      "opencv-android",
+      "opencv-python"
+    ],
+    "ignore_name_patterns": [
+      "opencv"
+    ]
+  }
 }
