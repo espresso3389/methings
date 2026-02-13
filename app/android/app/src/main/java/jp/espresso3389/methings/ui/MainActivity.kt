@@ -46,6 +46,8 @@ import org.kivy.android.PythonActivity
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CountDownLatch
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 class MainActivity : AppCompatActivity() {
     private companion object {
@@ -55,6 +57,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private var backCallback: OnBackPressedCallback? = null
     private var startupBanner: View? = null
+    @Volatile private var pendingMeSyncDeepLink: String? = null
+    @Volatile private var mainUiLoaded: Boolean = false
     private var mainFrameError = false
     private val pendingAndroidPermRequestId = AtomicReference<String?>(null)
     private val pendingAndroidPermAction = AtomicReference<((Boolean) -> Unit)?>(null)
@@ -90,6 +94,16 @@ class MainActivity : AppCompatActivity() {
             pendingFilePathCallback = null
             if (cb == null) return@registerForActivityResult
             if (uris.isNullOrEmpty()) cb.onReceiveValue(null) else cb.onReceiveValue(uris.toTypedArray())
+        }
+    private val meSyncQrScanLauncher =
+        registerForActivityResult(ScanContract()) { result ->
+            val txt = (result.contents ?: "").trim()
+            if (txt.isBlank()) {
+                evalJs("window.onMeSyncQrScanResult && window.onMeSyncQrScanResult({ok:false,cancelled:true})")
+                return@registerForActivityResult
+            }
+            val escaped = jsString(txt)
+            evalJs("window.onMeSyncQrScanResult && window.onMeSyncQrScanResult({ok:true,text:'$escaped'})")
         }
     private val pythonHealthReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -148,6 +162,12 @@ class MainActivity : AppCompatActivity() {
             val sectionId = intent.getStringExtra(LocalHttpServer.EXTRA_SETTINGS_SECTION_ID) ?: return
             val escaped = sectionId.replace("\\", "\\\\").replace("'", "\\'")
             evalJs("window.uiOpenSettingsSection && window.uiOpenSettingsSection('$escaped')")
+        }
+    }
+    private val meSyncExportShowReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != LocalHttpServer.ACTION_UI_ME_SYNC_EXPORT_SHOW) return
+            evalJs("window.uiShowMeSyncExport && window.uiShowMeSyncExport()")
         }
     }
 
@@ -272,6 +292,10 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 android.util.Log.d("MethingsWeb", "page finished: $url")
                 view.evaluateJavascript("console.log('methings page loaded: ' + location.href)", null)
+                if (url.contains("/ui/index.html")) {
+                    mainUiLoaded = true
+                    flushPendingMeSyncDeepLink()
+                }
                 if (!mainFrameError) {
                     dismissStartupBanner()
                 }
@@ -280,6 +304,12 @@ class MainActivity : AppCompatActivity() {
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url ?: return false
+                val raw = u.toString()
+                if (raw.startsWith("me.things:me.sync:", ignoreCase = true)) {
+                    pendingMeSyncDeepLink = raw
+                    flushPendingMeSyncDeepLink()
+                    return true
+                }
                 if (u.scheme == "methings" && u.host == "open_user_html") {
                     val rel = (u.getQueryParameter("path") ?: "").trim().trimStart('/')
                     if (rel.isBlank() || rel.contains("..")) return true
@@ -345,12 +375,51 @@ class MainActivity : AppCompatActivity() {
 
         // If launched from a permission notification, handle it immediately.
         maybeHandlePermissionIntent(intent)
+        maybeHandleDeepLinkIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         maybeHandlePermissionIntent(intent)
+        maybeHandleDeepLinkIntent(intent)
+    }
+
+    private fun maybeHandleDeepLinkIntent(intent: Intent?) {
+        val data = intent?.dataString?.trim().orEmpty()
+        if (!data.startsWith("me.things:me.sync:", ignoreCase = true)) return
+        try {
+            intent?.data = null
+        } catch (_: Exception) {}
+        pendingMeSyncDeepLink = data
+        flushPendingMeSyncDeepLink()
+    }
+
+    private fun flushPendingMeSyncDeepLink() {
+        val deep = pendingMeSyncDeepLink ?: return
+        if (!mainUiLoaded || !::webView.isInitialized) return
+        pendingMeSyncDeepLink = null
+        val escaped = jsString(deep)
+        evalJs("window.uiHandleMeSyncDeepLink && window.uiHandleMeSyncDeepLink('$escaped')")
+    }
+
+    private fun jsString(raw: String): String {
+        return raw
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+    }
+
+    fun startMeSyncQrScan() {
+        val opts = ScanOptions()
+        opts.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+        opts.setPrompt("Scan me.sync QR")
+        opts.setBeepEnabled(false)
+        opts.setOrientationLocked(false)
+        opts.setBarcodeImageEnabled(false)
+        opts.setCameraId(0)
+        meSyncQrScanLauncher.launch(opts)
     }
 
     private fun maybeHandlePermissionIntent(intent: Intent?) {
@@ -435,12 +504,18 @@ class MainActivity : AppCompatActivity() {
                 IntentFilter(LocalHttpServer.ACTION_UI_SETTINGS_NAVIGATE),
                 Context.RECEIVER_NOT_EXPORTED
             )
+            registerReceiver(
+                meSyncExportShowReceiver,
+                IntentFilter(LocalHttpServer.ACTION_UI_ME_SYNC_EXPORT_SHOW),
+                Context.RECEIVER_NOT_EXPORTED
+            )
         } else {
             registerReceiver(pythonHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
             registerReceiver(uiReloadReceiver, IntentFilter(LocalHttpServer.ACTION_UI_RELOAD))
             registerReceiver(viewerCommandReceiver, IntentFilter(LocalHttpServer.ACTION_UI_VIEWER_COMMAND))
             registerReceiver(settingsNavigateReceiver, IntentFilter(LocalHttpServer.ACTION_UI_SETTINGS_NAVIGATE))
+            registerReceiver(meSyncExportShowReceiver, IntentFilter(LocalHttpServer.ACTION_UI_ME_SYNC_EXPORT_SHOW))
         }
     }
 
@@ -451,6 +526,7 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(uiReloadReceiver)
         unregisterReceiver(viewerCommandReceiver)
         unregisterReceiver(settingsNavigateReceiver)
+        unregisterReceiver(meSyncExportShowReceiver)
         AppForegroundState.isForeground = false
         super.onStop()
     }

@@ -307,6 +307,16 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun scanMeSyncQr() {
+        handler.post {
+            runCatching { activity.startMeSyncQrScan() }
+                .onFailure {
+                    activity.evalJs("window.onMeSyncQrScanResult && window.onMeSyncQrScanResult({ok:false,error:'scanner_unavailable'})")
+                }
+        }
+    }
+
+    @JavascriptInterface
     fun getTaskCompleteNotifyAndroid(): Boolean {
         return notifPrefs.getBoolean("notify_android", true)
     }

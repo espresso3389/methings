@@ -301,6 +301,9 @@ Details: [vision.md](vision.md)
 | `cloud.prefs.get` | GET | `/cloud/prefs` **[no perm]** |
 | `notifications.prefs.get` | GET | `/notifications/prefs` **[no perm]** |
 | `notifications.prefs.set` | POST | `/notifications/prefs` **[no perm]** |
+| `me.sync.status` | GET | `/me/sync/status` **[no perm]** |
+| `me.sync.prepare_export` | POST | `/me/sync/prepare_export` |
+| `me.sync.import` | POST | `/me/sync/import` |
 
 `brain.config.get` returns `{vendor, base_url, model, has_api_key}` (never returns the key itself).
 
@@ -315,6 +318,7 @@ Details: [vision.md](vision.md)
 | `viewer.goto` | POST | `/ui/viewer/goto` |
 | `ui.settings.sections` | GET | `/ui/settings/sections` |
 | `ui.settings.navigate` | POST | `/ui/settings/navigate` |
+| `ui.me.sync.export.show` | POST | `/ui/me/sync/export/show` |
 
 ---
 
@@ -389,6 +393,26 @@ Endpoints:
 
 Chat prefix shortcut in the app UI:
 - `settings: <section_id_or_setting_key>` (examples: `settings: permissions`, `settings: remember_approvals`)
+
+### me.sync (LAN Export / Migration)
+
+One-time export/import endpoints for device-to-device transfer of chat memory/state.
+
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `GET` | `/me/sync/status` | — | List active export packages and expiry |
+| `POST` | `/me/sync/prepare_export` | `{"include_user":true,"include_protected_db":true,"include_identity":false,"mode":"export"}` | Build one-time export package and return download links + payload |
+| `GET` | `/me/sync/download` | `?id=<transfer_id>&token=<token>` | Download prepared ZIP package |
+| `POST` | `/me/sync/import` | `{"url":"http://.../me/sync/download?..."} or {"payload":"{...}"}` | Download package from source and import it locally |
+
+Notes:
+- `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and LAN/local download URLs.
+- `prepare_export` supports both modes:
+  - Export mode (default): `include_identity=false` (or `mode:"export"`), excludes `user/.ssh/id_dropbear*`.
+  - Migration mode: `include_identity=true` (or `mode:"migration"`), includes `user/.ssh/id_dropbear*`.
+- `import` accepts HTTP URL, JSON payload, or `me_sync_uri`.
+- Imported package merges `files/user/`, restores `files/protected/app.db`, re-applies credential/key state, and restarts Python worker.
+- App GUI "Export" uses export mode only; migration mode is API-only.
 
 ### Brain Journal (Per-Session Notes)
 
