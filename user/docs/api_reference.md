@@ -106,6 +106,49 @@ Recording produces AAC in .m4a container. PCM streaming delivers signed 16-bit L
 
 Details: [recording.md](recording.md)
 
+### Video Recording & Frame Streaming
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `video.record.status` | GET | `/video/record/status` |
+| `video.record.start` | POST | `/video/record/start` |
+| `video.record.stop` | POST | `/video/record/stop` |
+| `video.record.config.get` | GET | `/video/record/config` |
+| `video.record.config.set` | POST | `/video/record/config` |
+| `video.stream.start` | POST | `/video/stream/start` |
+| `video.stream.stop` | POST | `/video/stream/stop` |
+
+Recording produces H.265 (HEVC) or H.264 (fallback) in .mp4 container. Frame streaming delivers JPEG or RGBA over WebSocket `/ws/video/frames`.
+
+Details: [recording.md](recording.md)
+
+### Screen Recording
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `screenrec.status` | GET | `/screen/record/status` |
+| `screenrec.start` | POST | `/screen/record/start` |
+| `screenrec.stop` | POST | `/screen/record/stop` |
+| `screenrec.config.get` | GET | `/screen/record/config` |
+| `screenrec.config.set` | POST | `/screen/record/config` |
+
+Recording produces H.265 (HEVC) or H.264 in .mp4 container. Requires system MediaProjection consent dialog each time (scope: `once`).
+
+Details: [recording.md](recording.md)
+
+### Media Stream (File Decoding)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `media.stream.status` | GET | `/media/stream/status` |
+| `media.stream.audio.start` | POST | `/media/stream/audio/start` |
+| `media.stream.video.start` | POST | `/media/stream/video/start` |
+| `media.stream.stop` | POST | `/media/stream/stop` |
+
+Decode existing media files to raw PCM or JPEG/RGBA frames over dynamic WebSocket `/ws/media/stream/<stream_id>`.
+
+Details: [media_stream.md](media_stream.md)
+
 ### Android TTS (Text-to-Speech)
 
 | Action | Method | Endpoint |
@@ -279,6 +322,8 @@ Raw WebSocket connections on the same `127.0.0.1:8765` host.
 | `/ws/stt/events` | Speech recognition partial/final results | [stt.md](stt.md) |
 | `/ws/camera/preview` | Camera preview (binary JPEG frames) | [camera.md](camera.md) |
 | `/ws/audio/pcm` | Live PCM audio stream (s16le binary frames) | [recording.md](recording.md) |
+| `/ws/video/frames` | Live video frames (JPEG or RGBA binary) | [recording.md](recording.md) |
+| `/ws/media/stream/<id>` | Decoded media file stream (PCM/JPEG/RGBA) | [media_stream.md](media_stream.md) |
 
 ---
 

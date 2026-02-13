@@ -26,6 +26,7 @@ class WebAppBridge(private val activity: MainActivity) {
     private val notifPrefs = activity.getSharedPreferences("task_completion_prefs", Context.MODE_PRIVATE)
     private val browserPrefs = activity.getSharedPreferences("browser_prefs", Context.MODE_PRIVATE)
     private val audioRecordPrefs = activity.getSharedPreferences("audio_record_config", Context.MODE_PRIVATE)
+    private val videoRecordPrefs = activity.getSharedPreferences("video_record_config", Context.MODE_PRIVATE)
 
     @Volatile
     private var settingsUnlockedUntilMs: Long = 0L
@@ -385,5 +386,43 @@ class WebAppBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun setAudioRecordMaxDurationS(v: Int) {
         audioRecordPrefs.edit().putInt("max_duration_s", v.coerceIn(5, 3600)).apply()
+    }
+
+    // ── Video Recording Config ───────────────────────────────────────────────
+
+    @JavascriptInterface
+    fun getVideoRecordResolution(): String {
+        return videoRecordPrefs.getString("resolution", "720p") ?: "720p"
+    }
+
+    @JavascriptInterface
+    fun setVideoRecordResolution(v: String) {
+        val r = v.trim().lowercase()
+        if (r in listOf("720p", "1080p", "4k")) {
+            videoRecordPrefs.edit().putString("resolution", r).apply()
+        }
+    }
+
+    @JavascriptInterface
+    fun getVideoRecordCodec(): String {
+        return videoRecordPrefs.getString("codec", "h265") ?: "h265"
+    }
+
+    @JavascriptInterface
+    fun setVideoRecordCodec(v: String) {
+        val c = v.trim().lowercase()
+        if (c in listOf("h265", "h264")) {
+            videoRecordPrefs.edit().putString("codec", c).apply()
+        }
+    }
+
+    @JavascriptInterface
+    fun getVideoRecordMaxDurationS(): Int {
+        return videoRecordPrefs.getInt("max_duration_s", 300)
+    }
+
+    @JavascriptInterface
+    fun setVideoRecordMaxDurationS(v: Int) {
+        videoRecordPrefs.edit().putInt("max_duration_s", v.coerceIn(5, 3600)).apply()
     }
 }

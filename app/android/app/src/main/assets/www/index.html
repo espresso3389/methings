@@ -1549,6 +1549,39 @@
           </div>
         </section>
 
+        <!-- Video Recording -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon purple">&#127909;</div>
+            <div class="card-title">Video Recording</div>
+          </div>
+          <div class="card-desc">Default settings for agent-initiated video recording.</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+            <div class="field">
+              <label>Resolution</label>
+              <select id="videoRecResolution">
+                <option value="720p">720p</option>
+                <option value="1080p">1080p</option>
+                <option value="4k">4K</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Codec</label>
+              <select id="videoRecCodec">
+                <option value="h265">H.265 (HEVC)</option>
+                <option value="h264">H.264 (AVC)</option>
+              </select>
+            </div>
+          </div>
+          <div class="field" style="margin-top:10px;">
+            <label>Max Duration (s)</label>
+            <input type="number" id="videoRecMaxDuration" min="5" max="3600" value="300" />
+          </div>
+          <div class="btn-group" style="margin-top:10px;">
+            <button class="btn primary" id="videoRecSave">Save</button>
+          </div>
+        </section>
+
         <!-- SSHD -->
         <section class="card">
           <div class="card-header">
@@ -6081,6 +6114,27 @@
         }
       });
 
+      // Video recording config prefs
+      function loadVideoRecSettings() {
+        try {
+          if (typeof AndroidBridge === "undefined") return;
+          $("videoRecResolution").value = AndroidBridge.getVideoRecordResolution() || "720p";
+          $("videoRecCodec").value = AndroidBridge.getVideoRecordCodec() || "h265";
+          $("videoRecMaxDuration").value = AndroidBridge.getVideoRecordMaxDurationS() || 300;
+        } catch (_) {}
+      }
+      $("videoRecSave").addEventListener("click", () => {
+        try {
+          if (typeof AndroidBridge === "undefined") { showToast("Not available", 1600); return; }
+          AndroidBridge.setVideoRecordResolution($("videoRecResolution").value || "720p");
+          AndroidBridge.setVideoRecordCodec($("videoRecCodec").value || "h265");
+          AndroidBridge.setVideoRecordMaxDurationS(parseInt($("videoRecMaxDuration").value) || 300);
+          showToast("Video recording settings saved", 1600);
+        } catch (_) {
+          showToast("Failed to save video recording settings", 1800);
+        }
+      });
+
       $("restartPython").addEventListener("click", async () => {
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonWorker) {
           AndroidBridge.restartPythonWorker();
@@ -6315,6 +6369,7 @@
       loadCloudPrefs();
       loadNotifyPrefs();
       loadAudioRecSettings();
+      loadVideoRecSettings();
       loadBrowserPrefs();
       refreshPython();
       refreshAppUpdate(true);

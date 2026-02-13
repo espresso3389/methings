@@ -61,6 +61,8 @@ class CameraXManager(
     private var previewFps: Int = 5
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
 
+    fun isPreviewActive(): Boolean = started.get()
+
     fun addWsClient(ws: NanoWSD.WebSocket) {
         wsClients.add(ws)
     }

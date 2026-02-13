@@ -59,6 +59,22 @@ class DeviceApiTool:
         "audio.record.config.set": {"method": "POST", "path": "/audio/record/config", "permission": True},
         "audio.stream.start": {"method": "POST", "path": "/audio/stream/start", "permission": True},
         "audio.stream.stop": {"method": "POST", "path": "/audio/stream/stop", "permission": True},
+        "video.record.status": {"method": "GET", "path": "/video/record/status", "permission": True},
+        "video.record.start": {"method": "POST", "path": "/video/record/start", "permission": True},
+        "video.record.stop": {"method": "POST", "path": "/video/record/stop", "permission": True},
+        "video.record.config.get": {"method": "GET", "path": "/video/record/config", "permission": True},
+        "video.record.config.set": {"method": "POST", "path": "/video/record/config", "permission": True},
+        "video.stream.start": {"method": "POST", "path": "/video/stream/start", "permission": True},
+        "video.stream.stop": {"method": "POST", "path": "/video/stream/stop", "permission": True},
+        "screenrec.status": {"method": "GET", "path": "/screen/record/status", "permission": True},
+        "screenrec.start": {"method": "POST", "path": "/screen/record/start", "permission": True},
+        "screenrec.stop": {"method": "POST", "path": "/screen/record/stop", "permission": True},
+        "screenrec.config.get": {"method": "GET", "path": "/screen/record/config", "permission": True},
+        "screenrec.config.set": {"method": "POST", "path": "/screen/record/config", "permission": True},
+        "media.stream.status": {"method": "GET", "path": "/media/stream/status", "permission": True},
+        "media.stream.audio.start": {"method": "POST", "path": "/media/stream/audio/start", "permission": True},
+        "media.stream.video.start": {"method": "POST", "path": "/media/stream/video/start", "permission": True},
+        "media.stream.stop": {"method": "POST", "path": "/media/stream/stop", "permission": True},
         "llama.status": {"method": "GET", "path": "/llama/status", "permission": True},
         "llama.models": {"method": "GET", "path": "/llama/models", "permission": True},
         "llama.run": {"method": "POST", "path": "/llama/run", "permission": True},
@@ -150,6 +166,11 @@ class DeviceApiTool:
             "audio.record.start": 25.0,
             "audio.record.stop": 25.0,
             "audio.stream.start": 25.0,
+            "video.record.start": 25.0,
+            "video.record.stop": 25.0,
+            "video.stream.start": 25.0,
+            "screenrec.start": 45.0,
+            "screenrec.stop": 25.0,
         }
 
     def set_identity(self, identity: str) -> None:
@@ -561,6 +582,8 @@ class DeviceApiTool:
 
     def _permission_profile_for_action(self, action: str) -> tuple[str, str, str]:
         a = (action or "").strip()
+        if a.startswith("screenrec."):
+            return "device.screen", "screen_recording", "once"
         if a.startswith("screen."):
             return "device.screen", "screen", "session"
         if a.startswith("sshd.keys."):
@@ -572,6 +595,8 @@ class DeviceApiTool:
             return "device.sshd", "sshd", "session"
         if a.startswith("ssh."):
             return "device.ssh", "ssh", "session"
+        if a.startswith("video.record.") or a.startswith("video.stream."):
+            return "device.camera", "recording", "session"
         if a.startswith("camera."):
             return "device.camera", "camera", "session"
         if a.startswith("ble."):
@@ -580,6 +605,8 @@ class DeviceApiTool:
             return "device.tts", "tts", "session"
         if a.startswith("audio.record.") or a.startswith("audio.stream."):
             return "device.mic", "recording", "session"
+        if a.startswith("media.stream."):
+            return "device.media", "media_stream", "session"
         if a.startswith("media.audio."):
             return "device.media", "media", "session"
         if a.startswith("llama."):

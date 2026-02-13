@@ -47,6 +47,9 @@ import jp.espresso3389.methings.device.BleManager
 import jp.espresso3389.methings.device.AudioPlaybackManager
 import jp.espresso3389.methings.device.AudioRecordManager
 import jp.espresso3389.methings.device.CameraXManager
+import jp.espresso3389.methings.device.MediaStreamManager
+import jp.espresso3389.methings.device.ScreenRecordManager
+import jp.espresso3389.methings.device.VideoRecordManager
 import jp.espresso3389.methings.device.DeviceLocationManager
 import jp.espresso3389.methings.device.DeviceNetworkManager
 import jp.espresso3389.methings.device.LlamaCppManager
@@ -108,6 +111,9 @@ class LocalHttpServer(
     private val sensors = SensorsStreamManager(context)
     private val llama = LlamaCppManager(context)
     private val audioRecord = AudioRecordManager(context)
+    private val videoRecord = VideoRecordManager(context, lifecycleOwner)
+    private val screenRecord = ScreenRecordManager(context)
+    private val mediaStream = MediaStreamManager(context)
     private val appUpdateManager = AppUpdateManager(context)
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
@@ -1206,6 +1212,127 @@ class LocalHttpServer(
                 val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "recording", detail = "Stop live PCM audio stream")
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(audioRecord.stopStream()))
+            }
+
+            // ── Video Recording ──────────────────────────────────────────
+            (uri == "/video/record/status" || uri == "/video/record/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.camera", capability = "recording", detail = "Video recording status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(videoRecord.status()))
+            }
+            (uri == "/video/record/start" || uri == "/video/record/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.camera", capability = "recording", detail = "Start video recording")
+                if (!ok.first) return ok.second!!
+                val path = payload.optString("path", "").trim().ifBlank { null }
+                val lens = payload.optString("lens", "").trim().ifBlank { null }
+                val maxDur = if (payload.has("max_duration_s")) payload.optInt("max_duration_s") else null
+                val resolution = payload.optString("resolution", "").trim().ifBlank { null }
+                return jsonResponse(JSONObject(videoRecord.startRecording(path, lens, maxDur, resolution)))
+            }
+            (uri == "/video/record/stop" || uri == "/video/record/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.camera", capability = "recording", detail = "Stop video recording")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(videoRecord.stopRecording()))
+            }
+            (uri == "/video/record/config" || uri == "/video/record/config/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.camera", capability = "recording", detail = "Get video recording config")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(videoRecord.getConfig()))
+            }
+            (uri == "/video/record/config" || uri == "/video/record/config/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.camera", capability = "recording", detail = "Set video recording config")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(videoRecord.setConfig(payload)))
+            }
+
+            // ── Video Frame Streaming ────────────────────────────────────
+            (uri == "/video/stream/start" || uri == "/video/stream/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.camera", capability = "recording", detail = "Start live video frame stream")
+                if (!ok.first) return ok.second!!
+                val lens = payload.optString("lens", "").trim().ifBlank { null }
+                val width = if (payload.has("width")) payload.optInt("width") else null
+                val height = if (payload.has("height")) payload.optInt("height") else null
+                val fps = if (payload.has("fps")) payload.optInt("fps") else null
+                val format = payload.optString("format", "").trim().ifBlank { null }
+                val jq = if (payload.has("jpeg_quality")) payload.optInt("jpeg_quality") else null
+                return jsonResponse(JSONObject(videoRecord.startStream(lens, width, height, fps, format, jq)))
+            }
+            (uri == "/video/stream/stop" || uri == "/video/stream/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.camera", capability = "recording", detail = "Stop live video frame stream")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(videoRecord.stopStream()))
+            }
+
+            // ── Screen Recording ─────────────────────────────────────────
+            (uri == "/screen/record/status" || uri == "/screen/record/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.screen", capability = "screen_recording", detail = "Screen recording status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(screenRecord.status()))
+            }
+            (uri == "/screen/record/start" || uri == "/screen/record/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Start screen recording")
+                if (!ok.first) return ok.second!!
+                val path = payload.optString("path", "").trim().ifBlank { null }
+                val maxDur = if (payload.has("max_duration_s")) payload.optInt("max_duration_s") else null
+                val resolution = payload.optString("resolution", "").trim().ifBlank { null }
+                val bitrate = if (payload.has("bitrate")) payload.optInt("bitrate") else null
+                return jsonResponse(JSONObject(screenRecord.startRecording(path, maxDur, resolution, bitrate)))
+            }
+            (uri == "/screen/record/stop" || uri == "/screen/record/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Stop screen recording")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(screenRecord.stopRecording()))
+            }
+            (uri == "/screen/record/config" || uri == "/screen/record/config/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.screen", capability = "screen_recording", detail = "Get screen recording config")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(screenRecord.getConfig()))
+            }
+            (uri == "/screen/record/config" || uri == "/screen/record/config/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Set screen recording config")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(screenRecord.setConfig(payload)))
+            }
+
+            // ── Media Stream (file decode) ───────────────────────────────
+            (uri == "/media/stream/status" || uri == "/media/stream/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.media", capability = "media_stream", detail = "Media stream status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(mediaStream.status()))
+            }
+            (uri == "/media/stream/audio/start" || uri == "/media/stream/audio/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Decode audio file to PCM stream")
+                if (!ok.first) return ok.second!!
+                val src = payload.optString("source_file", "").trim().ifBlank { null }
+                val sr = if (payload.has("sample_rate")) payload.optInt("sample_rate") else null
+                val ch = if (payload.has("channels")) payload.optInt("channels") else null
+                return jsonResponse(JSONObject(mediaStream.startAudioDecode(src, sr, ch)))
+            }
+            (uri == "/media/stream/video/start" || uri == "/media/stream/video/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Decode video file to frame stream")
+                if (!ok.first) return ok.second!!
+                val src = payload.optString("source_file", "").trim().ifBlank { null }
+                val format = payload.optString("format", "").trim().ifBlank { null }
+                val fps = if (payload.has("fps")) payload.optInt("fps") else null
+                val jq = if (payload.has("jpeg_quality")) payload.optInt("jpeg_quality") else null
+                return jsonResponse(JSONObject(mediaStream.startVideoDecode(src, format, fps, jq)))
+            }
+            (uri == "/media/stream/stop" || uri == "/media/stream/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Stop media decode stream")
+                if (!ok.first) return ok.second!!
+                val streamId = payload.optString("stream_id", "").trim().ifBlank { null }
+                return jsonResponse(JSONObject(mediaStream.stopDecode(streamId)))
             }
 
             (uri == "/llama/status" || uri == "/llama/status/") && session.method == Method.GET -> {
@@ -3502,6 +3629,42 @@ class LocalHttpServer(
                 override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
                 override fun onException(exception: java.io.IOException?) {
                     audioRecord.removeWsClient(this)
+                }
+            }
+        }
+
+        if (uri == "/ws/video/frames") {
+            return object : NanoWSD.WebSocket(handshake) {
+                override fun onOpen() {
+                    videoRecord.addWsClient(this)
+                }
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    videoRecord.removeWsClient(this)
+                }
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+                override fun onException(exception: java.io.IOException?) {
+                    videoRecord.removeWsClient(this)
+                }
+            }
+        }
+
+        val mediaStreamPrefix = "/ws/media/stream/"
+        if (uri.startsWith(mediaStreamPrefix)) {
+            val streamId = uri.removePrefix(mediaStreamPrefix).trim()
+            return object : NanoWSD.WebSocket(handshake) {
+                override fun onOpen() {
+                    if (!mediaStream.addWsClient(streamId, this)) {
+                        runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "stream_not_found", false) }
+                    }
+                }
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    mediaStream.removeWsClient(streamId, this)
+                }
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+                override fun onException(exception: java.io.IOException?) {
+                    mediaStream.removeWsClient(streamId, this)
                 }
             }
         }
