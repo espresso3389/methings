@@ -140,6 +140,14 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+    private val settingsNavigateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != LocalHttpServer.ACTION_UI_SETTINGS_NAVIGATE) return
+            val sectionId = intent.getStringExtra(LocalHttpServer.EXTRA_SETTINGS_SECTION_ID) ?: return
+            val escaped = sectionId.replace("\\", "\\\\").replace("'", "\\'")
+            evalJs("window.uiOpenSettingsSection && window.uiOpenSettingsSection('$escaped')")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -383,11 +391,17 @@ class MainActivity : AppCompatActivity() {
                 IntentFilter(LocalHttpServer.ACTION_UI_VIEWER_COMMAND),
                 Context.RECEIVER_NOT_EXPORTED
             )
+            registerReceiver(
+                settingsNavigateReceiver,
+                IntentFilter(LocalHttpServer.ACTION_UI_SETTINGS_NAVIGATE),
+                Context.RECEIVER_NOT_EXPORTED
+            )
         } else {
             registerReceiver(pythonHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
             registerReceiver(uiReloadReceiver, IntentFilter(LocalHttpServer.ACTION_UI_RELOAD))
             registerReceiver(viewerCommandReceiver, IntentFilter(LocalHttpServer.ACTION_UI_VIEWER_COMMAND))
+            registerReceiver(settingsNavigateReceiver, IntentFilter(LocalHttpServer.ACTION_UI_SETTINGS_NAVIGATE))
         }
     }
 
@@ -397,6 +411,7 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(permissionPromptReceiver)
         unregisterReceiver(uiReloadReceiver)
         unregisterReceiver(viewerCommandReceiver)
+        unregisterReceiver(settingsNavigateReceiver)
         AppForegroundState.isForeground = false
         super.onStop()
     }

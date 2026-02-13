@@ -221,6 +221,35 @@ class LocalHttpServer(
                 context.sendBroadcast(android.content.Intent(ACTION_UI_RELOAD))
                 jsonResponse(JSONObject().put("status", "ok"))
             }
+            uri == "/ui/settings/sections" && session.method == Method.GET -> {
+                handleUiSettingsSections()
+            }
+            (uri == "/ui/settings/navigate" || uri == "/ui/settings/navigate/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val sectionRaw = payload.optString("section_id", "")
+                val settingKeyRaw = payload.optString("setting_key", "")
+                var sectionId = normalizeSettingsSectionId(sectionRaw)
+                if (sectionId.isBlank()) {
+                    val settingKey = normalizeSettingsSectionId(settingKeyRaw)
+                    if (settingKey.isNotBlank()) {
+                        sectionId = extractSettingsKeyToSectionMap()[settingKey] ?: ""
+                    }
+                }
+                if (sectionId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "section_id_or_setting_key_required")
+                if (!SETTINGS_SECTION_IDS.contains(sectionId)) {
+                    return jsonError(Response.Status.BAD_REQUEST, "unknown_section_id")
+                }
+                val intent = Intent(ACTION_UI_SETTINGS_NAVIGATE).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_SETTINGS_SECTION_ID, sectionId)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("section_id", sectionId)
+                )
+            }
             uri == "/permissions/request" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val tool = payload.optString("tool", "unknown")
@@ -1833,6 +1862,67 @@ class LocalHttpServer(
 
     private fun firstParam(session: IHTTPSession, name: String): String {
         return session.parameters[name]?.firstOrNull()?.trim() ?: ""
+    }
+
+    private fun normalizeSettingsSectionId(raw: String): String {
+        return raw.trim().lowercase(Locale.US).replace('-', '_').replace(Regex("\\s+"), "_")
+    }
+
+    private fun extractSettingsKeyToSectionMap(): Map<String, String> {
+        val htmlFile = File(uiRoot, "index.html")
+        if (!htmlFile.exists()) return emptyMap()
+        val html = runCatching { htmlFile.readText() }.getOrElse { return emptyMap() }
+        val sectionRegex = Regex(
+            """<section\s+class="card"\s+id="settings-section-([a-zA-Z0-9_]+)"[^>]*>""",
+            RegexOption.IGNORE_CASE
+        )
+        val keyRegex = Regex("""data-setting-key="([^"]+)"""", RegexOption.IGNORE_CASE)
+        val matches = sectionRegex.findAll(html).toList()
+        if (matches.isEmpty()) return emptyMap()
+        val out = linkedMapOf<String, String>()
+        for (i in matches.indices) {
+            val cur = matches[i]
+            val sectionId = normalizeSettingsSectionId(cur.groupValues.getOrNull(1) ?: "")
+            if (sectionId.isBlank()) continue
+            val start = cur.range.first
+            val end = if (i + 1 < matches.size) matches[i + 1].range.first else html.length
+            if (start < 0 || end <= start || end > html.length) continue
+            val chunk = html.substring(start, end)
+            keyRegex.findAll(chunk).forEach { km ->
+                val raw = km.groupValues.getOrNull(1) ?: ""
+                raw.split(",").forEach tokenLoop@{ token ->
+                    val key = normalizeSettingsSectionId(token)
+                    if (key.isBlank()) return@tokenLoop
+                    if (!out.containsKey(key)) out[key] = sectionId
+                }
+            }
+        }
+        return out
+    }
+
+    private fun handleUiSettingsSections(): Response {
+        val arr = org.json.JSONArray()
+        val keyMap = extractSettingsKeyToSectionMap()
+        SETTINGS_SECTIONS.forEach { s ->
+            val keys = org.json.JSONArray()
+            keyMap.forEach { (k, sid) ->
+                if (sid == s.first) keys.put(k)
+            }
+            arr.put(
+                JSONObject()
+                    .put("id", s.first)
+                    .put("label", s.second)
+                    .put("setting_keys", keys)
+            )
+        }
+        val keyMapJson = JSONObject()
+        keyMap.forEach { (k, v) -> keyMapJson.put(k, v) }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("sections", arr)
+                .put("setting_key_map", keyMapJson)
+        )
     }
 
     private fun handleUserList(session: IHTTPSession): Response {
@@ -6704,14 +6794,34 @@ Policies:
         const val ACTION_PERMISSION_RESOLVED = "jp.espresso3389.methings.action.PERMISSION_RESOLVED"
         const val ACTION_UI_RELOAD = "jp.espresso3389.methings.action.UI_RELOAD"
         const val ACTION_UI_VIEWER_COMMAND = "jp.espresso3389.methings.action.UI_VIEWER_COMMAND"
+        const val ACTION_UI_SETTINGS_NAVIGATE = "jp.espresso3389.methings.action.UI_SETTINGS_NAVIGATE"
         const val EXTRA_VIEWER_COMMAND = "viewer_command"
         const val EXTRA_VIEWER_PATH = "viewer_path"
         const val EXTRA_VIEWER_ENABLED = "viewer_enabled"
         const val EXTRA_VIEWER_PAGE = "viewer_page"
+        const val EXTRA_SETTINGS_SECTION_ID = "settings_section_id"
         const val EXTRA_PERMISSION_ID = "permission_id"
         const val EXTRA_PERMISSION_TOOL = "permission_tool"
         const val EXTRA_PERMISSION_DETAIL = "permission_detail"
         const val EXTRA_PERMISSION_BIOMETRIC = "permission_biometric"
         const val EXTRA_PERMISSION_STATUS = "permission_status"
+        private val SETTINGS_SECTIONS = listOf(
+            "brain" to "Brain",
+            "web_search" to "Web Search",
+            "memory" to "Memory",
+            "task_notifications" to "Task Notifications",
+            "audio_recording" to "Audio Recording",
+            "video_recording" to "Video Recording",
+            "sshd" to "SSHD",
+            "agent_service" to "Agent Service",
+            "user_interface" to "User Interface",
+            "reset_restore" to "Reset & Restore",
+            "android" to "Android",
+            "permissions" to "Permissions",
+            "cloud" to "Cloud",
+            "app_update" to "App Update",
+            "about" to "About",
+        )
+        private val SETTINGS_SECTION_IDS: Set<String> = SETTINGS_SECTIONS.map { it.first }.toSet()
     }
 }

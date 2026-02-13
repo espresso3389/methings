@@ -369,6 +369,20 @@ Endpoints:
 
 Details: [viewer.md](viewer.md)
 
+### Settings Navigation **[no perm]**
+
+Programmatic navigation to Settings sections in the WebView.
+
+Endpoints:
+
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `GET` | `/ui/settings/sections` | — | List section IDs/labels and discovered setting-key mappings |
+| `POST` | `/ui/settings/navigate` | `{"section_id":"permissions"}` or `{"setting_key":"remember_approvals"}` | Open Settings and scroll/highlight the target section |
+
+Chat prefix shortcut in the app UI:
+- `settings: <section_id_or_setting_key>` (examples: `settings: permissions`, `settings: remember_approvals`)
+
 ### Brain Journal (Per-Session Notes)
 
 | Method | Endpoint | Body / Query | Effect |
