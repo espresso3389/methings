@@ -3965,6 +3965,29 @@
         _currentMarpDeck._show(page, true);
       };
 
+      // Deterministic back policy for Android back gesture/button:
+      // viewer -> licenses -> settings -> chat -> host handles (exit app).
+      window.uiHandleBackGesture = function() {
+        try {
+          if (viewer.classList.contains("show")) {
+            _viewerClosingFromPopstate = true;
+            closeViewer();
+            _viewerClosingFromPopstate = false;
+            return true;
+          }
+          const h = String(location.hash || "").replace(/^#/, "") || "chat";
+          if (h === "licenses") {
+            location.hash = "settings";
+            return true;
+          }
+          if (h === "settings") {
+            location.hash = "chat";
+            return true;
+          }
+        } catch (_) {}
+        return false;
+      };
+
       attachVideoFullscreenFix(viewerVideo);
 
       // ==============================

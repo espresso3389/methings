@@ -53,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private lateinit var webView: WebView
+    private var backCallback: OnBackPressedCallback? = null
     private var startupBanner: View? = null
     private var mainFrameError = false
     private val pendingAndroidPermRequestId = AtomicReference<String?>(null)
@@ -335,17 +336,12 @@ class MainActivity : AppCompatActivity() {
             webView.loadUrl("http://127.0.0.1:8765/ui/index.html")
         }
 
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+        backCallback = object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (::webView.isInitialized && webView.canGoBack()) {
-                    webView.goBack()
-                    return
-                }
-                isEnabled = false
-                onBackPressedDispatcher.onBackPressed()
-                isEnabled = true
+                handlePredictableBack()
             }
-        })
+        }
+        onBackPressedDispatcher.addCallback(this, backCallback!!)
 
         // If launched from a permission notification, handle it immediately.
         maybeHandlePermissionIntent(intent)
@@ -368,6 +364,36 @@ class MainActivity : AppCompatActivity() {
         intent.removeExtra(LocalHttpServer.EXTRA_PERMISSION_DETAIL)
         intent.removeExtra(LocalHttpServer.EXTRA_PERMISSION_BIOMETRIC)
         handlePermissionPrompt(id, tool, detail, forceBio)
+    }
+
+    private fun handlePredictableBack() {
+        if (!::webView.isInitialized) {
+            finishFromBack()
+            return
+        }
+        webView.evaluateJavascript("window.uiHandleBackGesture && window.uiHandleBackGesture()") { raw ->
+            val handled = (raw ?: "null").trim().equals("true", ignoreCase = true)
+            if (handled) return@evaluateJavascript
+
+            val currentUrl = (webView.url ?: "").trim()
+            val isUiPage = currentUrl.contains("/ui/index.html")
+            if (!isUiPage && webView.canGoBack()) {
+                webView.goBack()
+                return@evaluateJavascript
+            }
+            finishFromBack()
+        }
+    }
+
+    private fun finishFromBack() {
+        val cb = backCallback
+        if (cb != null) {
+            cb.isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+            cb.isEnabled = true
+            return
+        }
+        finish()
     }
 
     override fun onStart() {
