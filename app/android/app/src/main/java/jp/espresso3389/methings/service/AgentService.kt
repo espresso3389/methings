@@ -589,7 +589,7 @@ class AgentService : LifecycleService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "methings Agent Service",
+                "me.things Agent Service",
                 NotificationManager.IMPORTANCE_LOW
             )
             val manager = getSystemService(NotificationManager::class.java)
@@ -597,7 +597,7 @@ class AgentService : LifecycleService() {
         }
 
         val builder = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("methings Agent Service")
+            .setContentTitle("me.things Agent Service")
             .setContentText(foregroundText(activeMode, expiresAt))
             .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
