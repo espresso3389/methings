@@ -18,6 +18,7 @@ import androidx.lifecycle.LifecycleService
 import jp.espresso3389.methings.AppForegroundState
 import jp.espresso3389.methings.R
 import jp.espresso3389.methings.ui.MainActivity
+import android.media.RingtoneManager
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -34,6 +35,7 @@ class AgentService : LifecycleService() {
     private var permissionReceiverRegistered = false
     private var brainWorkNotificationShown = false
     private var lastBrainWorkCheckAtMs: Long = 0L
+    private var wasBrainBusy = false
 
     // Permission prompt notifications:
     // - Show exactly one notification at a time.
@@ -242,7 +244,13 @@ class AgentService : LifecycleService() {
         val busy = st?.optBoolean("busy", false) ?: false
         val q = st?.optInt("queue_size", 0) ?: 0
         val shouldShow = busy || q > 0
-        if (!shouldShow) {
+        if (shouldShow) {
+            wasBrainBusy = true
+        } else {
+            if (wasBrainBusy) {
+                wasBrainBusy = false
+                onBrainTaskCompleted()
+            }
             if (brainWorkNotificationShown) {
                 nm.cancel(id)
                 brainWorkNotificationShown = false
@@ -283,6 +291,81 @@ class AgentService : LifecycleService() {
             .build()
         nm.notify(id, notif)
         brainWorkNotificationShown = true
+    }
+
+    private fun onBrainTaskCompleted() {
+        if (AppForegroundState.isForeground) return
+        val prefs = getSharedPreferences("task_completion_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("notify_android", true)) {
+            showTaskCompleteNotification()
+        }
+        if (prefs.getBoolean("notify_sound", false)) {
+            playTaskCompleteSound()
+        }
+        val webhookUrl = prefs.getString("notify_webhook_url", "") ?: ""
+        if (webhookUrl.isNotBlank()) {
+            fireWebhook(webhookUrl)
+        }
+    }
+
+    private fun showTaskCompleteNotification() {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val ch = NotificationChannel(
+                TASK_COMPLETE_CHANNEL_ID,
+                "Task Completion",
+                NotificationManager.IMPORTANCE_HIGH
+            )
+            nm.createNotificationChannel(ch)
+        }
+        val openIntent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        val openPi = PendingIntent.getActivity(
+            this,
+            TASK_COMPLETE_NOTIFICATION_ID,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = NotificationCompat.Builder(this, TASK_COMPLETE_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("methings")
+            .setContentText("Agent task completed")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(openPi)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(TASK_COMPLETE_NOTIFICATION_ID, notif)
+    }
+
+    private fun playTaskCompleteSound() {
+        try {
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            RingtoneManager.getRingtone(applicationContext, uri)?.play()
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun fireWebhook(url: String) {
+        Thread {
+            try {
+                val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 10_000
+                    readTimeout = 10_000
+                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    doOutput = true
+                }
+                val body = org.json.JSONObject().apply {
+                    put("event", "task_completed")
+                    put("timestamp", System.currentTimeMillis())
+                    put("source", "methings")
+                }.toString()
+                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                conn.responseCode // trigger the request
+                conn.disconnect()
+            } catch (_: Exception) {
+            }
+        }.start()
     }
 
     private fun startForegroundCompat(notification: Notification) {
@@ -637,6 +720,8 @@ class AgentService : LifecycleService() {
     companion object {
         private const val NOTIFICATION_ID = 1001
         private const val PERMISSION_NOTIFICATION_ID = 200201
+        private const val TASK_COMPLETE_NOTIFICATION_ID = 82020
+        private const val TASK_COMPLETE_CHANNEL_ID = "task_completion"
         private const val ACTION_PERMISSION_NOTIFICATION_DISMISSED =
             "jp.espresso3389.methings.action.PERMISSION_NOTIFICATION_DISMISSED"
         const val ACTION_START_PYTHON = "jp.espresso3389.methings.action.START_PYTHON"

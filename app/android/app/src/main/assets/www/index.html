@@ -1388,6 +1388,36 @@
           </div>
         </section>
 
+        <!-- Task Notifications -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon amber">&#128276;</div>
+            <div class="card-title">Task Notifications</div>
+          </div>
+          <div class="card-desc">Notify when the AI agent finishes a task while the app is backgrounded.</div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="notifyAndroid" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Android notification</span>
+          </div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="notifySound" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Play notification sound</span>
+          </div>
+          <div class="field" style="margin-top:10px;">
+            <label>Webhook URL</label>
+            <input type="url" id="notifyWebhookUrl" placeholder="https://..." />
+          </div>
+          <div class="btn-group" style="margin-top:10px;">
+            <button class="btn primary" id="notifySave">Save</button>
+          </div>
+        </section>
+
         <!-- SSHD -->
         <section class="card">
           <div class="card-header">
@@ -5484,6 +5514,27 @@
         }
       });
 
+      // Task completion notification prefs
+      function loadNotifyPrefs() {
+        try {
+          if (typeof AndroidBridge === "undefined") return;
+          $("notifyAndroid").checked = !!AndroidBridge.getTaskCompleteNotifyAndroid();
+          $("notifySound").checked = !!AndroidBridge.getTaskCompleteNotifySound();
+          $("notifyWebhookUrl").value = AndroidBridge.getTaskCompleteWebhookUrl() || "";
+        } catch (_) {}
+      }
+      $("notifySave").addEventListener("click", () => {
+        try {
+          if (typeof AndroidBridge === "undefined") { showToast("Not available", 1600); return; }
+          AndroidBridge.setTaskCompleteNotifyAndroid(!!$("notifyAndroid").checked);
+          AndroidBridge.setTaskCompleteNotifySound(!!$("notifySound").checked);
+          AndroidBridge.setTaskCompleteWebhookUrl($("notifyWebhookUrl").value || "");
+          showToast("Notification prefs saved", 1600);
+        } catch (_) {
+          showToast("Failed to save notification prefs", 1800);
+        }
+      });
+
       $("restartPython").addEventListener("click", async () => {
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonWorker) {
           AndroidBridge.restartPythonWorker();
@@ -5657,6 +5708,7 @@
 
       loadPermissionPrefs();
       loadCloudPrefs();
+      loadNotifyPrefs();
       refreshPython();
       refreshSsh();
       refreshPin();

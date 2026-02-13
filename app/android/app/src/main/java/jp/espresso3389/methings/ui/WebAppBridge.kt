@@ -23,6 +23,7 @@ class WebAppBridge(private val activity: MainActivity) {
     private val handler = Handler(Looper.getMainLooper())
     private val credentialStore = CredentialStore(activity)
     private val brainPrefs = activity.getSharedPreferences("brain_config", Context.MODE_PRIVATE)
+    private val notifPrefs = activity.getSharedPreferences("task_completion_prefs", Context.MODE_PRIVATE)
 
     @Volatile
     private var settingsUnlockedUntilMs: Long = 0L
@@ -300,5 +301,35 @@ class WebAppBridge(private val activity: MainActivity) {
                 openAppDetailsSettings()
             }
         }
+    }
+
+    @JavascriptInterface
+    fun getTaskCompleteNotifyAndroid(): Boolean {
+        return notifPrefs.getBoolean("notify_android", true)
+    }
+
+    @JavascriptInterface
+    fun setTaskCompleteNotifyAndroid(enabled: Boolean) {
+        notifPrefs.edit().putBoolean("notify_android", enabled).apply()
+    }
+
+    @JavascriptInterface
+    fun getTaskCompleteNotifySound(): Boolean {
+        return notifPrefs.getBoolean("notify_sound", false)
+    }
+
+    @JavascriptInterface
+    fun setTaskCompleteNotifySound(enabled: Boolean) {
+        notifPrefs.edit().putBoolean("notify_sound", enabled).apply()
+    }
+
+    @JavascriptInterface
+    fun getTaskCompleteWebhookUrl(): String {
+        return notifPrefs.getString("notify_webhook_url", "") ?: ""
+    }
+
+    @JavascriptInterface
+    fun setTaskCompleteWebhookUrl(url: String) {
+        notifPrefs.edit().putString("notify_webhook_url", url.trim()).apply()
     }
 }
