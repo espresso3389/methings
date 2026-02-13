@@ -1255,6 +1255,20 @@
       }
       .perm-card-footer .btn { font-size: 12px; padding: 6px 14px; }
       .perm-card.resolved { opacity: 0.6; }
+      .perm-overlay {
+        display: none;
+        position: fixed;
+        bottom: 16px; left: 16px; right: 16px;
+        z-index: 1300;
+        background: var(--bg-raised);
+        border: 1px solid var(--accent);
+        border-radius: var(--radius-md);
+        padding: 12px 14px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+        max-height: 50vh;
+        overflow-y: auto;
+      }
+      .perm-overlay.show { display: block; }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
@@ -1641,6 +1655,8 @@
         <div class="viewer-text" id="viewerText" style="display:none;"></div>
       </div>
     </div>
+
+    <div class="perm-overlay" id="permOverlay"></div>
 
     <script>
       // ==============================
@@ -4143,6 +4159,7 @@
           const footer = _permState.cardEl.querySelector("#permCardFooter");
           if (footer) footer.innerHTML = "";
         }
+        syncPermOverlay();
       }
 
       async function postPermAction(pid, action) {
@@ -4186,7 +4203,60 @@
           // Filter to truly new pending items.
           const newPending = pending.filter(p => !_permState.knownIds.has(p.id));
           if (newPending.length > 0) renderPermCard(newPending);
+          syncPermOverlay();
         } catch (_) {}
+      }
+
+      function syncPermOverlay() {
+        const overlay = $("permOverlay");
+        if (!overlay) return;
+        const viewerOpen = viewer.classList.contains("show");
+        const pendingItems = Object.entries(_permState.items).filter(([, e]) => e.status === "pending");
+        if (!viewerOpen || pendingItems.length === 0) {
+          overlay.classList.remove("show");
+          overlay.innerHTML = "";
+          return;
+        }
+        // Rebuild overlay content from pending items.
+        let html = "<div class='perm-card-title'>Permission required</div><div class='perm-card-list'>";
+        for (const [pid, entry] of pendingItems) {
+          const toolEl = entry.el.querySelector(".perm-item-tool");
+          const detailEl = entry.el.querySelector(".perm-item-detail");
+          const tool = toolEl ? toolEl.textContent : "";
+          const detail = detailEl ? detailEl.textContent : "";
+          const isBio = entry.el.querySelector("[data-action]") === null;
+          html += "<div class='perm-item' data-pid='" + pid + "'>" +
+            "<div class='perm-item-info'>" +
+              "<div class='perm-item-tool'>" + tool.replace(/</g, "&lt;") + "</div>" +
+              "<div class='perm-item-detail'>" + detail.replace(/</g, "&lt;") + "</div>" +
+            "</div>" +
+            (isBio
+              ? "<div style='font-size:11px; color:var(--ink-muted); white-space:nowrap;'>device auth</div>"
+              : "<div class='perm-item-actions'>" +
+                  "<button class='btn' data-action='deny' data-pid='" + pid + "'>Deny</button>" +
+                  "<button class='btn primary' data-action='approve' data-pid='" + pid + "'>Allow</button>" +
+                "</div>") +
+            "</div>";
+        }
+        html += "</div>";
+        const nonBioCount = pendingItems.filter(([, e]) => e.el.querySelector("[data-action]") !== null).length;
+        if (nonBioCount > 1) {
+          html += "<div class='perm-card-footer'><button class='btn primary' id='permOverlayApproveAll'>Approve All</button></div>";
+        }
+        overlay.innerHTML = html;
+        overlay.classList.add("show");
+        // Wire overlay buttons.
+        for (const btn of overlay.querySelectorAll("button[data-pid]")) {
+          btn.addEventListener("click", () => postPermAction(btn.dataset.pid, btn.dataset.action));
+        }
+        const allBtn = $("permOverlayApproveAll");
+        if (allBtn) allBtn.addEventListener("click", () => {
+          for (const [pid, entry] of pendingItems) {
+            if (entry.el.querySelector("[data-action]") !== null && entry.status === "pending") {
+              postPermAction(pid, "approve");
+            }
+          }
+        });
       }
 
       setInterval(pollPendingPermissions, 1200);
