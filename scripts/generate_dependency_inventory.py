@@ -312,31 +312,23 @@ def docs_for_gradle(dep: Dict[str, str]) -> List[Dict[str, str]]:
         docs.append(mapped)
         return docs[:3]
     if group.startswith("androidx."):
-        docs.append(
-            {
-                "title": "AndroidX LICENSE.txt",
-                "format": "text",
-                "text": "Fallback source: https://github.com/androidx/androidx/blob/androidx-main/LICENSE.txt\n"
-                "Apache License 2.0 applies to AndroidX project sources. "
-                "See the source URL for the canonical full text.",
-            }
-        )
-        return docs[:3]
+        txt = fetch_text_url("https://raw.githubusercontent.com/androidx/androidx/refs/heads/androidx-main/LICENSE.txt")
+        if txt:
+            docs.append(
+                {
+                    "title": "AndroidX LICENSE.txt",
+                    "format": "text",
+                    "text": txt,
+                }
+            )
+            return docs[:3]
     if group.startswith("com.github."):
         owner = group.replace("com.github.", "", 1).strip()
         repo = artifact.strip()
         gh = fetch_github_license(owner, repo)
         if gh:
             docs.append(gh)
-        else:
-            docs.append(
-                {
-                    "title": "GitHub repository",
-                    "format": "text",
-                    "text": f"Fallback source: https://github.com/{owner}/{repo}\n"
-                    "No LICENSE file could be fetched automatically.",
-                }
-            )
+            return docs[:3]
     return docs[:3]
 
 
