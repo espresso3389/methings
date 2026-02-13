@@ -1845,6 +1845,10 @@
           </div>
           <div class="muted">Checks GitHub Releases and installs newer APKs.</div>
           <p class="muted" id="appUpdateDetail" style="margin-top:8px;">Checking latest release...</p>
+          <div id="appUpdateDownloadIndicator" class="thinking-dots mini" style="display:none; margin-top:8px;">
+            <span></span><span></span><span></span>
+            <span class="thinking-label" style="margin-left:8px;">Downloading installer...</span>
+          </div>
           <div class="btn-group">
             <button class="btn" id="checkAppUpdate">Check Update</button>
             <button class="btn" id="installAppUpdate">Install Update</button>
@@ -6053,6 +6057,7 @@
       const pythonDetail = $("pythonDetail");
       const appUpdateStatus = $("appUpdateStatus");
       const appUpdateDetail = $("appUpdateDetail");
+      const appUpdateDownloadIndicator = $("appUpdateDownloadIndicator");
       const checkAppUpdate = $("checkAppUpdate");
       const installAppUpdate = $("installAppUpdate");
       const openInstallUnknownSources = $("openInstallUnknownSources");
@@ -6136,6 +6141,13 @@
         installAppUpdate.disabled = !updateEnabled || !(appUpdateInfo && appUpdateInfo.has_update);
       }
 
+      function setAppUpdateDownloading(active) {
+        try {
+          if (!appUpdateDownloadIndicator) return;
+          appUpdateDownloadIndicator.style.display = active ? "inline-flex" : "none";
+        } catch (_) {}
+      }
+
       function setInstallPermissionButtonVisible(show) {
         try {
           if (!openInstallUnknownSources) return;
@@ -6215,6 +6227,7 @@
       async function refreshAppUpdate(autoPrompt) {
         setStatus(appUpdateStatus, "starting");
         appUpdateDetail.textContent = "Checking latest release...";
+        setAppUpdateDownloading(false);
         try {
           const res = await fetch(API + "/app/update/check");
           if (!res.ok) throw 0;
@@ -6261,6 +6274,7 @@
       async function installLatestUpdate() {
         setStatus(appUpdateStatus, "starting");
         appUpdateDetail.textContent = "Downloading update APK...";
+        setAppUpdateDownloading(true);
         try {
           const res = await fetch(API + "/app/update/install", {
             method: "POST",
@@ -6275,6 +6289,7 @@
             appUpdateDetail.textContent = "Install permission required. Tap \"Allow Install Permission\".";
             showToast("Installer permission required", 2200);
             updateAppUpdateButtons();
+            setAppUpdateDownloading(false);
             return;
           }
           setInstallPermissionButtonVisible(false);
@@ -6283,12 +6298,27 @@
           appUpdateDetail.textContent = "Installer opened for " + String(data.latest_tag || "latest");
           showToast("Installer opened", 1800);
           updateAppUpdateButtons();
+          setAppUpdateDownloading(false);
         } catch (_) {
           setStatus(appUpdateStatus, "offline");
           appUpdateDetail.textContent = "Update install failed";
           showToast("Failed to install update", 1800);
           updateAppUpdateButtons();
+          setAppUpdateDownloading(false);
         }
+      }
+
+      function updateMeSyncSectionCountdown() {
+        const a = meSyncActiveExport;
+        const exp = Number((a && a.expires_at) || 0);
+        if (!a || exp <= 0) return;
+        const remMs = Math.max(0, exp - Date.now());
+        if (remMs <= 0) {
+          meSyncActiveExport = null;
+          meSyncStatus.textContent = "No active export.";
+          return;
+        }
+        meSyncStatus.textContent = "Active export: " + String(a.id || "") + " (expires in " + formatDurationMMSS(remMs) + ")";
       }
 
       async function refreshMeSyncStatus() {
@@ -6309,9 +6339,7 @@
             if (!String(top.me_sync_uri || "").trim() && String(prev.me_sync_uri || "").trim()) top.me_sync_uri = prev.me_sync_uri;
           }
           meSyncActiveExport = top;
-          const exp = Number(top.expires_at || 0);
-          const remMs = exp > 0 ? Math.max(0, exp - Date.now()) : 0;
-          meSyncStatus.textContent = "Active export: " + String(top.id || "") + " (expires in " + formatDurationMMSS(remMs) + ")";
+          updateMeSyncSectionCountdown();
         } catch (_) {
           meSyncStatus.textContent = "Sync status unavailable.";
         }
@@ -7007,10 +7035,25 @@
         meSyncExportReq = controller;
         showMeSyncExportModal(true);
         try {
+          let permission_id = "";
+          try {
+            const ssr = await fetch(API + "/sshd/status", { signal: controller.signal });
+            const ssd = await ssr.json().catch(() => ({}));
+            const needTempSshd = !!ssr.ok && !ssd.enabled && !ssd.running;
+            if (needTempSshd) {
+              permission_id = await requestPermission("device.me_sync", "Temporarily enable SSHD for me.sync export");
+            }
+          } catch (_) {}
           const res = await fetch(API + "/me/sync/prepare_export", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ include_user: true, include_protected_db: true, include_identity: false, mode: "export" }),
+            body: JSON.stringify({
+              include_user: true,
+              include_protected_db: true,
+              include_identity: false,
+              mode: "export",
+              permission_id,
+            }),
             signal: controller.signal,
           });
           const data = await res.json().catch(() => ({}));
@@ -7255,6 +7298,8 @@
       refreshPin();
       setInterval(refreshPython, 5000);
       setInterval(refreshSsh, 5000);
+      setInterval(refreshMeSyncStatus, 5000);
+      setInterval(updateMeSyncSectionCountdown, 1000);
       setInterval(refreshPin, 1000);
       setInterval(updatePinCountdown, 1000);
     </script>

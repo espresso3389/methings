@@ -131,6 +131,8 @@ class LocalHttpServer(
     private val mediaStream = MediaStreamManager(context)
     private val appUpdateManager = AppUpdateManager(context)
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
+    private val meSyncLanDownloadServer = MeSyncLanDownloadServer()
+    @Volatile private var meSyncLanServerStarted = false
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
@@ -141,6 +143,14 @@ class LocalHttpServer(
         return try {
             start(SOCKET_READ_TIMEOUT, false)
             Log.i(TAG, "Local HTTP server started on $HOST:$PORT")
+            meSyncLanServerStarted = try {
+                meSyncLanDownloadServer.start(SOCKET_READ_TIMEOUT, false)
+                Log.i(TAG, "me.sync LAN download server started on 0.0.0.0:$ME_SYNC_LAN_PORT")
+                true
+            } catch (ex: Exception) {
+                Log.w(TAG, "Failed to start me.sync LAN download server", ex)
+                false
+            }
             true
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to start local HTTP server", ex)
@@ -154,6 +164,11 @@ class LocalHttpServer(
         } catch (_: Exception) {
             // ignore
         }
+        try {
+            meSyncLanDownloadServer.stop()
+        } catch (_: Exception) {
+        }
+        meSyncLanServerStarted = false
         try {
             setKeepScreenOn(false, timeoutS = 0)
         } catch (_: Exception) {
@@ -217,6 +232,16 @@ class LocalHttpServer(
             }
             uri == "/me/sync/prepare_export" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                if (shouldRequestPermissionForTempMeSyncSshd()) {
+                    val ok = ensureDevicePermission(
+                        session,
+                        payload,
+                        tool = "device.me_sync",
+                        capability = "me_sync.export_temp_sshd",
+                        detail = "Temporarily enable SSHD for me.sync export"
+                    )
+                    if (!ok.first) return ok.second!!
+                }
                 handleMeSyncPrepareExport(payload)
             }
             uri == "/me/sync/download" && session.method == Method.GET -> {
@@ -6887,6 +6912,12 @@ class LocalHttpServer(
         }
     }
 
+    private fun shouldRequestPermissionForTempMeSyncSshd(): Boolean {
+        val st = sshdManager.status()
+        // Ask permission only when me.sync would temporarily start SSHD by itself.
+        return !st.enabled && !st.running
+    }
+
     private fun handleMeSyncDownload(session: IHTTPSession): Response {
         cleanupExpiredMeSyncTransfers()
         val id = firstParam(session, "id")
@@ -6897,11 +6928,12 @@ class LocalHttpServer(
         val now = System.currentTimeMillis()
         if (tr.expiresAt > 0L && now > tr.expiresAt) {
             meSyncTransfers.remove(id)
-            runCatching { tr.file.delete() }
+            releaseMeSyncTransfer(tr)
             return jsonError(Response.Status.GONE, "transfer_expired")
         }
         if (!tr.file.exists() || !tr.file.isFile) {
             meSyncTransfers.remove(id)
+            cleanupMeSyncTempSshKey(tr.tempSshKeyFingerprint)
             return jsonError(Response.Status.NOT_FOUND, "package_not_found")
         }
         tr.downloadCount += 1
@@ -6919,16 +6951,30 @@ class LocalHttpServer(
             val rawUrl = payload.optString("url", "").trim()
                 .ifBlank { payload.optString("download_url", "").trim() }
             val wipeExisting = payload.optBoolean("wipe_existing", true)
-            val url = parseMeSyncPayloadToUrl(rawPayload)
-                .ifBlank { parseMeSyncPayloadToUrl(rawUrl) }
-                .ifBlank { rawUrl }
-            if (url.isBlank()) {
+            val source = parseMeSyncImportSource(rawPayload, rawUrl)
+            if (!source.hasAnySource()) {
                 return jsonError(Response.Status.BAD_REQUEST, "url_or_payload_required")
             }
             val tmpRoot = File(context.cacheDir, "me_sync")
             tmpRoot.mkdirs()
             val inFile = File(tmpRoot, "import_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}.zip")
-            downloadMeSyncPackage(url, inFile, maxBytes = 512L * 1024L * 1024L)
+            val maxBytes = 512L * 1024L * 1024L
+            var downloadError: Exception? = null
+            if (source.hasSshSource()) {
+                try {
+                    downloadMeSyncPackageViaScp(source, inFile, maxBytes)
+                } catch (ex: Exception) {
+                    downloadError = ex
+                    runCatching { inFile.delete() }
+                }
+            }
+            if (!inFile.exists() || inFile.length() == 0L) {
+                val httpUrl = source.httpUrl
+                if (httpUrl.isBlank()) {
+                    throw downloadError ?: IllegalStateException("no_download_source")
+                }
+                downloadMeSyncPackage(httpUrl, inFile, maxBytes = maxBytes)
+            }
             val result = importMeSyncPackage(inFile, wipeExisting = wipeExisting)
             jsonResponse(result)
         } catch (ex: Exception) {
@@ -6961,34 +7007,58 @@ class LocalHttpServer(
         }
     }
 
-    private fun parseMeSyncPayloadToUrl(raw: String): String {
-        val txt = raw.trim()
-        if (txt.isBlank()) return ""
-        if (txt.startsWith(ME_SYNC_URI_PREFIX, ignoreCase = true)) {
-            return decodeMeSyncUriToUrl(txt)
-        }
-        if (txt.startsWith("http://") || txt.startsWith("https://")) return txt
-        return try {
-            val obj = JSONObject(txt)
-            val u = obj.optString("url", "").trim()
-            if (u.startsWith("http://") || u.startsWith("https://")) u else ""
-        } catch (_: Exception) {
-            ""
-        }
+    private fun parseMeSyncImportSource(rawPayload: String, rawUrl: String): MeSyncImportSource {
+        val fromPayload = parseMeSyncImportSourceSingle(rawPayload)
+        if (fromPayload.hasAnySource()) return fromPayload
+        return parseMeSyncImportSourceSingle(rawUrl)
     }
 
-    private fun decodeMeSyncUriToUrl(uri: String): String {
-        val raw = uri.trim()
-        if (!raw.startsWith(ME_SYNC_URI_PREFIX, ignoreCase = true)) return ""
-        val b64 = raw.substring(ME_SYNC_URI_PREFIX.length).trim()
-        if (b64.isBlank()) return ""
+    private fun parseMeSyncImportSourceSingle(raw: String): MeSyncImportSource {
+        val txt = raw.trim()
+        if (txt.isBlank()) return MeSyncImportSource()
+        if (txt.startsWith("http://") || txt.startsWith("https://")) {
+            return MeSyncImportSource(httpUrl = txt)
+        }
+        val obj = parseMeSyncPayloadObject(txt) ?: return MeSyncImportSource()
+        val ssh = obj.optJSONObject("ssh")
+        val httpUrl = obj.optString("url", "").trim()
+            .ifBlank { obj.optString("download_url", "").trim() }
+            .ifBlank { obj.optString("http_url", "").trim() }
+            .takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: ""
+        val sshHost = (ssh?.optString("host", "") ?: obj.optString("ssh_host", "")).trim()
+        val sshPort = (if (ssh?.has("port") == true) ssh.optInt("port", 22) else obj.optInt("ssh_port", 22))
+            .coerceIn(1, 65535)
+        val sshUser = (ssh?.optString("user", "") ?: obj.optString("ssh_user", "")).trim().ifBlank { "methings" }
+        val sshRemotePath = (ssh?.optString("remote_path", "") ?: obj.optString("ssh_remote_path", "")).trim()
+        val sshPrivateKeyB64 = (ssh?.optString("private_key_b64", "") ?: obj.optString("ssh_private_key_b64", "")).trim()
+        return MeSyncImportSource(
+            httpUrl = httpUrl,
+            sshHost = sshHost,
+            sshPort = sshPort,
+            sshUser = sshUser,
+            sshRemotePath = sshRemotePath,
+            sshPrivateKeyB64 = sshPrivateKeyB64
+        )
+    }
+
+    private fun parseMeSyncPayloadObject(raw: String): JSONObject? {
+        val txt = raw.trim()
+        if (txt.isBlank()) return null
+        if (txt.startsWith(ME_SYNC_URI_PREFIX, ignoreCase = true)) {
+            val b64 = txt.substring(ME_SYNC_URI_PREFIX.length).trim()
+            if (b64.isBlank()) return null
+            return try {
+                val decoded = Base64.decode(normalizeBase64UrlNoPadding(b64), Base64.URL_SAFE or Base64.NO_WRAP)
+                JSONObject(String(decoded, Charsets.UTF_8))
+            } catch (_: Exception) {
+                null
+            }
+        }
         return try {
-            val decoded = Base64.decode(normalizeBase64UrlNoPadding(b64), Base64.URL_SAFE or Base64.NO_WRAP)
-            val obj = JSONObject(String(decoded, Charsets.UTF_8))
-            val u = obj.optString("url", "").trim()
-            if (u.startsWith("http://") || u.startsWith("https://")) u else ""
+            JSONObject(txt)
         } catch (_: Exception) {
-            ""
+            null
         }
     }
 
@@ -7042,14 +7112,31 @@ class LocalHttpServer(
         val query = "id=" + URLEncoder.encode(id, "UTF-8") +
             "&token=" + URLEncoder.encode(token, "UTF-8")
         val localUrl = "http://127.0.0.1:$PORT/me/sync/download?$query"
-        val lanUrl = if (hostIp.isNotBlank()) "http://$hostIp:$PORT/me/sync/download?$query" else ""
+        val lanUrl = if (hostIp.isNotBlank() && meSyncLanServerStarted) {
+            "http://$hostIp:$ME_SYNC_LAN_PORT/me/sync/download?$query"
+        } else ""
+        val sshMeta = createMeSyncSshAccess(id, expiresAt)
+        val transport = if (sshMeta != null) "ssh_scp" else "http"
         val exportPayload = JSONObject()
             .put("type", "me.sync")
-            .put("version", 1)
+            .put("version", 2)
             .put("id", id)
             .put("token", token)
+            .put("transport", transport)
             .put("url", if (lanUrl.isNotBlank()) lanUrl else localUrl)
             .put("expires_at", expiresAt)
+            .put("http_url", if (lanUrl.isNotBlank()) lanUrl else localUrl)
+        if (sshMeta != null) {
+            exportPayload.put(
+                "ssh",
+                JSONObject()
+                    .put("host", sshMeta.host)
+                    .put("port", sshMeta.port)
+                    .put("user", sshMeta.user)
+                    .put("remote_path", sshMeta.remotePath)
+                    .put("private_key_b64", sshMeta.privateKeyB64)
+            )
+        }
         val payloadJson = exportPayload.toString()
         val encodedPayload = Base64.encodeToString(
             payloadJson.toByteArray(Charsets.UTF_8),
@@ -7071,7 +7158,14 @@ class LocalHttpServer(
             downloadUrlLan = lanUrl,
             payloadJson = payloadJson,
             meSyncUri = meSyncUri,
-            qrDataUrl = qrDataUrl
+            qrDataUrl = qrDataUrl,
+            transport = transport,
+            sshHost = sshMeta?.host ?: "",
+            sshPort = sshMeta?.port ?: 22,
+            sshUser = sshMeta?.user ?: "",
+            sshRemotePath = sshMeta?.remotePath ?: "",
+            tempSshKeyFingerprint = sshMeta?.fingerprint ?: "",
+            requiresTempSshd = sshMeta?.requiresTempSshd ?: false
         )
     }
 
@@ -7099,6 +7193,7 @@ class LocalHttpServer(
             .put("sha256", transfer.sha256)
             .put("mode", if (transfer.includeIdentity) "migration" else "export")
             .put("include_identity", transfer.includeIdentity)
+            .put("transport", transfer.transport)
             .put("download_url_local", transfer.downloadUrlLocal)
             .put("download_url_lan", if (transfer.downloadUrlLan.isNotBlank()) transfer.downloadUrlLan else JSONObject.NULL)
             .put("payload_json", transfer.payloadJson)
@@ -7106,6 +7201,70 @@ class LocalHttpServer(
             .put("me_sync_uri", transfer.meSyncUri)
             .put("qr_data_url", transfer.qrDataUrl)
             .put("note", "Share the QR/URI with target device. URI format: me.things:me.sync:<base64url>.")
+    }
+
+    private fun createMeSyncSshAccess(transferId: String, expiresAt: Long): MeSyncSshAccess? {
+        val initial = sshdManager.status()
+        val requiresTempSshd = !initial.enabled
+        if (!initial.running) {
+            val started = runCatching { sshdManager.start() }.getOrElse { false }
+            if (!started) return null
+        }
+        val status = sshdManager.status()
+        if (!status.running) return null
+        val host = sshdManager.getHostIp().trim()
+        if (host.isBlank()) {
+            if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
+            return null
+        }
+        val dropbearKey = findDropbearkeyBinary() ?: run {
+            if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
+            return null
+        }
+
+        val tmpRoot = File(context.cacheDir, "me_sync_ssh")
+        tmpRoot.mkdirs()
+        val keyFile = File(tmpRoot, "${transferId}_key")
+        if (keyFile.exists()) runCatching { keyFile.delete() }
+        return try {
+            val gen = runProcessCapture(
+                listOf(dropbearKey.absolutePath, "-t", "ed25519", "-f", keyFile.absolutePath),
+                timeoutS = 8.0,
+                maxOutputBytes = 8192
+            )
+            if (gen.timedOut || gen.exitCode != 0 || !keyFile.exists()) {
+                if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
+                return null
+            }
+
+            val info = readDropbearKeyInfo(dropbearKey, keyFile) ?: run {
+                if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
+                return null
+            }
+            val privateKeyBytes = runCatching { keyFile.readBytes() }.getOrNull() ?: run {
+                if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
+                return null
+            }
+            val privateKeyB64 = Base64.encodeToString(privateKeyBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+
+            val keyEntity = sshKeyStore.upsertMerge(info.publicKey, "me.sync:$transferId", expiresAt)
+            runCatching { syncAuthorizedKeys() }
+
+            MeSyncSshAccess(
+                host = host,
+                port = status.port,
+                user = "methings",
+                remotePath = File(context.cacheDir, "me_sync/$transferId.zip").absolutePath,
+                privateKeyB64 = privateKeyB64,
+                fingerprint = keyEntity.fingerprint,
+                requiresTempSshd = requiresTempSshd
+            )
+        } catch (_: Exception) {
+            if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
+            null
+        } finally {
+            runCatching { keyFile.delete() }
+        }
     }
 
     private fun makeQrDataUrl(text: String): String {
@@ -7282,7 +7441,7 @@ class LocalHttpServer(
         runCatching {
             val stale = meSyncTransfers.values.toList()
             meSyncTransfers.clear()
-            stale.forEach { tr -> runCatching { tr.file.delete() } }
+            stale.forEach { tr -> releaseMeSyncTransfer(tr) }
         }
     }
 
@@ -7325,6 +7484,89 @@ class LocalHttpServer(
             if (total > maxBytes) throw IllegalStateException("package_too_large")
             output.write(buf, 0, n)
         }
+    }
+
+    private fun downloadMeSyncPackageViaScp(source: MeSyncImportSource, destFile: File, maxBytes: Long) {
+        if (!source.hasSshSource()) throw IllegalStateException("ssh_source_required")
+        val scp = findScpBinary() ?: throw IllegalStateException("scp_client_missing")
+        val privateKey = try {
+            Base64.decode(normalizeBase64UrlNoPadding(source.sshPrivateKeyB64), Base64.URL_SAFE or Base64.NO_WRAP)
+        } catch (_: Exception) {
+            throw IllegalStateException("invalid_ssh_private_key")
+        }
+        if (privateKey.isEmpty()) throw IllegalStateException("invalid_ssh_private_key")
+
+        val tmpDir = File(context.cacheDir, "me_sync_scp")
+        tmpDir.mkdirs()
+        val keyFile = File(tmpDir, "import_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}.key")
+        val wrapper = File(tmpDir, keyFile.name + ".sh")
+        keyFile.writeBytes(privateKey)
+        keyFile.setReadable(true, true)
+        keyFile.setWritable(true, true)
+        keyFile.setExecutable(false, false)
+        wrapper.writeText(
+            "#!/system/bin/sh\n" +
+                "exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" -y -i ${shellSingleQuote(keyFile.absolutePath)} \"${'$'}@\"\n"
+        )
+        wrapper.setExecutable(true, true)
+        wrapper.setReadable(true, true)
+        wrapper.setWritable(true, true)
+
+        try {
+            val args = mutableListOf(
+                scp.absolutePath,
+                "-S",
+                wrapper.absolutePath
+            )
+            if (source.sshPort != 22) {
+                args.add("-P")
+                args.add(source.sshPort.toString())
+            }
+            args.add("${sshTarget(source.sshUser, source.sshHost)}:${source.sshRemotePath}")
+            args.add(destFile.absolutePath)
+            val result = runProcessCapture(args, timeoutS = 180.0, maxOutputBytes = 128 * 1024)
+            if (result.timedOut) throw IllegalStateException("scp_timeout")
+            if (result.exitCode != 0 || !destFile.exists() || destFile.length() <= 0L) {
+                throw IllegalStateException("scp_failed:${result.stderr.ifBlank { result.stdout }.take(240)}")
+            }
+            if (destFile.length() > maxBytes) throw IllegalStateException("package_too_large")
+        } finally {
+            runCatching { keyFile.delete() }
+            runCatching { wrapper.delete() }
+        }
+    }
+
+    private fun findDropbearkeyBinary(): File? {
+        val native = File(context.applicationInfo.nativeLibraryDir, "libdropbearkey.so")
+        if (native.exists()) return native
+        val fallback = File(File(context.filesDir, "bin"), "dropbearkey")
+        return if (fallback.exists()) fallback else null
+    }
+
+    private data class DropbearKeyInfo(
+        val fingerprint: String,
+        val publicKey: String
+    )
+
+    private fun readDropbearKeyInfo(dropbearKey: File, keyFile: File): DropbearKeyInfo? {
+        val result = runProcessCapture(
+            listOf(dropbearKey.absolutePath, "-y", "-f", keyFile.absolutePath),
+            timeoutS = 6.0,
+            maxOutputBytes = 16 * 1024
+        )
+        if (result.timedOut || result.exitCode != 0) return null
+        var fingerprint = ""
+        var publicKey = ""
+        result.stdout.lineSequence().forEach { line ->
+            val t = line.trim()
+            if (t.startsWith("Fingerprint:")) {
+                fingerprint = t.removePrefix("Fingerprint:").trim()
+            } else if (t.startsWith("ssh-")) {
+                publicKey = t
+            }
+        }
+        if (publicKey.isBlank()) return null
+        return DropbearKeyInfo(fingerprint = fingerprint, publicKey = publicKey)
     }
 
     private fun putZipBytes(zos: ZipOutputStream, path: String, bytes: ByteArray) {
@@ -7441,7 +7683,32 @@ class LocalHttpServer(
             if (expired) toDelete.add(tr)
             expired
         }
-        toDelete.forEach { runCatching { it.file.delete() } }
+        toDelete.forEach { releaseMeSyncTransfer(it) }
+    }
+
+    private fun releaseMeSyncTransfer(transfer: MeSyncTransfer) {
+        runCatching { transfer.file.delete() }
+        cleanupMeSyncTempSshKey(transfer.tempSshKeyFingerprint)
+        if (transfer.requiresTempSshd) {
+            stopTemporaryMeSyncSshdIfIdle()
+        }
+    }
+
+    private fun cleanupMeSyncTempSshKey(fingerprint: String?) {
+        val fp = fingerprint?.trim().orEmpty()
+        if (fp.isBlank()) return
+        runCatching {
+            sshKeyStore.delete(fp)
+            syncAuthorizedKeys()
+        }
+    }
+
+    private fun stopTemporaryMeSyncSshdIfIdle() {
+        if (sshdManager.isEnabled()) return
+        val hasPendingTempExports = meSyncTransfers.values.any { it.requiresTempSshd }
+        if (!hasPendingTempExports) {
+            runCatching { sshdManager.stop() }
+        }
     }
 
     private fun deleteRecursively(root: File) {
@@ -7498,7 +7765,37 @@ class LocalHttpServer(
         val payloadJson: String,
         val meSyncUri: String,
         val qrDataUrl: String,
+        val transport: String,
+        val sshHost: String,
+        val sshPort: Int,
+        val sshUser: String,
+        val sshRemotePath: String,
+        val tempSshKeyFingerprint: String,
+        val requiresTempSshd: Boolean,
         @Volatile var downloadCount: Int = 0
+    )
+
+    private data class MeSyncImportSource(
+        val httpUrl: String = "",
+        val sshHost: String = "",
+        val sshPort: Int = 22,
+        val sshUser: String = "methings",
+        val sshRemotePath: String = "",
+        val sshPrivateKeyB64: String = ""
+    ) {
+        fun hasSshSource(): Boolean =
+            sshHost.isNotBlank() && sshRemotePath.isNotBlank() && sshPrivateKeyB64.isNotBlank()
+        fun hasAnySource(): Boolean = httpUrl.isNotBlank() || hasSshSource()
+    }
+
+    private data class MeSyncSshAccess(
+        val host: String,
+        val port: Int,
+        val user: String,
+        val remotePath: String,
+        val privateKeyB64: String,
+        val fingerprint: String,
+        val requiresTempSshd: Boolean
     )
 
     private fun autoApprovePermission(
@@ -7640,10 +7937,22 @@ class LocalHttpServer(
         }
     }
 
+    private inner class MeSyncLanDownloadServer : NanoHTTPD("0.0.0.0", ME_SYNC_LAN_PORT) {
+        override fun serve(session: IHTTPSession): Response {
+            val uri = session.uri ?: "/"
+            return if (session.method == Method.GET && uri == "/me/sync/download") {
+                handleMeSyncDownload(session)
+            } else {
+                newFixedLengthResponse(Response.Status.NOT_FOUND, "application/json", "{\"error\":\"not_found\"}")
+            }
+        }
+    }
+
     companion object {
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
         private const val PORT = 8765
+        private const val ME_SYNC_LAN_PORT = 8766
         private const val ME_SYNC_URI_PREFIX = "me.things:me.sync:"
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
         private const val SOCKET_READ_TIMEOUT = 0

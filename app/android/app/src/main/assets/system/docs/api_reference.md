@@ -396,7 +396,7 @@ Endpoints:
 Chat prefix shortcut in the app UI:
 - `settings: <section_id_or_setting_key>` (examples: `settings: permissions`, `settings: remember_approvals`)
 
-### me.sync (LAN Export / Migration)
+### me.sync (Export / Import / Migration)
 
 One-time export/import endpoints for device-to-device transfer of chat memory/state.
 
@@ -410,7 +410,12 @@ One-time export/import endpoints for device-to-device transfer of chat memory/st
 | `POST` | `/me/sync/wipe_all` | `{"restart_app":true}` | **Dangerous:** wipe all local app data and restart app (best effort) |
 
 Notes:
-- `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and LAN/local download URLs.
+- `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and download metadata.
+- Current export payload (`version: 2`) prefers encrypted SSH/SCP transport:
+  - `transport: "ssh_scp"`
+  - `ssh: {host, port, user, remote_path, private_key_b64}`
+  - `http_url` remains included as fallback for compatibility.
+- Importer tries SSH/SCP first when SSH fields are present, then falls back to HTTP URL if needed.
 - `prepare_export` supports both modes:
   - Export mode (default): `include_identity=false` (or `mode:"export"`), excludes `user/.ssh/id_dropbear*`.
   - Migration mode: `include_identity=true` (or `mode:"migration"`), includes `user/.ssh/id_dropbear*`.
