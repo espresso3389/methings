@@ -114,6 +114,14 @@ Practical flow:
   - Prefer local vision if an appropriate local model is available.
   - Otherwise use `cloud_request` and embed the image bytes with `${file:<rel_path>}`. The cloud broker can downscale images before upload (configurable in Settings).
 
+## Recording (Audio / Video / Screen)
+
+- **Audio recording:** `audio.record.start` / `audio.record.stop` → AAC in .m4a. For live PCM: `audio.stream.start` → WebSocket `/ws/audio/pcm`.
+- **Video recording:** `video.record.start` / `video.record.stop` → H.265/H.264 in .mp4. Specify `lens` (back/front), `resolution` (720p/1080p/4k). For live frames: `video.stream.start` → WebSocket `/ws/video/frames`.
+- **Screen recording:** `screenrec.start` / `screenrec.stop` → .mp4. Requires system consent dialog each time (the user must tap "Start now" on the device).
+- All recording stop responses include `rel_path`. Include `rel_path: <path>` in your message so the user can access the file.
+- Details and full payloads: `$sys/docs/recording.md`
+
 ## UVC (USB Webcam): Capture + PTZ
 
 - If a UVC webcam is connected over USB, use `usb.list` -> `usb.open` to get a `handle`.

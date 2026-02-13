@@ -234,6 +234,75 @@ Play from file:
 
 Play from base64: use `{ "audio_b64": "<base64>", "ext": "wav" }` in payload.
 
+### Audio Recording
+
+Record audio to AAC (.m4a). Details: `$sys/docs/recording.md`
+
+```json
+{ "type": "tool_invoke", "tool": "device_api",
+  "args": { "action": "audio.record.start", "payload": {}, "detail": "Start audio recording" } }
+```
+
+Stop and get the file:
+
+```json
+{ "type": "tool_invoke", "tool": "device_api",
+  "args": { "action": "audio.record.stop", "payload": {}, "detail": "Stop audio recording" } }
+```
+
+Returns `rel_path`, `duration_ms`, `size_bytes`. Optional start payload: `path`, `sample_rate`, `channels`, `bitrate`, `max_duration_s`.
+
+For live PCM streaming: `audio.stream.start` → connect WebSocket `/ws/audio/pcm`.
+
+### Video Recording
+
+Record video to H.265/H.264 (.mp4) using the device camera. Details: `$sys/docs/recording.md`
+
+```json
+{ "type": "tool_invoke", "tool": "device_api",
+  "args": { "action": "video.record.start", "payload": { "lens": "back" }, "detail": "Start video recording" } }
+```
+
+Stop:
+
+```json
+{ "type": "tool_invoke", "tool": "device_api",
+  "args": { "action": "video.record.stop", "payload": {}, "detail": "Stop video recording" } }
+```
+
+Returns `rel_path`, `duration_ms`, `size_bytes`, `codec`. Optional start payload: `lens`, `resolution` (720p/1080p/4k), `max_duration_s`.
+
+For live frame streaming: `video.stream.start` → connect WebSocket `/ws/video/frames`.
+
+### Screen Recording
+
+Record the device screen to H.265/H.264 (.mp4). Requires user consent dialog each time. Details: `$sys/docs/recording.md`
+
+```json
+{ "type": "tool_invoke", "tool": "device_api",
+  "args": { "action": "screenrec.start", "payload": {}, "detail": "Start screen recording" } }
+```
+
+Stop:
+
+```json
+{ "type": "tool_invoke", "tool": "device_api",
+  "args": { "action": "screenrec.stop", "payload": {}, "detail": "Stop screen recording" } }
+```
+
+Optional start payload: `resolution` (720p/1080p), `bitrate`, `max_duration_s`.
+
+### Media Decode Streaming
+
+Decode existing audio/video files to raw data over WebSocket. Details: `$sys/docs/media_stream.md`
+
+```json
+{ "type": "tool_invoke", "tool": "device_api",
+  "args": { "action": "media.stream.audio.start", "payload": { "source_file": "recordings/audio/rec.m4a" }, "detail": "Decode audio to PCM" } }
+```
+
+Returns `stream_id` and `ws_path`. Connect to `/ws/media/stream/<stream_id>` for decoded frames.
+
 ---
 
 ## Chat Rendering Rules

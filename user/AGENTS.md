@@ -9,6 +9,7 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - Treat `AGENTS.md` and `TOOLS.md` as session policy docs: read once per session and reuse that knowledge without repeatedly re-reading. If either file is updated externally (content/mtime changes), re-read and follow the latest rules.
 - If you are unsure how to proceed, use `web_search` to research and then continue.
 - Keep responses concise and include relevant snippets from tool output when helpful.
+- When listing or referencing files you created/saved, always emit `rel_path: <path>` (or `html_path:`) for each file so the chat UI renders clickable preview cards. Never list bare filenames.
 
 ## Posture (No Delegation + Permission-Optimistic)
 
@@ -21,15 +22,29 @@ This file documents how the on-device AI agent should operate. It is referenced 
 ## Filesystem
 
 - The agent filesystem tools are restricted to the user root directory (this folder).
+- **System reference docs** (API reference, device docs, examples, Python lib) are read-only and accessed via the `$sys/` prefix: `read_file("$sys/docs/api_reference.md")`, `list_dir("$sys/docs")`.
+- **Agent workspace** (`docs/`): a read-write directory for your own notes. This is under the user root.
 - Developer option: set brain config `fs_scope="app"` to allow filesystem tools to access the whole app private files dir (includes `protected/`, `server/`, etc). Use with care.
 - Do not try to run `ls`, `pwd`, `cat` via a shell. Use filesystem tools.
+
+## Agent Accessibility of App Features
+
+- Every app feature (settings, configuration, device actions) MUST be agent-accessible via the local HTTP API unless there is a concrete security risk.
+- If a feature poses a security risk (e.g. API keys, credentials), it should still be agent-accessible but gated behind the existing permission system — the agent requests access, the user approves via the app UI, and the agent proceeds.
+- Do not create UI-only settings that the agent cannot read or change programmatically.
+
+## Notification & Permission Preferences
+
+- **Notification prefs**: `GET /notifications/prefs` and `POST /notifications/prefs` control task-completion notifications (Android notification, sound, webhook URL).
+- **Permission prefs**: `GET /permissions/prefs` and `POST /permissions/prefs` control the permission broker (remember approvals, dangerously skip permissions).
+- **Permission state**: `GET /permissions/pending` lists pending requests; `GET /permissions/grants` lists active grants; `POST /permissions/clear` clears saved grants.
 
 ## When Unsure About APIs
 
 - Do not guess or ask the user to "implement a new API" prematurely.
 - First:
   - Read `TOOLS.md`
-  - Read the relevant `docs/*.md` (especially `docs/api_reference.md`)
+  - Read the relevant system docs via `$sys/` prefix (especially `$sys/docs/api_reference.md`)
   - Call `device_api` status/list actions (`camera.status`, `usb.list`, `brain.config.get`, etc.) and use returned errors/fields to decide next steps.
 - Only request a new API/action if you can name the missing primitive precisely and explain why existing actions are insufficient.
 
@@ -94,10 +109,18 @@ Practical flow:
 ## Camera: Take Picture + Show Inline + Recognize
 
 - Take a picture with `device_api` action `camera.capture` (usually `lens=back`) and save it under `captures/`.
-- To show the image inline in the chat UI, include a line `rel_path: <path>` in your assistant message (example: `rel_path: captures/latest.jpg`). The WebView chat UI will preview it automatically. This also works for text/code files (e.g. `rel_path: uploads/chat/notes.md`) — they render with syntax highlighting.
+- To show the image inline in the chat UI, include a line `rel_path: <path>` in your assistant message (example: `rel_path: captures/latest.jpg`). The WebView chat UI will preview it automatically.
 - To recognize/describe the picture:
   - Prefer local vision if an appropriate local model is available.
   - Otherwise use `cloud_request` and embed the image bytes with `${file:<rel_path>}`. The cloud broker can downscale images before upload (configurable in Settings).
+
+## Recording (Audio / Video / Screen)
+
+- **Audio recording:** `audio.record.start` / `audio.record.stop` → AAC in .m4a. For live PCM: `audio.stream.start` → WebSocket `/ws/audio/pcm`.
+- **Video recording:** `video.record.start` / `video.record.stop` → H.265/H.264 in .mp4. Specify `lens` (back/front), `resolution` (720p/1080p/4k). For live frames: `video.stream.start` → WebSocket `/ws/video/frames`.
+- **Screen recording:** `screenrec.start` / `screenrec.stop` → .mp4. Requires system consent dialog each time (the user must tap "Start now" on the device).
+- All recording stop responses include `rel_path`. Include `rel_path: <path>` in your message so the user can access the file.
+- Details and full payloads: `$sys/docs/recording.md`
 
 ## UVC (USB Webcam): Capture + PTZ
 
