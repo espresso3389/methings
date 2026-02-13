@@ -191,46 +191,47 @@ class VideoRecordManager(
             // Configure MediaRecorder
             val recorder = MediaRecorder(context)
             try {
-                recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-                recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                recorder.setOutputFile(outFile.absolutePath)
-                recorder.setVideoSize(videoSize.width, videoSize.height)
-                recorder.setVideoFrameRate(30)
-                recorder.setVideoEncodingBitRate(
-                    when (res) {
-                        "4k", "2160p" -> 25_000_000
-                        "1080p" -> 12_000_000
-                        else -> 6_000_000
-                    }
+                configureRecorder(
+                    recorder = recorder,
+                    withAudio = true,
+                    outFile = outFile,
+                    videoSize = videoSize,
+                    res = res,
+                    codec = codec,
+                    cameraId = cameraId,
+                    maxS = maxS,
+                    handler = handler
                 )
-                recorder.setAudioEncodingBitRate(128_000)
-                recorder.setAudioSamplingRate(44100)
-                recorder.setVideoEncoder(
-                    if (codec == "h265") MediaRecorder.VideoEncoder.HEVC
-                    else MediaRecorder.VideoEncoder.H264
-                )
-                recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                recorder.setOrientationHint(computeRotation(cameraId))
-                recorder.setMaxDuration(maxS * 1000)
-                recorder.setOnInfoListener { _, what, _ ->
-                    if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
-                        Log.i(TAG, "Max duration reached, stopping recording")
-                        // Stop from background thread to avoid blocking the callback
-                        handler.post { stopRecordingInternal() }
-                    }
-                }
-                recorder.setOnErrorListener { _, what, extra ->
-                    Log.e(TAG, "MediaRecorder error: what=$what extra=$extra")
-                    lastRecordError = "media_recorder_error_$what"
-                    handler.post { stopRecordingInternal() }
-                }
-                recorder.prepare()
             } catch (e: Exception) {
-                Log.e(TAG, "MediaRecorder configure/prepare failed", e)
-                recorder.release()
-                thread.quitSafely()
-                return mapOf("status" to "error", "error" to "recorder_prepare_failed", "detail" to (e.message ?: ""))
+                val msg = (e.message ?: "").trim().lowercase()
+                val shouldRetryVideoOnly =
+                    msg.contains("setaudiosource failed") || msg.contains("audiosource") || e is SecurityException
+                if (!shouldRetryVideoOnly) {
+                    Log.e(TAG, "MediaRecorder configure/prepare failed", e)
+                    recorder.release()
+                    thread.quitSafely()
+                    return mapOf("status" to "error", "error" to "recorder_prepare_failed", "detail" to (e.message ?: ""))
+                }
+                try {
+                    Log.w(TAG, "Audio source unavailable; falling back to video-only recording: ${e.message}")
+                    recorder.reset()
+                    configureRecorder(
+                        recorder = recorder,
+                        withAudio = false,
+                        outFile = outFile,
+                        videoSize = videoSize,
+                        res = res,
+                        codec = codec,
+                        cameraId = cameraId,
+                        maxS = maxS,
+                        handler = handler
+                    )
+                } catch (e2: Exception) {
+                    Log.e(TAG, "Video-only MediaRecorder configure/prepare failed", e2)
+                    recorder.release()
+                    thread.quitSafely()
+                    return mapOf("status" to "error", "error" to "recorder_prepare_failed", "detail" to (e2.message ?: ""))
+                }
             }
 
             // Open camera and start recording
@@ -391,6 +392,59 @@ class VideoRecordManager(
             "size_bytes" to sizeBytes,
             "codec" to recordingCodec
         )
+    }
+
+    private fun configureRecorder(
+        recorder: MediaRecorder,
+        withAudio: Boolean,
+        outFile: File,
+        videoSize: Size,
+        res: String,
+        codec: String,
+        cameraId: String,
+        maxS: Int,
+        handler: Handler
+    ) {
+        if (withAudio) {
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+        }
+        recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+        recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+        recorder.setOutputFile(outFile.absolutePath)
+        recorder.setVideoSize(videoSize.width, videoSize.height)
+        recorder.setVideoFrameRate(30)
+        recorder.setVideoEncodingBitRate(
+            when (res) {
+                "4k", "2160p" -> 25_000_000
+                "1080p" -> 12_000_000
+                else -> 6_000_000
+            }
+        )
+        if (withAudio) {
+            recorder.setAudioEncodingBitRate(128_000)
+            recorder.setAudioSamplingRate(44100)
+        }
+        recorder.setVideoEncoder(
+            if (codec == "h265") MediaRecorder.VideoEncoder.HEVC
+            else MediaRecorder.VideoEncoder.H264
+        )
+        if (withAudio) {
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+        }
+        recorder.setOrientationHint(computeRotation(cameraId))
+        recorder.setMaxDuration(maxS * 1000)
+        recorder.setOnInfoListener { _, what, _ ->
+            if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
+                Log.i(TAG, "Max duration reached, stopping recording")
+                handler.post { stopRecordingInternal() }
+            }
+        }
+        recorder.setOnErrorListener { _, what, extra ->
+            Log.e(TAG, "MediaRecorder error: what=$what extra=$extra")
+            lastRecordError = "media_recorder_error_$what"
+            handler.post { stopRecordingInternal() }
+        }
+        recorder.prepare()
     }
 
     // ── Frame Streaming (CameraX ImageAnalysis → JPEG or RGBA over WebSocket) ─
