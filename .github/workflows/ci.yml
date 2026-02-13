@@ -3,6 +3,16 @@ name: ci
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      test_release_build:
+        description: "Run signed release APK build/upload without creating a GitHub Release"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 jobs:
   submodule-policy:
@@ -104,8 +114,8 @@ jobs:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4"
         run: |
           gradle --project-dir app/android --parallel --build-cache assembleDebug
-      - name: Restore signing keystore (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Restore signing keystore (tag/manual release test)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.test_release_build == 'true')
         env:
           ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
@@ -124,14 +134,26 @@ jobs:
             echo "ANDROID_KEY_ALIAS=${ANDROID_KEY_ALIAS}"
             echo "ANDROID_KEY_PASSWORD=${ANDROID_KEY_PASSWORD}"
           } >> "$GITHUB_ENV"
-      - name: Build Release APK (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Validate release keystore (tag/manual release test)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.test_release_build == 'true')
+        run: |
+          set -euo pipefail
+          keytool -list -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" >/dev/null
+          if ! keytool -list -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" >/dev/null 2>&1; then
+            echo "Configured ANDROID_KEY_ALIAS was not found in the release keystore."
+            echo "Available aliases:"
+            keytool -list -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" | sed -n 's/^.*, //p'
+            exit 1
+          fi
+          keytool -list -v -keystore "$ANDROID_KEYSTORE_PATH" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" -keypass "$ANDROID_KEY_PASSWORD" >/dev/null
+      - name: Build Release APK (tag/manual release test)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.test_release_build == 'true')
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4"
         run: |
           gradle --project-dir app/android --parallel --build-cache assembleRelease
-      - name: Verify Release APK signature (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Verify Release APK signature (tag/manual release test)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.test_release_build == 'true')
         run: |
           set -euo pipefail
           "$ANDROID_SDK_ROOT/build-tools/34.0.0/apksigner" verify --verbose --print-certs app/android/app/build/outputs/apk/release/app-release.apk
@@ -142,8 +164,8 @@ jobs:
           path: |
             app/android/app/build/outputs/apk/debug/app-debug.apk
             app/android/app/build/outputs/apk/debug/output-metadata.json
-      - name: Upload Release APK (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Upload Release APK (tag/manual release test)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.test_release_build == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
