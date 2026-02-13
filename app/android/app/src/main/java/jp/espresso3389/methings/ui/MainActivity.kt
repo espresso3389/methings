@@ -42,6 +42,10 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.CountDownLatch
 
 class MainActivity : AppCompatActivity() {
+    private companion object {
+        const val STATE_WEBVIEW = "main_webview_state"
+    }
+
     private lateinit var webView: WebView
     private val pendingAndroidPermRequestId = AtomicReference<String?>(null)
     private val pendingAndroidPermAction = AtomicReference<((Boolean) -> Unit)?>(null)
@@ -259,8 +263,12 @@ class MainActivity : AppCompatActivity() {
         }
         webView.addJavascriptInterface(WebAppBridge(this), "AndroidBridge")
 
-        // Load the local UI served by Kotlin.
-        webView.loadUrl("http://127.0.0.1:8765/ui/index.html")
+        // Restore the current session (scroll/form/history/viewer state) after recreation.
+        val restored = savedInstanceState?.getBundle(STATE_WEBVIEW)?.let { webView.restoreState(it) } != null
+        if (!restored) {
+            // Initial launch.
+            webView.loadUrl("http://127.0.0.1:8765/ui/index.html")
+        }
 
         // If launched from a permission notification, handle it immediately.
         maybeHandlePermissionIntent(intent)
@@ -288,6 +296,10 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         AppForegroundState.isForeground = true
+        // Heal possible WebView CSS/state desync after activity/window transitions.
+        if (!isImmersive) {
+            evalJs("window.onExitImmersiveMode && window.onExitImmersiveMode()")
+        }
         // Cancel "Agent is working" and permission summary notifications when app comes to foreground.
         try {
             val nm = getSystemService(android.app.NotificationManager::class.java)
@@ -337,6 +349,13 @@ class MainActivity : AppCompatActivity() {
         pendingFilePathCallback?.onReceiveValue(null)
         pendingFilePathCallback = null
         super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        val webViewState = Bundle()
+        webView.saveState(webViewState)
+        outState.putBundle(STATE_WEBVIEW, webViewState)
     }
 
     private fun publishStatusToWeb(status: String) {
@@ -638,9 +657,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun exitImmersiveMode() {
-        if (!isImmersive) return
+        val wasImmersive = isImmersive
         isImmersive = false
-        showSystemBars()
+        if (wasImmersive) {
+            showSystemBars()
+        }
         evalJs("window.onExitImmersiveMode && window.onExitImmersiveMode()")
     }
 

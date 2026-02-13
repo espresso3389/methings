@@ -50,7 +50,8 @@
         <activity
             android:name=".ui.MainActivity"
             android:theme="@style/Theme.Methings"
-            android:exported="true">
+            android:exported="true"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -60,6 +61,7 @@
             android:name=".ui.AgentHtmlActivity"
             android:exported="false"
             android:excludeFromRecents="true"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize"
             android:theme="@style/Theme.Methings" />
         <activity
             android:name=".ui.UsbPermissionActivity"
