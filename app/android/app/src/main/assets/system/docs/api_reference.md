@@ -90,6 +90,22 @@ Details: [camera.md](camera.md)
 - `path`: user-root relative audio file path
 - `audio_b64`: base64 audio bytes (+ optional `ext`, e.g. `wav`, `mp3`, `m4a`)
 
+### Audio Recording & PCM Streaming
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `audio.record.status` | GET | `/audio/record/status` |
+| `audio.record.start` | POST | `/audio/record/start` |
+| `audio.record.stop` | POST | `/audio/record/stop` |
+| `audio.record.config.get` | GET | `/audio/record/config` |
+| `audio.record.config.set` | POST | `/audio/record/config` |
+| `audio.stream.start` | POST | `/audio/stream/start` |
+| `audio.stream.stop` | POST | `/audio/stream/stop` |
+
+Recording produces AAC in .m4a container. PCM streaming delivers signed 16-bit LE samples over WebSocket `/ws/audio/pcm`.
+
+Details: [recording.md](recording.md)
+
 ### Android TTS (Text-to-Speech)
 
 | Action | Method | Endpoint |
@@ -262,6 +278,7 @@ Raw WebSocket connections on the same `127.0.0.1:8765` host.
 | `/ws/ble/events` | BLE scan results, connect/disconnect, GATT notifications | [ble.md](ble.md) |
 | `/ws/stt/events` | Speech recognition partial/final results | [stt.md](stt.md) |
 | `/ws/camera/preview` | Camera preview (binary JPEG frames) | [camera.md](camera.md) |
+| `/ws/audio/pcm` | Live PCM audio stream (s16le binary frames) | [recording.md](recording.md) |
 
 ---
 

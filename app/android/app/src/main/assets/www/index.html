@@ -1502,6 +1502,53 @@
           </div>
         </section>
 
+        <!-- Audio Recording -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon red">&#127908;</div>
+            <div class="card-title">Audio Recording</div>
+          </div>
+          <div class="card-desc">Default settings for agent-initiated audio recording and PCM streaming.</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+            <div class="field">
+              <label>Sample Rate</label>
+              <select id="audioRecSampleRate">
+                <option value="8000">8 kHz</option>
+                <option value="16000">16 kHz</option>
+                <option value="22050">22.05 kHz</option>
+                <option value="44100">44.1 kHz</option>
+                <option value="48000">48 kHz</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Channels</label>
+              <select id="audioRecChannels">
+                <option value="1">Mono</option>
+                <option value="2">Stereo</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+            <div class="field">
+              <label>Bitrate</label>
+              <select id="audioRecBitrate">
+                <option value="64000">64 kbps</option>
+                <option value="96000">96 kbps</option>
+                <option value="128000">128 kbps</option>
+                <option value="192000">192 kbps</option>
+                <option value="256000">256 kbps</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Max Duration (s)</label>
+              <input type="number" id="audioRecMaxDuration" min="5" max="3600" value="300" />
+            </div>
+          </div>
+          <div class="btn-group" style="margin-top:10px;">
+            <button class="btn primary" id="audioRecSave">Save</button>
+          </div>
+        </section>
+
         <!-- SSHD -->
         <section class="card">
           <div class="card-header">
@@ -1582,37 +1629,6 @@
           <div class="btn-group">
             <button class="btn" id="resetUi">Reset UI</button>
             <button class="btn" id="resetAgentDocs">Reset Agent Docs</button>
-          </div>
-        </section>
-
-        <!-- App Update -->
-        <section class="card">
-          <div class="card-header">
-            <div class="card-icon blue">&#8635;</div>
-            <div class="card-title">App Update</div>
-            <div id="appUpdateStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
-          </div>
-          <div class="muted">Checks GitHub Releases and installs newer APKs.</div>
-          <p class="muted" id="appUpdateDetail" style="margin-top:8px;">Checking latest release...</p>
-          <div class="btn-group">
-            <button class="btn" id="checkAppUpdate">Check update</button>
-            <button class="btn" id="installAppUpdate">Install update</button>
-          </div>
-        </section>
-
-        <!-- About -->
-        <section class="card">
-          <div class="card-header">
-            <div class="card-icon blue">&#8505;</div>
-            <div class="card-title">About</div>
-          </div>
-          <div class="muted">Version and project information.</div>
-          <p class="muted" id="appVersionText" style="margin-top:8px;">Version: checking...</p>
-          <p class="muted">Commit: <a id="appCommitLink" href="#" target="_blank" rel="noopener">checking...</a></p>
-          <p class="muted">Repo: <a id="appRepoLink" href="https://github.com/espresso3389/methings" target="_blank" rel="noopener">https://github.com/espresso3389/methings</a></p>
-          <div class="btn-group">
-            <button class="btn" id="openProjectRepo">Open Repo</button>
-            <button class="btn" id="openLicensesPage">Licenses</button>
           </div>
         </section>
 
@@ -1707,6 +1723,37 @@
           </div>
           <div class="btn-group">
             <button class="btn primary" id="cloudPrefsSave">Save</button>
+          </div>
+        </section>
+
+        <!-- App Update -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon blue">&#8635;</div>
+            <div class="card-title">App Update</div>
+            <div id="appUpdateStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
+          </div>
+          <div class="muted">Checks GitHub Releases and installs newer APKs.</div>
+          <p class="muted" id="appUpdateDetail" style="margin-top:8px;">Checking latest release...</p>
+          <div class="btn-group">
+            <button class="btn" id="checkAppUpdate">Check Update</button>
+            <button class="btn" id="installAppUpdate">Install Update</button>
+          </div>
+        </section>
+
+        <!-- About -->
+        <section class="card">
+          <div class="card-header">
+            <div class="card-icon blue">&#8505;</div>
+            <div class="card-title">About</div>
+          </div>
+          <div class="muted">Version and project information.</div>
+          <p class="muted" id="appVersionText" style="margin-top:8px;">Version: checking...</p>
+          <p class="muted">Commit: <a id="appCommitLink" href="#" target="_blank" rel="noopener">checking...</a></p>
+          <p class="muted">Repo: <a id="appRepoLink" href="https://github.com/espresso3389/methings" target="_blank" rel="noopener">https://github.com/espresso3389/methings</a></p>
+          <div class="btn-group">
+            <button class="btn" id="openProjectRepo">Open Repo</button>
+            <button class="btn" id="openLicensesPage">Licenses</button>
           </div>
         </section>
       </div>
@@ -6011,6 +6058,29 @@
         }
       });
 
+      // Audio recording config prefs
+      function loadAudioRecSettings() {
+        try {
+          if (typeof AndroidBridge === "undefined") return;
+          $("audioRecSampleRate").value = String(AndroidBridge.getAudioRecordSampleRate() || 44100);
+          $("audioRecChannels").value = String(AndroidBridge.getAudioRecordChannels() || 1);
+          $("audioRecBitrate").value = String(AndroidBridge.getAudioRecordBitrate() || 128000);
+          $("audioRecMaxDuration").value = AndroidBridge.getAudioRecordMaxDurationS() || 300;
+        } catch (_) {}
+      }
+      $("audioRecSave").addEventListener("click", () => {
+        try {
+          if (typeof AndroidBridge === "undefined") { showToast("Not available", 1600); return; }
+          AndroidBridge.setAudioRecordSampleRate(parseInt($("audioRecSampleRate").value) || 44100);
+          AndroidBridge.setAudioRecordChannels(parseInt($("audioRecChannels").value) || 1);
+          AndroidBridge.setAudioRecordBitrate(parseInt($("audioRecBitrate").value) || 128000);
+          AndroidBridge.setAudioRecordMaxDurationS(parseInt($("audioRecMaxDuration").value) || 300);
+          showToast("Audio recording settings saved", 1600);
+        } catch (_) {
+          showToast("Failed to save audio recording settings", 1800);
+        }
+      });
+
       $("restartPython").addEventListener("click", async () => {
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonWorker) {
           AndroidBridge.restartPythonWorker();
@@ -6244,6 +6314,7 @@
       loadPermissionPrefs();
       loadCloudPrefs();
       loadNotifyPrefs();
+      loadAudioRecSettings();
       loadBrowserPrefs();
       refreshPython();
       refreshAppUpdate(true);

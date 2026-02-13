@@ -1,10 +1,12 @@
 # API Reference (Local Control Plane)
 
-methings exposes a local HTTP control plane on `http://127.0.0.1:8765`.
+me.things exposes a local HTTP control plane on `http://127.0.0.1:8765`.
 
 The agent should use the `device_api(action, payload, detail)` tool instead of calling these endpoints directly.
 
-## Identity + Permissions (High Level)
+See also: `TOOLS.md` (in user root) for agent tool usage and quickstart examples.
+
+## Identity + Permissions
 
 - Most device actions require user approval via the permission broker.
 - Approvals are remembered per `(identity, capability)` for the configured scope.
@@ -14,104 +16,299 @@ Common patterns:
 - If a `device_api` action returns `permission_required`, ask the user to approve the prompt and then retry the same action.
 - Uploaded files (`/user/upload`) are treated as an explicit read grant for those uploaded files.
 
+See [permissions.md](permissions.md) for scopes, identity model, and USB special cases.
+
+---
+
 ## device_api Action Map
 
-`device_api` action names map to Kotlin endpoints:
+`device_api` action names map to Kotlin HTTP endpoints. Actions marked **[no perm]** do not require user approval; all others are permission-gated.
 
 ### System / Services
-- `python.status` -> `GET /python/status`
-- `python.restart` -> `POST /python/restart`
-- `screen.status` -> `GET /screen/status`
-- `screen.keep_on` -> `POST /screen/keep_on`
-- `ssh.status` -> `GET /ssh/status`
-- `ssh.config` -> `POST /ssh/config`
-- `ssh.pin.status` -> `GET /ssh/pin/status`
-- `ssh.pin.start` -> `POST /ssh/pin/start`
-- `ssh.pin.stop` -> `POST /ssh/pin/stop`
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `python.status` | GET | `/python/status` **[no perm]** |
+| `python.restart` | POST | `/python/restart` |
+| `screen.status` | GET | `/screen/status` **[no perm]** |
+| `screen.keep_on` | POST | `/screen/keep_on` |
+| `shell.exec` | POST | `/shell/exec` |
+
+### SSHD (On-device SSH Server)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `sshd.status` | GET | `/sshd/status` **[no perm]** |
+| `sshd.config` | POST | `/sshd/config` |
+| `sshd.keys.list` | GET | `/sshd/keys` **[no perm]** |
+| `sshd.keys.add` | POST | `/sshd/keys/add` |
+| `sshd.keys.delete` | POST | `/sshd/keys/delete` |
+| `sshd.keys.policy.get` | GET | `/sshd/keys/policy` **[no perm]** |
+| `sshd.keys.policy.set` | POST | `/sshd/keys/policy` |
+| `sshd.pin.status` | GET | `/sshd/pin/status` **[no perm]** |
+| `sshd.pin.start` | POST | `/sshd/pin/start` |
+| `sshd.pin.stop` | POST | `/sshd/pin/stop` |
+| `sshd.noauth.status` | GET | `/sshd/noauth/status` **[no perm]** |
+| `sshd.noauth.start` | POST | `/sshd/noauth/start` |
+| `sshd.noauth.stop` | POST | `/sshd/noauth/stop` |
+
+Details: [sshd.md](sshd.md)
+
+### SSH (Remote Host Client)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `ssh.exec` | POST | `/ssh/exec` |
+| `ssh.scp` | POST | `/ssh/scp` |
+| `ssh.ws.contract` | GET | `/ssh/ws/contract` **[no perm]** |
+
+Details: [ssh.md](ssh.md)
+
+### Camera
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `camera.list` | GET | `/camera/list` |
+| `camera.status` | GET | `/camera/status` |
+| `camera.capture` | POST | `/camera/capture` |
+| `camera.preview.start` | POST | `/camera/preview/start` |
+| `camera.preview.stop` | POST | `/camera/preview/stop` |
+
+Preview stream is delivered over WebSocket `/ws/camera/preview` (binary JPEG frames).
+
+Details: [camera.md](camera.md)
 
 ### Media Playback
-- `media.audio.status` -> `GET /media/audio/status`
-- `media.audio.play` -> `POST /media/audio/play`
-- `media.audio.stop` -> `POST /media/audio/stop`
-  - `media.audio.play` accepts either:
-    - `path`: user-root relative audio file path
-    - `audio_b64`: base64 audio bytes (+ optional `ext`, e.g. `wav`, `mp3`, `m4a`)
 
-### Camera (on-device)
-- `camera.list` -> `GET /camera/list`
-- `camera.status` -> `GET /camera/status`
-- `camera.preview.start` -> `POST /camera/preview/start`
-- `camera.preview.stop` -> `POST /camera/preview/stop`
-- `camera.capture` -> `POST /camera/capture`
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `media.audio.status` | GET | `/media/audio/status` |
+| `media.audio.play` | POST | `/media/audio/play` |
+| `media.audio.stop` | POST | `/media/audio/stop` |
 
-### USB (generic)
-- `usb.list` -> `GET /usb/list`
-- `usb.status` -> `GET /usb/status`
-- `usb.open` -> `POST /usb/open`
-- `usb.close` -> `POST /usb/close`
-- `usb.raw_descriptors` -> `POST /usb/raw_descriptors`
-- `usb.claim_interface` -> `POST /usb/claim_interface`
-- `usb.release_interface` -> `POST /usb/release_interface`
-- `usb.control_transfer` -> `POST /usb/control_transfer`
-- `usb.bulk_transfer` -> `POST /usb/bulk_transfer`
-- `usb.iso_transfer` -> `POST /usb/iso_transfer`
-- `usb.stream.start` -> `POST /usb/stream/start`
-- `usb.stream.stop` -> `POST /usb/stream/stop`
-- `usb.stream.status` -> `GET /usb/stream/status`
+`media.audio.play` accepts either:
+- `path`: user-root relative audio file path
+- `audio_b64`: base64 audio bytes (+ optional `ext`, e.g. `wav`, `mp3`, `m4a`)
 
-### UVC (USB Webcam helpers)
-- `uvc.mjpeg.capture` -> `POST /uvc/mjpeg/capture`
-  - Captures one MJPEG frame from a connected UVC webcam and saves a JPEG under `captures/`.
-  - Supports both `transfer_mode=iso` and `transfer_mode=bulk` depending on the camera endpoints.
-- `uvc.diagnose` -> `POST /uvc/diagnose`
-  - Runs a step-by-step USB/UVC diagnostic and returns a structured `steps[]` report:
-    - USB device listing + matching
-    - OS-level USB permission
-    - Open device
-    - Read raw descriptors + parse VC interface / camera terminal IDs / extension units
-    - PTZ GET_CUR probes (including a known-good `wIndex=0x0100` probe for Insta360 Link)
-- `uvc.ptz.*` -> implemented client-side via `usb.control_transfer` (CameraTerminal PTZ selectors)
+### Audio Recording & PCM Streaming
 
-### Vision (local TFLite pipeline)
-- `vision.model.load` -> `POST /vision/model/load`
-- `vision.model.unload` -> `POST /vision/model/unload`
-- `vision.image.load` -> `POST /vision/image/load`
-- `vision.frame.put` -> `POST /vision/frame/put`
-- `vision.frame.get` -> `POST /vision/frame/get`
-- `vision.frame.delete` -> `POST /vision/frame/delete`
-- `vision.frame.save` -> `POST /vision/frame/save`
-- `vision.run` -> `POST /vision/run`
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `audio.record.status` | GET | `/audio/record/status` |
+| `audio.record.start` | POST | `/audio/record/start` |
+| `audio.record.stop` | POST | `/audio/record/stop` |
+| `audio.record.config.get` | GET | `/audio/record/config` |
+| `audio.record.config.set` | POST | `/audio/record/config` |
+| `audio.stream.start` | POST | `/audio/stream/start` |
+| `audio.stream.stop` | POST | `/audio/stream/stop` |
 
-### Llama.cpp (local GGUF models)
-- `llama.status` -> `GET /llama/status`
-- `llama.models` -> `GET /llama/models`
-- `llama.run` -> `POST /llama/run`
-- `llama.generate` -> `POST /llama/generate`
-- `llama.tts` -> `POST /llama/tts`
-- `llama.tts.plugins.list` -> `GET /llama/tts/plugins`
-- `llama.tts.plugins.upsert` -> `POST /llama/tts/plugins/upsert`
-- `llama.tts.plugins.delete` -> `POST /llama/tts/plugins/delete`
-- `llama.tts.speak` -> `POST /llama/tts/speak`
-- `llama.tts.speak.status` -> `POST /llama/tts/speak/status`
-- `llama.tts.speak.stop` -> `POST /llama/tts/speak/stop`
+Recording produces AAC in .m4a container. PCM streaming delivers signed 16-bit LE samples over WebSocket `/ws/audio/pcm`.
 
-### Network / Radio status
-- `network.status` -> `GET /network/status`
-- `wifi.status` -> `GET /wifi/status`
-- `mobile.status` -> `GET /mobile/status`
-- `ble.status` -> `GET /ble/status`
+Details: [recording.md](recording.md)
 
-## File Endpoints (User Root)
+### Android TTS (Text-to-Speech)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `tts.init` | POST | `/tts/init` |
+| `tts.voices` | GET | `/tts/voices` |
+| `tts.speak` | POST | `/tts/speak` |
+| `tts.stop` | POST | `/tts/stop` |
+
+This is Android's built-in TextToSpeech. For local llama.cpp TTS (MioTTS etc.), see [Llama.cpp](#llamacpp-local-gguf-models) / [llama.md](llama.md).
+
+Details: [tts.md](tts.md)
+
+### STT (Speech Recognition)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `stt.status` | GET | `/stt/status` |
+| `stt.start` | POST | `/stt/start` |
+| `stt.stop` | POST | `/stt/stop` |
+
+Recognition events are delivered over WebSocket `/ws/stt/events`.
+
+Details: [stt.md](stt.md)
+
+### Llama.cpp (Local GGUF Models)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `llama.status` | GET | `/llama/status` |
+| `llama.models` | GET | `/llama/models` |
+| `llama.run` | POST | `/llama/run` |
+| `llama.generate` | POST | `/llama/generate` |
+| `llama.tts` | POST | `/llama/tts` |
+| `llama.tts.plugins.list` | GET | `/llama/tts/plugins` |
+| `llama.tts.plugins.upsert` | POST | `/llama/tts/plugins/upsert` |
+| `llama.tts.plugins.delete` | POST | `/llama/tts/plugins/delete` |
+| `llama.tts.speak` | POST | `/llama/tts/speak` |
+| `llama.tts.speak.status` | POST | `/llama/tts/speak/status` |
+| `llama.tts.speak.stop` | POST | `/llama/tts/speak/stop` |
+
+Notes:
+- `llama.tts` / `llama.tts.speak` support `min_output_duration_ms` (default `400`).
+- Set `min_output_duration_ms: 0` to disable short-output validation.
+
+Details: [llama.md](llama.md)
+
+### Sensors
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `sensor.list` / `sensors.list` | GET | `/sensor/list` / `/sensors/list` |
+| `sensors.ws.contract` | GET | `/sensors/ws/contract` |
+
+Realtime sensor data is delivered over WebSocket `/ws/sensors`.
+
+Details: [sensors.md](sensors.md)
+
+### Location
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `location.status` | GET | `/location/status` |
+| `location.get` | POST | `/location/get` |
+
+`location.get` payload: `{ "high_accuracy": true, "timeout_ms": 12000 }`
+
+### Network / Radio
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `network.status` | GET | `/network/status` |
+| `wifi.status` | GET | `/wifi/status` |
+| `mobile.status` | GET | `/mobile/status` |
+
+### BLE (Bluetooth Low Energy)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `ble.status` | GET | `/ble/status` |
+| `ble.scan.start` | POST | `/ble/scan/start` |
+| `ble.scan.stop` | POST | `/ble/scan/stop` |
+| `ble.connect` | POST | `/ble/connect` |
+| `ble.disconnect` | POST | `/ble/disconnect` |
+| `ble.gatt.services` | POST | `/ble/gatt/services` |
+| `ble.gatt.read` | POST | `/ble/gatt/read` |
+| `ble.gatt.write` | POST | `/ble/gatt/write` |
+| `ble.gatt.notify.start` | POST | `/ble/gatt/notify/start` |
+| `ble.gatt.notify.stop` | POST | `/ble/gatt/notify/stop` |
+
+BLE events are delivered over WebSocket `/ws/ble/events`.
+
+Details: [ble.md](ble.md)
+
+### USB (Generic)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `usb.list` | GET | `/usb/list` |
+| `usb.status` | GET | `/usb/status` |
+| `usb.open` | POST | `/usb/open` |
+| `usb.close` | POST | `/usb/close` |
+| `usb.raw_descriptors` | POST | `/usb/raw_descriptors` |
+| `usb.claim_interface` | POST | `/usb/claim_interface` |
+| `usb.release_interface` | POST | `/usb/release_interface` |
+| `usb.control_transfer` | POST | `/usb/control_transfer` |
+| `usb.bulk_transfer` | POST | `/usb/bulk_transfer` |
+| `usb.iso_transfer` | POST | `/usb/iso_transfer` |
+| `usb.stream.start` | POST | `/usb/stream/start` |
+| `usb.stream.stop` | POST | `/usb/stream/stop` |
+| `usb.stream.status` | GET | `/usb/stream/status` |
+
+Details: [usb.md](usb.md)
+
+### UVC (USB Webcam)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `uvc.mjpeg.capture` | POST | `/uvc/mjpeg/capture` |
+| `uvc.diagnose` | POST | `/uvc/diagnose` |
+| `uvc.ptz.get_abs` | — | virtual (via `usb.control_transfer`) |
+| `uvc.ptz.get_limits` | — | virtual (via `usb.control_transfer`) |
+| `uvc.ptz.set_abs` | — | virtual (via `usb.control_transfer`) |
+| `uvc.ptz.nudge` | — | virtual (via `usb.control_transfer`) |
+
+Details: [uvc.md](uvc.md)
+
+### Vision (TFLite)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `vision.model.load` | POST | `/vision/model/load` |
+| `vision.model.unload` | POST | `/vision/model/unload` |
+| `vision.image.load` | POST | `/vision/image/load` |
+| `vision.frame.put` | POST | `/vision/frame/put` |
+| `vision.frame.get` | POST | `/vision/frame/get` |
+| `vision.frame.delete` | POST | `/vision/frame/delete` |
+| `vision.frame.save` | POST | `/vision/frame/save` |
+| `vision.run` | POST | `/vision/run` |
+
+Details: [vision.md](vision.md)
+
+### Brain / Config
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `brain.config.get` | GET | `/brain/config` **[no perm]** |
+| `brain.memory.get` | GET | `/brain/memory` **[no perm]** |
+| `brain.memory.set` | POST | `/brain/memory` |
+| `cloud.prefs.get` | GET | `/cloud/prefs` **[no perm]** |
+
+`brain.config.get` returns `{vendor, base_url, model, has_api_key}` (never returns the key itself).
+
+### Notifications
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `notifications.prefs.get` | GET | `/notifications/prefs` **[no perm]** |
+| `notifications.prefs.set` | POST | `/notifications/prefs` **[no perm]** |
+
+---
+
+## WebSocket Endpoints
+
+Raw WebSocket connections on the same `127.0.0.1:8765` host.
+
+| Path | Description | Details |
+|------|-------------|---------|
+| `/ws/sensors` | Realtime sensor data stream | [sensors.md](sensors.md) |
+| `/ws/ble/events` | BLE scan results, connect/disconnect, GATT notifications | [ble.md](ble.md) |
+| `/ws/stt/events` | Speech recognition partial/final results | [stt.md](stt.md) |
+| `/ws/camera/preview` | Camera preview (binary JPEG frames) | [camera.md](camera.md) |
+| `/ws/audio/pcm` | Live PCM audio stream (s16le binary frames) | [recording.md](recording.md) |
+
+---
+
+## HTTP-Only Endpoints
+
+These endpoints are accessed directly via HTTP, not through `device_api`.
+
+### File Endpoints (User Root)
 
 | Method | Endpoint | Body / Query | Effect |
 |--------|----------|--------------|--------|
 | `POST` | `/user/upload` | `multipart/form-data` (`file`, optional `dir`) | Store uploaded file under `files/user/<dir>/...`; returns `path` |
-| `GET` | `/user/file` | `path=<rel_path>` | Serve bytes from user-root for preview/render/open |
+| `GET` | `/user/file` | `path=<rel_path>` | Serve bytes from user-root |
 | `GET` | `/user/file/info` | `path=<rel_path>` | Return metadata + image/Marp extras |
+| `GET` | `/user/list` | `path=<rel_path>` | List files under a user-root directory |
 
 Details: [file_endpoints.md](file_endpoints.md)
 
-## Viewer Control
+### System Reference Docs (Read-Only)
+
+System reference docs (`docs/`, `examples/`, `lib/`) are extracted to `files/system/` and always overwritten on app start to match the current app version. The agent accesses them via the `$sys/` prefix in filesystem tools, which routes through these endpoints.
+
+| Method | Endpoint | Query | Effect |
+|--------|----------|-------|--------|
+| `GET` | `/sys/list` | `path=<rel_path>` | List directory under `files/system/` |
+| `GET` | `/sys/file` | `path=<rel_path>` | Serve file bytes from `files/system/` |
+
+Response format matches `/user/list` and `/user/file` respectively. These endpoints are read-only; there are no write/delete counterparts.
+
+### Viewer Control **[no perm]**
 
 Programmatic control of the WebView fullscreen viewer via 5 POST endpoints (`/ui/viewer/open`, `close`, `immersive`, `slideshow`, `goto`). Supports `#page=N` fragment for Marp slide navigation.
 
@@ -127,7 +324,7 @@ Endpoints:
 
 Details: [viewer.md](viewer.md)
 
-## Brain Journal (Per-Session Notes)
+### Brain Journal (Per-Session Notes)
 
 | Method | Endpoint | Body / Query | Effect |
 |--------|----------|--------------|--------|
@@ -139,7 +336,7 @@ Details: [viewer.md](viewer.md)
 
 Details: [brain_journal.md](brain_journal.md)
 
-## Cloud Broker (Placeholder Expansion + Secrets)
+### Cloud Broker
 
 | Method | Endpoint | Body | Effect |
 |--------|----------|------|--------|
@@ -149,35 +346,44 @@ Details: [brain_journal.md](brain_journal.md)
 
 Details: [cloud_broker.md](cloud_broker.md)
 
-## Notification Preferences
+### Notifications
 
 | Method | Endpoint | Body | Effect |
 |--------|----------|------|--------|
-| `GET` | `/notifications/prefs` | — | Read task-completion notification settings |
-| `POST` | `/notifications/prefs` | `{"notify_android":bool,"notify_sound":bool,"notify_webhook_url":"..."}` | Update notification settings (partial updates OK) |
+| `GET` | `/notifications/prefs` | — | Read task-completion notification preferences |
+| `POST` | `/notifications/prefs` | Partial prefs JSON | Update notification preferences (partial merge) |
 
-Response fields:
-- `notify_android` — show Android notification when agent finishes while backgrounded (default `true`)
-- `notify_sound` — play a sound with the notification (default `false`)
-- `notify_webhook_url` — optional webhook URL called on task completion (default `""`)
+Fields: `notify_android` (bool, default `true`), `notify_sound` (bool, default `false`), `notify_webhook_url` (string, default `""`).
 
-## Permission Preferences
+### Permissions
 
 | Method | Endpoint | Body | Effect |
 |--------|----------|------|--------|
-| `GET` | `/permissions/prefs` | — | Read permission broker preferences |
-| `POST` | `/permissions/prefs` | `{"remember_approvals":bool,"dangerously_skip_permissions":bool}` | Update permission preferences |
+| `POST` | `/permissions/request` | `{"tool","detail","scope","identity","capability"}` | Create permission request |
 | `GET` | `/permissions/pending` | — | List pending permission requests |
-| `GET` | `/permissions/grants` | — | List active approved permission grants |
-| `POST` | `/permissions/clear` | `{}` | Clear all saved approval grants |
+| `GET` | `/permissions/grants` | — | List currently active (non-expired) approved grants |
+| `GET` | `/permissions/{id}` | — | Return request status |
+| `POST` | `/permissions/{id}` | `{"approved": true or false}` | Approve or deny request |
+| `POST` | `/permissions/clear` | — | Clear grants |
+| `GET` | `/permissions/prefs` | — | Read permission preferences |
+| `POST` | `/permissions/prefs` | Preferences JSON | Update permission preferences |
 
-Preference fields:
-- `remember_approvals` — remember user approvals for the configured scope (default `true`)
-- `dangerously_skip_permissions` — auto-approve all permission requests without prompting (default `false`)
+Details: [permissions.md](permissions.md)
 
-## Maintenance (UI-only)
+### Vault
 
-The following operations are available only from the WebView settings UI (via `AndroidBridge`). They do not have HTTP API endpoints yet.
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `GET` | `/vault/credentials` | — | List stored credential names |
+| `POST` | `/vault/credentials/get` | `{"name":"..."}` | Retrieve credential value |
+| `POST` | `/vault/credentials/has` | `{"name":"..."}` | Check if credential exists |
 
-- **Reset UI** — reverts `index.html` to the APK-bundled default
-- **Reset Agent Docs** — reverts `AGENTS.md`, `TOOLS.md`, and `docs/` to APK-bundled defaults
+Details: [vault.md](vault.md)
+
+### Health
+
+| Method | Endpoint | Effect |
+|--------|----------|--------|
+| `GET` | `/health` | Server health check |
+
+Details: [health.md](health.md)

@@ -45,6 +45,7 @@ import jp.espresso3389.methings.perm.InstallIdentity
 import jp.espresso3389.methings.perm.PermissionPrefs
 import jp.espresso3389.methings.device.BleManager
 import jp.espresso3389.methings.device.AudioPlaybackManager
+import jp.espresso3389.methings.device.AudioRecordManager
 import jp.espresso3389.methings.device.CameraXManager
 import jp.espresso3389.methings.device.DeviceLocationManager
 import jp.espresso3389.methings.device.DeviceNetworkManager
@@ -106,6 +107,7 @@ class LocalHttpServer(
     private val network = DeviceNetworkManager(context)
     private val sensors = SensorsStreamManager(context)
     private val llama = LlamaCppManager(context)
+    private val audioRecord = AudioRecordManager(context)
     private val appUpdateManager = AppUpdateManager(context)
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
@@ -1154,6 +1156,58 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(mediaAudio.stop()))
             }
+
+            // ── Audio Recording ──────────────────────────────────────────
+            (uri == "/audio/record/status" || uri == "/audio/record/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.mic", capability = "recording", detail = "Audio recording status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(audioRecord.status()))
+            }
+            (uri == "/audio/record/start" || uri == "/audio/record/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "recording", detail = "Start audio recording")
+                if (!ok.first) return ok.second!!
+                val path = payload.optString("path", "").trim().ifBlank { null }
+                val maxDur = if (payload.has("max_duration_s")) payload.optInt("max_duration_s") else null
+                val sr = if (payload.has("sample_rate")) payload.optInt("sample_rate") else null
+                val ch = if (payload.has("channels")) payload.optInt("channels") else null
+                val br = if (payload.has("bitrate")) payload.optInt("bitrate") else null
+                return jsonResponse(JSONObject(audioRecord.startRecording(path, maxDur, sr, ch, br)))
+            }
+            (uri == "/audio/record/stop" || uri == "/audio/record/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "recording", detail = "Stop audio recording")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(audioRecord.stopRecording()))
+            }
+            (uri == "/audio/record/config" || uri == "/audio/record/config/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.mic", capability = "recording", detail = "Get audio recording config")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(audioRecord.getConfig()))
+            }
+            (uri == "/audio/record/config" || uri == "/audio/record/config/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "recording", detail = "Set audio recording config")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(audioRecord.setConfig(payload)))
+            }
+
+            // ── Audio PCM Streaming ──────────────────────────────────────
+            (uri == "/audio/stream/start" || uri == "/audio/stream/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "recording", detail = "Start live PCM audio stream")
+                if (!ok.first) return ok.second!!
+                val sr = if (payload.has("sample_rate")) payload.optInt("sample_rate") else null
+                val ch = if (payload.has("channels")) payload.optInt("channels") else null
+                return jsonResponse(JSONObject(audioRecord.startStream(sr, ch)))
+            }
+            (uri == "/audio/stream/stop" || uri == "/audio/stream/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "recording", detail = "Stop live PCM audio stream")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(audioRecord.stopStream()))
+            }
+
             (uri == "/llama/status" || uri == "/llama/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.llama", capability = "llama", detail = "Llama.cpp runtime status")
                 if (!ok.first) return ok.second!!
@@ -3432,6 +3486,22 @@ class LocalHttpServer(
                 override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
                 override fun onException(exception: java.io.IOException?) {
                     stt.removeWsClient(this)
+                }
+            }
+        }
+
+        if (uri == "/ws/audio/pcm") {
+            return object : NanoWSD.WebSocket(handshake) {
+                override fun onOpen() {
+                    audioRecord.addWsClient(this)
+                }
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    audioRecord.removeWsClient(this)
+                }
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {}
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+                override fun onException(exception: java.io.IOException?) {
+                    audioRecord.removeWsClient(this)
                 }
             }
         }

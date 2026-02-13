@@ -25,6 +25,7 @@ class WebAppBridge(private val activity: MainActivity) {
     private val brainPrefs = activity.getSharedPreferences("brain_config", Context.MODE_PRIVATE)
     private val notifPrefs = activity.getSharedPreferences("task_completion_prefs", Context.MODE_PRIVATE)
     private val browserPrefs = activity.getSharedPreferences("browser_prefs", Context.MODE_PRIVATE)
+    private val audioRecordPrefs = activity.getSharedPreferences("audio_record_config", Context.MODE_PRIVATE)
 
     @Volatile
     private var settingsUnlockedUntilMs: Long = 0L
@@ -342,5 +343,47 @@ class WebAppBridge(private val activity: MainActivity) {
     @JavascriptInterface
     fun setOpenLinksExternal(enabled: Boolean) {
         browserPrefs.edit().putBoolean("open_links_external", enabled).apply()
+    }
+
+    // ── Audio Recording Config ───────────────────────────────────────────────
+
+    @JavascriptInterface
+    fun getAudioRecordSampleRate(): Int {
+        return audioRecordPrefs.getInt("sample_rate", 44100)
+    }
+
+    @JavascriptInterface
+    fun setAudioRecordSampleRate(v: Int) {
+        audioRecordPrefs.edit().putInt("sample_rate", v.coerceIn(8000, 48000)).apply()
+    }
+
+    @JavascriptInterface
+    fun getAudioRecordChannels(): Int {
+        return audioRecordPrefs.getInt("channels", 1)
+    }
+
+    @JavascriptInterface
+    fun setAudioRecordChannels(v: Int) {
+        audioRecordPrefs.edit().putInt("channels", v.coerceIn(1, 2)).apply()
+    }
+
+    @JavascriptInterface
+    fun getAudioRecordBitrate(): Int {
+        return audioRecordPrefs.getInt("bitrate", 128000)
+    }
+
+    @JavascriptInterface
+    fun setAudioRecordBitrate(v: Int) {
+        audioRecordPrefs.edit().putInt("bitrate", v.coerceIn(32000, 320000)).apply()
+    }
+
+    @JavascriptInterface
+    fun getAudioRecordMaxDurationS(): Int {
+        return audioRecordPrefs.getInt("max_duration_s", 300)
+    }
+
+    @JavascriptInterface
+    fun setAudioRecordMaxDurationS(v: Int) {
+        audioRecordPrefs.edit().putInt("max_duration_s", v.coerceIn(5, 3600)).apply()
     }
 }

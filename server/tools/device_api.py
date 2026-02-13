@@ -52,6 +52,13 @@ class DeviceApiTool:
         "media.audio.status": {"method": "GET", "path": "/media/audio/status", "permission": True},
         "media.audio.play": {"method": "POST", "path": "/media/audio/play", "permission": True},
         "media.audio.stop": {"method": "POST", "path": "/media/audio/stop", "permission": True},
+        "audio.record.status": {"method": "GET", "path": "/audio/record/status", "permission": True},
+        "audio.record.start": {"method": "POST", "path": "/audio/record/start", "permission": True},
+        "audio.record.stop": {"method": "POST", "path": "/audio/record/stop", "permission": True},
+        "audio.record.config.get": {"method": "GET", "path": "/audio/record/config", "permission": True},
+        "audio.record.config.set": {"method": "POST", "path": "/audio/record/config", "permission": True},
+        "audio.stream.start": {"method": "POST", "path": "/audio/stream/start", "permission": True},
+        "audio.stream.stop": {"method": "POST", "path": "/audio/stream/stop", "permission": True},
         "llama.status": {"method": "GET", "path": "/llama/status", "permission": True},
         "llama.models": {"method": "GET", "path": "/llama/models", "permission": True},
         "llama.run": {"method": "POST", "path": "/llama/run", "permission": True},
@@ -140,6 +147,9 @@ class DeviceApiTool:
             "media.audio.play": 120.0,
             "media.audio.status": 20.0,
             "media.audio.stop": 20.0,
+            "audio.record.start": 25.0,
+            "audio.record.stop": 25.0,
+            "audio.stream.start": 25.0,
         }
 
     def set_identity(self, identity: str) -> None:
@@ -568,6 +578,8 @@ class DeviceApiTool:
             return "device.ble", "ble", "session"
         if a.startswith("tts."):
             return "device.tts", "tts", "session"
+        if a.startswith("audio.record.") or a.startswith("audio.stream."):
+            return "device.mic", "recording", "session"
         if a.startswith("media.audio."):
             return "device.media", "media", "session"
         if a.startswith("llama."):
