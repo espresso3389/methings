@@ -77,6 +77,11 @@ import java.util.zip.ZipOutputStream
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import jp.espresso3389.methings.device.UsbPermissionWaiter
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import androidx.core.content.FileProvider
+import org.json.JSONArray
 
 class LocalHttpServer(
     private val context: Context,
@@ -206,6 +211,9 @@ class LocalHttpServer(
             }
             uri == "/me/sync/status" && session.method == Method.GET -> {
                 handleMeSyncStatus()
+            }
+            uri == "/me/sync/local_state" && session.method == Method.GET -> {
+                handleMeSyncLocalState()
             }
             uri == "/me/sync/prepare_export" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -1886,6 +1894,21 @@ class LocalHttpServer(
             }
             uri == "/user/file/info" && session.method == Method.GET -> {
                 handleUserFileInfo(session)
+            }
+            uri == "/intent/send" && session.method == Method.POST -> {
+                val payload = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val action = payload.optString("action", "").trim()
+                if (action.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "action_required")
+                val ok = ensureDevicePermission(session, payload, tool = "device.intent", capability = "intent", detail = action)
+                if (!ok.first) return ok.second!!
+                handleIntentSend(payload)
+            }
+            uri == "/intent/share_app" && session.method == Method.POST -> {
+                val payload = runCatching { JSONObject(postBody ?: "{}") }.getOrNull() ?: JSONObject()
+                val ok = ensureDevicePermission(session, payload, tool = "device.intent", capability = "intent", detail = "Share this app (APK)")
+                if (!ok.first) return ok.second!!
+                handleIntentShareApp()
             }
             uri == "/sys/list" && session.method == Method.GET -> {
                 handleSysList(session)
@@ -6523,6 +6546,88 @@ class LocalHttpServer(
         return response
     }
 
+    // ── Intent launch helpers ────────────────────────────────────────
+
+    private fun handleIntentSend(payload: JSONObject): Response {
+        val action = payload.optString("action", "").trim()
+        val type = payload.optString("type", "").trim().ifBlank { null }
+        val dataStr = payload.optString("data", "").trim().ifBlank { null }
+        val streamRel = payload.optString("stream", "").trim().ifBlank { null }
+        val extras: JSONObject? = payload.optJSONObject("extras")
+        val categories: JSONArray? = payload.optJSONArray("categories")
+        val pkg = payload.optString("package", "").trim().ifBlank { null }
+        val useChooser = payload.optBoolean("chooser", true)
+        val chooserTitle = payload.optString("chooser_title", "").trim().ifBlank { null }
+
+        val intent = Intent(action).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+            if (type != null && dataStr != null) {
+                setDataAndType(Uri.parse(dataStr), type)
+            } else if (dataStr != null) {
+                data = Uri.parse(dataStr)
+            } else if (type != null) {
+                setType(type)
+            }
+
+            if (streamRel != null) {
+                val file = userPath(streamRel)
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "stream_path_outside_user_dir")
+                if (!file.exists() || !file.isFile) {
+                    return jsonError(Response.Status.BAD_REQUEST, "stream_file_not_found")
+                }
+                val authority = context.packageName + ".fileprovider"
+                val contentUri = FileProvider.getUriForFile(context, authority, file)
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+
+            extras?.keys()?.forEach { key ->
+                putExtra(key, extras.optString(key, ""))
+            }
+
+            categories?.let { cats ->
+                for (i in 0 until cats.length()) {
+                    addCategory(cats.optString(i))
+                }
+            }
+
+            if (pkg != null) setPackage(pkg)
+        }
+
+        val launch = if (useChooser) {
+            Intent.createChooser(intent, chooserTitle ?: "Share").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        } else {
+            intent
+        }
+
+        Handler(Looper.getMainLooper()).post { context.startActivity(launch) }
+        return jsonResponse(JSONObject().put("status", "ok").put("action", action))
+    }
+
+    private fun handleIntentShareApp(): Response {
+        val src = File(context.applicationInfo.sourceDir)
+        val shareDir = File(context.cacheDir, "share").also { it.mkdirs() }
+        val dest = File(shareDir, "methings.apk")
+        src.inputStream().use { inp -> dest.outputStream().use { out -> inp.copyTo(out) } }
+
+        val authority = context.packageName + ".fileprovider"
+        val contentUri = FileProvider.getUriForFile(context, authority, dest)
+
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/vnd.android.package-archive"
+            putExtra(Intent.EXTRA_STREAM, contentUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val chooser = Intent.createChooser(intent, "Share methings").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        Handler(Looper.getMainLooper()).post { context.startActivity(chooser) }
+        return jsonResponse(JSONObject().put("status", "ok"))
+    }
+
     private fun notFound(): Response {
         return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
     }
@@ -6727,6 +6832,26 @@ class LocalHttpServer(
         return jsonResponse(JSONObject().put("status", "ok").put("items", arr))
     }
 
+    private fun handleMeSyncLocalState(): Response {
+        val userRoot = File(context.filesDir, "user")
+        val userFileCount = if (userRoot.exists() && userRoot.isDirectory) {
+            runCatching { userRoot.walkTopDown().count { it.isFile } }.getOrElse { 0 }
+        } else 0
+        val protectedDb = File(File(context.filesDir, "protected"), "app.db")
+        val credentials = runCatching { credentialStore.list().size }.getOrElse { 0 }
+        val sshKeys = runCatching { sshKeyStore.listAll().size }.getOrElse { 0 }
+        val hasAny = userFileCount > 0 || protectedDb.exists() || credentials > 0 || sshKeys > 0
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("has_existing_data", hasAny)
+                .put("user_file_count", userFileCount)
+                .put("has_protected_db", protectedDb.exists())
+                .put("credential_count", credentials)
+                .put("ssh_key_count", sshKeys)
+        )
+    }
+
     private fun handleMeSyncPrepareExport(payload: JSONObject): Response {
         return try {
             cleanupExpiredMeSyncTransfers()
@@ -6781,6 +6906,7 @@ class LocalHttpServer(
             val rawPayload = payload.optString("payload", "").trim()
             val rawUrl = payload.optString("url", "").trim()
                 .ifBlank { payload.optString("download_url", "").trim() }
+            val wipeExisting = payload.optBoolean("wipe_existing", true)
             val url = parseMeSyncPayloadToUrl(rawPayload)
                 .ifBlank { parseMeSyncPayloadToUrl(rawUrl) }
                 .ifBlank { rawUrl }
@@ -6791,7 +6917,7 @@ class LocalHttpServer(
             tmpRoot.mkdirs()
             val inFile = File(tmpRoot, "import_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}.zip")
             downloadMeSyncPackage(url, inFile, maxBytes = 512L * 1024L * 1024L)
-            val result = importMeSyncPackage(inFile)
+            val result = importMeSyncPackage(inFile, wipeExisting = wipeExisting)
             jsonResponse(result)
         } catch (ex: Exception) {
             Log.e(TAG, "me.sync import failed", ex)
@@ -6995,12 +7121,16 @@ class LocalHttpServer(
         return root
     }
 
-    private fun importMeSyncPackage(pkgFile: File): JSONObject {
+    private fun importMeSyncPackage(pkgFile: File, wipeExisting: Boolean): JSONObject {
         if (!pkgFile.exists() || !pkgFile.isFile) throw IllegalStateException("missing package")
         val tmpDir = File(context.cacheDir, "me_sync_import_" + System.currentTimeMillis() + "_" + Random.nextInt(1000, 9999))
         tmpDir.mkdirs()
         try {
             unzipInto(pkgFile, tmpDir)
+
+            if (wipeExisting) {
+                wipeMeSyncLocalState()
+            }
 
             val roomStateFile = File(tmpDir, "room/state.json")
             if (roomStateFile.exists()) {
@@ -7034,6 +7164,7 @@ class LocalHttpServer(
             return JSONObject()
                 .put("status", "ok")
                 .put("imported", true)
+                .put("wipe_existing", wipeExisting)
                 .put("restarted_python", true)
         } finally {
             runCatching { pkgFile.delete() }
@@ -7069,6 +7200,29 @@ class LocalHttpServer(
             permissionPrefs.setDangerouslySkipPermissions(
                 prefs.optBoolean("dangerously_skip_permissions", permissionPrefs.dangerouslySkipPermissions())
             )
+        }
+    }
+
+    private fun wipeMeSyncLocalState() {
+        runCatching { runtimeManager.requestShutdown() }
+        runCatching { Thread.sleep(250) }
+
+        val userRoot = File(context.filesDir, "user")
+        runCatching { deleteRecursively(userRoot) }
+        runCatching { userRoot.mkdirs() }
+
+        val protectedDb = File(File(context.filesDir, "protected"), "app.db")
+        runCatching { if (protectedDb.exists()) protectedDb.delete() }
+
+        runCatching {
+            credentialStore.list().forEach { row ->
+                credentialStore.delete(row.name)
+            }
+        }
+        runCatching {
+            sshKeyStore.listAll().forEach { row ->
+                sshKeyStore.delete(row.fingerprint)
+            }
         }
     }
 

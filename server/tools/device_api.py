@@ -133,11 +133,14 @@ class DeviceApiTool:
         "notifications.prefs.get": {"method": "GET", "path": "/notifications/prefs", "permission": False},
         "notifications.prefs.set": {"method": "POST", "path": "/notifications/prefs", "permission": False},
         "me.sync.status": {"method": "GET", "path": "/me/sync/status", "permission": False},
+        "me.sync.local_state": {"method": "GET", "path": "/me/sync/local_state", "permission": False},
         "me.sync.prepare_export": {"method": "POST", "path": "/me/sync/prepare_export", "permission": True},
         "me.sync.import": {"method": "POST", "path": "/me/sync/import", "permission": True},
         "ui.settings.sections": {"method": "GET", "path": "/ui/settings/sections", "permission": False},
         "ui.settings.navigate": {"method": "POST", "path": "/ui/settings/navigate", "permission": False},
         "ui.me.sync.export.show": {"method": "POST", "path": "/ui/me/sync/export/show", "permission": False},
+        "intent.send": {"method": "POST", "path": "/intent/send", "permission": True},
+        "intent.share_app": {"method": "POST", "path": "/intent/share_app", "permission": True},
     }
 
     def __init__(self, base_url: str = "http://127.0.0.1:8765"):
@@ -633,6 +636,8 @@ class DeviceApiTool:
             return "device.usb", "usb", "session"
         if a.startswith("vision."):
             return "device.vision", "vision", "session"
+        if a.startswith("intent."):
+            return "device.intent", "intent", "session"
         # Default to session scope: approve once per chat session, then no repeated prompts.
         return "device_api", "device_api", "session"
 

@@ -2,5 +2,7 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Share only app-private user files (captures/uploads/etc.) -->
     <files-path name="user" path="user/" />
+    <!-- Temporary files for sharing (e.g. APK share) -->
+    <cache-path name="share" path="share/" />
 </paths>
 

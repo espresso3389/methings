@@ -109,6 +109,27 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun shareApp() {
+        handler.post {
+            val src = File(activity.applicationInfo.sourceDir)
+            val shareDir = File(activity.cacheDir, "share").also { it.mkdirs() }
+            val dest = File(shareDir, "methings.apk")
+            src.inputStream().use { inp -> dest.outputStream().use { out -> inp.copyTo(out) } }
+
+            val authority = activity.packageName + ".fileprovider"
+            val uri = runCatching { FileProvider.getUriForFile(activity, authority, dest) }.getOrNull()
+                ?: return@post
+
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/vnd.android.package-archive"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            activity.startActivity(Intent.createChooser(intent, "Share methings"))
+        }
+    }
+
+    @JavascriptInterface
     fun getSettingsUnlockRemainingMs(): Long {
         val rem = settingsUnlockedUntilMs - System.currentTimeMillis()
         return if (rem > 0) rem else 0L
