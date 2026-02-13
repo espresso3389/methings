@@ -4373,7 +4373,7 @@
           const existing = localStorage.getItem(CHAT_SESSION_KEY);
           if (existing && typeof existing === "string" && existing.trim()) return existing.trim();
         } catch (_) {}
-        const created = genSessionId();
+        const created = "default";
         try { localStorage.setItem(CHAT_SESSION_KEY, created); } catch (_) {}
         return created;
       }
