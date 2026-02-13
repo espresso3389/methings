@@ -130,6 +130,10 @@ class DeviceApiTool:
         # Non-sensitive configuration helpers (do not return secrets).
         "brain.config.get": {"method": "GET", "path": "/brain/config", "permission": False},
         "cloud.prefs.get": {"method": "GET", "path": "/cloud/prefs", "permission": False},
+        "notifications.prefs.get": {"method": "GET", "path": "/notifications/prefs", "permission": False},
+        "notifications.prefs.set": {"method": "POST", "path": "/notifications/prefs", "permission": False},
+        "ui.settings.sections": {"method": "GET", "path": "/ui/settings/sections", "permission": False},
+        "ui.settings.navigate": {"method": "POST", "path": "/ui/settings/navigate", "permission": False},
     }
 
     def __init__(self, base_url: str = "http://127.0.0.1:8765"):
