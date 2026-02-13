@@ -1821,15 +1821,18 @@
         resolve: null,
       };
 
-      function appConfirm(title, message) {
+      function appConfirm(title, message, opts) {
+        var cancelLabel = (opts && opts.cancel) || "Cancel";
+        var okLabel = (opts && opts.ok) || "Confirm";
+        var okClass = (opts && opts.okClass) || "danger";
         return new Promise((resolve) => {
           if (_dlg.resolve) { _dlg.resolve(null); }
           _dlg.title.textContent = title;
           _dlg.message.textContent = message;
           _dlg.inputWrap.style.display = "none";
           _dlg.buttons.innerHTML =
-            "<button class='btn' id='_dlgCancel'>Cancel</button>" +
-            "<button class='btn danger' id='_dlgOk'>Confirm</button>";
+            "<button class='btn' id='_dlgCancel'>" + cancelLabel + "</button>" +
+            "<button class='btn " + okClass + "' id='_dlgOk'>" + okLabel + "</button>";
           _dlg.resolve = resolve;
           _dlg.modal.classList.add("show");
           $("_dlgCancel").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(false); });
@@ -5533,7 +5536,7 @@
             appUpdateDetail.textContent = "New version: " + latest + " (current: " + cur + ")";
             if (autoPrompt && !appUpdatePrompted) {
               appUpdatePrompted = true;
-              const ok = await appConfirm("Update available", latest + " is available. Download and install now?");
+              const ok = await appConfirm("Update available", latest + " is available. Download and install now?", { cancel: "Later", ok: "Install Now", okClass: "primary" });
               if (ok) await installLatestUpdate();
             }
           } else {
@@ -6037,7 +6040,7 @@
             return;
           }
         }
-        if (!await appConfirm("Install update", "Download and install " + String(appUpdateInfo.latest_tag || "latest") + "?")) return;
+        if (!await appConfirm("Install update", "Download and install " + String(appUpdateInfo.latest_tag || "latest") + "?", { cancel: "Later", ok: "Install Now", okClass: "primary" })) return;
         await installLatestUpdate();
       });
 
