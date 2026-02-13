@@ -416,8 +416,9 @@
       .viewer.marp-slidemode .marp-slide-wrap .marp-fallback { display: flex; align-items: center; justify-content: center; height: 100%; }
       /* Slide mode non-immersive: always show nav */
       .viewer.marp-slidemode .marp-nav { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 10px; flex-shrink: 0; border-top: 1px solid rgba(255,255,255,0.08); }
-      /* Slide mode + immersive: hide nav */
+      /* Slide mode + immersive: hide nav, but restore with controls */
       .viewer.marp-slidemode.immersive .marp-nav { display: none; }
+      .viewer.marp-slidemode.immersive.show-controls .marp-nav { display: flex; }
       /* Inline Marp preview */
       .attach-marp-preview { max-height: 200px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #000; border-radius: var(--radius-sm); }
       .attach-marp-preview > .marpit { width: 100%; }
