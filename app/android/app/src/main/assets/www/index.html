@@ -108,6 +108,7 @@
       .send-btn svg { width: 20px; height: 20px; }
       .icon-btn:active { transform: scale(0.95); }
       .icon-btn:hover { background: var(--bg-overlay); border-color: var(--ink-muted); color: var(--ink); }
+      .icon-btn.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-hover); }
       .icon-btn.secondary { background: transparent; border-color: transparent; }
       .icon-btn.secondary:hover { background: var(--surface); }
       .icon-btn.unlock {
@@ -120,6 +121,64 @@
         filter: brightness(1.06);
       }
       .icon-btn.unlock:active { filter: brightness(0.96); }
+      .icon-btn.small { width: 28px; height: 28px; font-size: 14px; border-radius: 6px; }
+      .chat-search-bar {
+        display: none;
+        align-items: center;
+        padding: 6px 12px;
+        gap: 6px;
+        background: var(--bg-raised);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+      }
+      .chat-search-bar.show { display: flex; }
+      .chat-search-field {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        height: 36px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        overflow: hidden;
+      }
+      .chat-search-field:focus-within { border-color: var(--border-focus); }
+      .chat-search-bar input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        color: var(--ink);
+        font-size: 14px;
+        padding: 0 10px;
+        height: 100%;
+        outline: none;
+        min-width: 0;
+      }
+      .chat-search-count {
+        font-size: 11px;
+        color: var(--ink-muted);
+        white-space: nowrap;
+        flex-shrink: 0;
+        line-height: 36px;
+      }
+      .chat-search-clear {
+        display: grid;
+        place-items: center;
+        width: 28px;
+        height: 28px;
+        flex-shrink: 0;
+        background: transparent;
+        border: none;
+        color: var(--ink-muted);
+        font-size: 13px;
+        cursor: pointer;
+        border-radius: 4px;
+        margin: 0 3px;
+      }
+      .chat-search-clear:hover:not(:disabled) { color: var(--ink); background: var(--bg-overlay); }
+      .chat-search-clear:disabled { opacity: 0.3; cursor: default; }
+      mark.search-hit { background: #facc15; color: #000; border-radius: 2px; }
+      mark.search-hit.current { background: var(--amber); color: #000; }
       .sr-only {
         position: absolute;
         width: 1px;
@@ -1288,8 +1347,18 @@
         <div class="title">me.things</div>
         <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
           <button class="session-chip" id="sessionChip" title="Session menu" aria-label="Session menu">default</button>
+          <button class="icon-btn" id="chatSearchBtn" title="Search messages" aria-label="Search messages"></button>
           <button class="icon-btn" id="openSettingsBtn" title="Settings" aria-label="Settings"></button>
         </div>
+      </div>
+      <div class="chat-search-bar" id="chatSearchBar">
+        <div class="chat-search-field">
+          <input type="text" id="chatSearchInput" placeholder="Search messages..." />
+          <span class="chat-search-count" id="chatSearchCount"></span>
+          <button class="chat-search-clear" id="chatSearchClear" title="Clear" disabled>&#10005;</button>
+        </div>
+        <button class="icon-btn small" id="chatSearchPrev" title="Previous" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+        <button class="icon-btn small" id="chatSearchNext" title="Next" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
       </div>
       <div class="chat-messages" id="chatMessages">
         <div class="chat-welcome" id="chatWelcome">
@@ -1699,9 +1768,11 @@
         collapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>',
         slideSingle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="14" y2="12"/></svg>',
         slideScroll: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="1" width="18" height="9" rx="1.5"/><line x1="7" y1="4" x2="15" y2="4"/><line x1="7" y1="7" x2="12" y2="7"/><rect x="3" y="14" width="18" height="9" rx="1.5"/><line x1="7" y1="17" x2="15" y2="17"/><line x1="7" y1="20" x2="12" y2="20"/></svg>',
+        search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
       };
 
       // Set static button icons (record button is handled by setRecordUi()).
+      try { $("chatSearchBtn").innerHTML = ICON.search; } catch (_) {}
       try { $("openSettingsBtn").innerHTML = ICON.settings; } catch (_) {}
       try { $("chatUploadBtn").innerHTML = ICON.attach; } catch (_) {}
       try { $("chatSend").innerHTML = ICON.send; } catch (_) {}
@@ -3417,6 +3488,170 @@
         if (!_currentMarpDeck || !_currentMarpDeck._show) return;
         _currentMarpDeck._show(page, true);
       };
+
+      // ==============================
+      // Chat Search
+      // ==============================
+      const _chatSearchBar = $("chatSearchBar");
+      const _chatSearchInput = $("chatSearchInput");
+      const _chatSearchCount = $("chatSearchCount");
+      let _searchHits = [];
+      let _searchIndex = -1;
+      let _searchDebounce = 0;
+
+      const _chatSearchBtn = $("chatSearchBtn");
+      const _chatSearchClear = $("chatSearchClear");
+      const _chatSearchPrev = $("chatSearchPrev");
+      const _chatSearchNext = $("chatSearchNext");
+
+      function updateSearchButtons() {
+        const hasText = _chatSearchInput.value.length > 0;
+        const hasHits = _searchHits.length > 0;
+        _chatSearchClear.disabled = !hasText;
+        _chatSearchPrev.disabled = !hasHits;
+        _chatSearchNext.disabled = !hasHits;
+      }
+
+      function openChatSearch() {
+        try {
+          _chatSearchBar.classList.add("show");
+          _chatSearchBtn.classList.add("active");
+          _chatSearchInput.focus();
+        } catch (_) {}
+      }
+
+      function closeChatSearch() {
+        try {
+          _chatSearchBar.classList.remove("show");
+          _chatSearchBtn.classList.remove("active");
+          _chatSearchInput.value = "";
+          _chatSearchCount.textContent = "";
+          clearSearchHighlights();
+          updateSearchButtons();
+        } catch (_) {}
+      }
+
+      function clearSearchHighlights() {
+        _searchHits = [];
+        _searchIndex = -1;
+        const marks = document.querySelectorAll("#chatMessages mark.search-hit");
+        for (let i = marks.length - 1; i >= 0; i--) {
+          const m = marks[i];
+          const parent = m.parentNode;
+          parent.replaceChild(document.createTextNode(m.textContent), m);
+          parent.normalize();
+        }
+      }
+
+      function performChatSearch(query) {
+        clearSearchHighlights();
+        if (!query) { _chatSearchCount.textContent = ""; updateSearchButtons(); return; }
+        const norm = query.normalize("NFKC").toLowerCase();
+        const container = $("chatMessages");
+        const walker = document.createTreeWalker(container, NodeFilter.SHOW_ALL, {
+          acceptNode(n) {
+            if (n.nodeType === Node.ELEMENT_NODE) {
+              if (getComputedStyle(n).display === "none") return NodeFilter.FILTER_REJECT;
+              return NodeFilter.FILTER_SKIP;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        const matches = [];
+        let node;
+        while ((node = walker.nextNode())) {
+          const text = node.textContent.normalize("NFKC").toLowerCase();
+          let idx = text.indexOf(norm);
+          if (idx === -1) continue;
+          // Collect all match positions in this text node
+          const positions = [];
+          while (idx !== -1) {
+            positions.push(idx);
+            idx = text.indexOf(norm, idx + norm.length);
+          }
+          matches.push({ node, positions });
+        }
+        // Process matches in reverse order to preserve node positions
+        for (let mi = matches.length - 1; mi >= 0; mi--) {
+          const { node: textNode, positions } = matches[mi];
+          const original = textNode.textContent;
+          const parent = textNode.parentNode;
+          const frag = document.createDocumentFragment();
+          let last = 0;
+          for (const pos of positions) {
+            if (pos > last) frag.appendChild(document.createTextNode(original.slice(last, pos)));
+            const mark = document.createElement("mark");
+            mark.className = "search-hit";
+            mark.textContent = original.slice(pos, pos + norm.length);
+            frag.appendChild(mark);
+            last = pos + norm.length;
+          }
+          if (last < original.length) frag.appendChild(document.createTextNode(original.slice(last)));
+          parent.replaceChild(frag, textNode);
+        }
+        _searchHits = Array.from(document.querySelectorAll("#chatMessages mark.search-hit"));
+        if (_searchHits.length > 0) {
+          _searchIndex = 0;
+          _searchHits[0].classList.add("current");
+          _searchHits[0].scrollIntoView({ block: "center", behavior: "smooth" });
+          _chatSearchCount.textContent = "1 of " + _searchHits.length;
+        } else {
+          _searchIndex = -1;
+          _chatSearchCount.textContent = "0 of 0";
+        }
+        updateSearchButtons();
+      }
+
+      function jumpToSearchHit(index) {
+        if (_searchHits.length === 0) return;
+        if (_searchIndex >= 0 && _searchIndex < _searchHits.length) {
+          _searchHits[_searchIndex].classList.remove("current");
+        }
+        _searchIndex = ((index % _searchHits.length) + _searchHits.length) % _searchHits.length;
+        _searchHits[_searchIndex].classList.add("current");
+        _searchHits[_searchIndex].scrollIntoView({ block: "center", behavior: "smooth" });
+        _chatSearchCount.textContent = (_searchIndex + 1) + " of " + _searchHits.length;
+      }
+
+      function searchNext() { if (_searchHits.length) jumpToSearchHit(_searchIndex + 1); }
+      function searchPrev() { if (_searchHits.length) jumpToSearchHit(_searchIndex - 1); }
+
+      function toggleChatSearch() {
+        if (_chatSearchBar.classList.contains("show")) closeChatSearch();
+        else openChatSearch();
+      }
+      function clearChatSearchInput() {
+        _chatSearchInput.value = "";
+        _chatSearchCount.textContent = "";
+        clearSearchHighlights();
+        updateSearchButtons();
+        _chatSearchInput.focus();
+      }
+      try { $("chatSearchBtn").addEventListener("click", toggleChatSearch); } catch (_) {}
+      try { $("chatSearchClear").addEventListener("click", clearChatSearchInput); } catch (_) {}
+      try { $("chatSearchPrev").addEventListener("click", searchPrev); } catch (_) {}
+      try { $("chatSearchNext").addEventListener("click", searchNext); } catch (_) {}
+      try {
+        _chatSearchInput.addEventListener("input", () => {
+          clearTimeout(_searchDebounce);
+          _searchDebounce = setTimeout(() => performChatSearch(_chatSearchInput.value), 200);
+        });
+      } catch (_) {}
+      try {
+        _chatSearchInput.addEventListener("keydown", (e) => {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); searchNext(); }
+          else if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); searchPrev(); }
+          else if (e.key === "Escape") { e.preventDefault(); closeChatSearch(); }
+        });
+      } catch (_) {}
+      try {
+        document.addEventListener("keydown", (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+            e.preventDefault();
+            openChatSearch();
+          }
+        });
+      } catch (_) {}
 
       // ==============================
       // Chat
