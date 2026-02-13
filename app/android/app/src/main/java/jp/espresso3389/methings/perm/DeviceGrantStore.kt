@@ -40,6 +40,10 @@ class DeviceGrantStore(context: Context) {
         dao.deleteByKey(key(identity, capability))
     }
 
+    fun clearAll() {
+        dao.deleteAll()
+    }
+
     companion object {
         fun key(identity: String, capability: String): String {
             return "${identity.trim()}::${capability.trim()}"
@@ -74,6 +78,19 @@ class DeviceGrantStoreFacade(context: Context) {
         }
     }
 
+    fun clearAll() {
+        try {
+            if (dbAvailable.get()) {
+                dbStore.clearAll()
+            } else {
+                fallback.clearAll()
+            }
+        } catch (_: Throwable) {
+            dbAvailable.set(false)
+            fallback.clearAll()
+        }
+    }
+
     private class InMemoryDeviceGrantStore {
         private data class Row(val status: String, val expiresAt: Long)
         private val items = ConcurrentHashMap<String, Row>()
@@ -89,6 +106,9 @@ class DeviceGrantStoreFacade(context: Context) {
             val key = DeviceGrantStore.key(identity, capability)
             items[key] = Row("granted", expiresAt)
         }
+
+        fun clearAll() {
+            items.clear()
+        }
     }
 }
-

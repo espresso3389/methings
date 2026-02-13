@@ -20,9 +20,14 @@ class InstallIdentity(private val context: Context) {
         return created
     }
 
+    fun reset(): String {
+        val created = "install_" + UUID.randomUUID().toString()
+        prefs.edit().putString(KEY_IDENTITY, created).apply()
+        return created
+    }
+
     companion object {
         private const val PREFS = "methings_install"
         private const val KEY_IDENTITY = "identity"
     }
 }
-

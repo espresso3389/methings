@@ -226,6 +226,18 @@ class LocalHttpServer(
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 handleMeSyncImport(payload)
             }
+            uri == "/me/sync/wipe_all" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_sync",
+                    capability = "me_sync.wipe_all",
+                    detail = "Wipe all local app data and restart app"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeSyncWipeAll(payload)
+            }
             uri == "/agent/run" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val name = payload.optString("name", "task")
@@ -6925,6 +6937,30 @@ class LocalHttpServer(
         }
     }
 
+    private fun handleMeSyncWipeAll(payload: JSONObject): Response {
+        return try {
+            val restartApp = payload.optBoolean("restart_app", true)
+            wipeAllLocalState()
+            val restarted = if (restartApp) restartAppIfPossible() else false
+            if (!restarted) {
+                runCatching { runtimeManager.restartSoft() }
+                runCatching {
+                    context.sendBroadcast(Intent(ACTION_UI_RELOAD).apply { setPackage(context.packageName) })
+                }
+            }
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("wiped", true)
+                    .put("restart_requested", restartApp)
+                    .put("restarted_app", restarted)
+            )
+        } catch (ex: Exception) {
+            Log.e(TAG, "me.sync wipe_all failed", ex)
+            jsonError(Response.Status.INTERNAL_ERROR, "me_sync_wipe_all_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
     private fun parseMeSyncPayloadToUrl(raw: String): String {
         val txt = raw.trim()
         if (txt.isBlank()) return ""
@@ -7223,6 +7259,41 @@ class LocalHttpServer(
             sshKeyStore.listAll().forEach { row ->
                 sshKeyStore.delete(row.fingerprint)
             }
+        }
+    }
+
+    private fun wipeAllLocalState() {
+        runCatching { runtimeManager.requestShutdown() }
+        runCatching { Thread.sleep(250) }
+
+        runCatching { wipeMeSyncLocalState() }
+        runCatching { permissionStore.clearAll() }
+        runCatching { deviceGrantStore.clearAll() }
+        runCatching {
+            permissionPrefs.setRememberApprovals(true)
+            permissionPrefs.setDangerouslySkipPermissions(false)
+        }
+        runCatching { installIdentity.reset() }
+
+        runCatching {
+            val tmpRoot = File(context.cacheDir, "me_sync")
+            if (tmpRoot.exists()) deleteRecursively(tmpRoot)
+        }
+        runCatching {
+            val stale = meSyncTransfers.values.toList()
+            meSyncTransfers.clear()
+            stale.forEach { tr -> runCatching { tr.file.delete() } }
+        }
+    }
+
+    private fun restartAppIfPossible(): Boolean {
+        return try {
+            val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return false
+            launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            Handler(Looper.getMainLooper()).post { context.startActivity(launch) }
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 

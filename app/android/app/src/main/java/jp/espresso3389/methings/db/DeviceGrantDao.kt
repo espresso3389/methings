@@ -15,5 +15,7 @@ interface DeviceGrantDao {
 
     @Query("DELETE FROM device_grants WHERE key = :key")
     fun deleteByKey(key: String)
-}
 
+    @Query("DELETE FROM device_grants")
+    fun deleteAll()
+}

@@ -305,6 +305,7 @@ Details: [vision.md](vision.md)
 | `me.sync.local_state` | GET | `/me/sync/local_state` **[no perm]** |
 | `me.sync.prepare_export` | POST | `/me/sync/prepare_export` |
 | `me.sync.import` | POST | `/me/sync/import` |
+| `me.sync.wipe_all` | POST | `/me/sync/wipe_all` |
 
 `brain.config.get` returns `{vendor, base_url, model, has_api_key}` (never returns the key itself).
 
@@ -406,6 +407,7 @@ One-time export/import endpoints for device-to-device transfer of chat memory/st
 | `POST` | `/me/sync/prepare_export` | `{"include_user":true,"include_protected_db":true,"include_identity":false,"mode":"export"}` | Build one-time export package and return download links + payload |
 | `GET` | `/me/sync/download` | `?id=<transfer_id>&token=<token>` | Download prepared ZIP package |
 | `POST` | `/me/sync/import` | `{"url":"http://.../me/sync/download?...","wipe_existing":true}` or `{"payload":"...","wipe_existing":true}` | Download package from source, wipe local state, then import |
+| `POST` | `/me/sync/wipe_all` | `{"restart_app":true}` | **Dangerous:** wipe all local app data and restart app (best effort) |
 
 Notes:
 - `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and LAN/local download URLs.
@@ -416,6 +418,7 @@ Notes:
 - `import` defaults to `wipe_existing=true` and wipes receiver local state before applying imported data.
 - Imported package then restores `files/user/`, `files/protected/app.db` (if present), re-applies credential/key state, and restarts Python worker.
 - App GUI "Export" uses export mode only; migration mode is API-only.
+- `wipe_all` is intentionally dangerous and API-only (no GUI button).
 
 ### Brain Journal (Per-Session Notes)
 

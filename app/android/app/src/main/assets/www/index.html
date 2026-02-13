@@ -1863,7 +1863,6 @@
           <p class="muted">Commit: <a id="appCommitLink" href="#" target="_blank" rel="noopener">checking...</a></p>
           <p class="muted">Repo: <a id="appRepoLink" href="https://github.com/espresso3389/methings" target="_blank" rel="noopener">https://github.com/espresso3389/methings</a></p>
           <div class="btn-group">
-            <button class="btn" id="openProjectRepo">Open Repo</button>
             <button class="btn" id="openLicensesPage">Licenses</button>
             <button class="btn" id="shareAppBtn">Share App</button>
           </div>
@@ -6073,7 +6072,6 @@
       const appVersionText = $("appVersionText");
       const appCommitLink = $("appCommitLink");
       const appRepoLink = $("appRepoLink");
-      const openProjectRepo = $("openProjectRepo");
       const openLicensesPage = $("openLicensesPage");
       const shareAppBtn = $("shareAppBtn");
       const sshStatus = $("sshStatus");
@@ -7090,15 +7088,6 @@
           showToast("URI copied", 1400);
         } catch (_) {
           showToast("Copy failed", 1600);
-        }
-      });
-
-      openProjectRepo.addEventListener("click", () => {
-        const href = String(appRepoLink.href || "https://github.com/espresso3389/methings");
-        try {
-          window.open(href, "_blank", "noopener");
-        } catch (_) {
-          location.href = href;
         }
       });
 
