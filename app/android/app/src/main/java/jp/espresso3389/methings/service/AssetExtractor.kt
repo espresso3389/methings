@@ -284,6 +284,9 @@ class AssetExtractor(private val context: Context) {
                 deleteRecursive(legacyLib)
             }
 
+            // Force-refresh AGENTS.md/TOOLS.md so old docs/ references become $sys/ paths.
+            resetUserDefaults()
+
             markerFile.writeText("1")
         } catch (ex: Exception) {
             Log.w(TAG, "Legacy cleanup incomplete", ex)
