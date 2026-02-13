@@ -1830,6 +1830,7 @@
           <div class="btn-group">
             <button class="btn" id="checkAppUpdate">Check Update</button>
             <button class="btn" id="installAppUpdate">Install Update</button>
+            <button class="btn" id="openInstallUnknownSources" style="display:none;">Allow Install Permission</button>
           </div>
         </section>
 
@@ -5986,6 +5987,7 @@
       const appUpdateDetail = $("appUpdateDetail");
       const checkAppUpdate = $("checkAppUpdate");
       const installAppUpdate = $("installAppUpdate");
+      const openInstallUnknownSources = $("openInstallUnknownSources");
       const appVersionText = $("appVersionText");
       const appCommitLink = $("appCommitLink");
       const appRepoLink = $("appRepoLink");
@@ -6035,6 +6037,82 @@
       let appUpdateInfo = null;
       let appUpdatePrompted = false;
 
+      function setInstallPermissionButtonVisible(show) {
+        try {
+          if (!openInstallUnknownSources) return;
+          openInstallUnknownSources.style.display = show ? "" : "none";
+        } catch (_) {}
+      }
+
+      async function getInstallPermissionState() {
+        try {
+          const res = await fetch(API + "/app/update/install_permission");
+          if (!res.ok) throw 0;
+          return await res.json();
+        } catch (_) {
+          return null;
+        }
+      }
+
+      async function openInstallPermissionSettings() {
+        try {
+          const res = await fetch(API + "/app/update/install_permission/open_settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({}),
+          });
+          return res.ok;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      async function waitForInstallPermissionReturn(timeoutMs) {
+        const deadline = Date.now() + Math.max(2000, Number(timeoutMs) || 45000);
+        let hiddenAt = 0;
+        while (Date.now() < deadline) {
+          await new Promise(r => setTimeout(r, 400));
+          try {
+            if (document.visibilityState !== "visible") {
+              if (!hiddenAt) hiddenAt = Date.now();
+              continue;
+            }
+          } catch (_) {}
+          const st = await getInstallPermissionState();
+          if (st && st.granted) return true;
+          if (hiddenAt) return false;
+        }
+        return false;
+      }
+
+      async function ensureInstallPermissionBeforeInstall() {
+        while (true) {
+          const st = await getInstallPermissionState();
+          if (st && st.granted) {
+            setInstallPermissionButtonVisible(false);
+            return true;
+          }
+          setInstallPermissionButtonVisible(true);
+          const ok = await appConfirm(
+            "Install permission required",
+            "To install updates, allow \"Install unknown apps\" for methings in Android settings.",
+            { cancel: "Cancel", ok: "Open Settings", okClass: "primary" }
+          );
+          if (!ok) return false;
+          const opened = await openInstallPermissionSettings();
+          if (!opened) {
+            showToast("Failed to open settings", 1800);
+            continue;
+          }
+          const granted = await waitForInstallPermissionReturn(120000);
+          if (granted) {
+            setInstallPermissionButtonVisible(false);
+            return true;
+          }
+          // Not granted after returning from settings; loop and re-show the same blocking dialog.
+        }
+      }
+
       async function refreshAppUpdate(autoPrompt) {
         setStatus(appUpdateStatus, "starting");
         appUpdateDetail.textContent = "Checking latest release...";
@@ -6044,11 +6122,14 @@
           const data = await res.json();
           appUpdateInfo = data || null;
           if (data && data.update_enabled === false) {
+            setInstallPermissionButtonVisible(false);
             setStatus(appUpdateStatus, "ok");
             appUpdateStatus.textContent = "disabled";
             appUpdateDetail.textContent = String(data.message || "Auto update is disabled for this build.");
             return;
           }
+          const canInstall = !!(data && data.can_request_installs);
+          setInstallPermissionButtonVisible(!canInstall);
           const cur = String(data.current_version || "").trim();
           const latest = String(data.latest_tag || "").trim();
           const hasUpdate = !!data.has_update;
@@ -6059,7 +6140,11 @@
             if (autoPrompt && !appUpdatePrompted) {
               appUpdatePrompted = true;
               const ok = await appConfirm("Update available", latest + " is available. Download and install now?", { cancel: "Later", ok: "Install Now", okClass: "primary" });
-              if (ok) await installLatestUpdate();
+              if (ok) {
+                const permitted = await ensureInstallPermissionBeforeInstall();
+                if (!permitted) return;
+                await installLatestUpdate();
+              }
             }
           } else {
             setStatus(appUpdateStatus, "ok");
@@ -6083,11 +6168,13 @@
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw 0;
           if (data.status === "install_permission_required") {
+            setInstallPermissionButtonVisible(true);
             setStatus(appUpdateStatus, "starting");
-            appUpdateDetail.textContent = "Allow installs from this app, then tap Install update again.";
+            appUpdateDetail.textContent = "Install permission required. Tap \"Allow Install Permission\".";
             showToast("Installer permission required", 2200);
             return;
           }
+          setInstallPermissionButtonVisible(false);
           setStatus(appUpdateStatus, "starting");
           appUpdateStatus.textContent = "installing";
           appUpdateDetail.textContent = "Installer opened for " + String(data.latest_tag || "latest");
@@ -6622,6 +6709,14 @@
         await refreshAppUpdate(false);
       });
 
+      openInstallUnknownSources.addEventListener("click", async () => {
+        const permitted = await ensureInstallPermissionBeforeInstall();
+        if (permitted) {
+          showToast("Install permission granted", 1600);
+          await refreshAppUpdate(false);
+        }
+      });
+
       installAppUpdate.addEventListener("click", async () => {
         if (appUpdateInfo && appUpdateInfo.update_enabled === false) {
           showToast("Auto update is disabled for this build", 1800);
@@ -6639,6 +6734,8 @@
           }
         }
         if (!await appConfirm("Install update", "Download and install " + String(appUpdateInfo.latest_tag || "latest") + "?", { cancel: "Later", ok: "Install Now", okClass: "primary" })) return;
+        const permitted = await ensureInstallPermissionBeforeInstall();
+        if (!permitted) return;
         await installLatestUpdate();
       });
 

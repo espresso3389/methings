@@ -47,6 +47,7 @@ class AppUpdateManager(private val context: Context) {
             .put("release_url", release.htmlUrl)
             .put("apk_name", release.apk?.name ?: "")
             .put("apk_size", release.apk?.size ?: 0L)
+            .put("can_request_installs", canInstallPackages())
     }
 
     fun downloadAndStartInstall(): JSONObject {
@@ -56,7 +57,6 @@ class AppUpdateManager(private val context: Context) {
 
         val canInstall = canRequestPackageInstalls()
         if (!canInstall) {
-            openUnknownSourcesSettings()
             return JSONObject()
                 .put("status", "install_permission_required")
                 .put("latest_tag", release.tagName)
@@ -71,6 +71,14 @@ class AppUpdateManager(private val context: Context) {
             .put("latest_tag", release.tagName)
             .put("apk_name", apk.name)
             .put("apk_path", apkFile.absolutePath)
+    }
+
+    fun canInstallPackages(): Boolean {
+        return canRequestPackageInstalls()
+    }
+
+    fun openInstallPermissionSettings() {
+        openUnknownSourcesSettings()
     }
 
     private fun fetchLatestRelease(): ReleaseInfo {

@@ -184,6 +184,12 @@ class LocalHttpServer(
             uri == "/app/update/install" && session.method == Method.POST -> {
                 handleAppUpdateInstall()
             }
+            uri == "/app/update/install_permission" && session.method == Method.GET -> {
+                handleAppUpdateInstallPermissionStatus()
+            }
+            uri == "/app/update/install_permission/open_settings" && session.method == Method.POST -> {
+                handleAppUpdateInstallPermissionOpenSettings()
+            }
             uri == "/app/info" -> {
                 handleAppInfo()
             }
@@ -4280,6 +4286,47 @@ class LocalHttpServer(
             jsonError(
                 Response.Status.INTERNAL_ERROR,
                 "update_install_failed",
+                JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+            )
+        }
+    }
+
+    private fun handleAppUpdateInstallPermissionStatus(): Response {
+        val granted = appUpdateManager.canInstallPackages()
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("granted", granted)
+                .put("update_enabled", !BuildConfig.DEBUG)
+                .put(
+                    "message",
+                    if (BuildConfig.DEBUG) {
+                        "Auto update/install is disabled for debug builds."
+                    } else if (granted) {
+                        "Install permission granted."
+                    } else {
+                        "Allow installs from this app to enable in-app APK updates."
+                    }
+                )
+        )
+    }
+
+    private fun handleAppUpdateInstallPermissionOpenSettings(): Response {
+        if (BuildConfig.DEBUG) {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "debug_build_update_disabled",
+                JSONObject().put("message", "Auto update/install is disabled for debug builds.")
+            )
+        }
+        return try {
+            appUpdateManager.openInstallPermissionSettings()
+            jsonResponse(JSONObject().put("status", "ok"))
+        } catch (ex: Throwable) {
+            Log.w(TAG, "Open install-permission settings failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "open_install_permission_settings_failed",
                 JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
             )
         }
