@@ -4237,6 +4237,22 @@ class LocalHttpServer(
     }
 
     private fun handleAppUpdateCheck(): Response {
+        if (BuildConfig.DEBUG) {
+            return jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("update_enabled", false)
+                    .put("current_version", "DEBUG VERSION")
+                    .put("latest_tag", "")
+                    .put("latest_version", "")
+                    .put("has_update", false)
+                    .put("published_at", "")
+                    .put("release_url", "")
+                    .put("apk_name", "")
+                    .put("apk_size", 0L)
+                    .put("message", "Auto update is disabled for debug builds.")
+            )
+        }
         return try {
             jsonResponse(appUpdateManager.checkLatestRelease())
         } catch (ex: Throwable) {
@@ -4250,6 +4266,13 @@ class LocalHttpServer(
     }
 
     private fun handleAppUpdateInstall(): Response {
+        if (BuildConfig.DEBUG) {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "debug_build_update_disabled",
+                JSONObject().put("message", "Auto update/install is disabled for debug builds.")
+            )
+        }
         return try {
             jsonResponse(appUpdateManager.downloadAndStartInstall())
         } catch (ex: Throwable) {
@@ -4273,7 +4296,7 @@ class LocalHttpServer(
                 @Suppress("DEPRECATION")
                 context.packageManager.getPackageInfo(context.packageName, 0)
             }
-            val versionName = pkg.versionName ?: ""
+            val versionName = if (BuildConfig.DEBUG) "DEBUG VERSION" else (pkg.versionName ?: "")
             val versionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 pkg.longVersionCode
             } else {
@@ -4290,6 +4313,7 @@ class LocalHttpServer(
                 JSONObject()
                     .put("status", "ok")
                     .put("version_name", versionName)
+                    .put("is_debug", BuildConfig.DEBUG)
                     .put("version_code", versionCode)
                     .put("git_sha", gitSha)
                     .put("commit_url", commitUrl)

@@ -6043,6 +6043,12 @@
           if (!res.ok) throw 0;
           const data = await res.json();
           appUpdateInfo = data || null;
+          if (data && data.update_enabled === false) {
+            setStatus(appUpdateStatus, "ok");
+            appUpdateStatus.textContent = "disabled";
+            appUpdateDetail.textContent = String(data.message || "Auto update is disabled for this build.");
+            return;
+          }
           const cur = String(data.current_version || "").trim();
           const latest = String(data.latest_tag || "").trim();
           const hasUpdate = !!data.has_update;
@@ -6617,8 +6623,16 @@
       });
 
       installAppUpdate.addEventListener("click", async () => {
+        if (appUpdateInfo && appUpdateInfo.update_enabled === false) {
+          showToast("Auto update is disabled for this build", 1800);
+          return;
+        }
         if (!appUpdateInfo || !appUpdateInfo.has_update) {
           await refreshAppUpdate(false);
+          if (appUpdateInfo && appUpdateInfo.update_enabled === false) {
+            showToast("Auto update is disabled for this build", 1800);
+            return;
+          }
           if (!appUpdateInfo || !appUpdateInfo.has_update) {
             showToast("Already up to date", 1400);
             return;
