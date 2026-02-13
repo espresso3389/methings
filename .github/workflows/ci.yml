@@ -99,6 +99,13 @@ jobs:
         run: |
           ./scripts/build_libusb_android.sh
           ./scripts/build_libuvc_android.sh
+      - name: Restore Python-for-Android dist cache
+        id: p4a-dist-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/python-for-android/dists/methings_ci
+          key: ${{ runner.os }}-p4a-dist-methings_ci-arm64-v8a-api34-v1-${{ hashFiles('scripts/build_p4a.sh', '.github/workflows/ci.yml') }}
       - name: Build Python-for-Android runtime
         env:
           SDK_DIR: ${{ env.ANDROID_SDK_ROOT }}
@@ -108,7 +115,16 @@ jobs:
           ANDROID_API: 34
           REQUIREMENTS: python3,fastapi==0.99.1,starlette==0.27.0,pydantic==1.10.13,typing-extensions,anyio==3.7.1,sniffio,uvicorn==0.23.2,click,h11,requests,charset-normalizer,idna,urllib3,certifi
         run: |
-          ./scripts/build_p4a.sh
+          set -euo pipefail
+          DIST_ROOT="$HOME/.local/share/python-for-android/dists/$DIST_NAME"
+          PY_BUNDLE_STDLIB="$DIST_ROOT/_python_bundle__${ARCH}/_python_bundle/stdlib.zip"
+          if [[ "${{ steps.p4a-dist-cache.outputs.cache-hit }}" == "true" && -f "$PY_BUNDLE_STDLIB" ]]; then
+            echo "Using cached python-for-android dist: $DIST_ROOT"
+            ./scripts/sync_p4a_dist.sh
+          else
+            echo "No reusable python-for-android dist cache found; building runtime"
+            ./scripts/build_p4a.sh
+          fi
       - name: Build Debug APK
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4"
