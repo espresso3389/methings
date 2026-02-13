@@ -279,19 +279,9 @@ jobs:
             echo "::endgroup::"
             echo "::group::App update endpoint smoke check"
             curl -sS -f --retry 5 --retry-delay 2 --retry-all-errors http://127.0.0.1:8765/app/update/check -o app_update_check.json || true
-            python3 - <<'PY'
-            import json,sys
-            try:
-                obj=json.load(open("app_update_check.json","r",encoding="utf-8"))
-            except Exception as ex:
-                print(f"::error::Failed to read app_update_check.json: {ex}")
-                sys.exit(1)
-            if "status" in obj or "error" in obj:
-                print("app/update/check endpoint reachable")
-                sys.exit(0)
-            print(f"::error::Unexpected /app/update/check payload: {obj}")
-            sys.exit(1)
-            PY
+            test -s app_update_check.json || { echo "::error::app_update_check.json is missing/empty"; exit 1; }
+            grep -Eq '"(status|error)"[[:space:]]*:' app_update_check.json || { echo "::error::Unexpected /app/update/check payload"; cat app_update_check.json; exit 1; }
+            echo "app/update/check endpoint reachable"
             echo "::endgroup::"
             echo "::group::Python exec test"
             curl -sf --retry 5 --retry-delay 5 --retry-all-errors -X POST http://127.0.0.1:8765/shell/exec -H "Content-Type: application/json" -d "{\"cmd\":\"python\",\"args\":\"-c \\\"import sys; print(sys.version_info[:2])\\\"\",\"cwd\":\"/\"}" -o shell_result.json && cat shell_result.json && grep -q '"code"' shell_result.json || { echo "::error::Python exec failed or returned unexpected response"; cat shell_result.json 2>/dev/null; exit 1; }
