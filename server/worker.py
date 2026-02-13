@@ -677,6 +677,30 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 deleted = 0
             self._send_json({"status": "ok", "session_id": session_id, "deleted": int(deleted or 0)})
             return
+        if parsed.path == "/brain/session/rename":
+            old_id = str((payload or {}).get("old_id") or "").strip()
+            new_id = str((payload or {}).get("new_id") or "").strip()
+            if not old_id or not new_id:
+                self._send_json({"error": "missing_old_id_or_new_id"}, status=400)
+                return
+            db_updated = 0
+            try:
+                db_updated = STORAGE.rename_chat_session(old_id, new_id)
+            except Exception:
+                db_updated = 0
+            journal_result = {}
+            try:
+                journal_result = JOURNAL.rename_session(old_id, new_id)
+            except Exception as ex:
+                journal_result = {"renamed": False, "detail": str(ex)}
+            self._send_json({
+                "status": "ok",
+                "old_id": old_id,
+                "new_id": new_id,
+                "chat_messages_updated": db_updated,
+                "journal": journal_result,
+            })
+            return
         if parsed.path == "/brain/debug/comment":
             # Debug-only: insert a message into a given session without enqueuing agent work.
             sid = str((payload or {}).get("session_id") or "default").strip() or "default"

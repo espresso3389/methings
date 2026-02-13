@@ -227,6 +227,18 @@ class Storage:
             )
             return [dict(r) for r in cur.fetchall()]
 
+    def rename_chat_session(self, old_id: str, new_id: str) -> int:
+        old = (old_id or "").strip()
+        new = (new_id or "").strip()
+        if not old or not new or old == new:
+            return 0
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE chat_messages SET session_id = ? WHERE session_id = ?",
+                (new, old),
+            )
+            return int(getattr(cur, "rowcount", 0) or 0)
+
     def delete_chat_session(self, session_id: str) -> int:
         sid = (session_id or "").strip()
         if not sid:

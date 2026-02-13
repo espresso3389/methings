@@ -247,3 +247,24 @@ class JournalStore:
         if len(items) > limit_i:
             items = items[-limit_i:]
         return {"status": "ok", "session_id": sid, "entries": items, "limit": limit_i}
+
+    def rename_session(self, old_id: str, new_id: str) -> Dict[str, Any]:
+        old_sid = sanitize_session_id(old_id)
+        new_sid = sanitize_session_id(new_id)
+        if old_sid == new_sid:
+            return {"status": "ok", "renamed": False, "reason": "same_id"}
+        old_dir = (self.root_dir / old_sid).resolve()
+        root = self.root_dir.resolve()
+        if not str(old_dir).startswith(str(root)) or not old_dir.exists():
+            return {"status": "ok", "renamed": False, "reason": "source_not_found"}
+        new_dir = (self.root_dir / new_sid).resolve()
+        if not str(new_dir).startswith(str(root)):
+            return {"status": "error", "error": "invalid_new_id"}
+        if new_dir.exists() and any(new_dir.iterdir()):
+            return {"status": "error", "error": "target_exists"}
+        try:
+            import shutil
+            shutil.move(str(old_dir), str(new_dir))
+            return {"status": "ok", "renamed": True, "old_id": old_sid, "new_id": new_sid}
+        except Exception as ex:
+            return {"status": "error", "error": "rename_failed", "detail": str(ex)}
