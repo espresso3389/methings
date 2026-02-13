@@ -201,29 +201,92 @@ class AssetExtractor(private val context: Context) {
                 copyAssetFile("user_defaults/TOOLS.md", toolsFile)
             }
 
-            // Seed docs/examples directories (missing-only). These are safe to copy even when the
-            // top-level markdown files already exist, because we never overwrite existing files.
+            // Create empty agent workspace directory for the agent's own notes.
             val docsDir = File(targetDir, "docs")
-            if (assetDirExists("user_defaults/docs")) {
+            if (!docsDir.exists()) {
                 docsDir.mkdirs()
-                copyAssetDirMissingOnly("user_defaults/docs", docsDir)
-            }
-            val examplesDir = File(targetDir, "examples")
-            if (assetDirExists("user_defaults/examples")) {
-                examplesDir.mkdirs()
-                copyAssetDirMissingOnly("user_defaults/examples", examplesDir)
             }
 
-            // Seed Python helper library (missing-only). Used by in-app run_python scripts.
-            val libDir = File(targetDir, "lib")
-            if (assetDirExists("user_defaults/lib")) {
-                libDir.mkdirs()
-                copyAssetDirMissingOnly("user_defaults/lib", libDir)
-            }
+            // System reference docs, examples, and lib are now in files/system/ (always overwritten).
+            extractSystemAssets()
+
+            // One-time cleanup: remove old bundled files that were previously in user/ but are now
+            // served from system/. Agent-created files are left untouched.
+            cleanupLegacyUserBundledFiles(targetDir)
+
             targetDir
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to extract user defaults", ex)
             null
+        }
+    }
+
+    fun extractSystemAssets(): File? {
+        return try {
+            val targetDir = File(context.filesDir, "system")
+            targetDir.mkdirs()
+
+            // Always overwrite system docs/examples/lib from APK assets on every app start,
+            // so they always match the current app version.
+            if (assetDirExists("system/docs")) {
+                val docsDir = File(targetDir, "docs")
+                docsDir.mkdirs()
+                copyAssetDirOverwrite("system/docs", docsDir)
+            }
+            if (assetDirExists("system/examples")) {
+                val examplesDir = File(targetDir, "examples")
+                examplesDir.mkdirs()
+                copyAssetDirOverwrite("system/examples", examplesDir)
+            }
+            if (assetDirExists("system/lib")) {
+                val libDir = File(targetDir, "lib")
+                libDir.mkdirs()
+                copyAssetDirOverwrite("system/lib", libDir)
+            }
+            targetDir
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to extract system assets", ex)
+            null
+        }
+    }
+
+    private fun cleanupLegacyUserBundledFiles(userDir: File) {
+        // Known filenames that were previously bundled under user/docs, user/examples, user/lib.
+        // Remove them so the agent isn't confused by stale copies alongside the new $sys/ prefix.
+        val markerFile = File(userDir, ".system_docs_migrated")
+        if (markerFile.exists()) return
+
+        try {
+            val legacyDocs = File(userDir, "docs")
+            if (legacyDocs.isDirectory) {
+                val bundledDocNames = setOf(
+                    "api_reference.md", "camera.md", "uvc.md", "usb.md", "ble.md",
+                    "tts.md", "stt.md", "llama.md", "sensors.md", "viewer.md",
+                    "vision.md", "permissions.md", "file_endpoints.md", "brain_journal.md",
+                    "vault.md", "cloud_broker.md", "health.md", "ssh.md", "sshd.md"
+                )
+                for (name in bundledDocNames) {
+                    File(legacyDocs, name).takeIf { it.exists() }?.delete()
+                }
+                // Remove docs dir if now empty (agent workspace will be recreated above).
+                if (legacyDocs.list()?.isEmpty() == true) {
+                    legacyDocs.delete()
+                }
+            }
+
+            val legacyExamples = File(userDir, "examples")
+            if (legacyExamples.isDirectory) {
+                deleteRecursive(legacyExamples)
+            }
+
+            val legacyLib = File(userDir, "lib")
+            if (legacyLib.isDirectory) {
+                deleteRecursive(legacyLib)
+            }
+
+            markerFile.writeText("1")
+        } catch (ex: Exception) {
+            Log.w(TAG, "Legacy cleanup incomplete", ex)
         }
     }
 
@@ -273,7 +336,9 @@ class AssetExtractor(private val context: Context) {
             val targetDir = File(context.filesDir, "user")
             targetDir.mkdirs()
 
-            // Overwrite shipped defaults (explicit user action).
+            // Overwrite agent operational docs (explicit user action).
+            // System reference docs (docs/, examples/, lib/) live in files/system/ and are
+            // always kept current by extractSystemAssets() — no reset needed here.
             val agentFile = File(targetDir, "AGENTS.md")
             val toolsFile = File(targetDir, "TOOLS.md")
             if (assetExists("user_defaults/AGENTS.md")) {
@@ -281,25 +346,6 @@ class AssetExtractor(private val context: Context) {
             }
             if (assetExists("user_defaults/TOOLS.md")) {
                 copyAssetFile("user_defaults/TOOLS.md", toolsFile)
-            }
-
-            // Overwrite docs/examples shipped by the app. Keep any extra user-created files.
-            val docsDir = File(targetDir, "docs")
-            if (assetDirExists("user_defaults/docs")) {
-                docsDir.mkdirs()
-                copyAssetDirOverwrite("user_defaults/docs", docsDir)
-            }
-            val examplesDir = File(targetDir, "examples")
-            if (assetDirExists("user_defaults/examples")) {
-                examplesDir.mkdirs()
-                copyAssetDirOverwrite("user_defaults/examples", examplesDir)
-            }
-
-            // Overwrite shipped Python helper library (explicit user action).
-            val libDir = File(targetDir, "lib")
-            if (assetDirExists("user_defaults/lib")) {
-                libDir.mkdirs()
-                copyAssetDirOverwrite("user_defaults/lib", libDir)
             }
 
             targetDir

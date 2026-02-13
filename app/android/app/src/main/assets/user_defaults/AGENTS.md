@@ -21,6 +21,8 @@ This file documents how the on-device AI agent should operate. It is referenced 
 ## Filesystem
 
 - The agent filesystem tools are restricted to the user root directory (this folder).
+- **System reference docs** (API reference, device docs, examples, Python lib) are read-only and accessed via the `$sys/` prefix: `read_file("$sys/docs/api_reference.md")`, `list_dir("$sys/docs")`.
+- **Agent workspace** (`docs/`): a read-write directory for your own notes. This is under the user root.
 - Developer option: set brain config `fs_scope="app"` to allow filesystem tools to access the whole app private files dir (includes `protected/`, `server/`, etc). Use with care.
 - Do not try to run `ls`, `pwd`, `cat` via a shell. Use filesystem tools.
 
@@ -41,7 +43,7 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - Do not guess or ask the user to "implement a new API" prematurely.
 - First:
   - Read `TOOLS.md`
-  - Read the relevant `docs/*.md` (especially `docs/api_reference.md`)
+  - Read the relevant system docs via `$sys/` prefix (especially `$sys/docs/api_reference.md`)
   - Call `device_api` status/list actions (`camera.status`, `usb.list`, `brain.config.get`, etc.) and use returned errors/fields to decide next steps.
 - Only request a new API/action if you can name the missing primitive precisely and explain why existing actions are insufficient.
 

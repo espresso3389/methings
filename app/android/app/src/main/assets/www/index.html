@@ -2463,6 +2463,12 @@
         return s;
       }
 
+      function fileUrl(rel) {
+        if (rel.startsWith("$sys/"))
+          return API + "/sys/file?path=" + encodeURIComponent(rel.slice(5));
+        return API + "/user/file?path=" + encodeURIComponent(rel);
+      }
+
       function extractRelPathsFromText(text) {
         const t = String(text || "");
         const out = [];
@@ -2483,7 +2489,7 @@
         // Also support spaces by capturing to end-of-line (common for uploaded filenames like "Slack - Ding.mp3").
         const rePlainQuoted = /\brel_path\b\s*[:=]\s*`([^`]+)`/gi;
         while ((m = rePlainQuoted.exec(t)) !== null) add(m[1]);
-        const rePlainEol = /\brel_path\b\s*[:=]\s*([a-zA-Z0-9._\-\/][a-zA-Z0-9._\-\/ ]*\.[a-zA-Z0-9]+(?:#page=\d+)?)/gi;
+        const rePlainEol = /\brel_path\b\s*[:=]\s*([$a-zA-Z0-9._\-\/][$a-zA-Z0-9._\-\/ ]*\.[a-zA-Z0-9]+(?:#page=\d+)?)/gi;
         while ((m = rePlainEol.exec(t)) !== null) add(m[1]);
 
         // Loose fallback (common folders + media extensions).
@@ -2562,7 +2568,7 @@
                 AndroidBridge.shareUserFile(p, mimeForPath(p));
                 return;
               }
-              const url = API + "/user/file?path=" + encodeURIComponent(p);
+              const url = fileUrl(p);
               if (navigator.share) {
                 await navigator.share({ title: p, url });
               } else if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -2590,7 +2596,7 @@
                 return;
               }
               try {
-                window.open(API + "/user/file?path=" + encodeURIComponent(p), "_blank", "noopener,noreferrer");
+                window.open(fileUrl(p), "_blank", "noopener,noreferrer");
               } catch (_) {}
             }
           };
@@ -2689,7 +2695,7 @@
 
           (async () => {
             try {
-              const src = API + "/user/file?path=" + encodeURIComponent(p);
+              const src = fileUrl(p);
               if (kind === "image") {
                 const img = document.createElement("img");
                 img.alt = p;
@@ -2955,7 +2961,7 @@
         viewerTitle.textContent = rel;
         resetViewerPanels();
         viewerImg.style.display = "";
-        viewerImg.src = API + "/user/file?path=" + encodeURIComponent(rel);
+        viewerImg.src = fileUrl(rel);
         viewerImg.alt = rel;
         resetViewerTransform();
       }
@@ -2981,7 +2987,7 @@
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
         resetViewerPanels();
         resetViewerTransform();
-        const src = API + "/user/file?path=" + encodeURIComponent(rel);
+        const src = fileUrl(rel);
         if (kind === "video") {
           viewerVideo.src = src;
           viewerVideo.style.display = "";
@@ -3000,7 +3006,7 @@
         viewerTitle.textContent = rel;
         if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
         resetViewerPanels();
-        const src = API + "/user/file?path=" + encodeURIComponent(rel) + (page >= 0 ? ("#page=" + page) : "");
+        const src = fileUrl(rel) + (page >= 0 ? ("#page=" + page) : "");
         viewerIframe.src = src;
         viewerIframe.style.display = "";
         const srcPre = document.createElement("pre");
@@ -3356,7 +3362,7 @@
           openHtmlViewer(path);
         } else if (kind === "text") {
           try {
-            const res = await fetch(API + "/user/file?path=" + encodeURIComponent(rel));
+            const res = await fetch(fileUrl(rel));
             const content = await res.text();
             openTextViewer(rel, content, ext, fragPage);
           } catch (_) {}

@@ -2,7 +2,7 @@
 
 This file is a quick reference for the agent's tools, invocation patterns, and chat rendering rules.
 
-For the complete device API action map, see [docs/api_reference.md](docs/api_reference.md).
+For the complete device API action map, see `$sys/docs/api_reference.md` (read via `read_file("$sys/docs/api_reference.md")`).
 
 ## Filesystem Tools (User Root Only)
 
@@ -14,6 +14,8 @@ For the complete device API action map, see [docs/api_reference.md](docs/api_ref
 - `delete_path(path, recursive)`
 
 Use these instead of shell commands like `ls`/`cat`.
+
+Paths starting with `$sys/` read from **system-protected reference docs** (read-only, always current with app version). Use `list_dir("$sys/docs")` to discover available reference documentation. Writing, deleting, or moving `$sys/` paths returns `system_files_read_only`.
 
 ## Execution Tools (Allowlist)
 
@@ -39,7 +41,7 @@ Notes:
 
 Used for allowlisted device control-plane actions. Some actions require user approval and will return `permission_required`.
 
-The full action map (88 actions across 16 domains) is in [docs/api_reference.md](docs/api_reference.md).
+The full action map (88 actions across 16 domains) is in `$sys/docs/api_reference.md`.
 
 ## Remote Access via SSH Tunnel
 
@@ -126,11 +128,11 @@ Delete key tips:
 
 ## Quickstarts
 
-Minimal copy-paste examples for common tasks. For full payload docs and all actions, see [docs/api_reference.md](docs/api_reference.md) and the domain docs linked from there.
+Minimal copy-paste examples for common tasks. For full payload docs and all actions, see `$sys/docs/api_reference.md` and the domain docs linked from there.
 
 ### Camera (Take a Picture)
 
-Use `device_api` (do not try to `pip install` camera bindings). Details: [docs/camera.md](docs/camera.md)
+Use `device_api` (do not try to `pip install` camera bindings). Details: `$sys/docs/camera.md`
 
 ```json
 {
@@ -148,7 +150,7 @@ On success, the response includes `rel_path`. Include `rel_path: <path>` in your
 
 ### UVC (USB Webcam)
 
-Capture a single MJPEG frame from a connected UVC camera. Details: [docs/uvc.md](docs/uvc.md)
+Capture a single MJPEG frame from a connected UVC camera. Details: `$sys/docs/uvc.md`
 
 ```json
 {
@@ -162,7 +164,7 @@ Capture a single MJPEG frame from a connected UVC camera. Details: [docs/uvc.md]
 }
 ```
 
-USB permissions: approving `device.usb` in-app is necessary but not sufficient. Android also requires an OS-level USB permission. See [docs/permissions.md](docs/permissions.md).
+USB permissions: approving `device.usb` in-app is necessary but not sufficient. Android also requires an OS-level USB permission. See `$sys/docs/permissions.md`.
 
 ### Location (GPS)
 
@@ -189,11 +191,11 @@ USB permissions: approving `device.usb` in-app is necessary but not sufficient. 
 
 2. Connect to WebSocket `/ws/sensors?sensors=a,g,m&rate_hz=200` for realtime data.
 
-Full protocol (sensor keys, query params, message format): [docs/sensors.md](docs/sensors.md).
+Full protocol (sensor keys, query params, message format): `$sys/docs/sensors.md`.
 
 ### Llama.cpp (Local GGUF / MioTTS)
 
-Use `device_api` actions (not raw shell). Details: [docs/llama.md](docs/llama.md)
+Use `device_api` actions (not raw shell). Details: `$sys/docs/llama.md`
 
 ```json
 {
@@ -282,7 +284,7 @@ Rules:
 
 ## Permission Requests
 
-Permissions are created via `POST /permissions/request`. See [docs/permissions.md](docs/permissions.md) for the full model.
+Permissions are created via `POST /permissions/request`. See `$sys/docs/permissions.md` for the full model.
 
 If a `device_api` action returns `permission_required`, ask the user to approve the prompt and retry.
 
@@ -317,7 +319,7 @@ Large uploads:
 - If total upload bytes exceed ~5MB, `/cloud/request` returns `error=confirm_large_required`.
   Ask the user to confirm, then retry with `confirm_large:true`.
 
-Cloud prefs: see [docs/api_reference.md](docs/api_reference.md) -> Cloud Broker.
+Cloud prefs: see `$sys/docs/api_reference.md` -> Cloud Broker.
 
 ### Python Helper
 
@@ -343,20 +345,20 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 
 ## Docs Index
 
-Read the relevant doc when working in that domain:
-- [docs/api_reference.md](docs/api_reference.md) — **complete action map**, all endpoints, WebSocket protocols
-- [docs/camera.md](docs/camera.md) — CameraX still capture + preview stream
-- [docs/uvc.md](docs/uvc.md) — UVC MJPEG capture + PTZ
-- [docs/usb.md](docs/usb.md) — USB device enumeration + transfers + streaming
-- [docs/ble.md](docs/ble.md) — BLE scanning + GATT + events
-- [docs/tts.md](docs/tts.md) — Android TextToSpeech
-- [docs/stt.md](docs/stt.md) — Android SpeechRecognizer
-- [docs/llama.md](docs/llama.md) — local llama.cpp model execution
-- [docs/sensors.md](docs/sensors.md) — realtime sensor streams via WebSocket
-- [docs/viewer.md](docs/viewer.md) — viewer control API, file info, Marp presentation
-- [docs/vision.md](docs/vision.md) — RGBA8888 + TFLite inference
-- [docs/permissions.md](docs/permissions.md) — permission scopes and identity
-- [examples/README.md](examples/README.md) — copy/paste golden paths
+Read the relevant doc when working in that domain (use `read_file("$sys/docs/<name>")`):
+- `$sys/docs/api_reference.md` — **complete action map**, all endpoints, WebSocket protocols
+- `$sys/docs/camera.md` — CameraX still capture + preview stream
+- `$sys/docs/uvc.md` — UVC MJPEG capture + PTZ
+- `$sys/docs/usb.md` — USB device enumeration + transfers + streaming
+- `$sys/docs/ble.md` — BLE scanning + GATT + events
+- `$sys/docs/tts.md` — Android TextToSpeech
+- `$sys/docs/stt.md` — Android SpeechRecognizer
+- `$sys/docs/llama.md` — local llama.cpp model execution
+- `$sys/docs/sensors.md` — realtime sensor streams via WebSocket
+- `$sys/docs/viewer.md` — viewer control API, file info, Marp presentation
+- `$sys/docs/vision.md` — RGBA8888 + TFLite inference
+- `$sys/docs/permissions.md` — permission scopes and identity
+- `$sys/examples/README.md` — copy/paste golden paths
 
 ## Source Code Fallback
 

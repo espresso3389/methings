@@ -535,13 +535,13 @@ def _shell_exec_impl(cmd: str, raw_args: str, cwd: str) -> Dict:
                 exit_code = _run_curl_args(args, resolved)
             else:
                 # Make app-provided Python helpers importable for run_python scripts.
-                # The UI can reset these into <user_dir>/lib (see Reset Agent Docs).
+                # System lib lives in <app_files>/system/lib (always overwritten on app start).
                 try:
-                    lib_dir = (resolved / "lib").resolve()
-                    if lib_dir.exists():
-                        lib_str = str(lib_dir)
-                        if lib_str not in sys.path:
-                            sys.path.insert(0, lib_str)
+                    sys_lib_dir = (user_dir.parent / "system" / "lib").resolve()
+                    if sys_lib_dir.exists():
+                        sys_lib_str = str(sys_lib_dir)
+                        if sys_lib_str not in sys.path:
+                            sys.path.insert(0, sys_lib_str)
                 except Exception:
                     pass
 

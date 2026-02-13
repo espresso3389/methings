@@ -2550,21 +2550,82 @@ class BrainRuntime:
         target.write_text(content, encoding="utf-8")
         return {"status": "ok", "path": str(target)}
 
+    def _sys_read_file(self, rel_path: str, max_bytes: int) -> Dict:
+        """Read a file from the system-protected reference docs via /sys/file."""
+        try:
+            resp = requests.get(
+                "http://127.0.0.1:8765/sys/file",
+                params={"path": rel_path},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                max_bytes = max(1024, min(int(max_bytes or 262144), 2 * 1024 * 1024))
+                data = resp.content
+                truncated = len(data) > max_bytes
+                if truncated:
+                    data = data[:max_bytes]
+                text = data.decode("utf-8", errors="replace")
+                return {"status": "ok", "path": "$sys/" + rel_path, "content": text, "truncated": truncated}
+            body = resp.json() if resp.content else {}
+            return {"status": "error", "error": body.get("error", "not_found")}
+        except Exception as ex:
+            return {"status": "error", "error": "sys_read_failed", "detail": str(ex)}
+
+    def _sys_list_dir(self, rel_path: str, show_hidden: bool = False, limit: int = 200) -> Dict:
+        """List a directory under system-protected reference docs via /sys/list."""
+        try:
+            resp = requests.get(
+                "http://127.0.0.1:8765/sys/list",
+                params={"path": rel_path},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                entries = body.get("items", [])
+                if not show_hidden:
+                    entries = [e for e in entries if not e.get("name", "").startswith(".")]
+                limit = max(1, min(int(limit or 200), 5000))
+                truncated = len(entries) > limit
+                entries = entries[:limit]
+                normalized: list = []
+                for e in entries:
+                    normalized.append({
+                        "name": e.get("name", ""),
+                        "type": "dir" if e.get("is_dir") else "file",
+                        "size": int(e.get("size", 0)),
+                        "mtime": int(e.get("mtime_ms", 0)) // 1000,
+                    })
+                return {"status": "ok", "path": "$sys/" + rel_path, "entries": normalized, "truncated": truncated}
+            body = resp.json() if resp.content else {}
+            return {"status": "error", "error": body.get("error", "not_found")}
+        except Exception as ex:
+            return {"status": "error", "error": "sys_list_failed", "detail": str(ex)}
+
     def _execute_function_tool(self, item: Dict, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         if name == "list_dir":
+            path = str(args.get("path") or "")
+            if path.startswith("$sys/"):
+                return self._sys_list_dir(
+                    path[5:],
+                    show_hidden=bool(args.get("show_hidden") or False),
+                    limit=int(args.get("limit") or 200),
+                )
             action = {
                 "type": "filesystem",
                 "op": "list_dir",
-                "path": str(args.get("path") or ""),
+                "path": path,
                 "show_hidden": bool(args.get("show_hidden") or False),
                 "limit": int(args.get("limit") or 200),
             }
             return self._execute_action(item, action)
         if name == "read_file":
+            path = str(args.get("path") or "")
+            if path.startswith("$sys/"):
+                return self._sys_read_file(path[5:], int(args.get("max_bytes") or 262144))
             action = {
                 "type": "filesystem",
                 "op": "read_file",
-                "path": str(args.get("path") or ""),
+                "path": path,
                 "max_bytes": int(args.get("max_bytes") or 262144),
             }
             return self._execute_action(item, action)
@@ -2775,34 +2836,47 @@ class BrainRuntime:
             }
             return self._execute_action(item, action)
         if name == "write_file":
+            path = str(args.get("path") or "")
+            if path.startswith("$sys/"):
+                return {"status": "error", "error": "system_files_read_only"}
             action = {
                 "type": "write_file",
-                "path": str(args.get("path") or ""),
+                "path": path,
                 "content": str(args.get("content") or ""),
             }
             return self._execute_action(item, action)
         if name == "mkdir":
+            path = str(args.get("path") or "")
+            if path.startswith("$sys/"):
+                return {"status": "error", "error": "system_files_read_only"}
             action = {
                 "type": "filesystem",
                 "op": "mkdir",
-                "path": str(args.get("path") or ""),
+                "path": path,
                 "parents": bool(args.get("parents") or False),
             }
             return self._execute_action(item, action)
         if name == "move_path":
+            src = str(args.get("src") or "")
+            dst = str(args.get("dst") or "")
+            if src.startswith("$sys/") or dst.startswith("$sys/"):
+                return {"status": "error", "error": "system_files_read_only"}
             action = {
                 "type": "filesystem",
                 "op": "move_path",
-                "src": str(args.get("src") or ""),
-                "dst": str(args.get("dst") or ""),
+                "src": src,
+                "dst": dst,
                 "overwrite": bool(args.get("overwrite") or False),
             }
             return self._execute_action(item, action)
         if name == "delete_path":
+            path = str(args.get("path") or "")
+            if path.startswith("$sys/"):
+                return {"status": "error", "error": "system_files_read_only"}
             action = {
                 "type": "filesystem",
                 "op": "delete_path",
-                "path": str(args.get("path") or ""),
+                "path": path,
                 "recursive": bool(args.get("recursive") or False),
             }
             return self._execute_action(item, action)

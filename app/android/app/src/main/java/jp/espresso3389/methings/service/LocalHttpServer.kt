@@ -1550,7 +1550,13 @@ class LocalHttpServer(
                 if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
                 // Strip #page=N fragment for file validation; preserve full path for JS.
                 val filePath = path.replace(Regex("#.*$"), "")
-                val file = userPath(filePath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                val file = if (filePath.startsWith("\$sys/")) {
+                    systemPath(filePath.removePrefix("\$sys/"))
+                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_system_dir")
+                } else {
+                    userPath(filePath)
+                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                }
                 if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
                 val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
                     setPackage(context.packageName)
@@ -1621,6 +1627,12 @@ class LocalHttpServer(
             }
             uri == "/user/file/info" && session.method == Method.GET -> {
                 handleUserFileInfo(session)
+            }
+            uri == "/sys/list" && session.method == Method.GET -> {
+                handleSysList(session)
+            }
+            uri == "/sys/file" && session.method == Method.GET -> {
+                serveSysFile(session)
             }
             else -> notFound()
         }
@@ -3582,6 +3594,53 @@ class LocalHttpServer(
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun systemPath(relative: String): File? {
+        val root = File(context.filesDir, "system")
+        val rel = relative.trim().trimStart('/')
+        if (rel.isBlank()) return null
+        return try {
+            val out = File(root, rel).canonicalFile
+            if (out.path.startsWith(root.canonicalPath + File.separator) || out == root.canonicalFile) out else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun handleSysList(session: IHTTPSession): Response {
+        val rel = firstParam(session, "path").trim().trimStart('/')
+        val root = File(context.filesDir, "system").canonicalFile
+        val dir = if (rel.isBlank()) root else systemPath(rel) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_system_dir")
+        if (!dir.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+        if (!dir.isDirectory) return jsonError(Response.Status.BAD_REQUEST, "not_a_directory")
+
+        val arr = org.json.JSONArray()
+        val kids = dir.listFiles()?.sortedBy { it.name.lowercase() } ?: emptyList()
+        for (f in kids) {
+            val item = JSONObject()
+                .put("name", f.name)
+                .put("is_dir", f.isDirectory)
+                .put("size", if (f.isFile) f.length() else 0L)
+                .put("mtime_ms", f.lastModified())
+            arr.put(item)
+        }
+        val outRel = if (dir == root) "" else dir.relativeTo(root).path.replace("\\", "/")
+        return jsonResponse(JSONObject().put("status", "ok").put("path", outRel).put("items", arr))
+    }
+
+    private fun serveSysFile(session: IHTTPSession): Response {
+        val rel = firstParam(session, "path")
+        if (rel.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+        val file = systemPath(rel) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_system_dir")
+        if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+
+        val mime = URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
+        val stream: InputStream = FileInputStream(file)
+        val response = newChunkedResponse(Response.Status.OK, mime, stream)
+        response.addHeader("Cache-Control", "no-cache")
+        response.addHeader("X-Content-Type-Options", "nosniff")
+        return response
     }
 
     private fun handleVisionModelLoad(payload: JSONObject): Response {

@@ -4,7 +4,7 @@ me.things exposes a local HTTP control plane on `http://127.0.0.1:8765`.
 
 The agent should use the `device_api(action, payload, detail)` tool instead of calling these endpoints directly.
 
-See also: [TOOLS.md](../TOOLS.md) for agent tool usage and quickstart examples.
+See also: `TOOLS.md` (in user root) for agent tool usage and quickstart examples.
 
 ## Identity + Permissions
 
@@ -279,6 +279,17 @@ These endpoints are accessed directly via HTTP, not through `device_api`.
 | `GET` | `/user/list` | `path=<rel_path>` | List files under a user-root directory |
 
 Details: [file_endpoints.md](file_endpoints.md)
+
+### System Reference Docs (Read-Only)
+
+System reference docs (`docs/`, `examples/`, `lib/`) are extracted to `files/system/` and always overwritten on app start to match the current app version. The agent accesses them via the `$sys/` prefix in filesystem tools, which routes through these endpoints.
+
+| Method | Endpoint | Query | Effect |
+|--------|----------|-------|--------|
+| `GET` | `/sys/list` | `path=<rel_path>` | List directory under `files/system/` |
+| `GET` | `/sys/file` | `path=<rel_path>` | Serve file bytes from `files/system/` |
+
+Response format matches `/user/list` and `/user/file` respectively. These endpoints are read-only; there are no write/delete counterparts.
 
 ### Viewer Control **[no perm]**
 
