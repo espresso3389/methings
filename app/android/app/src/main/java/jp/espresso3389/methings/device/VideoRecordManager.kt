@@ -2,27 +2,28 @@ package jp.espresso3389.methings.device
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.ImageFormat
 import android.graphics.Rect
+import android.graphics.SurfaceTexture
 import android.graphics.YuvImage
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraDevice
+import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CameraMetadata
 import android.media.MediaCodecList
 import android.media.MediaFormat
+import android.media.MediaRecorder
 import android.os.Handler
+import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.FileOutputOptions
-import androidx.camera.video.Quality
-import androidx.camera.video.QualitySelector
-import androidx.camera.video.Recorder
-import androidx.camera.video.Recording
-import androidx.camera.video.VideoCapture
-import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import fi.iki.elonen.NanoWSD
@@ -32,8 +33,10 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class VideoRecordManager(
@@ -48,21 +51,24 @@ class VideoRecordManager(
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private val userRoot = File(context.filesDir, "user")
     private val main = Handler(Looper.getMainLooper())
+    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+
+    // Camera2 background thread for recording
+    private var cameraThread: HandlerThread? = null
+    private var cameraHandler: Handler? = null
 
     // Recording state
     private val recordingLock = Any()
-    @Volatile private var activeRecording: Recording? = null
+    @Volatile private var cameraDevice: CameraDevice? = null
+    @Volatile private var captureSession: CameraCaptureSession? = null
+    @Volatile private var mediaRecorder: MediaRecorder? = null
     @Volatile private var recordingState: String = "idle"
     @Volatile private var recordingFile: File? = null
     @Volatile private var recordingStartMs: Long = 0L
     @Volatile private var recordingCodec: String = "unknown"
     @Volatile private var lastRecordError: String? = null
 
-    // CameraX recording use cases (bound on main thread)
-    @Volatile private var recordProvider: ProcessCameraProvider? = null
-    @Volatile private var videoCapture: VideoCapture<Recorder>? = null
-
-    // Frame streaming state
+    // Frame streaming state (CameraX — works fine without EncoderProfiles)
     private val streaming = AtomicBoolean(false)
     @Volatile private var streamProvider: ProcessCameraProvider? = null
     @Volatile private var streamAnalysis: ImageAnalysis? = null
@@ -125,7 +131,7 @@ class VideoRecordManager(
         )
     }
 
-    // ── Video Recording (CameraX VideoCapture → .mp4) ────────────────────────
+    // ── Video Recording (Camera2 + MediaRecorder → .mp4) ─────────────────────
 
     @SuppressLint("MissingPermission")
     fun startRecording(
@@ -142,7 +148,8 @@ class VideoRecordManager(
             val res = (resolution ?: prefs.getString("resolution", "720p") ?: "720p").trim().lowercase()
             val prefCodec = (prefs.getString("codec", "h265") ?: "h265").trim().lowercase()
             val maxS = (maxDurationS ?: prefs.getInt("max_duration_s", 300)).coerceIn(5, 3600)
-            val facing = parseLens(lens)
+            val facing = if ((lens ?: "back").trim().lowercase() == "front")
+                CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
 
             val recDir = File(userRoot, "recordings/video")
             recDir.mkdirs()
@@ -151,82 +158,161 @@ class VideoRecordManager(
             val outFile = if (fileName.startsWith("/")) File(fileName) else File(recDir, fileName)
             outFile.parentFile?.mkdirs()
 
-            val quality = when (res) {
-                "4k", "2160p" -> Quality.UHD
-                "1080p" -> Quality.FHD
-                else -> Quality.HD
+            val videoSize = when (res) {
+                "4k", "2160p" -> Size(3840, 2160)
+                "1080p" -> Size(1920, 1080)
+                else -> Size(1280, 720)
             }
 
             val codec = resolveCodec(prefCodec)
             recordingCodec = codec
 
-            // We need to bind on main thread and get the recording started
-            val latch = java.util.concurrent.CountDownLatch(1)
-            var error: String? = null
+            // Find the camera ID for the requested lens facing
+            val cameraId = findCameraId(facing)
+                ?: return mapOf("status" to "error", "error" to "no_camera", "detail" to "No camera found for lens=$lens")
 
-            main.post {
-                try {
-                    val providerFuture = ProcessCameraProvider.getInstance(context)
-                    providerFuture.addListener({
-                        try {
-                            val provider = providerFuture.get()
-                            recordProvider = provider
-                            provider.unbindAll()
+            // Start camera background thread
+            val thread = HandlerThread("VideoRecordCamera").also { it.start() }
+            cameraThread = thread
+            val handler = Handler(thread.looper)
+            cameraHandler = handler
 
-                            val recorder = Recorder.Builder()
-                                .setQualitySelector(QualitySelector.from(quality))
-                                .build()
-                            val vc = VideoCapture.withOutput(recorder)
-                            videoCapture = vc
-
-                            val selector = CameraSelector.Builder().requireLensFacing(facing).build()
-                            provider.bindToLifecycle(lifecycleOwner, selector, vc)
-
-                            val fileOpts = FileOutputOptions.Builder(outFile).apply {
-                                setDurationLimitMillis(maxS * 1000L)
-                            }.build()
-
-                            val recording = vc.output
-                                .prepareRecording(context, fileOpts)
-                                .withAudioEnabled()
-                                .start(ContextCompat.getMainExecutor(context)) { event ->
-                                    when (event) {
-                                        is VideoRecordEvent.Finalize -> {
-                                            if (event.hasError()) {
-                                                Log.e(TAG, "Recording finalize error: ${event.error}")
-                                                lastRecordError = "finalize_error_${event.error}"
-                                            }
-                                            recordingState = "idle"
-                                            activeRecording = null
-                                        }
-                                    }
-                                }
-
-                            activeRecording = recording
-                            recordingFile = outFile
-                            recordingStartMs = System.currentTimeMillis()
-                            recordingState = "recording"
-                            lastRecordError = null
-                        } catch (e: Exception) {
-                            Log.e(TAG, "startRecording bind failed", e)
-                            error = e.message ?: "bind_failed"
-                        } finally {
-                            latch.countDown()
-                        }
-                    }, ContextCompat.getMainExecutor(context))
-                } catch (e: Exception) {
-                    Log.e(TAG, "startRecording failed", e)
-                    error = e.message ?: "start_failed"
-                    latch.countDown()
+            // Configure MediaRecorder
+            val recorder = MediaRecorder(context)
+            try {
+                recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
+                recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                recorder.setOutputFile(outFile.absolutePath)
+                recorder.setVideoSize(videoSize.width, videoSize.height)
+                recorder.setVideoFrameRate(30)
+                recorder.setVideoEncodingBitRate(
+                    when (res) {
+                        "4k", "2160p" -> 25_000_000
+                        "1080p" -> 12_000_000
+                        else -> 6_000_000
+                    }
+                )
+                recorder.setAudioEncodingBitRate(128_000)
+                recorder.setAudioSamplingRate(44100)
+                recorder.setVideoEncoder(
+                    if (codec == "h265") MediaRecorder.VideoEncoder.HEVC
+                    else MediaRecorder.VideoEncoder.H264
+                )
+                recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                recorder.setMaxDuration(maxS * 1000)
+                recorder.setOnInfoListener { _, what, _ ->
+                    if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
+                        Log.i(TAG, "Max duration reached, stopping recording")
+                        // Stop from background thread to avoid blocking the callback
+                        handler.post { stopRecordingInternal() }
+                    }
                 }
+                recorder.setOnErrorListener { _, what, extra ->
+                    Log.e(TAG, "MediaRecorder error: what=$what extra=$extra")
+                    lastRecordError = "media_recorder_error_$what"
+                    handler.post { stopRecordingInternal() }
+                }
+                recorder.prepare()
+            } catch (e: Exception) {
+                Log.e(TAG, "MediaRecorder configure/prepare failed", e)
+                recorder.release()
+                thread.quitSafely()
+                return mapOf("status" to "error", "error" to "recorder_prepare_failed", "detail" to (e.message ?: ""))
             }
 
-            latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+            // Open camera and start recording
+            val openLatch = CountDownLatch(1)
+            var openError: String? = null
 
-            if (error != null) {
+            cameraManager.openCamera(cameraId, object : CameraDevice.StateCallback() {
+                override fun onOpened(camera: CameraDevice) {
+                    try {
+                        cameraDevice = camera
+                        val recorderSurface = recorder.surface
+
+                        // Use a dummy Preview surface to keep the camera pipeline happy
+                        val dummyTexture = SurfaceTexture(0)
+                        dummyTexture.setDefaultBufferSize(videoSize.width, videoSize.height)
+                        val previewSurface = Surface(dummyTexture)
+
+                        val surfaces = listOf(recorderSurface, previewSurface)
+                        camera.createCaptureSession(surfaces, object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(session: CameraCaptureSession) {
+                                try {
+                                    captureSession = session
+                                    val request = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+                                        addTarget(recorderSurface)
+                                        addTarget(previewSurface)
+                                        set(android.hardware.camera2.CaptureRequest.CONTROL_AF_MODE,
+                                            CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+                                    }.build()
+                                    session.setRepeatingRequest(request, null, handler)
+                                    recorder.start()
+
+                                    mediaRecorder = recorder
+                                    recordingFile = outFile
+                                    recordingStartMs = System.currentTimeMillis()
+                                    recordingState = "recording"
+                                    lastRecordError = null
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Session configure + start failed", e)
+                                    openError = e.message ?: "session_start_failed"
+                                    recorder.release()
+                                    camera.close()
+                                    previewSurface.release()
+                                    dummyTexture.release()
+                                } finally {
+                                    openLatch.countDown()
+                                }
+                            }
+
+                            override fun onConfigureFailed(session: CameraCaptureSession) {
+                                openError = "session_configure_failed"
+                                recorder.release()
+                                camera.close()
+                                previewSurface.release()
+                                dummyTexture.release()
+                                openLatch.countDown()
+                            }
+                        }, handler)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Camera onOpened setup failed", e)
+                        openError = e.message ?: "camera_setup_failed"
+                        recorder.release()
+                        camera.close()
+                        openLatch.countDown()
+                    }
+                }
+
+                override fun onDisconnected(camera: CameraDevice) {
+                    Log.w(TAG, "Camera disconnected")
+                    camera.close()
+                    cameraDevice = null
+                    if (recordingState == "recording") {
+                        stopRecordingInternal()
+                    }
+                    openLatch.countDown()
+                }
+
+                override fun onError(camera: CameraDevice, error: Int) {
+                    Log.e(TAG, "Camera open error: $error")
+                    openError = "camera_open_error_$error"
+                    camera.close()
+                    cameraDevice = null
+                    openLatch.countDown()
+                }
+            }, handler)
+
+            openLatch.await(10, TimeUnit.SECONDS)
+
+            if (openError != null) {
                 recordingState = "error"
-                lastRecordError = error
-                return mapOf("status" to "error", "error" to "start_failed", "detail" to (error ?: ""))
+                lastRecordError = openError
+                cameraThread?.quitSafely()
+                cameraThread = null
+                cameraHandler = null
+                return mapOf("status" to "error", "error" to "start_failed", "detail" to (openError ?: ""))
             }
 
             val relPath = outFile.absolutePath.removePrefix(userRoot.absolutePath).trimStart('/')
@@ -237,50 +323,65 @@ class VideoRecordManager(
                 "resolution" to res,
                 "codec" to codec,
                 "max_duration_s" to maxS,
-                "lens" to (if (facing == CameraSelector.LENS_FACING_FRONT) "front" else "back"),
+                "lens" to (if (facing == CameraCharacteristics.LENS_FACING_FRONT) "front" else "back"),
                 "container" to "mp4"
             )
         }
     }
 
     fun stopRecording(): Map<String, Any?> {
-        synchronized(recordingLock) {
-            val rec = activeRecording
-            if (rec == null || recordingState != "recording") {
-                return mapOf("status" to "ok", "stopped" to false, "state" to recordingState)
-            }
-
-            val durationMs = System.currentTimeMillis() - recordingStartMs
-            rec.stop()
-            activeRecording = null
-            recordingState = "idle"
-
-            // Unbind recording use cases
-            main.post {
-                recordProvider?.runCatching { unbindAll() }
-                recordProvider = null
-                videoCapture = null
-            }
-
-            val outFile = recordingFile
-            val relPath = outFile?.absolutePath?.removePrefix(userRoot.absolutePath)?.trimStart('/') ?: ""
-            // File size may not be final yet since finalize happens async; report what we have
-            val sizeBytes = outFile?.length() ?: 0L
-            recordingFile = null
-
-            return mapOf(
-                "status" to "ok",
-                "stopped" to true,
-                "state" to "idle",
-                "rel_path" to relPath,
-                "duration_ms" to durationMs,
-                "size_bytes" to sizeBytes,
-                "codec" to recordingCodec
-            )
-        }
+        return stopRecordingInternal()
     }
 
-    // ── Frame Streaming (ImageAnalysis → JPEG or RGBA over WebSocket) ─────────
+    /**
+     * Thread-safe stop. Called from HTTP thread (stopRecording) and from
+     * MediaRecorder max-duration/error callbacks on the camera handler thread.
+     */
+    private fun stopRecordingInternal(): Map<String, Any?> {
+        synchronized(recordingLock) {
+            if (recordingState != "recording") {
+                return mapOf("status" to "ok", "stopped" to false, "state" to recordingState)
+            }
+            recordingState = "idle"
+        }
+        val durationMs = System.currentTimeMillis() - recordingStartMs
+
+        try {
+            mediaRecorder?.stop()
+        } catch (e: Exception) {
+            Log.e(TAG, "MediaRecorder.stop() failed", e)
+            lastRecordError = "stop_failed: ${e.message}"
+        }
+        mediaRecorder?.release()
+        mediaRecorder = null
+
+        captureSession?.runCatching { close() }
+        captureSession = null
+
+        cameraDevice?.runCatching { close() }
+        cameraDevice = null
+
+        cameraThread?.quitSafely()
+        cameraThread = null
+        cameraHandler = null
+
+        val outFile = recordingFile
+        val relPath = outFile?.absolutePath?.removePrefix(userRoot.absolutePath)?.trimStart('/') ?: ""
+        val sizeBytes = outFile?.length() ?: 0L
+        recordingFile = null
+
+        return mapOf(
+            "status" to "ok",
+            "stopped" to true,
+            "state" to "idle",
+            "rel_path" to relPath,
+            "duration_ms" to durationMs,
+            "size_bytes" to sizeBytes,
+            "codec" to recordingCodec
+        )
+    }
+
+    // ── Frame Streaming (CameraX ImageAnalysis → JPEG or RGBA over WebSocket) ─
 
     fun startStream(
         lens: String?,
@@ -313,7 +414,7 @@ class VideoRecordManager(
         streaming.set(true)
         lastFrameAtMs = 0
 
-        val latch = java.util.concurrent.CountDownLatch(1)
+        val latch = CountDownLatch(1)
         var error: String? = null
 
         main.post {
@@ -324,6 +425,7 @@ class VideoRecordManager(
                         val provider = providerFuture.get()
                         streamProvider = provider
 
+                        @Suppress("DEPRECATION")
                         val ana = ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .setTargetResolution(Size(w, h))
@@ -349,13 +451,10 @@ class VideoRecordManager(
                         }
 
                         val selector = CameraSelector.Builder().requireLensFacing(facing).build()
-                        // Don't unbind all — only bind the analysis use case for streaming
-                        // If recording is active, they share the camera but separate providers
                         provider.unbindAll()
                         provider.bindToLifecycle(lifecycleOwner, selector, ana)
                         streamAnalysis = ana
 
-                        // Send hello to connected clients
                         broadcastHello()
                     } catch (e: Exception) {
                         Log.e(TAG, "startStream bind failed", e)
@@ -373,7 +472,7 @@ class VideoRecordManager(
             }
         }
 
-        latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        latch.await(10, TimeUnit.SECONDS)
 
         if (error != null) {
             return mapOf("status" to "error", "error" to "start_failed", "detail" to (error ?: ""))
@@ -426,6 +525,14 @@ class VideoRecordManager(
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
+    private fun findCameraId(lensFacing: Int): String? {
+        for (id in cameraManager.cameraIdList) {
+            val chars = cameraManager.getCameraCharacteristics(id)
+            if (chars.get(CameraCharacteristics.LENS_FACING) == lensFacing) return id
+        }
+        return null
+    }
+
     private fun parseLens(lens: String?): Int {
         return if ((lens ?: "back").trim().lowercase() == "front")
             CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
@@ -433,7 +540,6 @@ class VideoRecordManager(
 
     private fun resolveCodec(preferred: String): String {
         if (preferred == "h264") return "h264"
-        // Check if HEVC encoder is available
         val codecList = MediaCodecList(MediaCodecList.REGULAR_CODECS)
         val hasHevc = codecList.codecInfos.any { info ->
             info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_HEVC, ignoreCase = true) }
@@ -477,7 +583,6 @@ class VideoRecordManager(
         val h = image.height
         val rgba = yuv420888ToRgba(image)
 
-        // 12-byte header: [width:u32le][height:u32le][ts_ms:u32le]
         val tsMs = (System.currentTimeMillis() and 0xFFFFFFFFL).toInt()
         val header = ByteBuffer.allocate(12).order(ByteOrder.LITTLE_ENDIAN)
             .putInt(w).putInt(h).putInt(tsMs).array()
