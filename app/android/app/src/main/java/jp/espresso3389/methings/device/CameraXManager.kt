@@ -16,6 +16,7 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
 import android.util.Size
+import android.view.OrientationEventListener
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -49,6 +50,7 @@ class CameraXManager(
         private const val TAG = "CameraXManager"
     }
     private val main = Handler(Looper.getMainLooper())
+    private val cameraManager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
     private val wsClients = CopyOnWriteArrayList<NanoWSD.WebSocket>()
     private val started = AtomicBoolean(false)
     private var cameraProvider: ProcessCameraProvider? = null
@@ -60,6 +62,16 @@ class CameraXManager(
     private var previewSize: Size = Size(640, 480)
     private var previewFps: Int = 5
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
+
+    // Device orientation tracking (accelerometer-based, works even when screen rotation is locked)
+    @Volatile private var deviceOrientationDegrees: Int = 0
+    private val orientationListener = object : OrientationEventListener(context) {
+        override fun onOrientationChanged(orientation: Int) {
+            if (orientation == ORIENTATION_UNKNOWN) return
+            deviceOrientationDegrees = ((orientation + 45) / 90 * 90) % 360
+        }
+    }
+    init { orientationListener.enable() }
 
     fun isPreviewActive(): Boolean = started.get()
 
@@ -291,6 +303,7 @@ class CameraXManager(
                                         set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
                                         set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                                         set(CaptureRequest.JPEG_QUALITY, jpegQuality.coerceIn(40, 100).toByte())
+                                        set(CaptureRequest.JPEG_ORIENTATION, computeJpegOrientation(chars))
                                         // Exposure compensation (AE) in device-specific steps.
                                         if (exposureCompensation != null) {
                                             val range = chars?.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
@@ -516,6 +529,16 @@ class CameraXManager(
         camera = provider.bindToLifecycle(lifecycleOwner, selector, cap)
         capture = cap
         analysis = null
+    }
+
+    private fun computeJpegOrientation(chars: CameraCharacteristics?): Int {
+        val sensorOrientation = chars?.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val facing = chars?.get(CameraCharacteristics.LENS_FACING)
+        return if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
+            (sensorOrientation + deviceOrientationDegrees) % 360
+        } else {
+            (sensorOrientation - deviceOrientationDegrees + 360) % 360
+        }
     }
 
     private fun bindUseCases(provider: ProcessCameraProvider, facing: Int, jpegQuality: Int) {

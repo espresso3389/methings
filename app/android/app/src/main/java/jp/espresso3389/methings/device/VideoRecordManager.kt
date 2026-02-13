@@ -19,6 +19,7 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
 import android.util.Size
+import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -80,6 +81,16 @@ class VideoRecordManager(
     @Volatile private var streamHeight: Int = 480
     @Volatile private var lastFrameAtMs: Long = 0
     private val wsClients = CopyOnWriteArrayList<NanoWSD.WebSocket>()
+
+    // Device orientation tracking (accelerometer-based, works even when screen rotation is locked)
+    @Volatile private var deviceOrientationDegrees: Int = 0
+    private val orientationListener = object : OrientationEventListener(context) {
+        override fun onOrientationChanged(orientation: Int) {
+            if (orientation == ORIENTATION_UNKNOWN) return
+            deviceOrientationDegrees = ((orientation + 45) / 90 * 90) % 360
+        }
+    }
+    init { orientationListener.enable() }
 
     // ── Config ────────────────────────────────────────────────────────────────
 
@@ -200,6 +211,7 @@ class VideoRecordManager(
                     else MediaRecorder.VideoEncoder.H264
                 )
                 recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                recorder.setOrientationHint(computeRotation(cameraId))
                 recorder.setMaxDuration(maxS * 1000)
                 recorder.setOnInfoListener { _, what, _ ->
                     if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
@@ -536,6 +548,17 @@ class VideoRecordManager(
     private fun parseLens(lens: String?): Int {
         return if ((lens ?: "back").trim().lowercase() == "front")
             CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+    }
+
+    private fun computeRotation(cameraId: String): Int {
+        val chars = cameraManager.getCameraCharacteristics(cameraId)
+        val sensorOrientation = chars.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val facing = chars.get(CameraCharacteristics.LENS_FACING)
+        return if (facing == CameraCharacteristics.LENS_FACING_FRONT) {
+            (sensorOrientation + deviceOrientationDegrees) % 360
+        } else {
+            (sensorOrientation - deviceOrientationDegrees + 360) % 360
+        }
     }
 
     private fun resolveCodec(preferred: String): String {
