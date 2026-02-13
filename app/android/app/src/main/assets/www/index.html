@@ -1357,7 +1357,8 @@
         border-radius: var(--radius-sm);
         padding: 10px;
         max-height: 240px;
-        overflow: auto;
+        overflow: hidden;
+        touch-action: auto;
       }
       .license-doc-md {
         font-size: 13px;
@@ -1367,7 +1368,16 @@
         border-radius: var(--radius-sm);
         padding: 10px;
         max-height: 300px;
+        overflow: hidden;
+        touch-action: auto;
+      }
+      .license-doc {
+        border-color: rgba(161,161,170,0.35);
+      }
+      .license-doc.license-doc-active {
         overflow: auto;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px rgba(99,102,241,0.25);
       }
     </style>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
@@ -1840,7 +1850,6 @@
         <div style="width:38px; height:38px;" aria-hidden="true"></div>
       </div>
       <div class="settings-scroll">
-        <div class="muted license-summary" id="licensesSummary">Loading licenses...</div>
         <div id="licensesSections"></div>
       </div>
     </div>
@@ -2379,19 +2388,43 @@
       };
 
       let _licensesLoaded = false;
+      let _licenseDocTouchWired = false;
+      function deactivateLicenseDocs() {
+        try {
+          document.querySelectorAll(".license-doc.license-doc-active").forEach((el) => el.classList.remove("license-doc-active"));
+        } catch (_) {}
+      }
+      function wireLicenseDocTouchPolicy() {
+        if (_licenseDocTouchWired) return;
+        _licenseDocTouchWired = true;
+        document.addEventListener("pointerdown", (ev) => {
+          const t = ev && ev.target;
+          if (!t || !t.closest) return;
+          const docEl = t.closest(".license-doc");
+          if (docEl) {
+            try {
+              document.querySelectorAll(".license-doc.license-doc-active").forEach((el) => {
+                if (el !== docEl) el.classList.remove("license-doc-active");
+              });
+              docEl.classList.add("license-doc-active");
+            } catch (_) {}
+            return;
+          }
+          if (t.closest("#licensesPage")) {
+            deactivateLicenseDocs();
+          }
+        }, true);
+      }
+
       async function loadLicensesData() {
-        const summary = $("licensesSummary");
         const root = $("licensesSections");
-        summary.textContent = "Loading licenses...";
         root.innerHTML = "";
+        wireLicenseDocTouchPolicy();
         try {
           const res = await fetch("licenses/full_licenses.json", { cache: "no-store" });
           if (!res.ok) throw 0;
           const data = await res.json();
           const sections = Array.isArray(data.sections) ? data.sections : [];
-          let depCount = 0;
-          sections.forEach((s) => { depCount += (Array.isArray(s.dependencies) ? s.dependencies.length : 0); });
-          summary.textContent = "Dependencies with bundled licenses: " + depCount;
           if (!sections.length) {
             root.innerHTML = "<div class='muted'>(empty)</div>";
             return;
@@ -2430,11 +2463,16 @@
                   const body = document.createElement("div");
                   const fmt = String(doc.format || "text").toLowerCase();
                   const txt = String(doc.text || "");
-                  if (fmt === "markdown") {
-                    body.className = "license-doc-md";
-                    body.innerHTML = renderMarkdown(txt);
-                  } else {
-                    body.className = "license-doc-text";
+                  try {
+                    if (fmt === "markdown") {
+                      body.className = "license-doc license-doc-md";
+                      body.innerHTML = renderMarkdown(txt);
+                    } else {
+                      body.className = "license-doc license-doc-text";
+                      body.textContent = txt;
+                    }
+                  } catch (_) {
+                    body.className = "license-doc license-doc-text";
                     body.textContent = txt;
                   }
                   depBox.appendChild(body);
@@ -2447,13 +2485,13 @@
           root.innerHTML = "";
           root.appendChild(frag);
         } catch (_) {
-          summary.textContent = "Failed to load license data.";
-          root.innerHTML = "";
+          root.innerHTML = "<div class='muted'>Failed to load license data.</div>";
         }
       }
 
       function openLicensesPageView() {
         navigateTo("licensesPage");
+        deactivateLicenseDocs();
         if (_licensesLoaded) return;
         _licensesLoaded = true;
         loadLicensesData();

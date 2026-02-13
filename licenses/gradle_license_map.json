@@ -1,0 +1,14 @@
+{
+  "prefix_mappings": [
+    {
+      "group_prefix": "org.tensorflow",
+      "license_url": "https://raw.githubusercontent.com/tensorflow/tensorflow/refs/heads/master/LICENSE",
+      "title": "TensorFlow LICENSE"
+    },
+    {
+      "group_prefix": "com.google.android.material",
+      "license_url": "https://raw.githubusercontent.com/material-components/material-components-android/refs/heads/master/LICENSE",
+      "title": "Material Components Android LICENSE"
+    }
+  ]
+}

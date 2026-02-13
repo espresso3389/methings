@@ -7,6 +7,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -188,6 +189,29 @@ def read_ignore_config(repo_root: Path) -> Dict[str, List[str]]:
     }
 
 
+def read_gradle_license_map(repo_root: Path) -> List[Dict[str, str]]:
+    p = repo_root / "licenses" / "gradle_license_map.json"
+    if not p.exists():
+        return []
+    try:
+        obj = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    rows = obj.get("prefix_mappings", [])
+    out: List[Dict[str, str]] = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        prefix = str(r.get("group_prefix", "")).strip()
+        url = str(r.get("license_url", "")).strip()
+        title = str(r.get("title", "")).strip()
+        if not prefix or not url:
+            continue
+        out.append({"group_prefix": prefix, "license_url": url, "title": title})
+    out.sort(key=lambda x: len(x["group_prefix"]), reverse=True)
+    return out
+
+
 def is_ignored(dep: Dict[str, str], cfg: Dict[str, List[str]]) -> bool:
     eco = str(dep.get("ecosystem", "")).strip()
     if eco in cfg.get("ignore_ecosystems", []):
@@ -205,11 +229,29 @@ def find_local_license_files(base_dir: Path) -> List[Path]:
     if not base_dir.exists():
         return []
     out: List[Path] = []
+    allowed_exts = {"", ".txt", ".md", ".markdown", ".rst"}
+    skip_exts = {".cmake", ".c", ".cc", ".cpp", ".h", ".hpp", ".py", ".java", ".kt", ".js", ".ts", ".sh"}
     for p in sorted(base_dir.rglob("*")):
         if not p.is_file():
             continue
         n = p.name.lower()
-        if n.startswith("license") or n.startswith("copying") or n.startswith("notice"):
+        stem = p.stem.lower()
+        ext = p.suffix.lower()
+        is_license_name = (
+            n == "license"
+            or n == "copying"
+            or n == "notice"
+            or n.startswith("license.")
+            or n.startswith("copying.")
+            or n.startswith("notice.")
+        )
+        if not is_license_name:
+            continue
+        if ext in skip_exts:
+            continue
+        if ext not in allowed_exts:
+            continue
+        if stem in {"license", "copying", "notice"}:
             out.append(p)
     return out[:4]
 
@@ -263,7 +305,106 @@ def docs_for_gradle(dep: Dict[str, str]) -> List[Dict[str, str]]:
                         docs.append(d)
         except Exception:
             continue
+    if docs:
+        return docs[:3]
+    mapped = docs_for_gradle_prefix_map(group)
+    if mapped:
+        docs.append(mapped)
+        return docs[:3]
+    if group.startswith("androidx."):
+        docs.append(
+            {
+                "title": "AndroidX LICENSE.txt",
+                "format": "text",
+                "text": "Fallback source: https://github.com/androidx/androidx/blob/androidx-main/LICENSE.txt\n"
+                "Apache License 2.0 applies to AndroidX project sources. "
+                "See the source URL for the canonical full text.",
+            }
+        )
+        return docs[:3]
+    if group.startswith("com.github."):
+        owner = group.replace("com.github.", "", 1).strip()
+        repo = artifact.strip()
+        gh = fetch_github_license(owner, repo)
+        if gh:
+            docs.append(gh)
+        else:
+            docs.append(
+                {
+                    "title": "GitHub repository",
+                    "format": "text",
+                    "text": f"Fallback source: https://github.com/{owner}/{repo}\n"
+                    "No LICENSE file could be fetched automatically.",
+                }
+            )
     return docs[:3]
+
+
+_GRADLE_LICENSE_MAPPINGS: List[Dict[str, str]] = []
+
+
+def docs_for_gradle_prefix_map(group: str) -> Dict[str, str] | None:
+    for row in _GRADLE_LICENSE_MAPPINGS:
+        prefix = row.get("group_prefix", "")
+        if not prefix or not group.startswith(prefix):
+            continue
+        src = row.get("license_url", "")
+        if not src:
+            continue
+        text = fetch_text_url(src)
+        if not text:
+            continue
+        title = row.get("title", "").strip() or f"{prefix} LICENSE"
+        fmt = "markdown" if src.lower().endswith(".md") else "text"
+        return {"title": title, "format": fmt, "text": text}
+    return None
+
+
+def fetch_github_license(owner: str, repo: str) -> Dict[str, str] | None:
+    if not owner or not repo:
+        return None
+    branches = ["main", "master"]
+    names = ["LICENSE", "LICENSE.md", "LICENSE.txt", "COPYING", "COPYING.md", "COPYING.txt"]
+    for branch in branches:
+        for name in names:
+            url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{name}"
+            try:
+                with urllib.request.urlopen(url, timeout=6) as resp:
+                    if int(getattr(resp, "status", 200)) >= 400:
+                        continue
+                    raw = resp.read()
+                text = raw.decode("utf-8", errors="ignore").strip()
+                if not text:
+                    continue
+                fmt = "markdown" if name.lower().endswith(".md") else "text"
+                return {
+                    "title": f"{owner}/{repo}:{name}",
+                    "format": fmt,
+                    "text": text,
+                }
+            except Exception:
+                continue
+    return None
+
+
+def fetch_text_url(url: str) -> str:
+    candidates = [url]
+    m = re.match(r"^https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*)$", url)
+    if m:
+        owner, repo, branch, path = m.groups()
+        candidates.insert(0, f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}")
+    for u in candidates:
+        try:
+            with urllib.request.urlopen(u, timeout=8) as resp:
+                if int(getattr(resp, "status", 200)) >= 400:
+                    continue
+                raw = resp.read()
+            text = raw.decode("utf-8", errors="ignore").strip()
+            if text:
+                return text
+        except Exception:
+            continue
+    return ""
 
 
 def docs_for_vendored(repo_root: Path, dep: Dict[str, str]) -> List[Dict[str, str]]:
@@ -359,6 +500,8 @@ def main() -> int:
     args = parser.parse_args()
 
     repo_root = Path(__file__).resolve().parent.parent
+    global _GRADLE_LICENSE_MAPPINGS
+    _GRADLE_LICENSE_MAPPINGS = read_gradle_license_map(repo_root)
     output = Path(args.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
