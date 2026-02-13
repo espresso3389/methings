@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "dependencies": [
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.appcompat:appcompat",
+      "version": "1.6.1",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.biometric:biometric",
+      "version": "1.1.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.browser:browser",
+      "version": "1.7.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.camera:camera-camera2",
+      "version": "1.3.2",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.camera:camera-core",
+      "version": "1.3.2",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.camera:camera-lifecycle",
+      "version": "1.3.2",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.camera:camera-video",
+      "version": "1.3.2",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.core:core-ktx",
+      "version": "1.12.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.lifecycle:lifecycle-service",
+      "version": "2.7.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.room:room-compiler",
+      "version": "2.6.1",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "kapt"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.room:room-ktx",
+      "version": "2.6.1",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.room:room-runtime",
+      "version": "2.6.1",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.work:work-runtime-ktx",
+      "version": "2.9.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "com.github.android:renderscript-intrinsics-replacement-toolkit",
+      "version": "344be3f6bf03fb",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "com.google.android.material:material",
+      "version": "1.11.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "org.nanohttpd:nanohttpd",
+      "version": "2.3.1",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "org.nanohttpd:nanohttpd-websocket",
+      "version": "2.3.1",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "org.tensorflow:tensorflow-lite",
+      "version": "2.17.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "org.tensorflow:tensorflow-lite-gpu",
+      "version": "2.17.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "node",
+      "name": "corepack",
+      "version": "0.34.5",
+      "license": "MIT",
+      "source_path": "app/android/app/src/main/assets/node/usr/lib/node_modules/corepack/package.json"
+    },
+    {
+      "ecosystem": "node",
+      "name": "npm",
+      "version": "11.9.0",
+      "license": "Artistic-2.0",
+      "source_path": "app/android/app/src/main/assets/node/usr/lib/node_modules/npm/package.json"
+    },
+    {
+      "ecosystem": "python-wheel",
+      "name": "libusb",
+      "version": "0.0.0+kugutz1-py3-none",
+      "source_path": "app/android/app/src/main/assets/wheels/_disabled/libusb-0.0.0+kugutz1-py3-none-any.whl"
+    },
+    {
+      "ecosystem": "python-wheel",
+      "name": "libuvc",
+      "version": "0.0.0+kugutz1-py3-none",
+      "source_path": "app/android/app/src/main/assets/wheels/_disabled/libuvc-0.0.0+kugutz1-py3-none-any.whl"
+    },
+    {
+      "ecosystem": "python-wheel",
+      "name": "opencv-android",
+      "version": "0.0.0+kugutz1-py3-none",
+      "source_path": "app/android/app/src/main/assets/wheels/_disabled/opencv_android-0.0.0+kugutz1-py3-none-any.whl"
+    },
+    {
+      "ecosystem": "python-wheel",
+      "name": "opencv-python",
+      "version": "4.12.0.88+kugutz1-py3-none",
+      "source_path": "app/android/app/src/main/assets/wheels/common/opencv_python-4.12.0.88+kugutz1-py3-none-any.whl"
+    },
+    {
+      "ecosystem": "python-wheel",
+      "name": "opencv-python",
+      "version": "4.12.0.88+methings1-py3-none",
+      "source_path": "app/android/app/src/main/assets/wheels/common/opencv_python-4.12.0.88+methings1-py3-none-any.whl"
+    },
+    {
+      "ecosystem": "python-wheel",
+      "name": "pupil-labs-uvc",
+      "version": "0.0.0+kugutz1-py3-none",
+      "source_path": "app/android/app/src/main/assets/wheels/common/pupil_labs_uvc-0.0.0+kugutz1-py3-none-any.whl"
+    },
+    {
+      "ecosystem": "python-wheel",
+      "name": "pyusb",
+      "version": "1.3.1-py3-none",
+      "source_path": "app/android/app/src/main/assets/wheels/common/pyusb-1.3.1-py3-none-any.whl"
+    },
+    {
+      "ecosystem": "python-wheel",
+      "name": "pyuvc",
+      "version": "0.0.0+kugutz1-py3-none",
+      "source_path": "app/android/app/src/main/assets/wheels/common/pyuvc-0.0.0+kugutz1-py3-none-any.whl"
+    },
+    {
+      "ecosystem": "vendored-native",
+      "name": "dropbear",
+      "version": "",
+      "source_path": "third_party/dropbear"
+    },
+    {
+      "ecosystem": "vendored-native",
+      "name": "libusb",
+      "version": "",
+      "source_path": "third_party/libusb"
+    },
+    {
+      "ecosystem": "vendored-native",
+      "name": "libuvc",
+      "version": "",
+      "source_path": "third_party/libuvc"
+    },
+    {
+      "ecosystem": "vendored-native",
+      "name": "llama.cpp",
+      "version": "",
+      "source_path": "third_party/llama.cpp"
+    }
+  ]
+}

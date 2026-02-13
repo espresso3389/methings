@@ -70,21 +70,49 @@
 
       <h2>Third-Party OSS</h2>
       <div class="card">
-        <ul>
-          <li>AndroidX / Google libraries (Apache-2.0)</li>
-          <li>NanoHTTPD (BSD)</li>
-          <li>python-for-android and Python ecosystem packages (various OSS licenses)</li>
-          <li>Dropbear SSH (MIT-style)</li>
-          <li>libusb (LGPL-2.1 or later)</li>
-          <li>libuvc (BSD-3-Clause)</li>
-          <li>OpenCV (Apache-2.0 / BSD components)</li>
-          <li>Node.js and npm bundled components (various OSS licenses)</li>
-        </ul>
+        <div id="depSummary" class="muted">Loading dependency inventory...</div>
+        <ul id="depList"></ul>
         <div class="muted">
           Source repository:
           <a href="https://github.com/espresso3389/methings" target="_blank" rel="noopener">https://github.com/espresso3389/methings</a>
         </div>
       </div>
     </div>
+    <script>
+      (async function() {
+        const summary = document.getElementById("depSummary");
+        const list = document.getElementById("depList");
+        try {
+          const res = await fetch("licenses/dependency_inventory.json", { cache: "no-store" });
+          if (!res.ok) throw new Error("inventory not found");
+          const data = await res.json();
+          const deps = Array.isArray(data.dependencies) ? data.dependencies : [];
+          summary.textContent = "Dependencies: " + deps.length;
+          if (deps.length === 0) {
+            list.innerHTML = "<li>(empty)</li>";
+            return;
+          }
+          const frag = document.createDocumentFragment();
+          for (const d of deps) {
+            const li = document.createElement("li");
+            const name = String(d.name || "(unknown)");
+            const ver = String(d.version || "").trim();
+            const eco = String(d.ecosystem || "").trim();
+            const lic = String(d.license || "").trim();
+            let line = name;
+            if (ver) line += "@" + ver;
+            if (eco) line += " [" + eco + "]";
+            if (lic) line += " - " + lic;
+            li.textContent = line;
+            frag.appendChild(li);
+          }
+          list.innerHTML = "";
+          list.appendChild(frag);
+        } catch (_) {
+          summary.textContent = "Dependency inventory is not available in this build.";
+          list.innerHTML = "";
+        }
+      })();
+    </script>
   </body>
   </html>

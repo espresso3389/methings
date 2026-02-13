@@ -223,8 +223,32 @@ val fetchNodeRuntime by tasks.registering(Exec::class) {
     )
 }
 
+val generateDependencyInventory by tasks.registering(Exec::class) {
+    val repoRoot = rootProject.projectDir.parentFile.parentFile
+    workingDir = repoRoot
+    commandLine(
+        "bash",
+        "-lc",
+        "python3 ./scripts/generate_dependency_inventory.py --output ./licenses/dependency_inventory.json"
+    )
+}
+
+val syncDependencyInventoryAsset by tasks.registering {
+    val repoRoot = rootProject.projectDir.parentFile.parentFile
+    dependsOn(generateDependencyInventory)
+    doLast {
+        val src = repoRoot.resolve("licenses/dependency_inventory.json")
+        if (!src.exists()) {
+            throw GradleException("Missing generated dependency inventory: ${src.absolutePath}")
+        }
+        val dst = projectDir.resolve("src/main/assets/www/licenses/dependency_inventory.json")
+        dst.parentFile.mkdirs()
+        src.copyTo(dst, overwrite = true)
+    }
+}
+
 tasks.named("preBuild") {
-    dependsOn(syncServerAssets, verifyPythonRuntime, buildUsbLibs, buildFacadeWheels, fetchOpenCvAndroidSdk, fetchNodeRuntime)
+    dependsOn(syncServerAssets, verifyPythonRuntime, buildUsbLibs, buildFacadeWheels, fetchOpenCvAndroidSdk, fetchNodeRuntime, syncDependencyInventoryAsset)
     if (syncUserDefaultsOnBuild) {
         dependsOn(syncUserDefaults)
     }
