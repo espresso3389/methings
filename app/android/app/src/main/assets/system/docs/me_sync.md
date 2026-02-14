@@ -2,6 +2,8 @@
 
 `me.sync` is the app's device-to-device transfer flow for moving local state between installations.
 
+For the planned ad-hoc/nearby redesign, see [me_sync_v3.md](me_sync_v3.md).
+
 ## What It Transfers
 
 Depending on mode and options, export can include:
