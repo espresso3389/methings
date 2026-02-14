@@ -216,6 +216,13 @@ class SshdManager(private val context: Context) {
         }
     }
 
+    /** Restart dropbear if it is currently running. No-op when stopped. */
+    fun restartIfRunning() {
+        if (processRef.get()?.isAlive != true) return
+        stop()
+        start()
+    }
+
     fun status(): SshStatus {
         val running = processRef.get()?.isAlive == true || isPortOpen(getPort())
         val clientKeyInfo = getClientKeyInfo()

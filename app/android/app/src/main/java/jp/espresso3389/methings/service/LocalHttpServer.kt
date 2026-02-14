@@ -145,6 +145,8 @@ class LocalHttpServer(
     private val meSyncLanDownloadServer = MeSyncLanDownloadServer()
     @Volatile private var meSyncLanServerStarted = false
 
+    @Volatile private var authKeysLastMtime: Long = 0L
+
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
     private val screenScheduler = Executors.newSingleThreadScheduledExecutor()
@@ -1771,6 +1773,7 @@ class LocalHttpServer(
                 // even when labels/comments are edited.
                 val entity = sshKeyStore.upsert(parsed.canonicalNoComment(), finalLabel, expiresAt)
                 syncAuthorizedKeys()
+                sshdManager.restartIfRunning()
                 jsonResponse(
                     JSONObject()
                         .put("fingerprint", entity.fingerprint)
@@ -1799,6 +1802,7 @@ class LocalHttpServer(
                 }
                 sshKeyStore.delete(fingerprint)
                 syncAuthorizedKeys()
+                sshdManager.restartIfRunning()
                 jsonResponse(JSONObject().put("status", "ok"))
             }
             uri == "/sshd/pin/status" -> {
@@ -7239,6 +7243,7 @@ class LocalHttpServer(
             if (label != null) "$key $label" else key
         }
         authFile.writeText(lines.joinToString("\n") + if (lines.isNotEmpty()) "\n" else "")
+        authKeysLastMtime = authFile.lastModified()
     }
 
     private fun runHousekeepingOnce() {
@@ -7250,7 +7255,11 @@ class LocalHttpServer(
             }
             cleanupExpiredMeSyncTransfers()
             cleanupExpiredMeSyncV3Tickets()
+            detectExternalAuthorizedKeysEdit()
             syncAuthorizedKeys()
+            if (pruned > 0) {
+                sshdManager.restartIfRunning()
+            }
         }.onFailure {
             Log.w(TAG, "Housekeeping failed", it)
         }
@@ -7282,6 +7291,24 @@ class LocalHttpServer(
             // Merge into DB without clobbering existing metadata.
             sshKeyStore.upsertMerge(parsed.canonicalNoComment(), label, expiresAt = null)
         }
+    }
+
+    /**
+     * Detect if authorized_keys was edited externally (e.g. via SSH).
+     * If the file's mtime changed since we last wrote it, import any new keys,
+     * re-sync the file, and restart dropbear so the changes take effect.
+     */
+    private fun detectExternalAuthorizedKeysEdit() {
+        val authFile = File(File(context.filesDir, "user/.ssh"), "authorized_keys")
+        if (!authFile.exists()) return
+        val mtime = authFile.lastModified()
+        if (authKeysLastMtime != 0L && mtime != authKeysLastMtime) {
+            Log.i(TAG, "authorized_keys changed externally (mtime $authKeysLastMtime -> $mtime); importing")
+            importAuthorizedKeysFromFile()
+            syncAuthorizedKeys()
+            sshdManager.restartIfRunning()
+        }
+        authKeysLastMtime = mtime
     }
 
     private fun parseAuthorizedKeysLine(raw: String): ParsedSshPublicKey? {
@@ -7966,6 +7993,7 @@ class LocalHttpServer(
 
             val keyEntity = sshKeyStore.upsertMerge(info.publicKey, "me.sync:$transferId", expiresAt)
             runCatching { syncAuthorizedKeys() }
+            runCatching { sshdManager.restartIfRunning() }
 
             MeSyncSshAccess(
                 host = host,
@@ -8725,6 +8753,7 @@ class LocalHttpServer(
         runCatching {
             sshKeyStore.delete(fp)
             syncAuthorizedKeys()
+            sshdManager.restartIfRunning()
         }
     }
 
