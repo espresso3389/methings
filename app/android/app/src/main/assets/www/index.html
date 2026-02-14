@@ -144,12 +144,12 @@
         align-items: center;
         gap: 2px;
         max-width: 100%;
-        padding: 2px 6px;
+        padding: 2px 10px;
         border: 1px solid rgba(129,140,248,0.35);
         border-radius: var(--radius-full);
         background: rgba(99,102,241,0.14);
         color: #e8e9ff;
-        font-size: 11px;
+        font-size: 12px;
         line-height: 1.2;
       }
       .chip-label {
@@ -183,6 +183,20 @@
         padding: 4px 0;
       }
       .chip-editor-input::placeholder { color: var(--ink-muted); }
+      .preset-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; align-items: center; }
+      .preset-tag {
+        padding: 2px 10px; border-radius: 999px; font-size: 12px;
+        border: 1px solid var(--border); color: var(--ink-muted);
+        cursor: pointer; user-select: none;
+        transition: border-color .15s, color .15s, background .15s;
+      }
+      .preset-tag:hover { border-color: var(--ink-muted); color: var(--ink); }
+      .preset-tag.active {
+        background: var(--accent-soft); border-color: var(--accent);
+        color: var(--accent-hover);
+      }
+      .preset-tag.edit-btn { border-style: dashed; }
+      .tag-picker-body { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
       .chat-search-bar {
         display: none;
         align-items: center;
@@ -1880,7 +1894,7 @@
           </div>
           <div style="display:grid; gap:8px; margin-top:10px;">
             <div class="chip-editor" id="logsKeywordsEditor"></div>
-            <div class="chip-editor" id="logsTagsEditor"></div>
+            <div class="preset-tags" id="logsTagsPresets"></div>
           </div>
           <div class="btn-group" style="margin-top:10px;">
             <button class="btn" id="logsExportBtn">Export Diagnostics Log</button>
@@ -6519,14 +6533,14 @@
       const meSyncTransferFill = $("meSyncTransferFill");
       const meSyncTransferCaption = $("meSyncTransferCaption");
       const logsKeywordsEditorEl = $("logsKeywordsEditor");
-      const logsTagsEditorEl = $("logsTagsEditor");
+      const logsTagsPresetsEl = $("logsTagsPresets");
       const logsExportBtn = $("logsExportBtn");
       const logsDeleteAllBtn = $("logsDeleteAllBtn");
       const logsExportStatus = $("logsExportStatus");
       const logsShareLastBtn = $("logsShareLastBtn");
       let logsLastRelPath = "";
       let logsKeywordsEditor = null;
-      let logsTagsEditor = null;
+      let selectedLogTags = [];
       const meSyncModal = $("meSyncModal");
       const meSyncModalClose = $("meSyncModalClose");
       const meSyncModalStatus = $("meSyncModalStatus");
@@ -6617,6 +6631,7 @@
           render(true);
         }
 
+        let _onRender = null;
         function render(preserveFocus) {
           rootEl.innerHTML = "";
           values.forEach((token, idx) => {
@@ -6642,6 +6657,7 @@
               try { input.focus(); } catch (_) {}
             }, 0);
           }
+          if (typeof _onRender === "function") _onRender();
         }
 
         input.addEventListener("keydown", (e) => {
@@ -6683,6 +6699,14 @@
             render();
           },
           clear: () => { values = []; if (typeof onChange === "function") onChange(values.slice()); render(); },
+          addValue: (v) => { addToken(v); render(); },
+          removeValue: (v) => {
+            const t = normalizeToken(v);
+            const idx = values.indexOf(t);
+            if (idx >= 0) { values.splice(idx, 1); if (typeof onChange === "function") onChange(values.slice()); render(); }
+          },
+          hasValue: (v) => values.includes(normalizeToken(v)),
+          set onRender(fn) { _onRender = fn; },
         };
       }
 
@@ -8200,9 +8224,83 @@
 
       const savedLogFilters = loadSavedLogFilters();
       logsKeywordsEditor = createChipEditor(logsKeywordsEditorEl, "keywords (comma or space)", (vals) => saveLogFilters("keywords", vals));
-      logsTagsEditor = createChipEditor(logsTagsEditorEl, "tags (comma or space)", (vals) => saveLogFilters("tags", vals));
       logsKeywordsEditor.setValues(savedLogFilters.keywords);
-      logsTagsEditor.setValues(savedLogFilters.tags);
+
+      {
+        const allLogTags = [
+          "AgentService", "AppUpdateManager", "AssetExtractor",
+          "AudioRecordManager", "CaBundleManager", "CameraXManager",
+          "KeystoreVaultServer", "LocalHttpServer", "MediaStreamManager",
+          "MeSyncNearbyTransport", "MethingsPerm", "MethingsStt", "MethingsWeb",
+          "PermissionStoreFacade", "PythonBridge", "PythonRuntimeInstaller",
+          "PythonRuntimeManager", "ScreenCaptureActivity", "ScreenRecordManager",
+          "SensorsStreamManager", "SshdManager", "TfliteModelManager",
+          "UsbIsoBridge", "UsbPermissionActivity", "UsbPermissionResultReceiver",
+          "VideoRecordManager",
+          "NearbyConnections", "NearbyMediums"
+        ];
+        selectedLogTags = Array.isArray(savedLogFilters.tags) ? savedLogFilters.tags.filter(t => allLogTags.includes(t)) : [];
+
+        function renderSelectedTags() {
+          logsTagsPresetsEl.innerHTML = "";
+          selectedLogTags.forEach((tag) => {
+            const pill = document.createElement("span");
+            pill.className = "preset-tag active";
+            pill.textContent = tag;
+            pill.addEventListener("click", openTagPicker);
+            logsTagsPresetsEl.appendChild(pill);
+          });
+          const editPill = document.createElement("span");
+          editPill.className = "preset-tag edit-btn";
+          editPill.textContent = selectedLogTags.length ? "Edit\u2026" : "Select tags\u2026";
+          editPill.addEventListener("click", openTagPicker);
+          logsTagsPresetsEl.appendChild(editPill);
+        }
+
+        function openTagPicker() {
+          const overlay = document.createElement("div");
+          overlay.className = "modal show";
+          overlay.style.zIndex = "1050";
+          const card = document.createElement("div");
+          card.className = "modal-card settings-detail";
+          card.innerHTML = '<div class="card-title">Log Tags</div>';
+          const body = document.createElement("div");
+          body.className = "tag-picker-body";
+
+          function renderPickerTags() {
+            body.innerHTML = "";
+            allLogTags.forEach((tag) => {
+              const pill = document.createElement("span");
+              pill.className = "preset-tag" + (selectedLogTags.includes(tag) ? " active" : "");
+              pill.textContent = tag;
+              pill.addEventListener("click", () => {
+                const idx = selectedLogTags.indexOf(tag);
+                if (idx >= 0) selectedLogTags.splice(idx, 1);
+                else selectedLogTags.push(tag);
+                saveLogFilters("tags", selectedLogTags.slice());
+                renderPickerTags();
+              });
+              body.appendChild(pill);
+            });
+          }
+          renderPickerTags();
+
+          card.appendChild(body);
+          const btnWrap = document.createElement("div");
+          btnWrap.style.textAlign = "right";
+          const doneBtn = document.createElement("button");
+          doneBtn.className = "btn primary";
+          doneBtn.textContent = "Done";
+          doneBtn.addEventListener("click", () => { overlay.remove(); renderSelectedTags(); });
+          btnWrap.appendChild(doneBtn);
+          card.appendChild(btnWrap);
+          overlay.appendChild(card);
+          overlay.addEventListener("click", (e) => { if (e.target === overlay) { overlay.remove(); renderSelectedTags(); } });
+          document.body.appendChild(overlay);
+        }
+
+        renderSelectedTags();
+      }
 
       async function logsShare(relPath) {
         const rel = String(relPath || "").trim();
@@ -8231,7 +8329,7 @@
           logsDeleteAllBtn.disabled = true;
           logsExportStatus.textContent = "Exporting...";
           const kw = (logsKeywordsEditor ? logsKeywordsEditor.getValues() : []).join(",");
-          const tags = (logsTagsEditor ? logsTagsEditor.getValues() : []).join(",");
+          const tags = selectedLogTags.join(",");
           const qp = new URLSearchParams();
           qp.set("scope", "generic");
           qp.set("role", "device");
