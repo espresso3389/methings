@@ -131,6 +131,7 @@ class LocalHttpServer(
     private val screenRecord = ScreenRecordManager(context)
     private val mediaStream = MediaStreamManager(context)
     private val appUpdateManager = AppUpdateManager(context)
+    private val workJobManager = WorkJobManager(context)
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncLanDownloadServer = MeSyncLanDownloadServer()
     @Volatile private var meSyncLanServerStarted = false
@@ -139,6 +140,8 @@ class LocalHttpServer(
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
     private val screenScheduler = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var screenReleaseFuture: ScheduledFuture<*>? = null
+    private val housekeepingScheduler = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var housekeepingFuture: ScheduledFuture<*>? = null
 
     fun startServer(): Boolean {
         return try {
@@ -152,6 +155,7 @@ class LocalHttpServer(
                 Log.w(TAG, "Failed to start me.sync LAN download server", ex)
                 false
             }
+            scheduleHousekeeping()
             true
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to start local HTTP server", ex)
@@ -176,6 +180,11 @@ class LocalHttpServer(
         }
         try {
             screenScheduler.shutdownNow()
+        } catch (_: Exception) {
+        }
+        try {
+            housekeepingFuture?.cancel(true)
+            housekeepingFuture = null
         } catch (_: Exception) {
         }
     }
@@ -222,6 +231,45 @@ class LocalHttpServer(
             uri == "/app/update/install_permission/open_settings" && session.method == Method.POST -> {
                 handleAppUpdateInstallPermissionOpenSettings()
             }
+            uri == "/work/jobs/app_update_check" && session.method == Method.GET -> {
+                handleWorkAppUpdateCheckStatus()
+            }
+            uri == "/work/jobs/app_update_check/schedule" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.work",
+                    capability = "workmanager",
+                    detail = "Schedule app update background check"
+                )
+                if (!ok.first) return ok.second!!
+                handleWorkAppUpdateCheckSchedule(payload)
+            }
+            uri == "/work/jobs/app_update_check/run_once" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.work",
+                    capability = "workmanager",
+                    detail = "Run app update background check once"
+                )
+                if (!ok.first) return ok.second!!
+                handleWorkAppUpdateCheckRunOnce(payload)
+            }
+            uri == "/work/jobs/app_update_check/cancel" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.work",
+                    capability = "workmanager",
+                    detail = "Cancel app update background checks"
+                )
+                if (!ok.first) return ok.second!!
+                handleWorkAppUpdateCheckCancel()
+            }
             uri == "/app/info" -> {
                 handleAppInfo()
             }
@@ -264,6 +312,18 @@ class LocalHttpServer(
                 )
                 if (!ok.first) return ok.second!!
                 handleMeSyncWipeAll(payload)
+            }
+            uri == "/me/sync/share_nearby" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.intent",
+                    capability = "intent",
+                    detail = "Share me.sync export via Nearby Share"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeSyncShareNearby(payload)
             }
             uri == "/agent/run" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -1631,6 +1691,7 @@ class LocalHttpServer(
                     importAuthorizedKeysFromFile()
                 } catch (_: Exception) {
                 }
+                runHousekeepingOnce()
                 val arr = org.json.JSONArray()
                 sshKeyStore.listAll().forEach { key ->
                     arr.put(
@@ -4430,6 +4491,76 @@ class LocalHttpServer(
         }
     }
 
+    private fun handleWorkAppUpdateCheckStatus(): Response {
+        return try {
+            jsonResponse(workJobManager.appUpdateCheckStatus())
+        } catch (ex: Throwable) {
+            Log.w(TAG, "Work app_update_check status failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "work_status_failed",
+                JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+            )
+        }
+    }
+
+    private fun handleWorkAppUpdateCheckSchedule(payload: JSONObject): Response {
+        return try {
+            val intervalMin = payload.optLong("interval_minutes", 360L).coerceAtLeast(15L)
+            val requireCharging = payload.optBoolean("require_charging", false)
+            val requireUnmetered = payload.optBoolean("require_unmetered", false)
+            val replace = payload.optBoolean("replace", true)
+            jsonResponse(
+                workJobManager.scheduleAppUpdateCheck(
+                    intervalMinutes = intervalMin,
+                    requireCharging = requireCharging,
+                    requireUnmetered = requireUnmetered,
+                    replace = replace
+                )
+            )
+        } catch (ex: Throwable) {
+            Log.w(TAG, "Work app_update_check schedule failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "work_schedule_failed",
+                JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+            )
+        }
+    }
+
+    private fun handleWorkAppUpdateCheckRunOnce(payload: JSONObject): Response {
+        return try {
+            val requireCharging = payload.optBoolean("require_charging", false)
+            val requireUnmetered = payload.optBoolean("require_unmetered", false)
+            jsonResponse(
+                workJobManager.runAppUpdateCheckOnce(
+                    requireCharging = requireCharging,
+                    requireUnmetered = requireUnmetered
+                )
+            )
+        } catch (ex: Throwable) {
+            Log.w(TAG, "Work app_update_check run_once failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "work_run_once_failed",
+                JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+            )
+        }
+    }
+
+    private fun handleWorkAppUpdateCheckCancel(): Response {
+        return try {
+            jsonResponse(workJobManager.cancelAppUpdateCheck())
+        } catch (ex: Throwable) {
+            Log.w(TAG, "Work app_update_check cancel failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "work_cancel_failed",
+                JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+            )
+        }
+    }
+
     private fun handleAppInfo(): Response {
         return try {
             val pkg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -6799,6 +6930,30 @@ class LocalHttpServer(
         authFile.writeText(lines.joinToString("\n") + if (lines.isNotEmpty()) "\n" else "")
     }
 
+    private fun runHousekeepingOnce() {
+        runCatching {
+            val now = System.currentTimeMillis()
+            val pruned = sshKeyStore.pruneExpired(now)
+            if (pruned > 0) {
+                Log.i(TAG, "Housekeeping pruned expired SSH keys: $pruned")
+            }
+            syncAuthorizedKeys()
+        }.onFailure {
+            Log.w(TAG, "Housekeeping failed", it)
+        }
+    }
+
+    private fun scheduleHousekeeping() {
+        if (housekeepingFuture != null) return
+        runHousekeepingOnce()
+        housekeepingFuture = housekeepingScheduler.scheduleWithFixedDelay(
+            { runHousekeepingOnce() },
+            HOUSEKEEPING_INITIAL_DELAY_SEC,
+            HOUSEKEEPING_INTERVAL_SEC,
+            TimeUnit.SECONDS
+        )
+    }
+
     private fun importAuthorizedKeysFromFile() {
         val userHome = File(context.filesDir, "user")
         val authFile = File(File(userHome, ".ssh"), "authorized_keys")
@@ -6922,6 +7077,97 @@ class LocalHttpServer(
             Log.e(TAG, "me.sync export failed", ex)
             jsonError(Response.Status.INTERNAL_ERROR, "me_sync_export_failed", JSONObject().put("detail", ex.message ?: ""))
         }
+    }
+
+    private fun handleMeSyncShareNearby(payload: JSONObject): Response {
+        return try {
+            cleanupExpiredMeSyncTransfers()
+            val includeUser = payload.optBoolean("include_user", true)
+            val includeProtectedDb = payload.optBoolean("include_protected_db", true)
+            val includeIdentity = payload.optBoolean("include_identity", false)
+            val forceRefresh = payload.optBoolean("force_refresh", false)
+            val transferId = payload.optString("transfer_id", "").trim()
+            val chooserTitle = payload.optString("chooser_title", "").trim().ifBlank { "Share me.sync" }
+            val now = System.currentTimeMillis()
+            val requested = if (transferId.isNotBlank()) meSyncTransfers[transferId] else null
+            val active = if (forceRefresh) {
+                null
+            } else {
+                requested?.takeIf { it.expiresAt <= 0L || now < it.expiresAt }
+                    ?: findReusableMeSyncTransfer(includeUser, includeProtectedDb, includeIdentity)
+            }
+            val transfer = active ?: buildMeSyncExport(
+                includeUser = includeUser,
+                includeProtectedDb = includeProtectedDb,
+                includeIdentity = includeIdentity
+            ).also {
+                meSyncTransfers[it.id] = it
+            }
+            val launch = launchMeSyncNearbyShare(transfer.meSyncUri, chooserTitle)
+            if (!launch.optBoolean("started", false)) {
+                return jsonError(
+                    Response.Status.BAD_REQUEST,
+                    "nearby_share_unavailable",
+                    JSONObject().put("detail", launch.optString("detail", "No share target available"))
+                )
+            }
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("transfer_id", transfer.id)
+                    .put("reused", active != null)
+                    .put("expires_at", transfer.expiresAt)
+                    .put("me_sync_uri", transfer.meSyncUri)
+                    .put("share", launch)
+            )
+        } catch (ex: Exception) {
+            Log.e(TAG, "me.sync nearby share failed", ex)
+            jsonError(Response.Status.INTERNAL_ERROR, "me_sync_share_nearby_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun launchMeSyncNearbyShare(meSyncUri: String, chooserTitle: String): JSONObject {
+        val text = meSyncUri.trim()
+        if (text.isBlank()) {
+            return JSONObject().put("started", false).put("detail", "Missing me.sync URI")
+        }
+        val pm = context.packageManager
+        val base = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        if (base.resolveActivity(pm) == null) {
+            return JSONObject().put("started", false).put("detail", "No app can handle text sharing")
+        }
+
+        val nearbyPackages = listOf(
+            "com.google.android.gms",
+            "com.samsung.android.app.sharelive"
+        )
+        var mode = "chooser"
+        var targetPackage = ""
+        val launchIntent = nearbyPackages
+            .asSequence()
+            .map { pkg -> pkg to Intent(base).setPackage(pkg) }
+            .firstOrNull { (_, it) -> it.resolveActivity(pm) != null }
+            ?.let { (pkg, intent) ->
+                mode = "nearby_direct"
+                targetPackage = pkg
+                intent
+            }
+            ?: Intent.createChooser(base, chooserTitle).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+        val posted = Handler(Looper.getMainLooper()).post {
+            runCatching { context.startActivity(launchIntent) }
+                .onFailure { Log.w(TAG, "Failed to launch me.sync share intent", it) }
+        }
+        return JSONObject()
+            .put("started", posted)
+            .put("mode", mode)
+            .put("target_package", if (targetPackage.isNotBlank()) targetPackage else JSONObject.NULL)
     }
 
     private fun shouldRequestPermissionForTempMeSyncSshd(): Boolean {
@@ -8277,6 +8523,8 @@ class LocalHttpServer(
         private const val ME_SYNC_LAN_PORT = 8766
         private const val ME_SYNC_QR_TTL_MS = 40L * 1000L
         private const val ME_SYNC_URI_PREFIX = "me.things:me.sync:"
+        private const val HOUSEKEEPING_INITIAL_DELAY_SEC = 120L
+        private const val HOUSEKEEPING_INTERVAL_SEC = 60L * 60L
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
         private const val SOCKET_READ_TIMEOUT = 0
         private const val BRAIN_SYSTEM_PROMPT = """You are the me.things Brain, an AI assistant running on an Android device.

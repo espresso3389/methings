@@ -37,6 +37,10 @@ class SshKeyStore(context: Context) {
         dao.deleteByFingerprint(fingerprint)
     }
 
+    fun pruneExpired(now: Long = System.currentTimeMillis()): Int {
+        return dao.deleteExpired(now)
+    }
+
     fun findByPublicKey(key: String): SshKeyEntity? {
         val normalized = key.trim()
         if (normalized.isEmpty()) return null

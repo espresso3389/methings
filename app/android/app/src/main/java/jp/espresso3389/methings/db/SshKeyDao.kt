@@ -18,4 +18,7 @@ interface SshKeyDao {
 
     @Query("DELETE FROM ssh_keys WHERE fingerprint = :fingerprint")
     fun deleteByFingerprint(fingerprint: String)
+
+    @Query("DELETE FROM ssh_keys WHERE expiresAt IS NOT NULL AND expiresAt > 0 AND expiresAt <= :now")
+    fun deleteExpired(now: Long): Int
 }

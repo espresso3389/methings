@@ -1159,6 +1159,7 @@
         display: none; align-items: center; justify-content: center;
         padding: 20px; z-index: 999;
       }
+      #dialogModal { z-index: 1100; }
       .modal.show { display: flex; }
       .modal-card {
         width: 100%; max-width: 340px;
@@ -1168,6 +1169,10 @@
         padding: 20px;
         box-shadow: var(--shadow-lg);
         text-align: center;
+      }
+      .modal-card.settings-detail {
+        max-width: 440px;
+        text-align: left;
       }
       .modal-card .card-title { margin-bottom: 12px; font-size: 16px; }
       .pin-code {
@@ -1627,83 +1632,16 @@
           </div>
         </section>
 
-        <!-- Audio Recording -->
+        <!-- Media Recording -->
         <section class="card" id="settings-section-audio_recording">
           <div class="card-header">
             <div class="card-icon red">&#127908;</div>
-            <div class="card-title">Audio Recording</div>
+            <div class="card-title">Media Recording</div>
           </div>
-          <div class="card-desc">Default settings for agent-initiated audio recording and PCM streaming.</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
-            <div class="field">
-              <label>Sample Rate</label>
-              <select id="audioRecSampleRate">
-                <option value="8000">8 kHz</option>
-                <option value="16000">16 kHz</option>
-                <option value="22050">22.05 kHz</option>
-                <option value="44100">44.1 kHz</option>
-                <option value="48000">48 kHz</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Channels</label>
-              <select id="audioRecChannels">
-                <option value="1">Mono</option>
-                <option value="2">Stereo</option>
-              </select>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
-            <div class="field">
-              <label>Bitrate</label>
-              <select id="audioRecBitrate">
-                <option value="64000">64 kbps</option>
-                <option value="96000">96 kbps</option>
-                <option value="128000">128 kbps</option>
-                <option value="192000">192 kbps</option>
-                <option value="256000">256 kbps</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Max Duration (s)</label>
-              <input type="number" id="audioRecMaxDuration" min="5" max="3600" value="300" />
-            </div>
-          </div>
+          <div class="card-desc">Configure default audio and video recording behavior in dedicated popups.</div>
           <div class="btn-group" style="margin-top:10px;">
-            <button class="btn primary" id="audioRecSave">Save</button>
-          </div>
-        </section>
-
-        <!-- Video Recording -->
-        <section class="card" id="settings-section-video_recording">
-          <div class="card-header">
-            <div class="card-icon purple">&#127909;</div>
-            <div class="card-title">Video Recording</div>
-          </div>
-          <div class="card-desc">Default settings for agent-initiated video recording.</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
-            <div class="field">
-              <label>Resolution</label>
-              <select id="videoRecResolution">
-                <option value="720p">720p</option>
-                <option value="1080p">1080p</option>
-                <option value="4k">4K</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Codec</label>
-              <select id="videoRecCodec">
-                <option value="h265">H.265 (HEVC)</option>
-                <option value="h264">H.264 (AVC)</option>
-              </select>
-            </div>
-          </div>
-          <div class="field" style="margin-top:10px;">
-            <label>Max Duration (s)</label>
-            <input type="number" id="videoRecMaxDuration" min="5" max="3600" value="300" />
-          </div>
-          <div class="btn-group" style="margin-top:10px;">
-            <button class="btn primary" id="videoRecSave">Save</button>
+            <button class="btn" id="openAudioRecordingModalBtn">Audio Settings</button>
+            <button class="btn" id="openVideoRecordingModalBtn">Video Settings</button>
           </div>
         </section>
 
@@ -1732,16 +1670,8 @@
               <button class="btn" id="copyClientKey" style="padding:5px 10px;font-size:12px;">Copy</button>
             </div>
           </div>
-          <div style="margin-top:14px;">
-            <div style="display:flex;align-items:center;gap:8px;">
-              <div class="muted" style="font-weight:600;">Authorized Keys</div>
-              <button class="btn" id="sshKeysAdd" style="margin-left:auto;padding:5px 10px;font-size:12px;">+ Add</button>
-              <button class="btn" id="sshKeysRefresh" style="padding:5px 10px;font-size:12px;">Refresh</button>
-            </div>
-            <div class="muted" style="margin-top:6px;">
-              Keys in <span style="font-family:monospace;">files/user/.ssh/authorized_keys</span>. Adding/removing requires approval.
-            </div>
-            <div id="sshKeysList" style="margin-top:8px;"></div>
+          <div class="btn-group" style="margin-top:12px;">
+            <button class="btn" id="openSshKeysModalBtn">Authorized Keys</button>
           </div>
         </section>
 
@@ -1846,41 +1776,8 @@
           <div class="card-desc">
             Controls extra confirmations for cloud requests that upload local files.
           </div>
-          <div class="field">
-            <label>Auto-upload without confirm (MB)</label>
-            <input type="number" id="cloudAutoUploadMb" data-setting-key="auto_upload_no_confirm_mb" min="0" max="25" step="0.5" placeholder="1.0" />
-            <div class="muted" style="margin-top:4px;">
-              If a cloud request uploads more than this, the UI/agent should confirm before sending.
-            </div>
-          </div>
-          <div class="field">
-            <label>Min transfer speed (KB/s)</label>
-            <input type="number" id="cloudMinKbps" data-setting-key="min_transfer_kbps" min="0" max="50000" step="50" placeholder="0" />
-            <div class="muted" style="margin-top:4px;">
-              If set (>0), abort cloud requests when average upload/download rate drops below this.
-            </div>
-          </div>
-          <div class="field">
-            <label style="display:flex; align-items:center; gap:10px;">
-              <input type="checkbox" id="cloudImgResizeEnabled" data-setting-key="image_resize_enabled" />
-              <span>Resize images before upload</span>
-            </label>
-            <div class="muted" style="margin-top:4px;">
-              Reduces upload size for vision requests (helps avoid extra confirmations).
-            </div>
-          </div>
-          <div class="field" style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-            <div>
-              <label>Max image dim (px)</label>
-              <input type="number" id="cloudImgMaxDim" data-setting-key="image_resize_max_dim_px" min="64" max="4096" step="64" placeholder="512" />
-            </div>
-            <div>
-              <label>JPEG quality</label>
-              <input type="number" id="cloudImgJpegQ" data-setting-key="image_resize_jpeg_quality" min="30" max="95" step="1" placeholder="70" />
-            </div>
-          </div>
           <div class="btn-group">
-            <button class="btn primary" id="cloudPrefsSave">Save</button>
+            <button class="btn" id="openCloudSettingsModalBtn">Cloud Upload Settings</button>
           </div>
         </section>
 
@@ -1921,6 +1818,9 @@
             <button class="btn" id="checkAppUpdate">Check Update</button>
             <button class="btn" id="installAppUpdate">Install Update</button>
             <button class="btn" id="openInstallUnknownSources" style="display:none;">Allow Install Permission</button>
+          </div>
+          <div class="btn-group">
+            <button class="btn" id="openAutoUpdateSettingsModalBtn">Auto Update Settings</button>
           </div>
         </section>
 
@@ -2014,6 +1914,7 @@
           <img id="meSyncQrImage" alt="me.sync QR" style="width:260px; height:260px; image-rendering: pixelated; border:1px solid rgba(0,0,0,0.12); border-radius:10px; background:#fff;" />
         </div>
         <div class="btn-group" style="margin-top:12px;">
+          <button class="btn primary" id="meSyncShareNearby">Nearby Share</button>
           <button class="btn" id="meSyncExportCancel">Cancel</button>
         </div>
       </div>
@@ -2033,6 +1934,187 @@
             <div style="height:100%; width:40%; border-radius:999px; background:linear-gradient(90deg, rgba(34,197,94,0.35), rgba(34,197,94,0.95), rgba(34,197,94,0.35)); animation: meSyncPrepSlide 1.1s linear infinite;"></div>
           </div>
           <div class="muted" id="meSyncImportProgressText" style="margin-top:8px;">Elapsed 00:00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Audio Recording Modal -->
+    <div class="modal" id="audioRecordingModal" role="dialog" aria-modal="true" aria-labelledby="audioRecordingModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="media_recording">
+        <div class="card-header">
+          <div class="card-icon red">&#127908;</div>
+          <div class="card-title" id="audioRecordingModalTitle" style="margin-bottom:0;">Audio Recording</div>
+          <button class="icon-btn secondary" id="audioRecordingModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div class="muted" style="margin-top:8px;">Defaults for agent-initiated audio recording and PCM streaming.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+          <div class="field">
+            <label>Sample Rate</label>
+            <select id="audioRecSampleRate">
+              <option value="8000">8 kHz</option>
+              <option value="16000">16 kHz</option>
+              <option value="22050">22.05 kHz</option>
+              <option value="44100">44.1 kHz</option>
+              <option value="48000">48 kHz</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Channels</label>
+            <select id="audioRecChannels">
+              <option value="1">Mono</option>
+              <option value="2">Stereo</option>
+            </select>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+          <div class="field">
+            <label>Bitrate</label>
+            <select id="audioRecBitrate">
+              <option value="64000">64 kbps</option>
+              <option value="96000">96 kbps</option>
+              <option value="128000">128 kbps</option>
+              <option value="192000">192 kbps</option>
+              <option value="256000">256 kbps</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Max Duration (s)</label>
+            <input type="number" id="audioRecMaxDuration" min="5" max="3600" value="300" />
+          </div>
+        </div>
+        <div class="btn-group" style="margin-top:10px;">
+          <button class="btn primary" id="audioRecSave">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Video Recording Modal -->
+    <div class="modal" id="videoRecordingModal" role="dialog" aria-modal="true" aria-labelledby="videoRecordingModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="media_recording">
+        <div class="card-header">
+          <div class="card-icon purple">&#127909;</div>
+          <div class="card-title" id="videoRecordingModalTitle" style="margin-bottom:0;">Video Recording</div>
+          <button class="icon-btn secondary" id="videoRecordingModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div class="muted" style="margin-top:8px;">Defaults for agent-initiated video recording.</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;">
+          <div class="field">
+            <label>Resolution</label>
+            <select id="videoRecResolution">
+              <option value="720p">720p</option>
+              <option value="1080p">1080p</option>
+              <option value="4k">4K</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Codec</label>
+            <select id="videoRecCodec">
+              <option value="h265">H.265 (HEVC)</option>
+              <option value="h264">H.264 (AVC)</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label>Max Duration (s)</label>
+          <input type="number" id="videoRecMaxDuration" min="5" max="3600" value="300" />
+        </div>
+        <div class="btn-group" style="margin-top:10px;">
+          <button class="btn primary" id="videoRecSave">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SSH Authorized Keys Modal -->
+    <div class="modal" id="sshKeysModal" role="dialog" aria-modal="true" aria-labelledby="sshKeysModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="sshd" style="max-height:calc(100vh - 40px); display:flex; flex-direction:column; overflow:hidden;">
+        <div class="card-header">
+          <div class="card-icon green">&#128273;</div>
+          <div class="card-title" id="sshKeysModalTitle" style="margin-bottom:0;">Authorized Keys</div>
+          <button class="icon-btn secondary" id="sshKeysModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div class="muted" style="margin-top:8px;">
+          Keys in <span style="font-family:monospace;">files/user/.ssh/authorized_keys</span>. Adding/removing requires approval.
+        </div>
+        <div class="btn-group" style="margin-top:10px;">
+          <button class="btn" id="sshKeysAdd">+ Add</button>
+          <button class="btn" id="sshKeysRefresh">Refresh</button>
+        </div>
+        <div id="sshKeysList" style="margin-top:8px; flex:1 1 auto; min-height:140px; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px; background:rgba(255,255,255,0.02);"></div>
+      </div>
+    </div>
+
+    <!-- Cloud Upload Settings Modal -->
+    <div class="modal" id="cloudSettingsModal" role="dialog" aria-modal="true" aria-labelledby="cloudSettingsModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="cloud">
+        <div class="card-header">
+          <div class="card-icon blue">&#9729;</div>
+          <div class="card-title" id="cloudSettingsModalTitle" style="margin-bottom:0;">Cloud Upload Settings</div>
+          <button class="icon-btn secondary" id="cloudSettingsModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label>Auto-upload without confirm (MB)</label>
+          <input type="number" id="cloudAutoUploadMb" data-setting-key="auto_upload_no_confirm_mb" min="0" max="25" step="0.5" placeholder="1.0" />
+          <div class="muted" style="margin-top:4px;">
+            If a cloud request uploads more than this, the UI/agent should confirm before sending.
+          </div>
+        </div>
+        <div class="field">
+          <label>Min transfer speed (KB/s)</label>
+          <input type="number" id="cloudMinKbps" data-setting-key="min_transfer_kbps" min="0" max="50000" step="50" placeholder="0" />
+          <div class="muted" style="margin-top:4px;">
+            If set (>0), abort cloud requests when average upload/download rate drops below this.
+          </div>
+        </div>
+        <div class="field">
+          <label style="display:flex; align-items:center; gap:10px;">
+            <input type="checkbox" id="cloudImgResizeEnabled" data-setting-key="image_resize_enabled" />
+            <span>Resize images before upload</span>
+          </label>
+          <div class="muted" style="margin-top:4px;">
+            Reduces upload size for vision requests (helps avoid extra confirmations).
+          </div>
+        </div>
+        <div class="field" style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div>
+            <label>Max image dim (px)</label>
+            <input type="number" id="cloudImgMaxDim" data-setting-key="image_resize_max_dim_px" min="64" max="4096" step="64" placeholder="512" />
+          </div>
+          <div>
+            <label>JPEG quality</label>
+            <input type="number" id="cloudImgJpegQ" data-setting-key="image_resize_jpeg_quality" min="30" max="95" step="1" placeholder="70" />
+          </div>
+        </div>
+        <div class="btn-group">
+          <button class="btn primary" id="cloudPrefsSave">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Auto Update Settings Modal -->
+    <div class="modal" id="autoUpdateSettingsModal" role="dialog" aria-modal="true" aria-labelledby="autoUpdateSettingsModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="app_update">
+        <div class="card-header">
+          <div class="card-icon blue">&#8635;</div>
+          <div class="card-title" id="autoUpdateSettingsModalTitle" style="margin-bottom:0;">Auto Update Settings</div>
+          <button class="icon-btn secondary" id="autoUpdateSettingsModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <p class="muted" id="appUpdateWorkStatus" style="margin-top:8px;">Scheduler: loading...</p>
+        <div class="field" style="margin-top:8px;">
+          <label>Auto-check interval (minutes)</label>
+          <input type="number" id="appUpdateWorkInterval" min="15" step="15" value="360" />
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="appUpdateWorkCharging" />
+          <span>Require charging</span>
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="appUpdateWorkUnmetered" />
+          <span>Require unmetered network</span>
+        </div>
+        <div class="btn-group">
+          <button class="btn" id="appUpdateWorkSchedule">Save Schedule</button>
+          <button class="btn" id="appUpdateWorkRunOnce">Run Once</button>
+          <button class="btn danger" id="appUpdateWorkCancel">Cancel Schedule</button>
         </div>
       </div>
     </div>
@@ -2472,8 +2554,7 @@
         { id: "web_search", domId: "settings-section-web_search", label: "Web Search" },
         { id: "memory", domId: "settings-section-memory", label: "Memory" },
         { id: "task_notifications", domId: "settings-section-task_notifications", label: "Task Notifications" },
-        { id: "audio_recording", domId: "settings-section-audio_recording", label: "Audio Recording" },
-        { id: "video_recording", domId: "settings-section-video_recording", label: "Video Recording" },
+        { id: "media_recording", domId: "settings-section-audio_recording", label: "Media Recording" },
         { id: "sshd", domId: "settings-section-sshd", label: "SSHD" },
         { id: "agent_service", domId: "settings-section-agent_service", label: "Agent Service" },
         { id: "user_interface", domId: "settings-section-user_interface", label: "User Interface" },
@@ -2507,8 +2588,11 @@
             const raw = String(node.getAttribute("data-setting-key") || "").trim();
             if (!raw) return;
             const sectionEl = node.closest("section.card[id^='settings-section-']");
-            if (!sectionEl) return;
-            const sid = normalizeSettingsSectionToken(sectionEl.id.replace(/^settings-section-/, ""));
+            const containerEl = sectionEl || node.closest("[data-settings-section]");
+            if (!containerEl) return;
+            const sid = sectionEl
+              ? normalizeSettingsSectionToken(sectionEl.id.replace(/^settings-section-/, ""))
+              : normalizeSettingsSectionToken(containerEl.getAttribute("data-settings-section"));
             if (!sid) return;
             raw.split(",").forEach((part) => {
               const key = normalizeSettingsSectionToken(part);
@@ -2527,8 +2611,20 @@
       function resolveSettingsSection(raw) {
         const token = normalizeSettingsSectionToken(raw);
         if (!token) return null;
+        const alias = {
+          audio_recording: "media_recording",
+          video_recording: "media_recording",
+          media: "media_recording",
+          cloud_upload: "cloud",
+          auto_update: "app_update",
+        };
+        const canonical = alias[token] || token;
+        if (settingsSectionMap[canonical]) return settingsSectionMap[canonical];
         if (settingsSectionMap[token]) return settingsSectionMap[token];
         const byKey = getSettingsKeyToSectionMap();
+        if (byKey[canonical] && settingsSectionMap[byKey[canonical]]) {
+          return settingsSectionMap[byKey[canonical]];
+        }
         if (byKey[token] && settingsSectionMap[byKey[token]]) {
           return settingsSectionMap[byKey[token]];
         }
@@ -6277,6 +6373,28 @@
       const checkAppUpdate = $("checkAppUpdate");
       const installAppUpdate = $("installAppUpdate");
       const openInstallUnknownSources = $("openInstallUnknownSources");
+      const appUpdateWorkStatus = $("appUpdateWorkStatus");
+      const appUpdateWorkInterval = $("appUpdateWorkInterval");
+      const appUpdateWorkCharging = $("appUpdateWorkCharging");
+      const appUpdateWorkUnmetered = $("appUpdateWorkUnmetered");
+      const appUpdateWorkSchedule = $("appUpdateWorkSchedule");
+      const appUpdateWorkRunOnce = $("appUpdateWorkRunOnce");
+      const appUpdateWorkCancel = $("appUpdateWorkCancel");
+      const openAudioRecordingModalBtn = $("openAudioRecordingModalBtn");
+      const openVideoRecordingModalBtn = $("openVideoRecordingModalBtn");
+      const openSshKeysModalBtn = $("openSshKeysModalBtn");
+      const openCloudSettingsModalBtn = $("openCloudSettingsModalBtn");
+      const openAutoUpdateSettingsModalBtn = $("openAutoUpdateSettingsModalBtn");
+      const audioRecordingModal = $("audioRecordingModal");
+      const audioRecordingModalClose = $("audioRecordingModalClose");
+      const videoRecordingModal = $("videoRecordingModal");
+      const videoRecordingModalClose = $("videoRecordingModalClose");
+      const sshKeysModal = $("sshKeysModal");
+      const sshKeysModalClose = $("sshKeysModalClose");
+      const cloudSettingsModal = $("cloudSettingsModal");
+      const cloudSettingsModalClose = $("cloudSettingsModalClose");
+      const autoUpdateSettingsModal = $("autoUpdateSettingsModal");
+      const autoUpdateSettingsModalClose = $("autoUpdateSettingsModalClose");
       const meSyncStatus = $("meSyncStatus");
       const meSyncPrepareExport = $("meSyncPrepareExport");
       const meSyncImport = $("meSyncImport");
@@ -6290,6 +6408,7 @@
       const meSyncPrepareText = $("meSyncPrepareText");
       const meSyncQrWrap = $("meSyncQrWrap");
       const meSyncQrImage = $("meSyncQrImage");
+      const meSyncShareNearby = $("meSyncShareNearby");
       const meSyncExportCancel = $("meSyncExportCancel");
       const meSyncImportModal = $("meSyncImportModal");
       const meSyncImportModalClose = $("meSyncImportModalClose");
@@ -6343,6 +6462,7 @@
       }
 
       let appUpdateInfo = null;
+      let appUpdateWorkInfo = null;
       let appUpdatePrompted = false;
       let meSyncActiveExport = null;
       let meSyncExportReq = null;
@@ -6397,10 +6517,154 @@
         cap.textContent = String(caption || "");
       }
 
+      function openSimpleModal(modalEl) {
+        if (!modalEl) return;
+        modalEl.classList.add("show");
+      }
+
+      function closeSimpleModal(modalEl) {
+        if (!modalEl) return;
+        modalEl.classList.remove("show");
+      }
+
+      function wireSimpleModal(modalEl, openBtn, closeBtn) {
+        if (!modalEl) return;
+        if (openBtn) {
+          openBtn.addEventListener("click", () => {
+            openSimpleModal(modalEl);
+          });
+        }
+        if (closeBtn) {
+          closeBtn.addEventListener("click", () => {
+            closeSimpleModal(modalEl);
+          });
+        }
+        modalEl.addEventListener("click", (e) => {
+          if (e && e.target === modalEl) closeSimpleModal(modalEl);
+        });
+      }
+
       function updateAppUpdateButtons() {
         const updateEnabled = !(appUpdateInfo && appUpdateInfo.update_enabled === false);
         checkAppUpdate.disabled = !updateEnabled;
         installAppUpdate.disabled = !updateEnabled || !(appUpdateInfo && appUpdateInfo.has_update);
+        appUpdateWorkSchedule.disabled = !updateEnabled;
+        appUpdateWorkRunOnce.disabled = !updateEnabled;
+        appUpdateWorkCancel.disabled = !updateEnabled;
+      }
+
+      function formatWorkTime(ms) {
+        const n = Number(ms || 0);
+        if (!n || n <= 0) return "-";
+        try {
+          return new Date(n).toLocaleString();
+        } catch (_) {
+          return String(n);
+        }
+      }
+
+      function setAppUpdateWorkStatusText(text) {
+        appUpdateWorkStatus.textContent = String(text || "Scheduler unavailable.");
+      }
+
+      function applyAppUpdateWorkSnapshot(snapshot) {
+        const s = (snapshot && typeof snapshot === "object") ? snapshot : {};
+        const enabled = !!s.schedule_enabled;
+        const interval = Number(s.interval_minutes || 360);
+        const requireCharging = !!s.require_charging;
+        const requireUnmetered = !!s.require_unmetered;
+        appUpdateWorkInterval.value = String(Math.max(15, isFinite(interval) ? Math.floor(interval) : 360));
+        appUpdateWorkCharging.checked = requireCharging;
+        appUpdateWorkUnmetered.checked = requireUnmetered;
+        const lastStatus = String(s.last_status || "").trim() || "idle";
+        const latestTag = String(s.last_latest_tag || "").trim();
+        const hasUpdate = !!s.last_has_update;
+        const finish = formatWorkTime(s.last_finish_ms);
+        const mode = enabled
+          ? "every " + String(Math.max(15, interval)) + "m"
+          : "disabled";
+        const latestPart = latestTag ? (" latest=" + latestTag + (hasUpdate ? " (update)" : "")) : "";
+        setAppUpdateWorkStatusText(
+          "Scheduler: " + mode + " | Last: " + lastStatus + " @ " + finish + latestPart
+        );
+      }
+
+      async function refreshAppUpdateWorkStatus() {
+        try {
+          const res = await fetch(API + "/work/jobs/app_update_check");
+          if (!res.ok) throw 0;
+          const data = await res.json().catch(() => ({}));
+          appUpdateWorkInfo = data || null;
+          const tracker = (data && data.tracker) || {};
+          applyAppUpdateWorkSnapshot(tracker);
+        } catch (_) {
+          appUpdateWorkInfo = null;
+          setAppUpdateWorkStatusText("Scheduler unavailable.");
+        }
+      }
+
+      async function saveAppUpdateWorkSchedule() {
+        let interval = parseInt(String(appUpdateWorkInterval.value || "").trim() || "360", 10);
+        if (!Number.isFinite(interval) || interval < 15) interval = 15;
+        appUpdateWorkSchedule.disabled = true;
+        try {
+          const res = await fetch(API + "/work/jobs/app_update_check/schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              interval_minutes: interval,
+              require_charging: !!appUpdateWorkCharging.checked,
+              require_unmetered: !!appUpdateWorkUnmetered.checked,
+              replace: true,
+            }),
+          });
+          if (!res.ok) throw 0;
+          showToast("Update scheduler saved", 1600);
+          await refreshAppUpdateWorkStatus();
+        } catch (_) {
+          showToast("Failed to save scheduler", 1800);
+        } finally {
+          updateAppUpdateButtons();
+        }
+      }
+
+      async function runAppUpdateWorkOnce() {
+        appUpdateWorkRunOnce.disabled = true;
+        try {
+          const res = await fetch(API + "/work/jobs/app_update_check/run_once", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              require_charging: !!appUpdateWorkCharging.checked,
+              require_unmetered: !!appUpdateWorkUnmetered.checked,
+            }),
+          });
+          if (!res.ok) throw 0;
+          showToast("Background update check queued", 1700);
+          await refreshAppUpdateWorkStatus();
+        } catch (_) {
+          showToast("Failed to run check", 1800);
+        } finally {
+          updateAppUpdateButtons();
+        }
+      }
+
+      async function cancelAppUpdateWorkSchedule() {
+        appUpdateWorkCancel.disabled = true;
+        try {
+          const res = await fetch(API + "/work/jobs/app_update_check/cancel", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({}),
+          });
+          if (!res.ok) throw 0;
+          showToast("Update scheduler cancelled", 1600);
+          await refreshAppUpdateWorkStatus();
+        } catch (_) {
+          showToast("Failed to cancel scheduler", 1800);
+        } finally {
+          updateAppUpdateButtons();
+        }
       }
 
       function setAppUpdateDownloading(active) {
@@ -6727,18 +6991,56 @@
           meSyncPrepareWrap.style.display = "block";
           meSyncQrWrap.style.display = "none";
           startMeSyncPrepareTimer();
+          meSyncShareNearby.disabled = true;
           meSyncExportCancel.disabled = false;
           return;
         }
         stopMeSyncPrepareTimer();
         meSyncPrepareWrap.style.display = "none";
         const a = meSyncActiveExport || {};
+        const meSyncUri = String(a.me_sync_uri || "").trim();
         const qr = String(a.qr_data_url || "").trim();
         meSyncModalStatus.textContent = "Export ready. Scan this QR on target device.";
         meSyncQrWrap.style.display = qr ? "block" : "none";
         meSyncQrImage.src = qr || "";
+        meSyncShareNearby.disabled = !meSyncUri;
         meSyncExportCancel.disabled = false;
         startMeSyncExpireTimer();
+      }
+
+      async function shareMeSyncNearbyFromModal() {
+        meSyncShareNearby.disabled = true;
+        try {
+          if (!meSyncActiveExport || !String(meSyncActiveExport.me_sync_uri || "").trim()) {
+            await runMeSyncExportFlow(false);
+          }
+          const active = meSyncActiveExport || {};
+          const transferId = String(active.transfer_id || active.id || "").trim();
+          const res = await fetch(API + "/me/sync/share_nearby", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              transfer_id: transferId || undefined,
+              include_user: true,
+              include_protected_db: true,
+              include_identity: false,
+              ui_initiated: true,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(String(data.error || "nearby_share_failed"));
+          if (data && typeof data === "object") {
+            const next = Object.assign({}, (meSyncActiveExport || {}), data);
+            if (!next.id && data.transfer_id) next.id = data.transfer_id;
+            meSyncActiveExport = next;
+          }
+          const mode = String((data && data.share && data.share.mode) || "").trim();
+          showToast(mode === "nearby_direct" ? "Opening Nearby Share..." : "Opening share sheet...", 1600);
+        } catch (_) {
+          showToast("Nearby Share unavailable", 1800);
+        } finally {
+          meSyncShareNearby.disabled = !String((meSyncActiveExport && meSyncActiveExport.me_sync_uri) || "").trim();
+        }
       }
 
       async function importMeSyncByText(text) {
@@ -6900,16 +7202,14 @@
           ].filter(Boolean).join(" · ");
           rows.push(
             "<div style='display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(0,0,0,0.08);border-radius:10px;margin-top:8px;background:rgba(0,0,0,0.02);'>" +
-              "<div style='flex:1;min-width:0;'>" +
-                "<div style='display:flex;gap:8px;align-items:baseline;'>" +
-                  "<span style='font-family:monospace;font-size:12px;opacity:0.85;'>" + esc(shortFp(fp)) + "</span>" +
-                  (label ? ("<span class='muted' style='font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>" + esc(label) + "</span>") : "") +
-                "</div>" +
-                (meta ? ("<div class='muted' style='margin-top:2px;font-size:11px;'>" + esc(meta) + "</div>") : "") +
+              "<div style='flex:1;min-width:0;display:grid;grid-template-rows:auto auto auto;row-gap:4px;'>" +
+                "<div style='font-family:monospace;font-size:12px;opacity:0.85;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' title='" + escAttr(fp) + "'>" + esc(shortFp(fp)) + "</div>" +
+                "<div class='muted' style='font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' title='" + escAttr(label) + "'>" + esc(label || "-") + "</div>" +
+                "<div class='muted' style='font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' title='" + escAttr(meta) + "'>" + esc(meta || "-") + "</div>" +
               "</div>" +
               (unmanaged
                 ? "<button class='btn' disabled style='padding:5px 10px;font-size:12px;'>Unmanaged</button>"
-                : "<button class='btn' data-fp=\"" + escAttr(fp) + "\" style='padding:5px 10px;font-size:12px;'>Remove</button>") +
+                : "<button class='icon-btn' data-fp=\"" + escAttr(fp) + "\" title='Remove key' aria-label='Remove key' style='width:28px;height:28px;font-size:15px;line-height:1;'>&times;</button>") +
             "</div>"
           );
         }
@@ -7335,6 +7635,12 @@
         }
       });
 
+      wireSimpleModal(audioRecordingModal, openAudioRecordingModalBtn, audioRecordingModalClose);
+      wireSimpleModal(videoRecordingModal, openVideoRecordingModalBtn, videoRecordingModalClose);
+      wireSimpleModal(sshKeysModal, openSshKeysModalBtn, sshKeysModalClose);
+      wireSimpleModal(cloudSettingsModal, openCloudSettingsModalBtn, cloudSettingsModalClose);
+      wireSimpleModal(autoUpdateSettingsModal, openAutoUpdateSettingsModalBtn, autoUpdateSettingsModalClose);
+
       checkAppUpdate.addEventListener("click", async () => {
         await refreshAppUpdate(false);
       });
@@ -7367,6 +7673,19 @@
         const permitted = await ensureInstallPermissionBeforeInstall();
         if (!permitted) return;
         await installLatestUpdate();
+      });
+
+      appUpdateWorkSchedule.addEventListener("click", async () => {
+        await saveAppUpdateWorkSchedule();
+      });
+
+      appUpdateWorkRunOnce.addEventListener("click", async () => {
+        await runAppUpdateWorkOnce();
+      });
+
+      appUpdateWorkCancel.addEventListener("click", async () => {
+        if (!await appConfirm("Cancel schedule", "Cancel periodic app update checks?")) return;
+        await cancelAppUpdateWorkSchedule();
       });
 
       async function runMeSyncExportFlow(forceRefresh) {
@@ -7464,6 +7783,11 @@
       document.addEventListener("keydown", (e) => {
         if (e.key !== "Escape") return;
         if (meSyncImportModal.classList.contains("show")) closeMeSyncImportModal(false);
+        if (audioRecordingModal.classList.contains("show")) closeSimpleModal(audioRecordingModal);
+        if (videoRecordingModal.classList.contains("show")) closeSimpleModal(videoRecordingModal);
+        if (sshKeysModal.classList.contains("show")) closeSimpleModal(sshKeysModal);
+        if (cloudSettingsModal.classList.contains("show")) closeSimpleModal(cloudSettingsModal);
+        if (autoUpdateSettingsModal.classList.contains("show")) closeSimpleModal(autoUpdateSettingsModal);
       });
 
       meSyncExportCancel.addEventListener("click", () => {
@@ -7477,6 +7801,10 @@
         } finally {
           meSyncPrepareExport.disabled = false;
         }
+      });
+
+      meSyncShareNearby.addEventListener("click", async () => {
+        await shareMeSyncNearbyFromModal();
       });
 
       openLicensesPage.addEventListener("click", () => {
@@ -7637,6 +7965,7 @@
       refreshPython();
       updateAppUpdateButtons();
       refreshAppUpdate(true);
+      refreshAppUpdateWorkStatus();
       refreshMeSyncStatus();
       refreshAppInfo();
       refreshSsh();
@@ -7647,6 +7976,7 @@
       setInterval(updateMeSyncSectionCountdown, 1000);
       setInterval(refreshPin, 1000);
       setInterval(updatePinCountdown, 1000);
+      setInterval(refreshAppUpdateWorkStatus, 15000);
     </script>
   </body>
 </html>
