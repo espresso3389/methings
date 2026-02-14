@@ -6826,10 +6826,12 @@ class LocalHttpServer(
                 else -> {
                     report.appendLine("=== pid_logcat ===")
                     report.append(filterLogLines(captureLogcat(buildLogcatDumpArgs(opts, usePid = true, useTags = false)), opts.keywords))
-                    report.appendLine()
-                    report.appendLine()
-                    report.appendLine("=== tags_logcat ===")
-                    report.append(filterLogLines(captureLogcat(buildLogcatDumpArgs(opts, usePid = false, useTags = true)), opts.keywords))
+                    if (opts.tags.isNotEmpty()) {
+                        report.appendLine()
+                        report.appendLine()
+                        report.appendLine("=== tags_logcat ===")
+                        report.append(filterLogLines(captureLogcat(buildLogcatDumpArgs(opts, usePid = false, useTags = true)), opts.keywords))
+                    }
                 }
             }
 
@@ -6968,7 +6970,6 @@ class LocalHttpServer(
             if (q != null) return q.coerceIn(min, max)
             return fallback
         }
-        val defaultTags = listOf("LocalHttpServer", "MeSyncNearbyTransport", "NearbyConnections", "NearbyMediums", "MethingsWeb")
         val mode = pickString("mode", "pid_and_tags")
             .lowercase(Locale.US)
             .let { if (it in setOf("pid", "tags", "all", "pid_and_tags")) it else "pid_and_tags" }
@@ -6976,7 +6977,6 @@ class LocalHttpServer(
             .split(',')
             .map { it.trim() }
             .filter { it.isNotBlank() }
-            .ifEmpty { defaultTags }
             .take(12)
         val keywords = pickString("keywords")
             .split(',')
