@@ -48,10 +48,10 @@ The full action map (88 actions across 16 domains) is in `$sys/docs/api_referenc
 If the device's SSH server is running, a remote user can forward the local API/UI port over SSH:
 
 ```bash
-ssh <user>@<device-ip> -p <ssh-port> -L 8765:127.0.0.1:8765
+ssh <user>@<device-ip> -p <ssh-port> -L 33389:127.0.0.1:33389
 ```
 
-Then `http://127.0.0.1:8765` on the remote machine gives full access to the WebView UI and all local HTTP APIs.
+Then `http://127.0.0.1:33389` on the remote machine gives full access to the WebView UI and all local HTTP APIs.
 
 SSH actions through `device_api`:
 - `ssh.exec`: one-shot remote command. Payload: `host`, `user`, `port`, `command`.
@@ -111,9 +111,8 @@ For full payload docs, examples, and all actions, see `$sys/docs/api_reference.m
 - `sensor.list`: enumerate available sensors.
 - Realtime data via WebSocket `/ws/sensors?sensors=a,g,m&rate_hz=200`.
 
-### Llama.cpp (Local GGUF / MioTTS) — `$sys/docs/llama.md`
-- `llama.run`, `llama.generate`, `llama.tts`, `llama.tts.speak`: local model execution.
-- Use `-p` / `-o` for MioTTS (not `--text`). Set `min_output_duration_ms: 0` for very short clips.
+### Llama.cpp (Local GGUF Models) — `$sys/docs/llama.md`
+- `llama.run`, `llama.generate`: local model execution.
 
 ### Media Playback
 - `media.audio.play`: play audio file (`path`) or base64 (`audio_b64` + `ext`).

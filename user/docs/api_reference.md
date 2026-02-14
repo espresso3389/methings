@@ -1,6 +1,6 @@
 # API Reference (Local Control Plane)
 
-me.things exposes a local HTTP control plane on `http://127.0.0.1:8765`.
+me.things exposes a local HTTP control plane on `http://127.0.0.1:33389`.
 
 The agent should use the `device_api(action, payload, detail)` tool instead of calling these endpoints directly.
 
@@ -158,7 +158,7 @@ Details: [media_stream.md](media_stream.md)
 | `tts.speak` | POST | `/tts/speak` |
 | `tts.stop` | POST | `/tts/stop` |
 
-This is Android's built-in TextToSpeech. For local llama.cpp TTS (MioTTS etc.), see [Llama.cpp](#llamacpp-local-gguf-models) / [llama.md](llama.md).
+This is Android's built-in TextToSpeech.
 
 Details: [tts.md](tts.md)
 
@@ -181,17 +181,9 @@ Details: [stt.md](stt.md)
 | `llama.models` | GET | `/llama/models` |
 | `llama.run` | POST | `/llama/run` |
 | `llama.generate` | POST | `/llama/generate` |
-| `llama.tts` | POST | `/llama/tts` |
-| `llama.tts.plugins.list` | GET | `/llama/tts/plugins` |
-| `llama.tts.plugins.upsert` | POST | `/llama/tts/plugins/upsert` |
-| `llama.tts.plugins.delete` | POST | `/llama/tts/plugins/delete` |
-| `llama.tts.speak` | POST | `/llama/tts/speak` |
-| `llama.tts.speak.status` | POST | `/llama/tts/speak/status` |
-| `llama.tts.speak.stop` | POST | `/llama/tts/speak/stop` |
 
 Notes:
-- `llama.tts` / `llama.tts.speak` support `min_output_duration_ms` (default `400`).
-- Set `min_output_duration_ms: 0` to disable short-output validation.
+- Use Android TTS endpoints under `/tts/*`.
 
 Details: [llama.md](llama.md)
 
@@ -346,7 +338,7 @@ Notes:
 
 ## WebSocket Endpoints
 
-Raw WebSocket connections on the same `127.0.0.1:8765` host.
+Raw WebSocket connections on the same `127.0.0.1:33389` host.
 
 | Path | Description | Details |
 |------|-------------|---------|

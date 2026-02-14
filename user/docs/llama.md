@@ -8,13 +8,6 @@
 - `llama.models` -> `GET /llama/models`
 - `llama.run` -> `POST /llama/run`
 - `llama.generate` -> `POST /llama/generate`
-- `llama.tts` -> `POST /llama/tts`
-- `llama.tts.plugins.list` -> `GET /llama/tts/plugins`
-- `llama.tts.plugins.upsert` -> `POST /llama/tts/plugins/upsert`
-- `llama.tts.plugins.delete` -> `POST /llama/tts/plugins/delete`
-- `llama.tts.speak` -> `POST /llama/tts/speak`
-- `llama.tts.speak.status` -> `POST /llama/tts/speak/status`
-- `llama.tts.speak.stop` -> `POST /llama/tts/speak/stop`
 
 All actions are permission-gated under capability `llama` (`device.llama`).
 
@@ -22,14 +15,14 @@ All actions are permission-gated under capability `llama` (`device.llama`).
 
 The runtime searches common locations for binaries:
 
-- `<files>/bin/llama-cli`, `<files>/bin/llama-tts`
+- `<files>/bin/llama-cli`
 - `<files>/user/bin/...`
-- `<nativeLibraryDir>/libllama-cli.so`, `<nativeLibraryDir>/libllama-tts.so`
+- `<nativeLibraryDir>/libllama-cli.so`
 
 You can also pass explicit paths in payload:
 
-- `binary` for `llama.run/generate/tts`
-- `cli_path`/`tts_path` for `llama.status`
+- `binary` for `llama.run`
+- `cli_path` for `llama.status`
 
 ## Models
 
@@ -80,135 +73,6 @@ Default model roots:
 }
 ```
 
-### 4) TTS convenience (`llama.tts`)
+## TTS
 
-`llama.tts` uses templated args so you can match your `llama-tts` build.
-
-Supported template tokens in `payload.args`:
-
-- `{{model}}`
-- `{{text}}`
-- `{{output_path}}`
-
-```json
-{
-  "action": "llama.tts",
-  "payload": {
-    "model": "MioTTS-0.1B-Q8_0.gguf",
-    "text": "Hello from methings",
-    "output_path": "captures/miotts.wav",
-    "args": ["-m", "{{model}}", "-p", "{{text}}", "-o", "{{output_path}}"]
-  }
-}
-```
-
-On success, include `rel_path: captures/miotts.wav` in your assistant reply so chat can render an audio card.
-
-Important notes for current Android runtime:
-
-- Prefer `-p` / `-o` for prompt/output. `--text` is not accepted by this `llama-tts` build.
-- Do not rely on `--tts-oute-default` by default. It may fail when remote presets are unavailable.
-- For MioTTS, prefer explicit local args and local vocoder path (example below).
-
-MioTTS explicit/local pattern (no remote preset dependency):
-
-```json
-{
-  "action": "llama.tts",
-  "payload": {
-    "model": "MioTTS-0.1B-Q4_K_M.gguf",
-    "text": "MioTTS test",
-    "output_path": "captures/miotts.wav",
-    "args": [
-      "-m", "{{model}}",
-      "-p", "{{text}}",
-      "-o", "{{output_path}}",
-      "--model-vocoder", "/data/user/0/jp.espresso3389.methings/files/user/.cache/llama.cpp/ggml-org_WavTokenizer_WavTokenizer-Large-75-F16.gguf"
-    ]
-  }
-}
-```
-
-### 5) Direct speaker playback with streaming (`llama.tts.speak`)
-
-This endpoint starts synthesis and plays audio on the device speaker while the WAV grows.
-
-```json
-{
-  "action": "llama.tts.speak",
-  "payload": {
-    "model": "MioTTS-0.1B-Q8_0.gguf",
-    "text": "Hello from methings",
-    "output_path": "captures/miotts_stream.wav",
-    "args": ["--model", "{{model}}", "--text", "{{text}}", "--output", "{{output_path}}"]
-  }
-}
-```
-
-The response returns `speech_id`. Poll status and stop if needed:
-
-```json
-{"action":"llama.tts.speak.status","payload":{"speech_id":"tts_xxx"}}
-```
-
-```json
-{"action":"llama.tts.speak.stop","payload":{"speech_id":"tts_xxx"}}
-```
-
-If you already have a generated audio file and only need playback, use `media.audio.play` with `path`.
-
-### 6) Generic TTS plugins (codec/vocoder presets)
-
-Register reusable templates so the agent can switch codec/vocoder stacks without hardcoding them into each request.
-
-Create/update plugin:
-
-```json
-{
-  "action": "llama.tts.plugins.upsert",
-  "payload": {
-    "plugin_id": "miotts_local_vocoder",
-    "description": "MioTTS with local gguf vocoder",
-    "args": [
-      "-m", "{{model}}",
-      "-p", "{{text}}",
-      "-o", "{{output_path}}",
-      "--model-vocoder", "{{vocoder_path}}"
-    ],
-    "defaults": {
-      "vocoder_path": "/data/user/0/jp.espresso3389.methings/files/user/.cache/llama.cpp/ggml-org_WavTokenizer_WavTokenizer-Large-75-F16.gguf"
-    },
-    "set_default": true
-  }
-}
-```
-
-Use plugin:
-
-```json
-{
-  "action": "llama.tts",
-  "payload": {
-    "plugin_id": "miotts_local_vocoder",
-    "model": "MioTTS-0.1B-Q4_K_M.gguf",
-    "text": "plugin based synthesis",
-    "output_path": "captures/miotts_plugin.wav"
-  }
-}
-```
-
-Override plugin variables per request:
-
-```json
-{
-  "action": "llama.tts.speak",
-  "payload": {
-    "plugin_id": "miotts_local_vocoder",
-    "model": "MioTTS-0.1B-Q4_K_M.gguf",
-    "text": "streaming speech",
-    "vars": {
-      "vocoder_path": "/custom/path/to/vocoder.gguf"
-    }
-  }
-}
-```
+Use Android TTS APIs documented in `docs/tts.md` (`/tts/*`).

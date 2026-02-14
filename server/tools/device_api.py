@@ -79,13 +79,6 @@ class DeviceApiTool:
         "llama.models": {"method": "GET", "path": "/llama/models", "permission": True},
         "llama.run": {"method": "POST", "path": "/llama/run", "permission": True},
         "llama.generate": {"method": "POST", "path": "/llama/generate", "permission": True},
-        "llama.tts": {"method": "POST", "path": "/llama/tts", "permission": True},
-        "llama.tts.plugins.list": {"method": "GET", "path": "/llama/tts/plugins", "permission": True},
-        "llama.tts.plugins.upsert": {"method": "POST", "path": "/llama/tts/plugins/upsert", "permission": True},
-        "llama.tts.plugins.delete": {"method": "POST", "path": "/llama/tts/plugins/delete", "permission": True},
-        "llama.tts.speak": {"method": "POST", "path": "/llama/tts/speak", "permission": True},
-        "llama.tts.speak.status": {"method": "POST", "path": "/llama/tts/speak/status", "permission": True},
-        "llama.tts.speak.stop": {"method": "POST", "path": "/llama/tts/speak/stop", "permission": True},
         "stt.status": {"method": "GET", "path": "/stt/status", "permission": True},
         "stt.record": {"method": "POST", "path": "/stt/record", "permission": True},
         "location.status": {"method": "GET", "path": "/location/status", "permission": True},
@@ -156,7 +149,7 @@ class DeviceApiTool:
         "work.app_update_check.cancel": {"method": "POST", "path": "/work/jobs/app_update_check/cancel", "permission": True},
     }
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8765"):
+    def __init__(self, base_url: str = "http://127.0.0.1:33389"):
         self.base_url = base_url.rstrip("/")
         self._identity = (os.environ.get("METHINGS_IDENTITY") or os.environ.get("METHINGS_SESSION_ID") or "").strip() or "default"
         # Cache approvals (in-memory). Kotlin also reuses approvals server-side by identity/capability.
@@ -177,13 +170,6 @@ class DeviceApiTool:
             "screen.keep_on": 12.0,
             "llama.run": 300.0,
             "llama.generate": 300.0,
-            "llama.tts": 420.0,
-            "llama.tts.plugins.list": 20.0,
-            "llama.tts.plugins.upsert": 20.0,
-            "llama.tts.plugins.delete": 20.0,
-            "llama.tts.speak": 120.0,
-            "llama.tts.speak.status": 20.0,
-            "llama.tts.speak.stop": 20.0,
             "media.audio.play": 120.0,
             "media.audio.status": 20.0,
             "media.audio.stop": 20.0,

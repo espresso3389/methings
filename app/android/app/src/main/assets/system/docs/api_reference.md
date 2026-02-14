@@ -1,6 +1,6 @@
 # API Reference (Local Control Plane)
 
-me.things exposes a local HTTP control plane on `http://127.0.0.1:8765`.
+me.things exposes a local HTTP control plane on `http://127.0.0.1:33389`.
 
 The agent should use the `device_api(action, payload, detail)` tool instead of calling these endpoints directly.
 
@@ -158,7 +158,7 @@ Details: [media_stream.md](media_stream.md)
 | `tts.speak` | POST | `/tts/speak` |
 | `tts.stop` | POST | `/tts/stop` |
 
-This is Android's built-in TextToSpeech. For local llama.cpp TTS (MioTTS etc.), see [Llama.cpp](#llamacpp-local-gguf-models) / [llama.md](llama.md).
+This is Android's built-in TextToSpeech.
 
 Details: [tts.md](tts.md)
 
@@ -181,17 +181,9 @@ Details: [stt.md](stt.md)
 | `llama.models` | GET | `/llama/models` |
 | `llama.run` | POST | `/llama/run` |
 | `llama.generate` | POST | `/llama/generate` |
-| `llama.tts` | POST | `/llama/tts` |
-| `llama.tts.plugins.list` | GET | `/llama/tts/plugins` |
-| `llama.tts.plugins.upsert` | POST | `/llama/tts/plugins/upsert` |
-| `llama.tts.plugins.delete` | POST | `/llama/tts/plugins/delete` |
-| `llama.tts.speak` | POST | `/llama/tts/speak` |
-| `llama.tts.speak.status` | POST | `/llama/tts/speak/status` |
-| `llama.tts.speak.stop` | POST | `/llama/tts/speak/stop` |
 
 Notes:
-- `llama.tts` / `llama.tts.speak` support `min_output_duration_ms` (default `400`).
-- Set `min_output_duration_ms: 0` to disable short-output validation.
+- Use Android TTS endpoints under `/tts/*`.
 
 Details: [llama.md](llama.md)
 
@@ -346,7 +338,7 @@ Notes:
 
 ## WebSocket Endpoints
 
-Raw WebSocket connections on the same `127.0.0.1:8765` host.
+Raw WebSocket connections on the same `127.0.0.1:33389` host.
 
 | Path | Description | Details |
 |------|-------------|---------|
@@ -416,7 +408,7 @@ Endpoints:
 Chat prefix shortcut in the app UI:
 - `settings: <section_id_or_setting_key>` (examples: `settings: permissions`, `settings: remember_approvals`)
 
-### me.sync (Export / Import / Migration)
+### me.sync (LAN Export / Migration)
 
 One-time export/import endpoints for device-to-device transfer of chat memory/state.
 
@@ -434,12 +426,7 @@ One-time export/import endpoints for device-to-device transfer of chat memory/st
 | `POST` | `/me/sync/v3/import/apply` | `{"ticket_uri":"me.things:me.sync.v3:...","wipe_existing":true}` | Import using v3 ticket URI (delegates to normal import pipeline) |
 
 Notes:
-- `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and download metadata.
-- Current export payload (`version: 2`) prefers encrypted SSH/SCP transport:
-  - `transport: "ssh_scp"`
-  - `ssh: {host, port, user, remote_path, private_key_b64}`
-  - `http_url` remains included as fallback for compatibility.
-- Importer tries SSH/SCP first when SSH fields are present, then falls back to HTTP URL if needed.
+- `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and LAN/local download URLs.
 - `prepare_export` supports both modes:
   - Export mode (default): `include_identity=false` (or `mode:"export"`), excludes `user/.ssh/id_dropbear*`.
   - Migration mode: `include_identity=true` (or `mode:"migration"`), includes `user/.ssh/id_dropbear*`.

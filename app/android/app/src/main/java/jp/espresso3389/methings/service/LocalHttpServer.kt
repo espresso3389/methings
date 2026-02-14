@@ -1594,46 +1594,12 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(llama.generate(payload)))
             }
-            (uri == "/llama/tts" || uri == "/llama/tts/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Synthesize speech with local Llama.cpp model")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(llama.tts(payload)))
-            }
-            (uri == "/llama/tts/plugins" || uri == "/llama/tts/plugins/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.llama", capability = "llama", detail = "List local Llama.cpp TTS plugins")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(llama.ttsPluginsList(JSONObject())))
-            }
-            (uri == "/llama/tts/plugins/upsert" || uri == "/llama/tts/plugins/upsert/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Create or update local Llama.cpp TTS plugin")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(llama.ttsPluginsUpsert(payload)))
-            }
-            (uri == "/llama/tts/plugins/delete" || uri == "/llama/tts/plugins/delete/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Delete local Llama.cpp TTS plugin")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(llama.ttsPluginsDelete(payload)))
-            }
-            (uri == "/llama/tts/speak" || uri == "/llama/tts/speak/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Synthesize and stream speech to speaker with local Llama.cpp model")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(llama.ttsSpeak(payload)))
-            }
-            (uri == "/llama/tts/speak/status" || uri == "/llama/tts/speak/status/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Check local Llama.cpp speech task status")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(llama.ttsSpeakStatus(payload)))
-            }
-            (uri == "/llama/tts/speak/stop" || uri == "/llama/tts/speak/stop/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.llama", capability = "llama", detail = "Stop local Llama.cpp speech playback")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(llama.ttsSpeakStop(payload)))
+            (uri.startsWith("/llama/miotts") || uri.startsWith("/llama/tts")) -> {
+                return jsonError(
+                    Response.Status.NOT_FOUND,
+                    "endpoint_removed",
+                    JSONObject().put("detail", "Use Android /tts/* endpoints.")
+                )
             }
             (uri == "/stt/status" || uri == "/stt/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.mic", capability = "stt", detail = "Speech recognizer status")
@@ -9051,7 +9017,7 @@ class LocalHttpServer(
     companion object {
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
-        private const val PORT = 8765
+        private const val PORT = 33389
         private const val ME_SYNC_LAN_PORT = 8766
         private const val ME_SYNC_QR_TTL_MS = 40L * 1000L
         private const val ME_SYNC_URI_PREFIX = "me.things:me.sync:"
@@ -9115,6 +9081,7 @@ Policies:
             "android" to "Android",
             "permissions" to "Permissions",
             "cloud" to "Cloud",
+            "tts" to "Text-to-Speech",
             "me_sync" to "me.sync",
             "app_update" to "App Update",
             "about" to "About",
