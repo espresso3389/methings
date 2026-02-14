@@ -1763,7 +1763,7 @@
             When enabled, all permission requests are granted automatically and logged in chat.
           </div>
           <div class="btn-group">
-            <button class="btn" id="permClear">Clear Saved Approvals</button>
+            <button class="btn" id="openPermApprovalsModalBtn">Saved Approvals</button>
           </div>
         </section>
 
@@ -2116,6 +2116,23 @@
           <button class="btn" id="appUpdateWorkRunOnce">Run Once</button>
           <button class="btn danger" id="appUpdateWorkCancel">Cancel Schedule</button>
         </div>
+      </div>
+    </div>
+
+    <!-- Saved Approvals Modal -->
+    <div class="modal" id="permApprovalsModal" role="dialog" aria-modal="true" aria-labelledby="permApprovalsModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="permissions" style="max-height:calc(100vh - 40px); display:flex; flex-direction:column; overflow:hidden;">
+        <div class="card-header">
+          <div class="card-icon green">&#9872;</div>
+          <div class="card-title" id="permApprovalsModalTitle" style="margin-bottom:0;">Saved Approvals</div>
+          <button class="icon-btn secondary" id="permApprovalsModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div class="muted" style="margin-top:8px;">Manage remembered approvals individually.</div>
+        <div class="btn-group" style="margin-top:10px;">
+          <button class="btn" id="permApprovalsRefresh">Refresh</button>
+          <button class="btn danger" id="permClear">Clear All</button>
+        </div>
+        <div id="permApprovalsList" style="margin-top:8px; flex:1 1 auto; min-height:140px; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px; background:rgba(255,255,255,0.02);"></div>
       </div>
     </div>
 
@@ -6385,6 +6402,7 @@
       const openSshKeysModalBtn = $("openSshKeysModalBtn");
       const openCloudSettingsModalBtn = $("openCloudSettingsModalBtn");
       const openAutoUpdateSettingsModalBtn = $("openAutoUpdateSettingsModalBtn");
+      const openPermApprovalsModalBtn = $("openPermApprovalsModalBtn");
       const audioRecordingModal = $("audioRecordingModal");
       const audioRecordingModalClose = $("audioRecordingModalClose");
       const videoRecordingModal = $("videoRecordingModal");
@@ -6395,6 +6413,10 @@
       const cloudSettingsModalClose = $("cloudSettingsModalClose");
       const autoUpdateSettingsModal = $("autoUpdateSettingsModal");
       const autoUpdateSettingsModalClose = $("autoUpdateSettingsModalClose");
+      const permApprovalsModal = $("permApprovalsModal");
+      const permApprovalsModalClose = $("permApprovalsModalClose");
+      const permApprovalsRefresh = $("permApprovalsRefresh");
+      const permApprovalsList = $("permApprovalsList");
       const meSyncStatus = $("meSyncStatus");
       const meSyncPrepareExport = $("meSyncPrepareExport");
       const meSyncImport = $("meSyncImport");
@@ -6542,6 +6564,81 @@
         modalEl.addEventListener("click", (e) => {
           if (e && e.target === modalEl) closeSimpleModal(modalEl);
         });
+      }
+
+      function formatScopeLabel(scope) {
+        const s = String(scope || "").trim().toLowerCase();
+        if (!s) return "-";
+        if (s === "persistent") return "persistent";
+        if (s === "session") return "session";
+        if (s === "program") return "program";
+        if (s === "once") return "once";
+        return s;
+      }
+
+      function renderPermApprovals(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+          permApprovalsList.innerHTML = "<div class='muted'>(no saved approvals)</div>";
+          return;
+        }
+        const rows = [];
+        for (const it of items) {
+          const id = String(it.id || "");
+          const tool = String(it.tool || "").trim() || "-";
+          const detail = String(it.detail || "").trim() || "-";
+          const scope = formatScopeLabel(it.scope);
+          const created = Number(it.created_at || 0);
+          const ident = String(it.identity || "").trim();
+          const cap = String(it.capability || "").trim();
+          const createdStr = created ? (new Date(created)).toLocaleString() : "";
+          const identityLine = ident ? ("identity " + ident) : "identity -";
+          const capabilityLine = cap ? ("capability " + cap) : "capability -";
+          const scopeCreatedLine = "scope " + scope + (createdStr ? (" · created " + createdStr) : "");
+          rows.push(
+            "<div style='display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid rgba(0,0,0,0.08);border-radius:10px;margin-top:8px;background:rgba(0,0,0,0.02);'>" +
+              "<div style='flex:1;min-width:0;display:grid;grid-template-rows:auto auto auto auto auto;row-gap:4px;'>" +
+                "<div style='font-family:monospace;font-size:12px;opacity:0.9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' title='" + escAttr(tool) + "'>" + esc(tool) + "</div>" +
+                "<div class='muted' style='font-size:12px;line-height:1.35;word-break:break-word;' title='" + escAttr(detail) + "'>" + esc(detail) + "</div>" +
+                "<div class='muted' style='font-size:11px;line-height:1.35;word-break:break-word;' title='" + escAttr(capabilityLine) + "'>" + esc(capabilityLine) + "</div>" +
+                "<div class='muted' style='font-size:11px;line-height:1.35;word-break:break-word;' title='" + escAttr(scopeCreatedLine) + "'>" + esc(scopeCreatedLine) + "</div>" +
+                "<div class='muted' style='font-size:11px;line-height:1.35;word-break:break-word;' title='" + escAttr(identityLine) + "'>" + esc(identityLine) + "</div>" +
+              "</div>" +
+              "<button class='icon-btn' data-perm-id=\"" + escAttr(id) + "\" title='Revoke approval' aria-label='Revoke approval' style='width:28px;height:28px;font-size:15px;line-height:1;'>&times;</button>" +
+            "</div>"
+          );
+        }
+        permApprovalsList.innerHTML = rows.join("");
+        for (const btn of permApprovalsList.querySelectorAll("button[data-perm-id]")) {
+          btn.addEventListener("click", async () => {
+            const id = String(btn.getAttribute("data-perm-id") || "");
+            if (!id) return;
+            if (!await appConfirm("Revoke approval", "Revoke this saved approval?")) return;
+            try {
+              const res = await fetch(API + "/permissions/" + encodeURIComponent(id) + "/deny", {
+                method: "POST",
+                headers: { "Content-Type": "application/json; charset=utf-8" },
+                body: JSON.stringify({}),
+              });
+              if (!res.ok) throw 0;
+              showToast("Approval revoked", 1400);
+              await refreshPermApprovals();
+            } catch (_) {
+              showToast("Failed to revoke approval", 1800);
+            }
+          });
+        }
+      }
+
+      async function refreshPermApprovals() {
+        try {
+          const res = await fetch(API + "/permissions/grants");
+          if (!res.ok) throw 0;
+          const data = await res.json().catch(() => ({}));
+          const items = Array.isArray(data.items) ? data.items : [];
+          renderPermApprovals(items);
+        } catch (_) {
+          permApprovalsList.innerHTML = "<div class='muted'>(approvals unavailable)</div>";
+        }
       }
 
       function updateAppUpdateButtons() {
@@ -7449,6 +7546,7 @@
           const res = await fetch(API + "/permissions/clear", { method: "POST" });
           if (!res.ok) throw 0;
           showToast("Saved approvals cleared", 1800);
+          await refreshPermApprovals();
         } catch (_) {
           showToast("Failed to clear approvals", 2000);
         }
@@ -7640,6 +7738,13 @@
       wireSimpleModal(sshKeysModal, openSshKeysModalBtn, sshKeysModalClose);
       wireSimpleModal(cloudSettingsModal, openCloudSettingsModalBtn, cloudSettingsModalClose);
       wireSimpleModal(autoUpdateSettingsModal, openAutoUpdateSettingsModalBtn, autoUpdateSettingsModalClose);
+      wireSimpleModal(permApprovalsModal, openPermApprovalsModalBtn, permApprovalsModalClose);
+      openPermApprovalsModalBtn.addEventListener("click", async () => {
+        await refreshPermApprovals();
+      });
+      permApprovalsRefresh.addEventListener("click", async () => {
+        await refreshPermApprovals();
+      });
 
       checkAppUpdate.addEventListener("click", async () => {
         await refreshAppUpdate(false);
@@ -7788,6 +7893,7 @@
         if (sshKeysModal.classList.contains("show")) closeSimpleModal(sshKeysModal);
         if (cloudSettingsModal.classList.contains("show")) closeSimpleModal(cloudSettingsModal);
         if (autoUpdateSettingsModal.classList.contains("show")) closeSimpleModal(autoUpdateSettingsModal);
+        if (permApprovalsModal.classList.contains("show")) closeSimpleModal(permApprovalsModal);
       });
 
       meSyncExportCancel.addEventListener("click", () => {
