@@ -75,10 +75,6 @@ class DeviceApiTool:
         "media.stream.audio.start": {"method": "POST", "path": "/media/stream/audio/start", "permission": True},
         "media.stream.video.start": {"method": "POST", "path": "/media/stream/video/start", "permission": True},
         "media.stream.stop": {"method": "POST", "path": "/media/stream/stop", "permission": True},
-        "llama.status": {"method": "GET", "path": "/llama/status", "permission": True},
-        "llama.models": {"method": "GET", "path": "/llama/models", "permission": True},
-        "llama.run": {"method": "POST", "path": "/llama/run", "permission": True},
-        "llama.generate": {"method": "POST", "path": "/llama/generate", "permission": True},
         "stt.status": {"method": "GET", "path": "/stt/status", "permission": True},
         "stt.record": {"method": "POST", "path": "/stt/record", "permission": True},
         "location.status": {"method": "GET", "path": "/location/status", "permission": True},
@@ -168,8 +164,6 @@ class DeviceApiTool:
             "usb.stream.stop": 25.0,
             "uvc.mjpeg.capture": 45.0,
             "screen.keep_on": 12.0,
-            "llama.run": 300.0,
-            "llama.generate": 300.0,
             "media.audio.play": 120.0,
             "media.audio.status": 20.0,
             "media.audio.stop": 20.0,
@@ -228,7 +222,7 @@ class DeviceApiTool:
             return {"status": "error", "error": "invalid_payload"}
 
         # Compatibility shim: some plans accidentally nest a device_api call as:
-        #   {"action":"device_api","payload":{"action":"llama.status","payload":{...}}}
+        #   {"action":"device_api","payload":{"action":"camera.status","payload":{...}}}
         # Unwrap this shape so execution still succeeds.
         if action == "device_api":
             nested_action = str(payload.get("action") or "").strip()
@@ -631,8 +625,6 @@ class DeviceApiTool:
             return "device.media", "media_stream", "session"
         if a.startswith("media.audio."):
             return "device.media", "media", "session"
-        if a.startswith("llama."):
-            return "device.llama", "llama", "session"
         if a.startswith("stt."):
             return "device.mic", "stt", "session"
         if a.startswith("location."):

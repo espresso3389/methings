@@ -173,20 +173,6 @@ Recognition events are delivered over WebSocket `/ws/stt/events`.
 
 Details: [stt.md](stt.md)
 
-### Llama.cpp (Local GGUF Models)
-
-| Action | Method | Endpoint |
-|--------|--------|----------|
-| `llama.status` | GET | `/llama/status` |
-| `llama.models` | GET | `/llama/models` |
-| `llama.run` | POST | `/llama/run` |
-| `llama.generate` | POST | `/llama/generate` |
-
-Notes:
-- Use Android TTS endpoints under `/tts/*`.
-
-Details: [llama.md](llama.md)
-
 ### Sensors
 
 | Action | Method | Endpoint |

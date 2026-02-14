@@ -111,9 +111,6 @@ For full payload docs, examples, and all actions, see `$sys/docs/api_reference.m
 - `sensor.list`: enumerate available sensors.
 - Realtime data via WebSocket `/ws/sensors?sensors=a,g,m&rate_hz=200`.
 
-### Llama.cpp (Local GGUF Models) — `$sys/docs/llama.md`
-- `llama.run`, `llama.generate`: local model execution.
-
 ### Media Playback
 - `media.audio.play`: play audio file (`path`) or base64 (`audio_b64` + `ext`).
 
@@ -257,7 +254,6 @@ Read the relevant doc when working in that domain (use `read_file("$sys/docs/<na
 - `$sys/docs/ble.md` — BLE scanning + GATT + events
 - `$sys/docs/tts.md` — Android TextToSpeech
 - `$sys/docs/stt.md` — Android SpeechRecognizer
-- `$sys/docs/llama.md` — local llama.cpp model execution
 - `$sys/docs/sensors.md` — realtime sensor streams via WebSocket
 - `$sys/docs/recording.md` — audio/video/screen recording + live streaming
 - `$sys/docs/media_stream.md` — file-based media decode streaming

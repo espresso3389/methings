@@ -52,8 +52,6 @@ object DevicePermissionPolicy {
                 Required(emptyList(), "Text-to-speech")
             t == "device.media" || t.startsWith("device.media.") ->
                 Required(emptyList(), "Media playback")
-            t == "device.llama" || t.startsWith("device.llama.") || t.contains(".llama") ->
-                Required(emptyList(), "Local AI model")
             t == "device.sensors" || t.startsWith("device.sensors.") || t == "device.accel" ->
                 // Most motion sensors do not require Android runtime permissions, but still require
                 // explicit in-app consent and audit logging.

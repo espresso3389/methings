@@ -20,7 +20,6 @@ This folder documents the local control plane, hardware access, and on-device ML
 - **Vision (TFLite)**: `docs/vision.md` - RGBA8888 frames + inference.
 - **STT**: `docs/stt.md` - Android SpeechRecognizer.
 - **TTS (Android)**: `docs/tts.md` - TextToSpeech API.
-- **Llama.cpp (Local Models)**: `docs/llama.md` - `llama.run`, `llama.generate`.
 
 ## Connectivity
 
@@ -29,5 +28,4 @@ This folder documents the local control plane, hardware access, and on-device ML
 
 ## Notes
 
-- For TTS, use Android TextToSpeech in `docs/tts.md`.
 - `docs/api_reference.md` remains the single source of truth for action names.

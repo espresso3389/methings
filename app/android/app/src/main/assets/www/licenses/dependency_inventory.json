@@ -175,13 +175,6 @@
       "version": "",
       "license": "",
       "source_path": "third_party/dropbear"
-    },
-    {
-      "ecosystem": "vendored-native",
-      "name": "llama.cpp",
-      "version": "",
-      "license": "MIT",
-      "source_path": "third_party/llama.cpp"
     }
   ],
   "ignore_config": {
