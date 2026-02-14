@@ -304,10 +304,27 @@ Details: [vision.md](vision.md)
 | `me.sync.status` | GET | `/me/sync/status` **[no perm]** |
 | `me.sync.local_state` | GET | `/me/sync/local_state` **[no perm]** |
 | `me.sync.prepare_export` | POST | `/me/sync/prepare_export` |
+| `me.sync.share_nearby` | POST | `/me/sync/share_nearby` |
 | `me.sync.import` | POST | `/me/sync/import` |
 | `me.sync.wipe_all` | POST | `/me/sync/wipe_all` |
 
 `brain.config.get` returns `{vendor, base_url, model, has_api_key}` (never returns the key itself).
+
+### Background Jobs (App Update Check)
+
+| Action | Method | Endpoint |
+|--------|--------|----------|
+| `work.app_update_check.status` | GET | `/work/jobs/app_update_check` **[no perm]** |
+| `work.app_update_check.schedule` | POST | `/work/jobs/app_update_check/schedule` |
+| `work.app_update_check.run_once` | POST | `/work/jobs/app_update_check/run_once` |
+| `work.app_update_check.cancel` | POST | `/work/jobs/app_update_check/cancel` |
+
+Notes:
+- `status` returns current schedule/tracker snapshot plus WorkManager state for periodic and one-time jobs.
+- `schedule` body: `{"interval_minutes":360,"require_charging":false,"require_unmetered":false,"replace":true}`. Interval is clamped to minimum 15 minutes.
+- `run_once` body: `{"require_charging":false,"require_unmetered":false}`.
+- `cancel` body: `{}` (or empty JSON); clears both periodic and one-time unique works.
+- `schedule`, `run_once`, and `cancel` are permission-gated (`device.work` / capability `workmanager`).
 
 ### UI (Viewer & Settings) **[no perm]**
 
@@ -405,12 +422,15 @@ One-time export/import endpoints for device-to-device transfer of chat memory/st
 | `GET` | `/me/sync/status` | — | List active export packages and expiry |
 | `GET` | `/me/sync/local_state` | — | Return whether receiver has existing local data to wipe |
 | `POST` | `/me/sync/prepare_export` | `{"include_user":true,"include_protected_db":true,"include_identity":false,"mode":"export"}` | Build one-time export package and return download links + payload |
+| `POST` | `/me/sync/share_nearby` | `{"id":"<transfer_id>"}` (optional) | Launch Android share sheet for the prepared `me_sync_uri` (Nearby Share, etc.) |
 | `GET` | `/me/sync/download` | `?id=<transfer_id>&token=<token>` | Download prepared ZIP package |
 | `POST` | `/me/sync/import` | `{"url":"http://.../me/sync/download?...","wipe_existing":true}` or `{"payload":"...","wipe_existing":true}` | Download package from source, wipe local state, then import |
 | `POST` | `/me/sync/wipe_all` | `{"restart_app":true}` | **Dangerous:** wipe all local app data and restart app (best effort) |
 
 Notes:
 - `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and download metadata.
+- `share_nearby` may reuse an active export or create one; optional fields: `transfer_id`, `force_refresh`, `include_user`, `include_protected_db`, `include_identity`, `chooser_title`.
+- `share_nearby` response includes `share.started` (bool) and returns `nearby_share_unavailable` when no share target is available.
 - Current export payload (`version: 2`) prefers encrypted SSH/SCP transport:
   - `transport: "ssh_scp"`
   - `ssh: {host, port, user, remote_path, private_key_b64}`
@@ -424,6 +444,8 @@ Notes:
 - Imported package then restores `files/user/`, `files/protected/app.db` (if present), re-applies credential/key state, and restarts Python worker.
 - App GUI "Export" uses export mode only; migration mode is API-only.
 - `wipe_all` is intentionally dangerous and API-only (no GUI button).
+
+Details: [me_sync.md](me_sync.md)
 
 ### Brain Journal (Per-Session Notes)
 
