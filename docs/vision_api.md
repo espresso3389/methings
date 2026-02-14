@@ -12,7 +12,7 @@ Vision endpoints require `permission_id` from a `device.vision` request (session
 
 ## Endpoints (Local Control Plane)
 
-All endpoints are on `http://127.0.0.1:8765`.
+All endpoints are on `http://127.0.0.1:33389`.
 
 ### Frame Store
 

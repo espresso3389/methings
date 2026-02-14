@@ -7,7 +7,7 @@ import struct
 import urllib.request
 
 
-BASE = os.environ.get("METHINGS_DEVICE_API", "http://127.0.0.1:8765").rstrip("/")
+BASE = os.environ.get("METHINGS_DEVICE_API", "http://127.0.0.1:33389").rstrip("/")
 
 
 def post(path: str, payload: dict) -> dict:

@@ -117,7 +117,7 @@ Notes:
 Use local API:
 
 ```bash
-curl -sS http://127.0.0.1:8765/ssh/status
+curl -sS http://127.0.0.1:33389/ssh/status
 ```
 
 Read these fields:
@@ -135,7 +135,7 @@ chmod 600 ~/.ssh/authorized_keys
 ## Apply Prompt via API
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8765/brain/config \
+curl -sS -X POST http://127.0.0.1:33389/brain/config \
   -H 'Content-Type: application/json' \
   -d '{"system_prompt":"<PASTE_SYSTEM_PROMPT_HERE>"}'
 ```

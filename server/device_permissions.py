@@ -6,7 +6,7 @@ import urllib.request
 from typing import Any, Dict, Optional
 
 
-BASE_URL = "http://127.0.0.1:8765"
+BASE_URL = "http://127.0.0.1:33389"
 _IDENTITY = (os.environ.get("METHINGS_IDENTITY") or os.environ.get("METHINGS_SESSION_ID") or "").strip() or "default"
 
 

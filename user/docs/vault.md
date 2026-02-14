@@ -2,7 +2,7 @@
 
 Credential-vault APIs.
 
-Base URL: `http://127.0.0.1:8765`
+Base URL: `http://127.0.0.1:33389`
 
 | Method | Endpoint | Body | Effect |
 |--------|----------|------|--------|

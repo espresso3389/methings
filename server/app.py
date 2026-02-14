@@ -1090,7 +1090,7 @@ if __name__ == "__main__":
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
-        port=8765,
+        port=33389,
         log_level="info",
         lifespan="off",
     )

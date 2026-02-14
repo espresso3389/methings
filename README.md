@@ -9,7 +9,7 @@ Kotlin owns the always-up control plane; Python is a spawned worker that can cra
 ```
 Android App (Foreground Service)
  +-- Kotlin Control Plane (always up)
- |    +-- Local HTTP Server (127.0.0.1:8765)
+ |    +-- Local HTTP Server (127.0.0.1:33389)
  |    +-- WebView UI
  |    +-- Permission Broker (consent + audit)
  |    +-- Credential Vault (Android Keystore AES-GCM)

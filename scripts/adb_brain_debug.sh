@@ -7,10 +7,11 @@ set -euo pipefail
 #   scripts/adb_brain_debug.sh [serial]
 #
 # Env:
-#   METHINGS_LOCAL_PORT=18765   Local forwarded port
-#   METHINGS_LOCAL_PORT=18765     Back-compat
+#   METHINGS_LOCAL_PORT=43389   Local forwarded host port (default)
+#   METHINGS_DEVICE_PORT=33389  Device control-plane port (default)
 
-LOCAL_PORT="${METHINGS_LOCAL_PORT:-${METHINGS_LOCAL_PORT:-18765}}"
+LOCAL_PORT="${METHINGS_LOCAL_PORT:-43389}"
+DEVICE_PORT="${METHINGS_DEVICE_PORT:-33389}"
 
 pick_serial() {
   local s
@@ -31,8 +32,8 @@ if [[ -z "$SERIAL" ]]; then
 fi
 
 echo "serial=$SERIAL"
-echo "forward: tcp:${LOCAL_PORT} -> device tcp:8765"
-adb -s "$SERIAL" forward "tcp:${LOCAL_PORT}" tcp:8765
+echo "forward: tcp:${LOCAL_PORT} -> device tcp:${DEVICE_PORT}"
+adb -s "$SERIAL" forward "tcp:${LOCAL_PORT}" "tcp:${DEVICE_PORT}"
 
 API="http://127.0.0.1:${LOCAL_PORT}"
 

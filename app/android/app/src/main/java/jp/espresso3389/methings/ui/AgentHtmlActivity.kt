@@ -144,7 +144,7 @@ class AgentHtmlActivity : AppCompatActivity() {
             }
         }
 
-        val url = Uri.parse("http://127.0.0.1:8765/user/www/").buildUpon()
+        val url = Uri.parse("http://127.0.0.1:33389/user/www/").buildUpon()
             .appendEncodedPath(Uri.encode(relPath, "/"))
             .build()
             .toString()

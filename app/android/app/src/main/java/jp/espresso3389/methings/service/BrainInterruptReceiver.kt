@@ -11,7 +11,7 @@ class BrainInterruptReceiver : BroadcastReceiver() {
         if (intent?.action != ACTION_INTERRUPT) return
         // Best-effort: tell the local control plane to interrupt the current brain item.
         try {
-            val url = URL("http://127.0.0.1:8765/brain/interrupt")
+            val url = URL("http://127.0.0.1:33389/brain/interrupt")
             val conn = (url.openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = 1200

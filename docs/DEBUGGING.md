@@ -4,7 +4,7 @@ This document collects practical debugging tips for me.things app/agent behavior
 
 ## Quick Mental Model
 
-- Kotlin control plane: `127.0.0.1:8765`
+- Kotlin control plane: `127.0.0.1:33389`
 - Python worker: `127.0.0.1:8776`
 - Many `/brain/*` endpoints are served by Kotlin and proxied to the worker.
 
@@ -20,20 +20,24 @@ All of that is persisted in `files/protected/app.db` on-device.
 ### Via ADB (USB or Wi-Fi paired)
 
 ```bash
-adb -s <serial> forward tcp:18765 tcp:8765
+adb -s <serial> forward --remove tcp:43389 || true
+adb -s <serial> forward tcp:43389 tcp:33389
 ```
 
-After this, access the APIs at `http://127.0.0.1:18765`.
+After this, access the APIs at `http://127.0.0.1:43389`.
+
+Important:
+- Do not use `adb reverse tcp:33389 tcp:33389` for this app. Reverse binds on the device and can block the app server from starting.
 
 ### Via SSH Tunnel (Remote / No ADB)
 
 If the device's SSH server is running, you can forward the GUI and API port over SSH:
 
 ```bash
-ssh <user>@<device-ip> -p <ssh-port> -L 8765:127.0.0.1:8765
+ssh <user>@<device-ip> -p <ssh-port> -L 33389:127.0.0.1:33389
 ```
 
-Then open `http://127.0.0.1:8765` in a browser on the host to access the full WebView UI and all local HTTP APIs.
+Then open `http://127.0.0.1:33389` in a browser on the host to access the full WebView UI and all local HTTP APIs.
 
 ## Hot Reload Web UI (No APK Rebuild)
 
@@ -49,6 +53,8 @@ Helper script:
 ```bash
 # Optionally pass a device serial (recommended)
 scripts/ui_hot_reload.sh <serial>
+# Optional ports:
+# METHINGS_LOCAL_PORT=43389 METHINGS_DEVICE_PORT=33389 scripts/ui_hot_reload.sh <serial>
 ```
 
 Manual equivalent:
@@ -59,8 +65,8 @@ date +%s > /tmp/methings.www.version && adb -s <serial> push /tmp/methings.www.v
 adb -s <serial> shell run-as jp.espresso3389.methings mkdir -p files/www
 adb -s <serial> shell run-as jp.espresso3389.methings cp /data/local/tmp/methings.index.html files/www/index.html
 adb -s <serial> shell run-as jp.espresso3389.methings cp /data/local/tmp/methings.www.version files/www/.version
-adb -s <serial> forward tcp:18765 tcp:8765
-curl -X POST http://127.0.0.1:18765/ui/reload -H 'Content-Type: application/json' -d '{}'
+adb -s <serial> forward tcp:43389 tcp:33389
+curl -X POST http://127.0.0.1:43389/ui/reload -H 'Content-Type: application/json' -d '{}'
 ```
 
 Notes:
@@ -98,13 +104,13 @@ METHINGS_SYNC_USER_DEFAULTS=1 ./gradlew assembleDebug
 `/brain/messages` is session-scoped. First discover which sessions exist:
 
 ```bash
-curl -sS 'http://127.0.0.1:18765/brain/sessions?limit=20'
+curl -sS 'http://127.0.0.1:43389/brain/sessions?limit=20'
 ```
 
 Then fetch the transcript for a session:
 
 ```bash
-curl -sS 'http://127.0.0.1:18765/brain/messages?session_id=<session_id>&limit=200'
+curl -sS 'http://127.0.0.1:43389/brain/messages?session_id=<session_id>&limit=200'
 ```
 
 Notes:
@@ -118,13 +124,13 @@ The app also keeps a per-session journal (file-backed under `files/user/journal/
 Fetch the current journal note:
 
 ```bash
-curl -sS 'http://127.0.0.1:18765/brain/journal/current?session_id=<session_id>'
+curl -sS 'http://127.0.0.1:43389/brain/journal/current?session_id=<session_id>'
 ```
 
 List recent journal entries:
 
 ```bash
-curl -sS 'http://127.0.0.1:18765/brain/journal/list?session_id=<session_id>&limit=30'
+curl -sS 'http://127.0.0.1:43389/brain/journal/list?session_id=<session_id>&limit=30'
 ```
 
 ## Talk To The Agent (UI)
@@ -141,13 +147,13 @@ This UI uses the same local HTTP APIs as the curl examples below.
 Start the brain loop:
 
 ```bash
-curl -sS -X POST 'http://127.0.0.1:18765/brain/start' -H 'Content-Type: application/json' -d '{}'
+curl -sS -X POST 'http://127.0.0.1:43389/brain/start' -H 'Content-Type: application/json' -d '{}'
 ```
 
 Send a chat message to a specific session:
 
 ```bash
-curl -sS -X POST 'http://127.0.0.1:18765/brain/inbox/chat' \
+curl -sS -X POST 'http://127.0.0.1:43389/brain/inbox/chat' \
   -H 'Content-Type: application/json' \
   -d '{"text":"hello","meta":{"session_id":"debug"}}'
 ```
@@ -160,7 +166,7 @@ For debugging, you can allow reading/writing anywhere under the app private file
 (includes `protected/` and `server/`):
 
 ```bash
-curl -sS -X POST 'http://127.0.0.1:18765/brain/config' \\
+curl -sS -X POST 'http://127.0.0.1:43389/brain/config' \\
   -H 'Content-Type: application/json' \\
   -d '{\"fs_scope\":\"app\"}'
 ```
@@ -168,7 +174,7 @@ curl -sS -X POST 'http://127.0.0.1:18765/brain/config' \\
 To restore the default restriction:
 
 ```bash
-curl -sS -X POST 'http://127.0.0.1:18765/brain/config' \\
+curl -sS -X POST 'http://127.0.0.1:43389/brain/config' \\
   -H 'Content-Type: application/json' \\
   -d '{\"fs_scope\":\"user\"}'
 ```
@@ -178,13 +184,13 @@ curl -sS -X POST 'http://127.0.0.1:18765/brain/config' \\
 Recent audit events (persisted):
 
 ```bash
-curl -sS 'http://127.0.0.1:18765/audit/recent?limit=200'
+curl -sS 'http://127.0.0.1:43389/audit/recent?limit=200'
 ```
 
 Live log stream (SSE):
 
 ```bash
-curl -N 'http://127.0.0.1:18765/logs/stream'
+curl -N 'http://127.0.0.1:43389/logs/stream'
 ```
 
 ## On-Device Files (Debug Builds)

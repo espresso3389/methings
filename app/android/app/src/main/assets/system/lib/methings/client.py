@@ -7,13 +7,13 @@ from typing import Any, Dict, Optional
 
 class MethingsClient:
     """
-    Small Python-friendly client for the on-device Kotlin control plane (127.0.0.1:8765).
+    Small Python-friendly client for the on-device Kotlin control plane (127.0.0.1:33389).
 
     Intended usage: run_python scripts and local tools can import this from <user_dir>/lib/methings.
     New code can also use <user_dir>/lib/methings (wrapper).
     """
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8765", *, identity: Optional[str] = None):
+    def __init__(self, base_url: str = "http://127.0.0.1:33389", *, identity: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
         # methings-only.
         self.identity = (

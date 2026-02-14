@@ -376,7 +376,7 @@ class MainActivity : AppCompatActivity() {
         val restored = savedInstanceState?.getBundle(STATE_WEBVIEW)?.let { webView.restoreState(it) } != null
         if (!restored) {
             // Initial launch.
-            webView.loadUrl("http://127.0.0.1:8765/ui/index.html")
+            webView.loadUrl("http://127.0.0.1:33389/ui/index.html")
         }
 
         backCallback = object : OnBackPressedCallback(true) {
@@ -577,7 +577,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     fun reloadUi(showToast: Boolean = true, toastText: String = "UI reset applied") {
-        val url = "http://127.0.0.1:8765/ui/index.html?ts=${System.currentTimeMillis()}"
+        val url = "http://127.0.0.1:33389/ui/index.html?ts=${System.currentTimeMillis()}"
         webView.post { webView.loadUrl(url) }
         if (showToast) {
             Toast.makeText(this, toastText, Toast.LENGTH_SHORT).show()
@@ -753,7 +753,7 @@ class MainActivity : AppCompatActivity() {
             val deadline = System.currentTimeMillis() + 120_000
             while (System.currentTimeMillis() < deadline) {
                 try {
-                    val url = java.net.URL("http://127.0.0.1:8765/permissions/$id")
+                    val url = java.net.URL("http://127.0.0.1:33389/permissions/$id")
                     val conn = url.openConnection() as java.net.HttpURLConnection
                     conn.connectTimeout = 2000
                     conn.readTimeout = 2000
@@ -830,7 +830,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val action = if (approved) "approve" else "deny"
-                val url = java.net.URL("http://127.0.0.1:8765/permissions/$id/$action")
+                val url = java.net.URL("http://127.0.0.1:33389/permissions/$id/$action")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
                 conn.doOutput = true

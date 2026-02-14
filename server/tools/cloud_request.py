@@ -14,7 +14,7 @@ class CloudRequestTool:
     server-side (vault/config/file expansion) and enforces permission prompts.
     """
 
-    def __init__(self, base_url: str = "http://127.0.0.1:8765"):
+    def __init__(self, base_url: str = "http://127.0.0.1:33389"):
         self.base_url = base_url.rstrip("/")
         self._identity = (os.environ.get("METHINGS_IDENTITY") or os.environ.get("METHINGS_SESSION_ID") or "").strip() or "default"
 

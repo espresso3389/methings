@@ -10,14 +10,14 @@ This phase moves the always-up responsibilities into Kotlin so the app can stay 
 ## Process Model
 ```
 Android App (Kotlin)
-  ├─ Local HTTP Server (127.0.0.1:8765)  [always up]
+  ├─ Local HTTP Server (127.0.0.1:33389)  [always up]
   ├─ UI assets served from files/www
   ├─ Storage + permissions (Kotlin + Room + Keystore AES-GCM)
   └─ Python Worker (spawned on demand)
 ```
 
 ## Kotlin Local Service (always up)
-- Serves `/health` and static UI at `/ui/*` on `127.0.0.1:8765`.
+- Serves `/health` and static UI at `/ui/*` on `127.0.0.1:33389`.
 - Provides `/python/*` endpoints to start/stop/restart the worker.
 - Keeps UI responsive even if Python fails.
 - Hosts SSHD control and credential vault endpoints.

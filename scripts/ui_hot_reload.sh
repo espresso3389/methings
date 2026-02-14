@@ -23,6 +23,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_HTML="${ROOT_DIR}/app/android/app/src/main/assets/www/index.html"
 SRC_VER="${ROOT_DIR}/app/android/app/src/main/assets/www/.version"
 PKG="jp.espresso3389.methings"
+DEVICE_PORT="${METHINGS_DEVICE_PORT:-33389}"
+HOST_PORT="${METHINGS_LOCAL_PORT:-43389}"
 
 if [[ ! -f "${SRC_HTML}" ]]; then
   echo "Missing ${SRC_HTML}" >&2
@@ -47,17 +49,17 @@ TMP_VER="/data/local/tmp/methings.www.version"
 "${ADB[@]}" shell run-as "${PKG}" cp "${TMP_VER}" files/www/.version
 
 # Ensure port forward exists, then trigger reload.
-"${ADB[@]}" forward tcp:18765 tcp:8765 >/dev/null 2>&1 || true
+"${ADB[@]}" forward "tcp:${HOST_PORT}" "tcp:${DEVICE_PORT}" >/dev/null 2>&1 || true
 
 # Ensure the app + local server are up before calling the reload API.
 "${ADB[@]}" shell am start -n "${PKG}/.ui.MainActivity" >/dev/null 2>&1 || true
 for _ in $(seq 1 30); do
-  if curl -fsS --max-time 1 "http://127.0.0.1:18765/ui/version" >/dev/null 2>&1; then
+  if curl -fsS --max-time 1 "http://127.0.0.1:${HOST_PORT}/ui/version" >/dev/null 2>&1; then
     break
   fi
   sleep 0.2
 done
 
-curl -fsS -X POST "http://127.0.0.1:18765/ui/reload" -H "Content-Type: application/json" -d '{}' >/dev/null
+curl -fsS -X POST "http://127.0.0.1:${HOST_PORT}/ui/reload" -H "Content-Type: application/json" -d '{}' >/dev/null
 
 echo "Hot-reloaded UI: files/www/index.html"

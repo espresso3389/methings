@@ -9,7 +9,7 @@ me.things exposes device sensors via `device_api` and a WebSocket realtime strea
 
 ## WebSocket `/ws/sensors`
 
-Connect to `ws://127.0.0.1:8765/ws/sensors` with query params to start a realtime sensor stream.
+Connect to `ws://127.0.0.1:33389/ws/sensors` with query params to start a realtime sensor stream.
 
 ### Query Params
 

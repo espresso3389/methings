@@ -603,7 +603,7 @@ class BrainRuntime:
         if not pid:
             return ""
         try:
-            resp = requests.get(f"http://127.0.0.1:8765/permissions/{pid}", timeout=3)
+            resp = requests.get(f"http://127.0.0.1:33389/permissions/{pid}", timeout=3)
             if resp.status_code != 200:
                 return ""
             body = resp.json() if resp.content else {}
@@ -968,7 +968,7 @@ class BrainRuntime:
     def _get_persistent_memory(self) -> str:
         # Stored on the Kotlin control-plane (LocalHttpServer) as a small text blob.
         try:
-            resp = requests.get("http://127.0.0.1:8765/brain/memory", timeout=2)
+            resp = requests.get("http://127.0.0.1:33389/brain/memory", timeout=2)
             if not resp.ok:
                 return ""
             payload = resp.json() if resp.headers.get("Content-Type", "").startswith("application/json") else {}
@@ -1407,7 +1407,7 @@ class BrainRuntime:
             {
                 "type": "function",
                 "name": "device_api",
-                "description": "Invoke allowlisted local device API action on 127.0.0.1:8765.",
+                "description": "Invoke allowlisted local device API action on 127.0.0.1:33389.",
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
@@ -2419,7 +2419,7 @@ class BrainRuntime:
         """Read a file from the system-protected reference docs via /sys/file."""
         try:
             resp = requests.get(
-                "http://127.0.0.1:8765/sys/file",
+                "http://127.0.0.1:33389/sys/file",
                 params={"path": rel_path},
                 timeout=5,
             )
@@ -2440,7 +2440,7 @@ class BrainRuntime:
         """List a directory under system-protected reference docs via /sys/list."""
         try:
             resp = requests.get(
-                "http://127.0.0.1:8765/sys/list",
+                "http://127.0.0.1:33389/sys/list",
                 params={"path": rel_path},
                 timeout=5,
             )
@@ -2608,7 +2608,7 @@ class BrainRuntime:
                     headers["X-Methings-Identity"] = self._active_identity
                     headers["X-Methings-Identity"] = self._active_identity
                 resp = requests.post(
-                    "http://127.0.0.1:8765/web/search",
+                    "http://127.0.0.1:33389/web/search",
                     json={
                         "query": query,
                         "max_results": max_results,

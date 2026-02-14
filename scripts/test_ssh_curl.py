@@ -47,7 +47,7 @@ def main() -> int:
             args.port,
             args.user,
             known_hosts,
-            "curl -sS http://127.0.0.1:8765/health",
+            "curl -sS http://127.0.0.1:33389/health",
         )
         assert_ok("health_get", p1)
         health = json.loads(p1.stdout.strip() or "{}")
@@ -60,7 +60,7 @@ def main() -> int:
             args.port,
             args.user,
             known_hosts,
-            "curl -sS -i http://127.0.0.1:8765/health",
+            "curl -sS -i http://127.0.0.1:33389/health",
         )
         assert_ok("include_headers", p2)
         if "HTTP/1.1 200" not in p2.stdout:
@@ -74,7 +74,7 @@ def main() -> int:
             args.port,
             args.user,
             known_hosts,
-            "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/health",
+            "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:33389/health",
         )
         assert_ok("write_out_status", p3)
         if p3.stdout.strip() != "200":
@@ -86,7 +86,7 @@ def main() -> int:
             args.port,
             args.user,
             known_hosts,
-            "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:8765/does-not-exist",
+            "curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:33389/does-not-exist",
         )
         assert_ok("http_error_no_fail", p4)
         if p4.stdout.strip() != "404":
@@ -98,7 +98,7 @@ def main() -> int:
             args.port,
             args.user,
             known_hosts,
-            "curl -sS --fail -o /dev/null http://127.0.0.1:8765/does-not-exist",
+            "curl -sS --fail -o /dev/null http://127.0.0.1:33389/does-not-exist",
         )
         if p5.returncode == 0:
             raise RuntimeError("expected non-zero exit for --fail 404")

@@ -368,7 +368,7 @@ static int cmd_python_or_pip(const char *cmd, const char *raw_args, const char *
              "{ \"cmd\": \"%s\", \"args\": \"%s\", \"cwd\": \"%s\" }",
              cmd_esc, args_esc, cwd_esc);
     char resp[8192];
-    if (http_post_json("127.0.0.1", 8765, "/shell/exec", json, resp, sizeof(resp)) != 0) {
+    if (http_post_json("127.0.0.1", 33389, "/shell/exec", json, resp, sizeof(resp)) != 0) {
         print_error("failed to reach local shell service");
         return 1;
     }

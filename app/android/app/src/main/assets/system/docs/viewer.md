@@ -109,22 +109,22 @@ Closes the viewer and exits immersive mode if active.
 
 ```bash
 # 1. Inspect the deck
-curl 'http://127.0.0.1:8765/user/file/info?path=presentations/demo.md'
+curl 'http://127.0.0.1:33389/user/file/info?path=presentations/demo.md'
 # -> {"name":"demo.md", "is_marp":true, "slide_count":15, ...}
 
 # 2. Open the viewer at slide 0
-curl -X POST http://127.0.0.1:8765/ui/viewer/open \
+curl -X POST http://127.0.0.1:33389/ui/viewer/open \
   -d '{"path":"presentations/demo.md"}'
 
 # 3. Enter slideshow + immersive
-curl -X POST http://127.0.0.1:8765/ui/viewer/slideshow -d '{"enabled":true}'
-curl -X POST http://127.0.0.1:8765/ui/viewer/immersive -d '{"enabled":true}'
+curl -X POST http://127.0.0.1:33389/ui/viewer/slideshow -d '{"enabled":true}'
+curl -X POST http://127.0.0.1:33389/ui/viewer/immersive -d '{"enabled":true}'
 
 # 4. Navigate slides (with TTS narration between)
-curl -X POST http://127.0.0.1:8765/ui/viewer/goto -d '{"page":1}'
+curl -X POST http://127.0.0.1:33389/ui/viewer/goto -d '{"page":1}'
 # ... tts.speak for slide 2 narration ...
-curl -X POST http://127.0.0.1:8765/ui/viewer/goto -d '{"page":2}'
+curl -X POST http://127.0.0.1:33389/ui/viewer/goto -d '{"page":2}'
 
 # 5. Close when done
-curl -X POST http://127.0.0.1:8765/ui/viewer/close -d '{}'
+curl -X POST http://127.0.0.1:33389/ui/viewer/close -d '{}'
 ```
