@@ -7063,7 +7063,7 @@
           appUpdateInfo = data || null;
           if (data && data.update_enabled === false) {
             setInstallPermissionButtonVisible(false);
-            setStatus(appUpdateStatus, "ok");
+            setStatus(appUpdateStatus, "offline");
             appUpdateStatus.textContent = "disabled";
             appUpdateDetail.textContent = String(data.message || "Auto update is disabled for this build.");
             updateAppUpdateButtons();
