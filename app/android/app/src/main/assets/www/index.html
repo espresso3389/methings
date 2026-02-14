@@ -7156,6 +7156,12 @@
           return;
         }
         const sent = Math.max(0, Number(a.bytes_sent || 0));
+        const completedAt = Number(a.transfer_completed_at || 0);
+        if (sent > 0 && completedAt > 0) {
+          meSyncStatus.textContent = "Transfer complete: " + formatBytes(sent) + " sent";
+          setMeSyncTransferUi("hidden", "");
+          return;
+        }
         if (sent > 0) {
           meSyncStatus.textContent = "Transfer sent: " + formatBytes(sent);
           setMeSyncTransferUi("sent", "Transfer complete: " + formatBytes(sent) + " sent");
@@ -7182,6 +7188,8 @@
             const data = await res.json().catch(() => ({}));
             const t = data && data.ticket ? data.ticket : {};
             const tr = data && data.transfer ? data.transfer : {};
+            const prevDownloads = Number((meSyncActiveExport && meSyncActiveExport.download_count) || 0);
+            const prevTransmitting = !!(meSyncActiveExport && meSyncActiveExport.transmitting);
             meSyncActiveExport = Object.assign({}, meSyncActiveExport || {}, {
               ticket_id: String(t.id || ticketId),
               id: String(t.id || ticketId),
@@ -7194,6 +7202,11 @@
               transfer_started_at: Number(tr.transfer_started_at || 0),
               transfer_completed_at: Number(tr.transfer_completed_at || 0),
             });
+            const curDownloads = Number(meSyncActiveExport.download_count || 0);
+            if ((!prevTransmitting && !!tr.transmitting) || (curDownloads > prevDownloads)) {
+              if (meSyncModal.classList.contains("show")) closeMeSyncModal();
+              if (!prevTransmitting && !!tr.transmitting) showToast("Importer connected. Sending data...", 1600);
+            }
             updateMeSyncSectionCountdown();
             return;
           } catch (_) {
