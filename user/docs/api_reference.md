@@ -283,6 +283,12 @@ Details: [vision.md](vision.md)
 | `me.me.config.get` | GET | `/me/me/config` **[no perm]** |
 | `me.me.config.set` | POST | `/me/me/config` |
 | `me.me.scan` | POST | `/me/me/scan` |
+| `me.me.connect` | POST | `/me/me/connect` |
+| `me.me.accept` | POST | `/me/me/accept` |
+| `me.me.connect.confirm` | POST | `/me/me/connect/confirm` |
+| `me.me.disconnect` | POST | `/me/me/disconnect` |
+| `me.me.message.send` | POST | `/me/me/message/send` |
+| `me.me.messages.pull` | POST | `/me/me/messages/pull` |
 | `me.sync.status` | GET | `/me/sync/status` **[no perm]** |
 | `me.sync.local_state` | GET | `/me/sync/local_state` **[no perm]** |
 | `me.sync.prepare_export` | POST | `/me/sync/prepare_export` |
@@ -405,7 +411,20 @@ Chat prefix shortcut in the app UI:
 | `GET` | `/me/me/status` | — | Return self profile and current discovery/connection summary |
 | `GET` | `/me/me/config` | — | Return current `me.me` config |
 | `POST` | `/me/me/config` | `{"allow_discovery":true,...}` | Update `me.me` config |
-| `POST` | `/me/me/scan` | `{"timeout_ms":3000}` | Trigger one-shot scan (foundation endpoint) |
+| `POST` | `/me/me/scan` | `{"timeout_ms":3000}` | Trigger one-shot Wi-Fi/BLE discovery scan and return discovered peers |
+| `POST` | `/me/me/connect` | `{"target_device_id":"mm_...","method":"auto"}` | Create a pending connection intent and return `accept_token` |
+| `POST` | `/me/me/accept` | `{"accept_token":"me.things:me.me.conn:..."}` | Accept connection intent on target and create a logical connection |
+| `POST` | `/me/me/connect/confirm` | `{"accept_token":"me.things:me.me.conn:..."}` | Confirm accepted connection on initiator and create logical connection |
+| `POST` | `/me/me/disconnect` | `{"peer_device_id":"mm_..."}` or `{"connection_id":"mmc_..."}` | Remove logical connection |
+| `POST` | `/me/me/message/send` | `{"peer_device_id":"mm_...","type":"task","payload":{...}}` | Encrypt and send data-plane message to peer |
+| `POST` | `/me/me/messages/pull` | `{"peer_device_id":"mm_...","limit":50,"consume":true}` | Pull/dequeue received messages for peer |
+
+Notes:
+- `/me/me/status` includes `advertising` state and cached `discovered` peers.
+- `/me/me/scan` response includes `warnings` when a method cannot run (for example missing BLE runtime permission).
+- `/me/me/status` also includes `pending_requests` and `connections`.
+- Data-plane currently uses LAN HTTP (`8767`) and AES-GCM session encryption.
+- `/me/me/accept` attempts auto-confirm to initiator over LAN; include `source_host`/`source_port` when discovery info is unavailable.
 
 Details: [me_me.md](me_me.md)
 

@@ -68,12 +68,16 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import jp.espresso3389.methings.device.UsbPermissionWaiter
@@ -133,7 +137,17 @@ class LocalHttpServer(
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
     private val meMePrefs = context.getSharedPreferences(ME_ME_PREFS, Context.MODE_PRIVATE)
+    private val meMeConnectIntents = ConcurrentHashMap<String, MeMeConnectIntent>()
+    private val meMeConnections = ConcurrentHashMap<String, MeMeConnection>()
+    private val meMeInboundMessages = ConcurrentHashMap<String, MutableList<JSONObject>>()
     @Volatile private var meMeLastScanAtMs: Long = 0L
+    private val meMeDiscovery = MeMeDiscoveryManager(
+        context = context,
+        servicePort = ME_ME_LAN_PORT,
+        logger = { msg, ex ->
+            if (ex != null) Log.w(TAG, msg, ex) else Log.w(TAG, msg)
+        }
+    )
     private val meSyncNearbyTransport = MeSyncNearbyTransport(
         context = context,
         serviceId = NEARBY_ME_SYNC_SERVICE_ID,
@@ -144,6 +158,8 @@ class LocalHttpServer(
     )
     private val meSyncLanDownloadServer = MeSyncLanDownloadServer()
     @Volatile private var meSyncLanServerStarted = false
+    private val meMeLanServer = MeMeLanServer()
+    @Volatile private var meMeLanServerStarted = false
 
     @Volatile private var authKeysLastMtime: Long = 0L
 
@@ -153,6 +169,7 @@ class LocalHttpServer(
     @Volatile private var screenReleaseFuture: ScheduledFuture<*>? = null
     private val housekeepingScheduler = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var housekeepingFuture: ScheduledFuture<*>? = null
+    private val meMeExecutor = Executors.newSingleThreadExecutor()
 
     fun startServer(): Boolean {
         return try {
@@ -166,7 +183,18 @@ class LocalHttpServer(
                 Log.w(TAG, "Failed to start me.sync LAN download server", ex)
                 false
             }
+            meMeLanServerStarted = try {
+                meMeLanServer.start(SOCKET_READ_TIMEOUT, false)
+                Log.i(TAG, "me.me LAN server started on 0.0.0.0:$ME_ME_LAN_PORT")
+                true
+            } catch (ex: Exception) {
+                Log.w(TAG, "Failed to start me.me LAN server", ex)
+                false
+            }
             scheduleHousekeeping()
+            meMeExecutor.execute {
+                runCatching { meMeDiscovery.applyConfig(currentMeMeDiscoveryConfig()) }
+            }
             true
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to start local HTTP server", ex)
@@ -186,6 +214,11 @@ class LocalHttpServer(
         }
         meSyncLanServerStarted = false
         try {
+            meMeLanServer.stop()
+        } catch (_: Exception) {
+        }
+        meMeLanServerStarted = false
+        try {
             setKeepScreenOn(false, timeoutS = 0)
         } catch (_: Exception) {
         }
@@ -200,6 +233,14 @@ class LocalHttpServer(
         }
         try {
             meSyncNearbyTransport.shutdown()
+        } catch (_: Exception) {
+        }
+        try {
+            meMeExecutor.shutdownNow()
+        } catch (_: Exception) {
+        }
+        try {
+            meMeDiscovery.shutdown()
         } catch (_: Exception) {
         }
     }
@@ -361,6 +402,82 @@ class LocalHttpServer(
                 )
                 if (!ok.first) return ok.second!!
                 handleMeMeScan(payload)
+            }
+            uri == "/me/me/connect" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.connect",
+                    detail = "Request connection to nearby me.things device"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeConnect(payload)
+            }
+            uri == "/me/me/accept" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.accept",
+                    detail = "Accept me.things connection request"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeAccept(payload)
+            }
+            uri == "/me/me/connect/confirm" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.connect",
+                    detail = "Confirm me.things connection request"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeConnectConfirm(payload)
+            }
+            uri == "/me/me/disconnect" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.disconnect",
+                    detail = "Disconnect me.things device connection"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeDisconnect(payload)
+            }
+            uri == "/me/me/message/send" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.message",
+                    detail = "Send message to connected me.things peer"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeMessageSend(payload)
+            }
+            uri == "/me/me/messages/pull" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.message",
+                    detail = "Read messages from connected me.things peer"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeMessagesPull(payload)
+            }
+            uri == "/me/me/data/ingest" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleMeMeDataIngest(payload, sourceIp = "local")
             }
             uri == "/me/sync/local_state" && session.method == Method.GET -> {
                 handleMeSyncLocalState()
@@ -7364,6 +7481,7 @@ class LocalHttpServer(
     }
 
     private fun handleMeMeStatus(): Response {
+        cleanupExpiredMeMeState()
         val cfg = currentMeMeConfig()
         val self = JSONObject()
             .put("device_id", cfg.deviceId)
@@ -7372,15 +7490,30 @@ class LocalHttpServer(
             .put("device_icon", cfg.deviceIcon)
             .put("allow_discovery", cfg.allowDiscovery)
             .put("connection_methods", org.json.JSONArray(cfg.connectionMethods))
+        val runtime = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig(cfg))
+        val connections = org.json.JSONArray(
+            meMeConnections.values
+                .sortedByDescending { it.connectedAt }
+                .map { it.toJson() }
+        )
+        val pending = org.json.JSONArray(
+            meMeConnectIntents.values
+                .filter { !it.accepted }
+                .sortedByDescending { it.createdAt }
+                .map { it.toJson(includeToken = false) }
+        )
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
                 .put("self", self)
-                .put("connected_count", 0)
-                .put("discovered_count", 0)
-                .put("connections", org.json.JSONArray())
-                .put("discovered", org.json.JSONArray())
-                .put("last_scan_at", if (meMeLastScanAtMs > 0L) meMeLastScanAtMs else JSONObject.NULL)
+                .put("connected_count", connections.length())
+                .put("discovered_count", runtime.optInt("discovered_count", 0))
+                .put("pending_request_count", pending.length())
+                .put("pending_requests", pending)
+                .put("connections", connections)
+                .put("discovered", runtime.optJSONArray("discovered") ?: org.json.JSONArray())
+                .put("advertising", runtime.optJSONObject("advertising") ?: JSONObject())
+                .put("last_scan_at", runtime.opt("last_scan_at"))
         )
     }
 
@@ -7414,6 +7547,9 @@ class LocalHttpServer(
             notifyOnDisconnection = if (payload.has("notify_on_disconnection")) payload.optBoolean("notify_on_disconnection", prev.notifyOnDisconnection) else prev.notifyOnDisconnection
         )
         saveMeMeConfig(next)
+        meMeExecutor.execute {
+            runCatching { meMeDiscovery.applyConfig(currentMeMeDiscoveryConfig(next)) }
+        }
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
@@ -7424,12 +7560,421 @@ class LocalHttpServer(
     private fun handleMeMeScan(payload: JSONObject): Response {
         meMeLastScanAtMs = System.currentTimeMillis()
         val timeoutMs = payload.optLong("timeout_ms", 3000L).coerceIn(500L, 30_000L)
+        val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(), timeoutMs)
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
-                .put("started_at", meMeLastScanAtMs)
-                .put("timeout_ms", timeoutMs)
-                .put("discovered", org.json.JSONArray())
+                .put("started_at", summary.startedAt)
+                .put("timeout_ms", summary.timeoutMs)
+                .put("discovered", org.json.JSONArray(summary.discovered))
+                .put("warnings", org.json.JSONArray(summary.warnings))
+        )
+    }
+
+    private fun handleMeMeConnect(payload: JSONObject): Response {
+        cleanupExpiredMeMeState()
+        val cfg = currentMeMeConfig()
+        val targetDeviceId = payload.optString("target_device_id", "").trim()
+        if (targetDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "target_device_id_required")
+        if (targetDeviceId == cfg.deviceId) return jsonError(Response.Status.BAD_REQUEST, "cannot_connect_self")
+        if (cfg.blockedDevices.contains(targetDeviceId)) {
+            return jsonError(Response.Status.FORBIDDEN, "target_blocked")
+        }
+        if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(targetDeviceId)) {
+            return jsonError(Response.Status.FORBIDDEN, "target_not_allowed")
+        }
+        val existing = meMeConnections[targetDeviceId]
+        if (existing != null) {
+            return jsonResponse(JSONObject().put("status", "ok").put("connection", existing.toJson()).put("already_connected", true))
+        }
+        if (meMeConnections.size >= cfg.maxConnections) {
+            return jsonError(Response.Status.FORBIDDEN, "max_connections_reached")
+        }
+        val discovered = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig(cfg)).optJSONArray("discovered")
+        val peer = findDiscoveredPeer(discovered, targetDeviceId)
+        if (peer == null && !payload.optBoolean("allow_unknown", false)) {
+            return jsonError(Response.Status.NOT_FOUND, "target_not_discovered")
+        }
+        val reqId = "mmr_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
+        val createdAt = System.currentTimeMillis()
+        val expiresAt = createdAt + cfg.connectionTimeoutSec * 1000L
+        val sessionId = "mms_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
+        val sessionKey = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        val sessionKeyB64 = Base64.encodeToString(sessionKey, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val acceptToken = encodeMeMeAcceptToken(reqId, cfg.deviceId, targetDeviceId, sessionId, sessionKeyB64, expiresAt)
+        val req = MeMeConnectIntent(
+            id = reqId,
+            sourceDeviceId = cfg.deviceId,
+            sourceDeviceName = cfg.deviceName,
+            targetDeviceId = targetDeviceId,
+            targetDeviceName = peer?.optString("device_name", "")?.trim().orEmpty(),
+            createdAt = createdAt,
+            expiresAt = expiresAt,
+            accepted = false,
+            acceptToken = acceptToken,
+            methodHint = payload.optString("method", "").trim().ifBlank { "auto" },
+            sessionId = sessionId,
+            sessionKeyB64 = sessionKeyB64
+        )
+        meMeConnectIntents[req.id] = req
+        return jsonResponse(
+            JSONObject()
+                .put("status", "pending")
+                .put("request", req.toJson(includeToken = true))
+                .put("note", "Share accept_token with target device, then call /me/me/accept on the target.")
+        )
+    }
+
+    private fun handleMeMeAccept(payload: JSONObject): Response {
+        cleanupExpiredMeMeState()
+        val cfg = currentMeMeConfig()
+        val token = payload.optString("accept_token", "").trim()
+        val requestId = payload.optString("request_id", "").trim()
+        val req = when {
+            token.isNotBlank() -> {
+                val parsed = decodeMeMeAcceptToken(token) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_accept_token")
+                if (parsed.expiresAt in 1..System.currentTimeMillis()) return jsonError(Response.Status.GONE, "request_expired")
+                if (parsed.targetDeviceId != cfg.deviceId) return jsonError(Response.Status.FORBIDDEN, "token_target_mismatch")
+                meMeConnectIntents[parsed.requestId] ?: MeMeConnectIntent(
+                    id = parsed.requestId,
+                    sourceDeviceId = parsed.sourceDeviceId,
+                    sourceDeviceName = "",
+                    targetDeviceId = parsed.targetDeviceId,
+                    targetDeviceName = cfg.deviceName,
+                    createdAt = System.currentTimeMillis(),
+                    expiresAt = parsed.expiresAt,
+                    accepted = false,
+                    acceptToken = token,
+                    methodHint = payload.optString("method", "").trim().ifBlank { "auto" },
+                    sessionId = parsed.sessionId,
+                    sessionKeyB64 = parsed.sessionKeyB64
+                )
+            }
+            requestId.isNotBlank() -> meMeConnectIntents[requestId]
+            else -> null
+        } ?: return jsonError(Response.Status.NOT_FOUND, "request_not_found")
+
+        if (cfg.blockedDevices.contains(req.sourceDeviceId)) return jsonError(Response.Status.FORBIDDEN, "source_blocked")
+        if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(req.sourceDeviceId)) {
+            return jsonError(Response.Status.FORBIDDEN, "source_not_allowed")
+        }
+        if (meMeConnections.size >= cfg.maxConnections && !meMeConnections.containsKey(req.sourceDeviceId)) {
+            return jsonError(Response.Status.FORBIDDEN, "max_connections_reached")
+        }
+        val connId = "mmc_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
+        val conn = MeMeConnection(
+            id = connId,
+            peerDeviceId = req.sourceDeviceId,
+            peerDeviceName = req.sourceDeviceName,
+            method = req.methodHint,
+            connectedAt = System.currentTimeMillis(),
+            state = "connected",
+            role = "acceptor",
+            sessionId = req.sessionId,
+            sessionKeyB64 = req.sessionKeyB64
+        )
+        meMeConnections[conn.peerDeviceId] = conn
+        meMeConnectIntents[req.id] = req.copy(accepted = true)
+        val autoConfirm = runAutoConfirmMeMeAccept(
+            req = req,
+            payload = payload,
+            acceptedByName = cfg.deviceName
+        )
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("ack_token", req.acceptToken)
+                .put("auto_confirm", autoConfirm)
+                .put("connection", conn.toJson())
+        )
+    }
+
+    private fun handleMeMeConnectConfirm(payload: JSONObject): Response {
+        cleanupExpiredMeMeState()
+        val cfg = currentMeMeConfig()
+        val token = payload.optString("accept_token", "").trim()
+        if (token.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "accept_token_required")
+        val parsed = decodeMeMeAcceptToken(token) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_accept_token")
+        if (parsed.expiresAt in 1..System.currentTimeMillis()) return jsonError(Response.Status.GONE, "request_expired")
+        if (parsed.sourceDeviceId != cfg.deviceId) return jsonError(Response.Status.FORBIDDEN, "token_source_mismatch")
+
+        val conn = MeMeConnection(
+            id = "mmc_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}",
+            peerDeviceId = parsed.targetDeviceId,
+            peerDeviceName = payload.optString("peer_device_name", "").trim(),
+            method = payload.optString("method", "auto").trim().ifBlank { "auto" },
+            connectedAt = System.currentTimeMillis(),
+            state = "connected",
+            role = "initiator",
+            sessionId = parsed.sessionId,
+            sessionKeyB64 = parsed.sessionKeyB64
+        )
+        meMeConnections[conn.peerDeviceId] = conn
+        return jsonResponse(JSONObject().put("status", "ok").put("connection", conn.toJson()))
+    }
+
+    private fun runAutoConfirmMeMeAccept(
+        req: MeMeConnectIntent,
+        payload: JSONObject,
+        acceptedByName: String
+    ): JSONObject {
+        val host = payload.optString("source_host", "").trim().ifBlank {
+            val discovered = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig()).optJSONArray("discovered")
+            findDiscoveredPeer(discovered, req.sourceDeviceId)
+                ?.optJSONObject("wifi")
+                ?.optString("host", "")
+                ?.trim()
+                .orEmpty()
+        }
+        val port = payload.optInt("source_port", 0).takeIf { it in 1..65535 }
+            ?: run {
+                val discovered = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig()).optJSONArray("discovered")
+                findDiscoveredPeer(discovered, req.sourceDeviceId)
+                    ?.optJSONObject("wifi")
+                    ?.optInt("port", ME_ME_LAN_PORT)
+                    ?: ME_ME_LAN_PORT
+            }
+        if (host.isBlank()) {
+            return JSONObject()
+                .put("attempted", false)
+                .put("confirmed", false)
+                .put("error", "source_host_unknown")
+        }
+        val confirmPayload = JSONObject()
+            .put("accept_token", req.acceptToken)
+            .put("peer_device_name", acceptedByName)
+            .put("method", req.methodHint)
+        val result = postMeMeLanJson(host, port, "/me/me/connect/confirm", confirmPayload)
+        return JSONObject()
+            .put("attempted", true)
+            .put("target", "$host:$port")
+            .put("confirmed", result.optBoolean("ok", false))
+            .put("result", result)
+    }
+
+    private fun handleMeMeDisconnect(payload: JSONObject): Response {
+        cleanupExpiredMeMeState()
+        val peerDeviceId = payload.optString("peer_device_id", "").trim()
+        val connectionId = payload.optString("connection_id", "").trim()
+        val removed = when {
+            peerDeviceId.isNotBlank() -> meMeConnections.remove(peerDeviceId)
+            connectionId.isNotBlank() -> {
+                val hit = meMeConnections.values.firstOrNull { it.id == connectionId }
+                if (hit != null) meMeConnections.remove(hit.peerDeviceId) else null
+            }
+            else -> null
+        } ?: return jsonError(Response.Status.NOT_FOUND, "connection_not_found")
+        meMeInboundMessages.remove(removed.peerDeviceId)
+        return jsonResponse(JSONObject().put("status", "ok").put("disconnected", true).put("connection", removed.toJson()))
+    }
+
+    private fun handleMeMeMessageSend(payload: JSONObject): Response {
+        cleanupExpiredMeMeState()
+        val peerDeviceId = payload.optString("peer_device_id", "").trim()
+        if (peerDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "peer_device_id_required")
+        val conn = meMeConnections[peerDeviceId] ?: return jsonError(Response.Status.NOT_FOUND, "connection_not_found")
+        if (conn.state != "connected") return jsonError(Response.Status.CONFLICT, "connection_not_ready")
+        val discovered = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig()).optJSONArray("discovered")
+        val peer = findDiscoveredPeer(discovered, peerDeviceId)
+        val host = payload.optString("host", "").trim().ifBlank {
+            peer?.optJSONObject("wifi")?.optString("host", "")?.trim().orEmpty()
+        }
+        val port = payload.optInt("port", 0).takeIf { it in 1..65535 }
+            ?: peer?.optJSONObject("wifi")?.optInt("port", ME_ME_LAN_PORT)
+            ?: ME_ME_LAN_PORT
+        if (host.isBlank()) return jsonError(Response.Status.NOT_FOUND, "peer_host_unavailable")
+        val plaintext = JSONObject()
+            .put("type", payload.optString("type", "message").trim().ifBlank { "message" })
+            .put("payload", payload.opt("payload") ?: JSONObject.NULL)
+            .put("sent_at", System.currentTimeMillis())
+            .put("from_device_id", currentMeMeConfig().deviceId)
+        val encrypted = encryptMeMePayload(conn.sessionKeyB64, plaintext)
+            ?: return jsonError(Response.Status.INTERNAL_ERROR, "encrypt_failed")
+        val req = JSONObject()
+            .put("session_id", conn.sessionId)
+            .put("from_device_id", currentMeMeConfig().deviceId)
+            .put("to_device_id", peerDeviceId)
+            .put("iv_b64", encrypted.ivB64)
+            .put("ciphertext_b64", encrypted.ciphertextB64)
+        val ok = postMeMeLanJson(host, port, "/me/me/data/ingest", req)
+        if (!ok.optBoolean("ok", false)) {
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "peer_delivery_failed", ok)
+        }
+        return jsonResponse(JSONObject().put("status", "ok").put("delivered", true).put("peer", "$host:$port"))
+    }
+
+    private fun handleMeMeMessagesPull(payload: JSONObject): Response {
+        cleanupExpiredMeMeState()
+        val peerDeviceId = payload.optString("peer_device_id", "").trim()
+        if (peerDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "peer_device_id_required")
+        val limit = payload.optInt("limit", 50).coerceIn(1, 200)
+        val consume = payload.optBoolean("consume", true)
+        val list = meMeInboundMessages[peerDeviceId] ?: mutableListOf()
+        val items = synchronized(list) {
+            val take = list.takeLast(limit)
+            if (consume && take.isNotEmpty()) {
+                repeat(take.size) { list.removeAt(0) }
+            }
+            take
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("peer_device_id", peerDeviceId)
+                .put("items", JSONArray(items))
+                .put("count", items.size)
+        )
+    }
+
+    private fun handleMeMeDataIngest(payload: JSONObject, sourceIp: String): Response {
+        val sessionId = payload.optString("session_id", "").trim()
+        val fromDeviceId = payload.optString("from_device_id", "").trim()
+        if (sessionId.isBlank() || fromDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "invalid_ingest_payload")
+        val conn = meMeConnections[fromDeviceId] ?: return jsonError(Response.Status.NOT_FOUND, "connection_not_found")
+        if (conn.sessionId != sessionId) return jsonError(Response.Status.FORBIDDEN, "session_mismatch")
+        val iv = payload.optString("iv_b64", "").trim()
+        val ct = payload.optString("ciphertext_b64", "").trim()
+        val plain = decryptMeMePayload(conn.sessionKeyB64, iv, ct)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "decrypt_failed")
+        val bucket = meMeInboundMessages.computeIfAbsent(fromDeviceId) { mutableListOf() }
+        synchronized(bucket) {
+            bucket.add(
+                JSONObject()
+                    .put("received_at", System.currentTimeMillis())
+                    .put("source_ip", sourceIp)
+                    .put("session_id", sessionId)
+                    .put("message", plain)
+            )
+            while (bucket.size > 200) bucket.removeAt(0)
+        }
+        return jsonResponse(JSONObject().put("status", "ok").put("stored", true))
+    }
+
+    private fun findDiscoveredPeer(discovered: JSONArray?, deviceId: String): JSONObject? {
+        if (discovered == null) return null
+        for (i in 0 until discovered.length()) {
+            val obj = discovered.optJSONObject(i) ?: continue
+            if (obj.optString("device_id", "").trim() == deviceId) return obj
+        }
+        return null
+    }
+
+    private fun cleanupExpiredMeMeState() {
+        val now = System.currentTimeMillis()
+        val it = meMeConnectIntents.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if (e.value.expiresAt in 1..now) it.remove()
+        }
+    }
+
+    private fun encodeMeMeAcceptToken(
+        requestId: String,
+        sourceDeviceId: String,
+        targetDeviceId: String,
+        sessionId: String,
+        sessionKeyB64: String,
+        expiresAt: Long
+    ): String {
+        val payload = JSONObject()
+            .put("v", 1)
+            .put("request_id", requestId)
+            .put("source_device_id", sourceDeviceId)
+            .put("target_device_id", targetDeviceId)
+            .put("session_id", sessionId)
+            .put("session_key", sessionKeyB64)
+            .put("expires_at", expiresAt)
+        val b64 = Base64.encodeToString(
+            payload.toString().toByteArray(StandardCharsets.UTF_8),
+            Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+        )
+        return "me.things:me.me.conn:$b64"
+    }
+
+    private fun decodeMeMeAcceptToken(token: String): MeMeAcceptToken? {
+        val prefix = "me.things:me.me.conn:"
+        if (!token.startsWith(prefix)) return null
+        val raw = token.removePrefix(prefix).trim()
+        if (raw.isBlank()) return null
+        return runCatching {
+            val decoded = Base64.decode(raw, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val obj = JSONObject(String(decoded, StandardCharsets.UTF_8))
+            MeMeAcceptToken(
+                requestId = obj.optString("request_id", "").trim(),
+                sourceDeviceId = obj.optString("source_device_id", "").trim(),
+                targetDeviceId = obj.optString("target_device_id", "").trim(),
+                sessionId = obj.optString("session_id", "").trim(),
+                sessionKeyB64 = obj.optString("session_key", "").trim(),
+                expiresAt = obj.optLong("expires_at", 0L)
+            )
+        }.getOrNull()?.takeIf {
+            it.requestId.isNotBlank() && it.sourceDeviceId.isNotBlank() &&
+                it.targetDeviceId.isNotBlank() && it.sessionId.isNotBlank() && it.sessionKeyB64.isNotBlank()
+        }
+    }
+
+    private data class EncryptedMessage(val ivB64: String, val ciphertextB64: String)
+
+    private fun encryptMeMePayload(sessionKeyB64: String, payload: JSONObject): EncryptedMessage? {
+        return runCatching {
+            val key = Base64.decode(sessionKeyB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+            val ct = cipher.doFinal(payload.toString().toByteArray(StandardCharsets.UTF_8))
+            EncryptedMessage(
+                ivB64 = Base64.encodeToString(iv, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING),
+                ciphertextB64 = Base64.encodeToString(ct, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            )
+        }.getOrNull()
+    }
+
+    private fun decryptMeMePayload(sessionKeyB64: String, ivB64: String, ciphertextB64: String): JSONObject? {
+        return runCatching {
+            val key = Base64.decode(sessionKeyB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val iv = Base64.decode(ivB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val ct = Base64.decode(ciphertextB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(128, iv))
+            val plain = cipher.doFinal(ct)
+            JSONObject(String(plain, StandardCharsets.UTF_8))
+        }.getOrNull()
+    }
+
+    private fun postMeMeLanJson(host: String, port: Int, path: String, payload: JSONObject): JSONObject {
+        return try {
+            val url = URI("http://$host:$port$path").toURL()
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 4000
+                readTimeout = 6000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Connection", "close")
+            }
+            conn.outputStream.use { it.write(payload.toString().toByteArray(StandardCharsets.UTF_8)) }
+            val code = conn.responseCode
+            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)?.use {
+                it.readBytes().toString(StandardCharsets.UTF_8)
+            } ?: ""
+            val parsed = runCatching { JSONObject(body) }.getOrNull() ?: JSONObject()
+            JSONObject()
+                .put("ok", code in 200..299)
+                .put("http_status", code)
+                .put("body", parsed)
+        } catch (ex: Exception) {
+            JSONObject().put("ok", false).put("error", ex.message ?: "request_failed")
+        }
+    }
+
+    private fun currentMeMeDiscoveryConfig(cfg: MeMeConfig = currentMeMeConfig()): MeMeDiscoveryManager.Config {
+        return MeMeDiscoveryManager.Config(
+            deviceId = cfg.deviceId,
+            deviceName = cfg.deviceName,
+            deviceDescription = cfg.deviceDescription,
+            deviceIcon = cfg.deviceIcon,
+            allowDiscovery = cfg.allowDiscovery,
+            connectionMethods = cfg.connectionMethods
         )
     }
 
@@ -9010,6 +9555,70 @@ class LocalHttpServer(
         }
     }
 
+    private data class MeMeConnectIntent(
+        val id: String,
+        val sourceDeviceId: String,
+        val sourceDeviceName: String,
+        val targetDeviceId: String,
+        val targetDeviceName: String,
+        val createdAt: Long,
+        val expiresAt: Long,
+        val accepted: Boolean,
+        val acceptToken: String,
+        val methodHint: String,
+        val sessionId: String,
+        val sessionKeyB64: String
+    ) {
+        fun toJson(includeToken: Boolean): JSONObject {
+            val out = JSONObject()
+                .put("id", id)
+                .put("source_device_id", sourceDeviceId)
+                .put("source_device_name", sourceDeviceName)
+                .put("target_device_id", targetDeviceId)
+                .put("target_device_name", targetDeviceName)
+                .put("created_at", createdAt)
+                .put("expires_at", expiresAt)
+                .put("accepted", accepted)
+                .put("method", methodHint)
+                .put("session_id", sessionId)
+            if (includeToken) out.put("accept_token", acceptToken)
+            return out
+        }
+    }
+
+    private data class MeMeConnection(
+        val id: String,
+        val peerDeviceId: String,
+        val peerDeviceName: String,
+        val method: String,
+        val connectedAt: Long,
+        val state: String,
+        val role: String,
+        val sessionId: String,
+        val sessionKeyB64: String
+    ) {
+        fun toJson(): JSONObject {
+            return JSONObject()
+                .put("id", id)
+                .put("peer_device_id", peerDeviceId)
+                .put("peer_device_name", peerDeviceName)
+                .put("method", method)
+                .put("connected_at", connectedAt)
+                .put("state", state)
+                .put("role", role)
+                .put("session_id", sessionId)
+        }
+    }
+
+    private data class MeMeAcceptToken(
+        val requestId: String,
+        val sourceDeviceId: String,
+        val targetDeviceId: String,
+        val sessionId: String,
+        val sessionKeyB64: String,
+        val expiresAt: Long
+    )
+
     private data class MeSyncImportSource(
         val httpUrl: String = "",
         val sshHost: String = "",
@@ -9201,11 +9810,32 @@ class LocalHttpServer(
         }
     }
 
+    private inner class MeMeLanServer : NanoHTTPD("0.0.0.0", ME_ME_LAN_PORT) {
+        override fun serve(session: IHTTPSession): Response {
+            val uri = session.uri ?: "/"
+            return when {
+                session.method == Method.GET && uri == "/health" -> {
+                    jsonResponse(JSONObject().put("status", "ok").put("service", "me_me_lan"))
+                }
+                session.method == Method.POST && uri == "/me/me/data/ingest" -> {
+                    val payload = JSONObject(readBody(session).ifBlank { "{}" })
+                    handleMeMeDataIngest(payload, sourceIp = session.remoteIpAddress ?: "")
+                }
+                session.method == Method.POST && uri == "/me/me/connect/confirm" -> {
+                    val payload = JSONObject(readBody(session).ifBlank { "{}" })
+                    handleMeMeConnectConfirm(payload)
+                }
+                else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "application/json", "{\"error\":\"not_found\"}")
+            }
+        }
+    }
+
     companion object {
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
         private const val PORT = 33389
         private const val ME_SYNC_LAN_PORT = 8766
+        private const val ME_ME_LAN_PORT = 8767
         private const val ME_SYNC_QR_TTL_MS = 40L * 1000L
         private const val ME_SYNC_URI_PREFIX = "me.things:me.sync:"
         private const val ME_SYNC_V3_URI_PREFIX = "me.things:me.sync.v3:"

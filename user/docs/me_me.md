@@ -4,14 +4,21 @@
 
 Current scope in this phase:
 - Device profile + connection policy configuration
-- Runtime status endpoint shape
-- Manual scan trigger endpoint
+- Wi-Fi local discovery via NSD (`_me_things._tcp`)
+- BLE local discovery via BLE service-data beacon
+- Runtime status + one-shot scan APIs
 
 Endpoints:
 - `GET /me/me/status`
 - `GET /me/me/config`
 - `POST /me/me/config`
 - `POST /me/me/scan`
+- `POST /me/me/connect`
+- `POST /me/me/accept`
+- `POST /me/me/connect/confirm`
+- `POST /me/me/disconnect`
+- `POST /me/me/message/send`
+- `POST /me/me/messages/pull`
 
 Config fields:
 - `device_name`, `device_description`, `device_icon`
@@ -24,4 +31,18 @@ Config fields:
 
 Notes:
 - `connection_methods` supports `wifi`, `ble`, `other`.
-- This is a compatibility-safe foundation API; transport/data-plane implementation can evolve.
+- `POST /me/me/scan` now returns discovered peers and `warnings` for partial failures (for example, missing BLE runtime permission).
+- `GET /me/me/status` includes:
+  - `discovered` / `discovered_count`
+  - `pending_requests` / `pending_request_count`
+  - `connections` / `connected_count`
+  - `advertising.wifi` and `advertising.ble`
+  - `last_scan_at`
+- `POST /me/me/connect` returns a short-lived `accept_token`.
+- `POST /me/me/accept` accepts that token on the target device and creates a logical connection record.
+- `POST /me/me/accept` also attempts LAN auto-confirm to the initiator (`/me/me/connect/confirm`) so both sides are connected automatically.
+- `POST /me/me/connect/confirm` remains available for manual/fallback confirmation.
+- `POST /me/me/disconnect` removes an existing logical connection by `peer_device_id` or `connection_id`.
+- `POST /me/me/message/send` delivers encrypted payloads to peer LAN endpoint.
+- `POST /me/me/messages/pull` reads/dequeues received messages.
+- Data-plane currently uses LAN HTTP (`0.0.0.0:8767`) + per-session AES-GCM.
