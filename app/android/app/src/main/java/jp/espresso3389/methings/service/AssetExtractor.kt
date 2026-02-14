@@ -263,7 +263,8 @@ class AssetExtractor(private val context: Context) {
                     "api_reference.md", "camera.md", "uvc.md", "usb.md", "ble.md",
                     "tts.md", "stt.md", "sensors.md", "viewer.md",
                     "vision.md", "permissions.md", "file_endpoints.md", "brain_journal.md",
-                    "vault.md", "cloud_broker.md", "health.md", "ssh.md", "sshd.md"
+                    "vault.md", "cloud_broker.md", "health.md", "ssh.md", "sshd.md",
+                    "me_me.md", "me_sync.md", "me_sync_v3.md"
                 )
                 for (name in bundledDocNames) {
                     File(legacyDocs, name).takeIf { it.exists() }?.delete()

@@ -8,6 +8,7 @@ This folder documents the local control plane, hardware access, and on-device ML
 - **Permissions**: `docs/permissions.md` - permission scopes and request flow.
 - **File Endpoints**: `docs/file_endpoints.md` - upload/list/file/info APIs.
 - **Viewer Control**: `docs/viewer.md` - fullscreen viewer/open/close/slide APIs.
+- **me.me**: `docs/me_me.md` - device discovery/connection foundation and config.
 - **me.sync**: `docs/me_sync.md` - export/import concepts, modes, and transfer flow.
 - **me.sync v3 Concept**: `docs/me_sync_v3.md` - QR-paired ad-hoc transfer architecture (Nearby-first, LAN fallback).
 - **Brain Journal**: `docs/brain_journal.md` - per-session journal APIs.

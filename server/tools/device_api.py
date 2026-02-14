@@ -122,6 +122,10 @@ class DeviceApiTool:
         "notifications.prefs.get": {"method": "GET", "path": "/notifications/prefs", "permission": False},
         "notifications.prefs.set": {"method": "POST", "path": "/notifications/prefs", "permission": False},
         "me.sync.status": {"method": "GET", "path": "/me/sync/status", "permission": False},
+        "me.me.status": {"method": "GET", "path": "/me/me/status", "permission": False},
+        "me.me.config.get": {"method": "GET", "path": "/me/me/config", "permission": False},
+        "me.me.config.set": {"method": "POST", "path": "/me/me/config", "permission": True},
+        "me.me.scan": {"method": "POST", "path": "/me/me/scan", "permission": True},
         "me.sync.local_state": {"method": "GET", "path": "/me/sync/local_state", "permission": False},
         "me.sync.prepare_export": {"method": "POST", "path": "/me/sync/prepare_export", "permission": True},
         "me.sync.import": {"method": "POST", "path": "/me/sync/import", "permission": True},
@@ -177,6 +181,7 @@ class DeviceApiTool:
             "screenrec.stop": 25.0,
             "me.sync.v3.ticket.create": 30.0,
             "me.sync.v3.import.apply": 300.0,
+            "me.me.scan": 45.0,
             "debug.logs.export": 45.0,
             "debug.logs.stream": 140.0,
         }
@@ -645,6 +650,8 @@ class DeviceApiTool:
             return "device.work", "workmanager", "session"
         if a.startswith("me.sync."):
             return "device.me_sync", "me_sync", "session"
+        if a.startswith("me.me."):
+            return "device.me_me", "me_me", "session"
         # Default to session scope: approve once per chat session, then no repeated prompts.
         return "device_api", "device_api", "session"
 

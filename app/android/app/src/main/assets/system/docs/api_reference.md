@@ -279,6 +279,10 @@ Details: [vision.md](vision.md)
 | `cloud.prefs.get` | GET | `/cloud/prefs` **[no perm]** |
 | `notifications.prefs.get` | GET | `/notifications/prefs` **[no perm]** |
 | `notifications.prefs.set` | POST | `/notifications/prefs` **[no perm]** |
+| `me.me.status` | GET | `/me/me/status` **[no perm]** |
+| `me.me.config.get` | GET | `/me/me/config` **[no perm]** |
+| `me.me.config.set` | POST | `/me/me/config` |
+| `me.me.scan` | POST | `/me/me/scan` |
 | `me.sync.status` | GET | `/me/sync/status` **[no perm]** |
 | `me.sync.local_state` | GET | `/me/sync/local_state` **[no perm]** |
 | `me.sync.prepare_export` | POST | `/me/sync/prepare_export` |
@@ -393,6 +397,17 @@ Endpoints:
 
 Chat prefix shortcut in the app UI:
 - `settings: <section_id_or_setting_key>` (examples: `settings: permissions`, `settings: remember_approvals`)
+
+### me.me (Device Discovery / Connection Foundation)
+
+| Method | Endpoint | Body | Effect |
+|--------|----------|------|--------|
+| `GET` | `/me/me/status` | — | Return self profile and current discovery/connection summary |
+| `GET` | `/me/me/config` | — | Return current `me.me` config |
+| `POST` | `/me/me/config` | `{"allow_discovery":true,...}` | Update `me.me` config |
+| `POST` | `/me/me/scan` | `{"timeout_ms":3000}` | Trigger one-shot scan (foundation endpoint) |
+
+Details: [me_me.md](me_me.md)
 
 ### me.sync (LAN Export / Migration)
 

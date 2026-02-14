@@ -132,6 +132,8 @@ class LocalHttpServer(
     private val workJobManager = WorkJobManager(context)
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
+    private val meMePrefs = context.getSharedPreferences(ME_ME_PREFS, Context.MODE_PRIVATE)
+    @Volatile private var meMeLastScanAtMs: Long = 0L
     private val meSyncNearbyTransport = MeSyncNearbyTransport(
         context = context,
         serviceId = NEARBY_ME_SYNC_SERVICE_ID,
@@ -329,6 +331,36 @@ class LocalHttpServer(
             }
             uri == "/me/sync/status" && session.method == Method.GET -> {
                 handleMeSyncStatus()
+            }
+            uri == "/me/me/status" && session.method == Method.GET -> {
+                handleMeMeStatus()
+            }
+            uri == "/me/me/config" && session.method == Method.GET -> {
+                handleMeMeConfigGet()
+            }
+            uri == "/me/me/config" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.config",
+                    detail = "Update me.me connection settings"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeConfigSet(payload)
+            }
+            uri == "/me/me/scan" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.scan",
+                    detail = "Scan nearby me.things devices"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeScan(payload)
             }
             uri == "/me/sync/local_state" && session.method == Method.GET -> {
                 handleMeSyncLocalState()
@@ -7331,6 +7363,153 @@ class LocalHttpServer(
         return jsonResponse(JSONObject().put("status", "ok").put("items", arr))
     }
 
+    private fun handleMeMeStatus(): Response {
+        val cfg = currentMeMeConfig()
+        val self = JSONObject()
+            .put("device_id", cfg.deviceId)
+            .put("device_name", cfg.deviceName)
+            .put("device_description", cfg.deviceDescription)
+            .put("device_icon", cfg.deviceIcon)
+            .put("allow_discovery", cfg.allowDiscovery)
+            .put("connection_methods", org.json.JSONArray(cfg.connectionMethods))
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("self", self)
+                .put("connected_count", 0)
+                .put("discovered_count", 0)
+                .put("connections", org.json.JSONArray())
+                .put("discovered", org.json.JSONArray())
+                .put("last_scan_at", if (meMeLastScanAtMs > 0L) meMeLastScanAtMs else JSONObject.NULL)
+        )
+    }
+
+    private fun handleMeMeConfigGet(): Response {
+        val cfg = currentMeMeConfig()
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("config", cfg.toJson())
+        )
+    }
+
+    private fun handleMeMeConfigSet(payload: JSONObject): Response {
+        val prev = currentMeMeConfig()
+        val next = MeMeConfig(
+            deviceId = prev.deviceId,
+            deviceName = payload.optString("device_name", prev.deviceName).trim().ifBlank { Build.MODEL?.trim().orEmpty() }.ifBlank { "Android device" },
+            deviceDescription = payload.optString("device_description", prev.deviceDescription).trim(),
+            deviceIcon = payload.optString("device_icon", prev.deviceIcon).trim(),
+            allowDiscovery = if (payload.has("allow_discovery")) payload.optBoolean("allow_discovery", prev.allowDiscovery) else prev.allowDiscovery,
+            connectionTimeoutSec = payload.optInt("connection_timeout", prev.connectionTimeoutSec).coerceIn(5, 300),
+            maxConnections = payload.optInt("max_connections", prev.maxConnections).coerceIn(1, 32),
+            connectionMethods = sanitizeConnectionMethods(readStringList(payload, "connection_methods", prev.connectionMethods)),
+            autoReconnect = if (payload.has("auto_reconnect")) payload.optBoolean("auto_reconnect", prev.autoReconnect) else prev.autoReconnect,
+            reconnectIntervalSec = payload.optInt("reconnect_interval", prev.reconnectIntervalSec).coerceIn(3, 3600),
+            discoveryIntervalSec = payload.optInt("discovery_interval", prev.discoveryIntervalSec).coerceIn(10, 3600),
+            connectionCheckIntervalSec = payload.optInt("connection_check_interval", prev.connectionCheckIntervalSec).coerceIn(5, 3600),
+            allowedDevices = readStringList(payload, "allowed_devices", prev.allowedDevices),
+            blockedDevices = readStringList(payload, "blocked_devices", prev.blockedDevices),
+            notifyOnConnection = if (payload.has("notify_on_connection")) payload.optBoolean("notify_on_connection", prev.notifyOnConnection) else prev.notifyOnConnection,
+            notifyOnDisconnection = if (payload.has("notify_on_disconnection")) payload.optBoolean("notify_on_disconnection", prev.notifyOnDisconnection) else prev.notifyOnDisconnection
+        )
+        saveMeMeConfig(next)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("config", next.toJson())
+        )
+    }
+
+    private fun handleMeMeScan(payload: JSONObject): Response {
+        meMeLastScanAtMs = System.currentTimeMillis()
+        val timeoutMs = payload.optLong("timeout_ms", 3000L).coerceIn(500L, 30_000L)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("started_at", meMeLastScanAtMs)
+                .put("timeout_ms", timeoutMs)
+                .put("discovered", org.json.JSONArray())
+        )
+    }
+
+    private fun currentMeMeConfig(): MeMeConfig {
+        val deviceId = meMePrefs.getString("device_id", "")?.trim().orEmpty().ifBlank {
+            "mm_" + UUID.randomUUID().toString()
+        }
+        if ((meMePrefs.getString("device_id", "") ?: "").trim().isBlank()) {
+            meMePrefs.edit().putString("device_id", deviceId).apply()
+        }
+        val methodsRaw = meMePrefs.getStringSet("connection_methods", setOf("wifi", "ble"))?.toList() ?: listOf("wifi", "ble")
+        return MeMeConfig(
+            deviceId = deviceId,
+            deviceName = (meMePrefs.getString("device_name", Build.MODEL?.trim().orEmpty()) ?: "").trim().ifBlank { "Android device" },
+            deviceDescription = (meMePrefs.getString("device_description", "") ?: "").trim(),
+            deviceIcon = (meMePrefs.getString("device_icon", "") ?: "").trim(),
+            allowDiscovery = meMePrefs.getBoolean("allow_discovery", false),
+            connectionTimeoutSec = meMePrefs.getInt("connection_timeout", 30).coerceIn(5, 300),
+            maxConnections = meMePrefs.getInt("max_connections", 5).coerceIn(1, 32),
+            connectionMethods = sanitizeConnectionMethods(methodsRaw),
+            autoReconnect = meMePrefs.getBoolean("auto_reconnect", true),
+            reconnectIntervalSec = meMePrefs.getInt("reconnect_interval", 10).coerceIn(3, 3600),
+            discoveryIntervalSec = meMePrefs.getInt("discovery_interval", 60).coerceIn(10, 3600),
+            connectionCheckIntervalSec = meMePrefs.getInt("connection_check_interval", 30).coerceIn(5, 3600),
+            allowedDevices = meMePrefs.getStringSet("allowed_devices", emptySet())?.toList()?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList(),
+            blockedDevices = meMePrefs.getStringSet("blocked_devices", emptySet())?.toList()?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList(),
+            notifyOnConnection = meMePrefs.getBoolean("notify_on_connection", true),
+            notifyOnDisconnection = meMePrefs.getBoolean("notify_on_disconnection", true)
+        )
+    }
+
+    private fun saveMeMeConfig(cfg: MeMeConfig) {
+        meMePrefs.edit()
+            .putString("device_id", cfg.deviceId)
+            .putString("device_name", cfg.deviceName)
+            .putString("device_description", cfg.deviceDescription)
+            .putString("device_icon", cfg.deviceIcon)
+            .putBoolean("allow_discovery", cfg.allowDiscovery)
+            .putInt("connection_timeout", cfg.connectionTimeoutSec)
+            .putInt("max_connections", cfg.maxConnections)
+            .putStringSet("connection_methods", cfg.connectionMethods.toSet())
+            .putBoolean("auto_reconnect", cfg.autoReconnect)
+            .putInt("reconnect_interval", cfg.reconnectIntervalSec)
+            .putInt("discovery_interval", cfg.discoveryIntervalSec)
+            .putInt("connection_check_interval", cfg.connectionCheckIntervalSec)
+            .putStringSet("allowed_devices", cfg.allowedDevices.toSet())
+            .putStringSet("blocked_devices", cfg.blockedDevices.toSet())
+            .putBoolean("notify_on_connection", cfg.notifyOnConnection)
+            .putBoolean("notify_on_disconnection", cfg.notifyOnDisconnection)
+            .apply()
+    }
+
+    private fun readStringList(payload: JSONObject, key: String, fallback: List<String>): List<String> {
+        val arr = payload.optJSONArray(key)
+        if (arr != null) {
+            val out = mutableListOf<String>()
+            for (i in 0 until arr.length()) {
+                val v = arr.optString(i, "").trim()
+                if (v.isNotBlank()) out.add(v)
+            }
+            return out.distinct()
+        }
+        if (payload.has(key)) {
+            val raw = payload.optString(key, "")
+            return raw.split(',', '\n', ' ')
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .distinct()
+        }
+        return fallback
+    }
+
+    private fun sanitizeConnectionMethods(raw: List<String>): List<String> {
+        val allowed = setOf("wifi", "ble", "other")
+        val out = raw.map { it.trim().lowercase(Locale.US) }
+            .filter { it in allowed }
+            .distinct()
+        return if (out.isEmpty()) listOf("wifi", "ble") else out
+    }
+
     private fun handleMeSyncLocalState(): Response {
         val userRoot = File(context.filesDir, "user")
         val userFileCount = if (userRoot.exists() && userRoot.isDirectory) {
@@ -8792,6 +8971,45 @@ class LocalHttpServer(
         @Volatile var claimedOnce: Boolean = false
     )
 
+    private data class MeMeConfig(
+        val deviceId: String,
+        val deviceName: String,
+        val deviceDescription: String,
+        val deviceIcon: String,
+        val allowDiscovery: Boolean,
+        val connectionTimeoutSec: Int,
+        val maxConnections: Int,
+        val connectionMethods: List<String>,
+        val autoReconnect: Boolean,
+        val reconnectIntervalSec: Int,
+        val discoveryIntervalSec: Int,
+        val connectionCheckIntervalSec: Int,
+        val allowedDevices: List<String>,
+        val blockedDevices: List<String>,
+        val notifyOnConnection: Boolean,
+        val notifyOnDisconnection: Boolean
+    ) {
+        fun toJson(): JSONObject {
+            return JSONObject()
+                .put("device_id", deviceId)
+                .put("device_name", deviceName)
+                .put("device_description", deviceDescription)
+                .put("device_icon", deviceIcon)
+                .put("allow_discovery", allowDiscovery)
+                .put("connection_timeout", connectionTimeoutSec)
+                .put("max_connections", maxConnections)
+                .put("connection_methods", org.json.JSONArray(connectionMethods))
+                .put("auto_reconnect", autoReconnect)
+                .put("reconnect_interval", reconnectIntervalSec)
+                .put("discovery_interval", discoveryIntervalSec)
+                .put("connection_check_interval", connectionCheckIntervalSec)
+                .put("allowed_devices", org.json.JSONArray(allowedDevices))
+                .put("blocked_devices", org.json.JSONArray(blockedDevices))
+                .put("notify_on_connection", notifyOnConnection)
+                .put("notify_on_disconnection", notifyOnDisconnection)
+        }
+    }
+
     private data class MeSyncImportSource(
         val httpUrl: String = "",
         val sshHost: String = "",
@@ -8993,6 +9211,7 @@ class LocalHttpServer(
         private const val ME_SYNC_V3_URI_PREFIX = "me.things:me.sync.v3:"
         private const val ME_SYNC_V3_TICKET_TTL_MS = 5L * 60L * 1000L
         private const val NEARBY_ME_SYNC_SERVICE_ID = "jp.espresso3389.methings.me_sync.v3"
+        private const val ME_ME_PREFS = "me_me_prefs"
         private const val HOUSEKEEPING_INITIAL_DELAY_SEC = 120L
         private const val HOUSEKEEPING_INTERVAL_SEC = 60L * 60L
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
@@ -9051,6 +9270,7 @@ Policies:
             "permissions" to "Permissions",
             "cloud" to "Cloud",
             "tts" to "Text-to-Speech",
+            "me_me" to "me.me",
             "me_sync" to "me.sync",
             "app_update" to "App Update",
             "about" to "About",

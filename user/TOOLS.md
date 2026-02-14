@@ -259,6 +259,8 @@ Read the relevant doc when working in that domain (use `read_file("$sys/docs/<na
 - `$sys/docs/media_stream.md` — file-based media decode streaming
 - `$sys/docs/viewer.md` — viewer control API, file info, Marp presentation
 - `$sys/docs/vision.md` — RGBA8888 + TFLite inference
+- `$sys/docs/me_me.md` — device discovery/connection foundation (`me.me`)
+- `$sys/docs/me_sync.md` — export/import transfer flow (`me.sync`)
 - `$sys/docs/permissions.md` — permission scopes and identity
 - `$sys/examples/README.md` — copy/paste golden paths
 
