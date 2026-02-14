@@ -137,9 +137,17 @@ class DeviceApiTool:
         "me.sync.prepare_export": {"method": "POST", "path": "/me/sync/prepare_export", "permission": True},
         "me.sync.import": {"method": "POST", "path": "/me/sync/import", "permission": True},
         "me.sync.wipe_all": {"method": "POST", "path": "/me/sync/wipe_all", "permission": True},
+        "me.sync.v3.ticket.create": {"method": "POST", "path": "/me/sync/v3/ticket/create", "permission": True},
+        "me.sync.v3.ticket.status": {"method": "GET", "path": "/me/sync/v3/ticket/status", "permission": False},
+        "me.sync.v3.ticket.cancel": {"method": "POST", "path": "/me/sync/v3/ticket/cancel", "permission": True},
+        "me.sync.v3.import.apply": {"method": "POST", "path": "/me/sync/v3/import/apply", "permission": True},
         "ui.settings.sections": {"method": "GET", "path": "/ui/settings/sections", "permission": False},
         "ui.settings.navigate": {"method": "POST", "path": "/ui/settings/navigate", "permission": False},
         "ui.me.sync.export.show": {"method": "POST", "path": "/ui/me/sync/export/show", "permission": False},
+        "debug.logs.export": {"method": "POST", "path": "/debug/logs/export", "permission": False},
+        "debug.logs.list": {"method": "GET", "path": "/debug/logs/list", "permission": False},
+        "debug.logs.delete_all": {"method": "POST", "path": "/debug/logs/delete_all", "permission": False},
+        "debug.logs.stream": {"method": "POST", "path": "/debug/logs/stream", "permission": False},
         "intent.send": {"method": "POST", "path": "/intent/send", "permission": True},
         "intent.share_app": {"method": "POST", "path": "/intent/share_app", "permission": True},
         "work.app_update_check.status": {"method": "GET", "path": "/work/jobs/app_update_check", "permission": False},
@@ -187,6 +195,10 @@ class DeviceApiTool:
             "video.stream.start": 25.0,
             "screenrec.start": 45.0,
             "screenrec.stop": 25.0,
+            "me.sync.v3.ticket.create": 30.0,
+            "me.sync.v3.import.apply": 300.0,
+            "debug.logs.export": 45.0,
+            "debug.logs.stream": 140.0,
         }
 
     def set_identity(self, identity: str) -> None:
@@ -653,6 +665,8 @@ class DeviceApiTool:
             return "device.intent", "intent", "session"
         if a.startswith("work."):
             return "device.work", "workmanager", "session"
+        if a.startswith("me.sync."):
+            return "device.me_sync", "me_sync", "session"
         # Default to session scope: approve once per chat session, then no repeated prompts.
         return "device_api", "device_api", "session"
 

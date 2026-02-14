@@ -133,6 +133,15 @@ class LocalHttpServer(
     private val appUpdateManager = AppUpdateManager(context)
     private val workJobManager = WorkJobManager(context)
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
+    private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
+    private val meSyncNearbyTransport = MeSyncNearbyTransport(
+        context = context,
+        serviceId = NEARBY_ME_SYNC_SERVICE_ID,
+        openOutgoingStream = { ticketId, transferId -> openMeSyncTransferStreamForNearby(ticketId, transferId) },
+        logger = { msg, ex ->
+            if (ex != null) Log.w(TAG, msg, ex) else Log.w(TAG, msg)
+        }
+    )
     private val meSyncLanDownloadServer = MeSyncLanDownloadServer()
     @Volatile private var meSyncLanServerStarted = false
 
@@ -187,6 +196,10 @@ class LocalHttpServer(
             housekeepingFuture = null
         } catch (_: Exception) {
         }
+        try {
+            meSyncNearbyTransport.shutdown()
+        } catch (_: Exception) {
+        }
     }
 
     override fun serveHttp(session: IHTTPSession): Response {
@@ -204,6 +217,26 @@ class LocalHttpServer(
                     .put("service", "local")
                     .put("python", runtimeManager.getStatus())
             )
+            uri == "/debug/logs/export" && session.method == Method.GET -> {
+                handleDebugLogsExport(session, null)
+            }
+            uri == "/debug/logs/export" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleDebugLogsExport(session, payload)
+            }
+            uri == "/debug/logs/list" && session.method == Method.GET -> {
+                handleDebugLogsList(session)
+            }
+            uri == "/debug/logs/delete_all" && session.method == Method.POST -> {
+                handleDebugLogsDeleteAll(session)
+            }
+            uri == "/debug/logs/stream" && session.method == Method.GET -> {
+                handleDebugLogsStream(session, null)
+            }
+            uri == "/debug/logs/stream" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleDebugLogsStream(session, payload)
+            }
             uri == "/python/status" -> jsonResponse(
                 JSONObject().put("status", runtimeManager.getStatus())
             )
@@ -293,6 +326,21 @@ class LocalHttpServer(
                     if (!ok.first) return ok.second!!
                 }
                 handleMeSyncPrepareExport(payload)
+            }
+            uri == "/me/sync/v3/ticket/create" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleMeSyncV3TicketCreate(payload)
+            }
+            uri == "/me/sync/v3/ticket/status" && session.method == Method.GET -> {
+                handleMeSyncV3TicketStatus(session)
+            }
+            uri == "/me/sync/v3/ticket/cancel" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleMeSyncV3TicketCancel(payload)
+            }
+            uri == "/me/sync/v3/import/apply" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleMeSyncV3ImportApply(payload)
             }
             uri == "/me/sync/download" && session.method == Method.GET -> {
                 handleMeSyncDownload(session)
@@ -6703,6 +6751,281 @@ class LocalHttpServer(
         }
     }
 
+    private data class DebugLogOptions(
+        val scope: String,
+        val role: String,
+        val mode: String,
+        val lines: Int,
+        val pid: Int,
+        val tags: List<String>,
+        val keywords: List<String>,
+        val streamSeconds: Int
+    )
+
+    private fun handleDebugLogsExport(session: IHTTPSession, payload: JSONObject?): Response {
+        return try {
+            val opts = parseDebugLogOptions(session, payload)
+
+            val userRoot = File(context.filesDir, "user").also { it.mkdirs() }
+            val logsDir = File(userRoot, "logs").also { it.mkdirs() }
+            val safeScope = opts.scope.replace(Regex("[^a-z0-9_-]"), "_").trim('_').ifBlank { "scope" }
+            val safeRole = opts.role.replace(Regex("[^a-z0-9_-]"), "_").trim('_').ifBlank { "device" }
+            val ts = System.currentTimeMillis()
+            val outFile = File(logsDir, "diagnostics_${safeScope}_${safeRole}_${ts}.log")
+
+            val report = StringBuilder()
+            report.appendLine("me.things diagnostics")
+            report.appendLine("generated_at_ms=$ts")
+            report.appendLine("scope=${opts.scope}")
+            report.appendLine("role=${opts.role}")
+            report.appendLine("mode=${opts.mode}")
+            report.appendLine("pid=${opts.pid}")
+            report.appendLine("app=${context.packageName}")
+            report.appendLine("version=${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            if (opts.tags.isNotEmpty()) report.appendLine("tags=${opts.tags.joinToString(",")}")
+            if (opts.keywords.isNotEmpty()) report.appendLine("keywords=${opts.keywords.joinToString(",")}")
+            report.appendLine()
+            when (opts.mode) {
+                "pid" -> {
+                    report.appendLine("=== pid_logcat ===")
+                    report.append(filterLogLines(captureLogcat(buildLogcatDumpArgs(opts, usePid = true, useTags = false)), opts.keywords))
+                }
+                "tags" -> {
+                    report.appendLine("=== tags_logcat ===")
+                    report.append(filterLogLines(captureLogcat(buildLogcatDumpArgs(opts, usePid = false, useTags = true)), opts.keywords))
+                }
+                "all" -> {
+                    report.appendLine("=== all_logcat ===")
+                    report.append(filterLogLines(captureLogcat(buildLogcatDumpArgs(opts, usePid = false, useTags = false)), opts.keywords))
+                }
+                else -> {
+                    report.appendLine("=== pid_logcat ===")
+                    report.append(filterLogLines(captureLogcat(buildLogcatDumpArgs(opts, usePid = true, useTags = false)), opts.keywords))
+                    report.appendLine()
+                    report.appendLine()
+                    report.appendLine("=== tags_logcat ===")
+                    report.append(filterLogLines(captureLogcat(buildLogcatDumpArgs(opts, usePid = false, useTags = true)), opts.keywords))
+                }
+            }
+
+            outFile.writeText(report.toString(), Charsets.UTF_8)
+            val relPath = "logs/${outFile.name}"
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("rel_path", relPath)
+                    .put("abs_path", outFile.absolutePath)
+                    .put("size_bytes", outFile.length())
+                    .put("options", JSONObject()
+                        .put("scope", opts.scope)
+                        .put("role", opts.role)
+                        .put("mode", opts.mode)
+                        .put("lines", opts.lines)
+                        .put("pid", opts.pid)
+                        .put("tags", JSONArray(opts.tags))
+                        .put("keywords", JSONArray(opts.keywords)))
+            )
+        } catch (ex: Exception) {
+            Log.w(TAG, "debug logs export failed", ex)
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "debug_logs_export_failed",
+                JSONObject().put("detail", ex.message ?: "")
+            )
+        }
+    }
+
+    private fun handleDebugLogsStream(session: IHTTPSession, payload: JSONObject?): Response {
+        return try {
+            val opts = parseDebugLogOptions(session, payload)
+            val usePid = opts.mode == "pid" || opts.mode == "pid_and_tags"
+            val useTags = opts.mode == "tags" || opts.mode == "pid_and_tags"
+            val cmd = buildLogcatStreamArgs(opts, usePid = usePid, useTags = useTags)
+            val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            val inPipe = java.io.PipedInputStream(128 * 1024)
+            val outPipe = java.io.PipedOutputStream(inPipe)
+            Thread({
+                val deadline = System.currentTimeMillis() + (opts.streamSeconds.toLong() * 1000L)
+                val reader = proc.inputStream.bufferedReader()
+                val writer = outPipe.bufferedWriter()
+                try {
+                    while (System.currentTimeMillis() < deadline) {
+                        if (!reader.ready()) {
+                            Thread.sleep(120)
+                            continue
+                        }
+                        val line = reader.readLine() ?: break
+                        if (!matchesKeywords(line, opts.keywords)) continue
+                        writer.write(line)
+                        writer.newLine()
+                        writer.flush()
+                    }
+                } catch (_: Exception) {
+                } finally {
+                    runCatching { writer.flush() }
+                    runCatching { writer.close() }
+                    runCatching { reader.close() }
+                    runCatching { proc.destroy() }
+                }
+            }, "debug-logcat-stream").start()
+            val res = newChunkedResponse(Response.Status.OK, "text/plain; charset=utf-8", inPipe)
+            res.addHeader("Cache-Control", "no-store")
+            res
+        } catch (ex: Exception) {
+            Log.w(TAG, "debug logs stream failed", ex)
+            jsonError(Response.Status.INTERNAL_ERROR, "debug_logs_stream_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleDebugLogsList(session: IHTTPSession): Response {
+        return try {
+            val limit = firstParam(session, "limit").toIntOrNull()?.coerceIn(1, 100) ?: 20
+            val logsDir = File(File(context.filesDir, "user"), "logs")
+            val arr = JSONArray()
+            if (logsDir.exists() && logsDir.isDirectory) {
+                val files = (logsDir.listFiles() ?: emptyArray())
+                    .filter { it.isFile && it.name.lowercase(Locale.US).endsWith(".log") }
+                    .sortedByDescending { it.lastModified() }
+                    .take(limit)
+                files.forEach { f ->
+                    arr.put(
+                        JSONObject()
+                            .put("name", f.name)
+                            .put("rel_path", "logs/${f.name}")
+                            .put("size_bytes", f.length())
+                            .put("modified_at", f.lastModified())
+                    )
+                }
+            }
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("items", arr)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "debug_logs_list_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleDebugLogsDeleteAll(session: IHTTPSession): Response {
+        return try {
+            val logsDir = File(File(context.filesDir, "user"), "logs")
+            var removed = 0
+            if (logsDir.exists() && logsDir.isDirectory) {
+                (logsDir.listFiles() ?: emptyArray())
+                    .filter { it.isFile && it.name.lowercase(Locale.US).endsWith(".log") }
+                    .forEach { f ->
+                        if (runCatching { f.delete() }.getOrDefault(false)) removed += 1
+                    }
+            }
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("removed", removed)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "debug_logs_delete_all_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun parseDebugLogOptions(session: IHTTPSession, payload: JSONObject?): DebugLogOptions {
+        fun pickString(name: String, fallback: String = ""): String {
+            val fromPayload = payload?.optString(name, "")?.trim().orEmpty()
+            if (fromPayload.isNotBlank()) return fromPayload
+            val fromQuery = firstParam(session, name)
+            if (fromQuery.isNotBlank()) return fromQuery
+            return fallback
+        }
+        fun pickInt(name: String, fallback: Int, min: Int, max: Int): Int {
+            val p = payload?.optInt(name, Int.MIN_VALUE) ?: Int.MIN_VALUE
+            if (p != Int.MIN_VALUE) return p.coerceIn(min, max)
+            val q = firstParam(session, name).toIntOrNull()
+            if (q != null) return q.coerceIn(min, max)
+            return fallback
+        }
+        val defaultTags = listOf("LocalHttpServer", "MeSyncNearbyTransport", "NearbyConnections", "NearbyMediums", "MethingsWeb")
+        val mode = pickString("mode", "pid_and_tags")
+            .lowercase(Locale.US)
+            .let { if (it in setOf("pid", "tags", "all", "pid_and_tags")) it else "pid_and_tags" }
+        val tags = pickString("tags")
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .ifEmpty { defaultTags }
+            .take(12)
+        val keywords = pickString("keywords")
+            .split(',')
+            .map { it.trim().lowercase(Locale.US) }
+            .filter { it.isNotBlank() }
+            .take(10)
+        val pid = pickInt("pid", android.os.Process.myPid(), 1, Int.MAX_VALUE)
+        return DebugLogOptions(
+            scope = pickString("scope", "generic").lowercase(Locale.US),
+            role = pickString("role", "device").lowercase(Locale.US),
+            mode = mode,
+            lines = pickInt("lines", 3000, 200, 10000),
+            pid = pid,
+            tags = tags,
+            keywords = keywords,
+            streamSeconds = pickInt("stream_seconds", 15, 2, 120)
+        )
+    }
+
+    private fun buildLogcatDumpArgs(opts: DebugLogOptions, usePid: Boolean, useTags: Boolean): List<String> {
+        val out = mutableListOf("logcat", "-d", "-v", "time", "-t", opts.lines.toString())
+        if (usePid) {
+            out.add("--pid")
+            out.add(opts.pid.toString())
+        }
+        if (useTags && opts.tags.isNotEmpty()) {
+            out.add("-s")
+            out.addAll(opts.tags)
+        }
+        return out
+    }
+
+    private fun buildLogcatStreamArgs(opts: DebugLogOptions, usePid: Boolean, useTags: Boolean): List<String> {
+        val out = mutableListOf("logcat", "-v", "time")
+        if (usePid) {
+            out.add("--pid")
+            out.add(opts.pid.toString())
+        }
+        if (useTags && opts.tags.isNotEmpty()) {
+            out.add("-s")
+            out.addAll(opts.tags)
+        }
+        return out
+    }
+
+    private fun captureLogcat(args: List<String>): String {
+        return try {
+            val pb = ProcessBuilder(args)
+            pb.redirectErrorStream(true)
+            val proc = pb.start()
+            val out = proc.inputStream.bufferedReader().use { it.readText() }
+            runCatching { proc.waitFor(1500, TimeUnit.MILLISECONDS) }
+            runCatching { proc.destroy() }
+            out
+        } catch (ex: Exception) {
+            "logcat_capture_failed: ${ex.message ?: "unknown"}\n"
+        }
+    }
+
+    private fun filterLogLines(text: String, keywords: List<String>): String {
+        if (keywords.isEmpty()) return text
+        val out = StringBuilder()
+        text.lineSequence().forEach { line ->
+            if (matchesKeywords(line, keywords)) out.appendLine(line)
+        }
+        return out.toString()
+    }
+
+    private fun matchesKeywords(line: String, keywords: List<String>): Boolean {
+        if (keywords.isEmpty()) return true
+        val low = line.lowercase(Locale.US)
+        return keywords.any { low.contains(it) }
+    }
+
     private fun textResponse(text: String): Response {
         val response = newFixedLengthResponse(Response.Status.OK, "text/plain", text)
         response.addHeader("Cache-Control", "no-cache")
@@ -6925,6 +7248,8 @@ class LocalHttpServer(
             if (pruned > 0) {
                 Log.i(TAG, "Housekeeping pruned expired SSH keys: $pruned")
             }
+            cleanupExpiredMeSyncTransfers()
+            cleanupExpiredMeSyncV3Tickets()
             syncAuthorizedKeys()
         }.onFailure {
             Log.w(TAG, "Housekeeping failed", it)
@@ -7065,6 +7390,220 @@ class LocalHttpServer(
             Log.e(TAG, "me.sync export failed", ex)
             jsonError(Response.Status.INTERNAL_ERROR, "me_sync_export_failed", JSONObject().put("detail", ex.message ?: ""))
         }
+    }
+
+    private fun handleMeSyncV3TicketCreate(payload: JSONObject): Response {
+        return try {
+            cleanupExpiredMeSyncTransfers()
+            cleanupExpiredMeSyncV3Tickets()
+            val modeRaw = payload.optString("mode", "").trim().lowercase(Locale.US)
+            val migrationMode = payload.optBoolean("migration", false) || modeRaw == "migration"
+            val includeUser = payload.optBoolean("include_user", true)
+            val includeProtectedDb = payload.optBoolean("include_protected_db", true)
+            val includeIdentity = payload.optBoolean("include_identity", migrationMode)
+            val forceRefresh = payload.optBoolean("force_refresh", false)
+            val sourceName = payload.optString("source_name", "").trim()
+                .ifBlank { Build.MODEL?.trim().orEmpty() }
+                .ifBlank { "Android device" }
+            val active = if (forceRefresh) null else findReusableMeSyncTransfer(includeUser, includeProtectedDb, includeIdentity)
+            val transfer = active ?: buildMeSyncExport(
+                includeUser = includeUser,
+                includeProtectedDb = includeProtectedDb,
+                includeIdentity = includeIdentity
+            ).also {
+                meSyncTransfers[it.id] = it
+            }
+            val ticketId = "ms3_" + System.currentTimeMillis() + "_" + Random.nextInt(1000, 9999)
+            val expiresAt = System.currentTimeMillis() + ME_SYNC_V3_TICKET_TTL_MS
+            val sessionNonce = randomToken(20)
+            val pairCode = String.format(Locale.US, "%06d", Random.nextInt(0, 1_000_000))
+            val fallbackUrl = if (transfer.downloadUrlLan.isNotBlank()) transfer.downloadUrlLan else transfer.downloadUrlLocal
+            val ticketPayload = JSONObject()
+                .put("v", 3)
+                .put("tid", ticketId)
+                .put("t", transfer.id)
+                .put("n", sessionNonce)
+                .put("transfer_id", transfer.id)
+                .put("session_nonce", sessionNonce)
+                .put("pair_code", pairCode)
+                .put("expires_at", expiresAt)
+                .put("source_name", sourceName)
+                .put("caps", JSONObject().put("nearby", true).put("lan_fallback", true))
+                .put("u", fallbackUrl)
+            val encodedPayload = Base64.encodeToString(
+                ticketPayload.toString().toByteArray(Charsets.UTF_8),
+                Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
+            )
+            val ticketUri = ME_SYNC_V3_URI_PREFIX + encodedPayload
+            val qrDataUrl = makeQrDataUrl(ticketUri)
+            val ticket = MeSyncV3Ticket(
+                id = ticketId,
+                transferId = transfer.id,
+                createdAt = System.currentTimeMillis(),
+                expiresAt = expiresAt,
+                sessionNonce = sessionNonce,
+                pairCode = pairCode,
+                sourceName = sourceName,
+                ticketUri = ticketUri,
+                qrDataUrl = qrDataUrl
+            )
+            meSyncV3Tickets[ticket.id] = ticket
+            meSyncNearbyTransport.publishTicket(
+                ticketId = ticket.id,
+                transferId = transfer.id,
+                sessionNonce = ticket.sessionNonce,
+                expiresAt = ticket.expiresAt
+            )
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("ticket_id", ticket.id)
+                    .put("transfer_id", transfer.id)
+                    .put("expires_at", ticket.expiresAt)
+                    .put("pair_code", ticket.pairCode)
+                    .put("source_name", ticket.sourceName)
+                    .put("transport", "nearby_stream")
+                    .put("ticket_uri", ticket.ticketUri)
+                    .put("qr_data_url", ticket.qrDataUrl)
+                    .put("fallback_me_sync_uri", transfer.meSyncUri)
+                    .put("fallback_download_url", fallbackUrl)
+            )
+        } catch (ex: Exception) {
+            Log.e(TAG, "me.sync v3 ticket create failed", ex)
+            jsonError(Response.Status.INTERNAL_ERROR, "me_sync_v3_ticket_create_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleMeSyncV3TicketStatus(session: IHTTPSession): Response {
+        cleanupExpiredMeSyncV3Tickets()
+        val ticketId = firstParam(session, "ticket_id")
+        if (ticketId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "ticket_id_required")
+        val ticket = meSyncV3Tickets[ticketId] ?: return jsonError(Response.Status.NOT_FOUND, "ticket_not_found")
+        val transfer = meSyncTransfers[ticket.transferId]
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("ticket", JSONObject()
+                    .put("id", ticket.id)
+                    .put("transfer_id", ticket.transferId)
+                    .put("created_at", ticket.createdAt)
+                    .put("expires_at", ticket.expiresAt)
+                    .put("pair_code", ticket.pairCode)
+                    .put("source_name", ticket.sourceName)
+                    .put("ticket_uri", ticket.ticketUri)
+                    .put("qr_data_url", ticket.qrDataUrl))
+                .put("transfer", if (transfer != null) JSONObject()
+                    .put("id", transfer.id)
+                    .put("expires_at", transfer.expiresAt)
+                    .put("download_count", transfer.downloadCount)
+                    .put("transmitting", transfer.transmitting)
+                    .put("bytes_sent", transfer.bytesSent)
+                    .put("transfer_started_at", if (transfer.transferStartedAt > 0L) transfer.transferStartedAt else JSONObject.NULL)
+                    .put("transfer_completed_at", if (transfer.transferCompletedAt > 0L) transfer.transferCompletedAt else JSONObject.NULL)
+                    .put("me_sync_uri", transfer.meSyncUri)
+                    .put("download_url_lan", if (transfer.downloadUrlLan.isNotBlank()) transfer.downloadUrlLan else JSONObject.NULL)
+                    .put("download_url_local", transfer.downloadUrlLocal) else JSONObject.NULL)
+        )
+    }
+
+    private fun handleMeSyncV3TicketCancel(payload: JSONObject): Response {
+        cleanupExpiredMeSyncV3Tickets()
+        val ticketId = payload.optString("ticket_id", "").trim()
+        if (ticketId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "ticket_id_required")
+        val removed = meSyncV3Tickets.remove(ticketId)
+        if (removed != null) {
+            meSyncNearbyTransport.unpublishTicket(ticketId)
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("cancelled", removed != null)
+                .put("ticket_id", ticketId)
+        )
+    }
+
+    private fun handleMeSyncV3ImportApply(payload: JSONObject): Response {
+        val merged = JSONObject(payload.toString())
+        val ticketUri = payload.optString("ticket_uri", "").trim()
+            .ifBlank { payload.optString("payload", "").trim() }
+        if (ticketUri.isNotBlank() && !merged.has("payload")) {
+            merged.put("payload", ticketUri)
+        }
+        val parsed = parseMeSyncV3Ticket(ticketUri)
+        if (parsed != null) {
+            val timeoutMs = payload.optLong("nearby_timeout_ms", 120_000L).coerceIn(15_000L, 600_000L)
+            val maxBytes = 512L * 1024L * 1024L
+            val wipeExisting = payload.optBoolean("wipe_existing", true)
+            val allowFallback = payload.optBoolean("allow_fallback", true)
+            val tmpRoot = File(context.cacheDir, "me_sync")
+            tmpRoot.mkdirs()
+            val inFile = File(tmpRoot, "import_nearby_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}.zip")
+            try {
+                val recv = meSyncNearbyTransport.receiveToFile(
+                    ticketId = parsed.ticketId,
+                    transferId = parsed.transferId,
+                    sessionNonce = parsed.sessionNonce,
+                    destFile = inFile,
+                    timeoutMs = timeoutMs,
+                    maxBytes = maxBytes
+                )
+                val result = importMeSyncPackage(inFile, wipeExisting = wipeExisting)
+                result.put("transport", "nearby_stream")
+                result.put(
+                    "nearby",
+                    JSONObject()
+                        .put("ticket_id", parsed.ticketId)
+                        .put("endpoint_id", recv.endpointId)
+                        .put("bytes_received", recv.bytesReceived)
+                )
+                return jsonResponse(result)
+            } catch (ex: Exception) {
+                Log.w(TAG, "me.sync v3 nearby import failed, fallback=${allowFallback}", ex)
+                runCatching { inFile.delete() }
+                if (!allowFallback) {
+                    return jsonError(
+                        Response.Status.INTERNAL_ERROR,
+                        "me_sync_v3_nearby_failed",
+                        JSONObject().put("detail", ex.message ?: "")
+                    )
+                }
+            }
+        }
+        return handleMeSyncImport(merged)
+    }
+
+    private fun openMeSyncTransferStreamForNearby(ticketId: String, transferId: String): InputStream? {
+        cleanupExpiredMeSyncTransfers()
+        cleanupExpiredMeSyncV3Tickets()
+        val ticket = meSyncV3Tickets[ticketId] ?: return null
+        if (ticket.transferId != transferId) return null
+        val tr = meSyncTransfers[transferId] ?: return null
+        val now = System.currentTimeMillis()
+        if (tr.expiresAt > 0L && now > tr.expiresAt) {
+            meSyncTransfers.remove(transferId)
+            releaseMeSyncTransfer(tr)
+            return null
+        }
+        markMeSyncTransferStart(tr)
+        val stream = streamMeSyncArchive(
+            includeUser = tr.includeUser,
+            includeProtectedDb = tr.includeProtectedDb,
+            includeIdentity = tr.includeIdentity
+        )
+        return withMeSyncTransferProgress(stream, tr)
+    }
+
+    private fun parseMeSyncV3Ticket(raw: String): MeSyncV3ParsedTicket? {
+        val txt = raw.trim()
+        if (!txt.startsWith(ME_SYNC_V3_URI_PREFIX, ignoreCase = true)) return null
+        val obj = parseMeSyncPayloadObject(txt) ?: return null
+        val ticketId = obj.optString("tid", "").trim()
+        val transferId = obj.optString("t", "").trim()
+            .ifBlank { obj.optString("transfer_id", "").trim() }
+        val sessionNonce = obj.optString("n", "").trim()
+            .ifBlank { obj.optString("session_nonce", "").trim() }
+        if (ticketId.isBlank() || transferId.isBlank() || sessionNonce.isBlank()) return null
+        return MeSyncV3ParsedTicket(ticketId = ticketId, transferId = transferId, sessionNonce = sessionNonce)
     }
 
     private fun shouldRequestPermissionForTempMeSyncSshd(): Boolean {
@@ -7256,6 +7795,16 @@ class LocalHttpServer(
     private fun parseMeSyncPayloadObject(raw: String): JSONObject? {
         val txt = raw.trim()
         if (txt.isBlank()) return null
+        if (txt.startsWith(ME_SYNC_V3_URI_PREFIX, ignoreCase = true)) {
+            val b64 = txt.substring(ME_SYNC_V3_URI_PREFIX.length).trim()
+            if (b64.isBlank()) return null
+            return try {
+                val decoded = Base64.decode(normalizeBase64UrlNoPadding(b64), Base64.URL_SAFE or Base64.NO_WRAP)
+                JSONObject(String(decoded, Charsets.UTF_8))
+            } catch (_: Exception) {
+                null
+            }
+        }
         if (txt.startsWith(ME_SYNC_URI_PREFIX, ignoreCase = true)) {
             val b64 = txt.substring(ME_SYNC_URI_PREFIX.length).trim()
             if (b64.isBlank()) return null
@@ -7743,6 +8292,11 @@ class LocalHttpServer(
             meSyncTransfers.clear()
             stale.forEach { tr -> releaseMeSyncTransfer(tr) }
         }
+        runCatching {
+            val staleTickets = meSyncV3Tickets.values.toList()
+            meSyncV3Tickets.clear()
+            staleTickets.forEach { t -> meSyncNearbyTransport.unpublishTicket(t.id) }
+        }
     }
 
     private fun wipeProtectedDb(preserveSessionId: String = "") {
@@ -8033,6 +8587,19 @@ class LocalHttpServer(
         toDelete.forEach { releaseMeSyncTransfer(it) }
     }
 
+    private fun cleanupExpiredMeSyncV3Tickets() {
+        val now = System.currentTimeMillis()
+        val removed = mutableListOf<String>()
+        meSyncV3Tickets.entries.removeIf { ent ->
+            val t = ent.value
+            val expired = t.expiresAt > 0L && now > t.expiresAt
+            if (expired) removed.add(t.id)
+            expired
+        }
+        removed.forEach { meSyncNearbyTransport.unpublishTicket(it) }
+        meSyncNearbyTransport.cleanupExpired(now)
+    }
+
     private fun releaseMeSyncTransfer(transfer: MeSyncTransfer) {
         runCatching { transfer.file?.delete() }
         cleanupMeSyncTempSshKey(transfer.tempSshKeyFingerprint)
@@ -8253,6 +8820,24 @@ class LocalHttpServer(
         fun hasAnySource(): Boolean = httpUrl.isNotBlank() || hasSshSource()
     }
 
+    private data class MeSyncV3Ticket(
+        val id: String,
+        val transferId: String,
+        val createdAt: Long,
+        @Volatile var expiresAt: Long,
+        val sessionNonce: String,
+        val pairCode: String,
+        val sourceName: String,
+        val ticketUri: String,
+        val qrDataUrl: String
+    )
+
+    private data class MeSyncV3ParsedTicket(
+        val ticketId: String,
+        val transferId: String,
+        val sessionNonce: String
+    )
+
     private data class MeSyncSshAccess(
         val host: String,
         val port: Int,
@@ -8420,6 +9005,9 @@ class LocalHttpServer(
         private const val ME_SYNC_LAN_PORT = 8766
         private const val ME_SYNC_QR_TTL_MS = 40L * 1000L
         private const val ME_SYNC_URI_PREFIX = "me.things:me.sync:"
+        private const val ME_SYNC_V3_URI_PREFIX = "me.things:me.sync.v3:"
+        private const val ME_SYNC_V3_TICKET_TTL_MS = 5L * 60L * 1000L
+        private const val NEARBY_ME_SYNC_SERVICE_ID = "jp.espresso3389.methings.me_sync.v3"
         private const val HOUSEKEEPING_INITIAL_DELAY_SEC = 120L
         private const val HOUSEKEEPING_INTERVAL_SEC = 60L * 60L
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).

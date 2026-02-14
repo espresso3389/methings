@@ -306,6 +306,10 @@ Details: [vision.md](vision.md)
 | `me.sync.prepare_export` | POST | `/me/sync/prepare_export` |
 | `me.sync.import` | POST | `/me/sync/import` |
 | `me.sync.wipe_all` | POST | `/me/sync/wipe_all` |
+| `me.sync.v3.ticket.create` | POST | `/me/sync/v3/ticket/create` |
+| `me.sync.v3.ticket.status` | GET | `/me/sync/v3/ticket/status` **[no perm]** |
+| `me.sync.v3.ticket.cancel` | POST | `/me/sync/v3/ticket/cancel` |
+| `me.sync.v3.import.apply` | POST | `/me/sync/v3/import/apply` |
 
 `brain.config.get` returns `{vendor, base_url, model, has_api_key}` (never returns the key itself).
 
@@ -424,6 +428,10 @@ One-time export/import endpoints for device-to-device transfer of chat memory/st
 | `GET` | `/me/sync/download` | `?id=<transfer_id>&token=<token>` | Download prepared ZIP package |
 | `POST` | `/me/sync/import` | `{"url":"http://.../me/sync/download?...","wipe_existing":true}` or `{"payload":"...","wipe_existing":true}` | Download package from source, wipe local state, then import |
 | `POST` | `/me/sync/wipe_all` | `{"restart_app":true}` | **Dangerous:** wipe all local app data and restart app (best effort) |
+| `POST` | `/me/sync/v3/ticket/create` | `{"include_user":true,"include_protected_db":true,"include_identity":false}` | Create v3 QR ticket (`me.things:me.sync.v3:<base64url>`) with LAN fallback metadata |
+| `GET` | `/me/sync/v3/ticket/status` | `?ticket_id=<ticket_id>` | Get v3 ticket status and linked transfer progress |
+| `POST` | `/me/sync/v3/ticket/cancel` | `{"ticket_id":"ms3_..."}` | Cancel a v3 ticket |
+| `POST` | `/me/sync/v3/import/apply` | `{"ticket_uri":"me.things:me.sync.v3:...","wipe_existing":true}` | Import using v3 ticket URI (delegates to normal import pipeline) |
 
 Notes:
 - `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and download metadata.
@@ -436,6 +444,8 @@ Notes:
   - Export mode (default): `include_identity=false` (or `mode:"export"`), excludes `user/.ssh/id_dropbear*`.
   - Migration mode: `include_identity=true` (or `mode:"migration"`), includes `user/.ssh/id_dropbear*`.
 - `import` accepts HTTP URL, JSON payload, or `me_sync_uri`.
+- `import` and `v3/import/apply` also accept `me.things:me.sync.v3:<base64url>` payloads.
+- `v3/import/apply` attempts Nearby Connections stream transfer first; on failure it can fall back to LAN URL transfer.
 - `import` defaults to `wipe_existing=true` and wipes receiver local state before applying imported data.
 - Imported package then restores `files/user/`, `files/protected/app.db` (if present), re-applies credential/key state, and restarts Python worker.
 - App GUI "Export" uses export mode only; migration mode is API-only.

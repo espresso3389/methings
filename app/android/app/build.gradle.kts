@@ -319,6 +319,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
     implementation("com.google.android.material:material:1.11.0")
+    implementation("com.google.android.gms:play-services-nearby:19.3.0")
     // CameraX for camera capture/preview endpoints.
     implementation("androidx.camera:camera-camera2:1.3.2")
     implementation("androidx.camera:camera-lifecycle:1.3.2")

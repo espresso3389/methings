@@ -36,6 +36,18 @@ Prepared exports provide metadata for transfer. Current payload supports:
 
 Importer attempts SSH/SCP first when metadata is present, then falls back to HTTP download.
 
+## v3 Preview APIs
+
+Current implementation includes v3 ticket endpoints:
+
+- `POST /me/sync/v3/ticket/create`
+- `GET /me/sync/v3/ticket/status?ticket_id=...`
+- `POST /me/sync/v3/ticket/cancel`
+- `POST /me/sync/v3/import/apply`
+
+`v3` tickets use URI format `me.things:me.sync.v3:<base64url>`.
+Current v3 import first attempts Nearby Connections stream transfer, then falls back to LAN metadata if enabled.
+
 ## Security Notes
 
 - Export packages are temporary and time-bounded.

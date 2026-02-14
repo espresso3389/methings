@@ -123,6 +123,66 @@
       }
       .icon-btn.unlock:active { filter: brightness(0.96); }
       .icon-btn.small { width: 28px; height: 28px; font-size: 14px; border-radius: 6px; }
+      .chip-editor {
+        min-height: 36px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: center;
+        padding: 6px 8px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: rgba(255,255,255,0.02);
+        transition: border-color var(--transition), box-shadow var(--transition);
+      }
+      .chip-editor:focus-within {
+        border-color: var(--border-focus);
+        box-shadow: 0 0 0 2px rgba(91,91,214,0.15);
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        max-width: 100%;
+        padding: 2px 6px;
+        border: 1px solid rgba(129,140,248,0.35);
+        border-radius: var(--radius-full);
+        background: rgba(99,102,241,0.14);
+        color: #e8e9ff;
+        font-size: 11px;
+        line-height: 1.2;
+      }
+      .chip-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 180px;
+      }
+      .chip-x {
+        border: 0;
+        background: none;
+        color: #e8e9ff;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1;
+        width: auto;
+        height: auto;
+        padding: 0;
+        cursor: pointer;
+        margin-right: 2px;
+      }
+      .chip-x:hover { opacity: 0.82; }
+      .chip-editor-input {
+        flex: 1 1 120px;
+        min-width: 90px;
+        border: 0;
+        outline: none;
+        background: transparent;
+        color: var(--ink);
+        font-size: 13px;
+        padding: 4px 0;
+      }
+      .chip-editor-input::placeholder { color: var(--ink-muted); }
       .chat-search-bar {
         display: none;
         align-items: center;
@@ -1801,6 +1861,29 @@
           </div>
         </section>
 
+        <!-- Logs -->
+        <section class="card" id="settings-section-logs">
+          <div class="card-header">
+            <div class="card-icon blue">&#128221;</div>
+            <div class="card-title">Logs</div>
+          </div>
+          <div class="card-desc">
+            Export filtered logcat diagnostics into <code>user/logs/</code> for troubleshooting.
+          </div>
+          <div style="display:grid; gap:8px; margin-top:10px;">
+            <div class="chip-editor" id="logsKeywordsEditor"></div>
+            <div class="chip-editor" id="logsTagsEditor"></div>
+          </div>
+          <div class="btn-group" style="margin-top:10px;">
+            <button class="btn" id="logsExportBtn">Export Diagnostics Log</button>
+            <button class="btn danger" id="logsDeleteAllBtn">Delete All Saved Logs</button>
+          </div>
+          <div style="margin-top:8px; display:flex; align-items:center; gap:8px;">
+            <div class="muted" id="logsExportStatus" style="flex:1 1 auto; min-width:0;">Ready.</div>
+            <button class="icon-btn small" id="logsShareLastBtn" title="Share last exported log" aria-label="Share last exported log" disabled></button>
+          </div>
+        </section>
+
         <!-- App Update -->
         <section class="card" id="settings-section-app_update">
           <div class="card-header">
@@ -1933,6 +2016,9 @@
             <div style="height:100%; width:40%; border-radius:999px; background:linear-gradient(90deg, rgba(34,197,94,0.35), rgba(34,197,94,0.95), rgba(34,197,94,0.35)); animation: meSyncPrepSlide 1.1s linear infinite;"></div>
           </div>
           <div class="muted" id="meSyncImportProgressText" style="margin-top:8px;">Elapsed 00:00</div>
+        </div>
+        <div class="btn-group" id="meSyncImportRetryWrap" style="display:none; margin-top:10px;">
+          <button class="btn primary" id="meSyncImportRetry">Retry Import</button>
         </div>
       </div>
     </div>
@@ -2202,6 +2288,7 @@
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meSyncModalClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meSyncImportModalClose").innerHTML = ICON.close; } catch (_) {}
+      try { $("logsShareLastBtn").innerHTML = ICON.share; } catch (_) {}
 
       function showToast(msg, ms) {
         const t = $("toast");
@@ -2579,6 +2666,7 @@
         { id: "permissions", domId: "settings-section-permissions", label: "Permissions" },
         { id: "cloud", domId: "settings-section-cloud", label: "Cloud" },
         { id: "me_sync", domId: "settings-section-me_sync", label: "me.sync" },
+        { id: "logs", domId: "settings-section-logs", label: "Logs" },
         { id: "app_update", domId: "settings-section-app_update", label: "App Update" },
         { id: "about", domId: "settings-section-about", label: "About" },
       ];
@@ -6422,6 +6510,15 @@
       const meSyncTransferWrap = $("meSyncTransferWrap");
       const meSyncTransferFill = $("meSyncTransferFill");
       const meSyncTransferCaption = $("meSyncTransferCaption");
+      const logsKeywordsEditorEl = $("logsKeywordsEditor");
+      const logsTagsEditorEl = $("logsTagsEditor");
+      const logsExportBtn = $("logsExportBtn");
+      const logsDeleteAllBtn = $("logsDeleteAllBtn");
+      const logsExportStatus = $("logsExportStatus");
+      const logsShareLastBtn = $("logsShareLastBtn");
+      let logsLastRelPath = "";
+      let logsKeywordsEditor = null;
+      let logsTagsEditor = null;
       const meSyncModal = $("meSyncModal");
       const meSyncModalClose = $("meSyncModalClose");
       const meSyncModalStatus = $("meSyncModalStatus");
@@ -6435,6 +6532,8 @@
       const meSyncImportModalStatus = $("meSyncImportModalStatus");
       const meSyncImportProgressWrap = $("meSyncImportProgressWrap");
       const meSyncImportProgressText = $("meSyncImportProgressText");
+      const meSyncImportRetryWrap = $("meSyncImportRetryWrap");
+      const meSyncImportRetry = $("meSyncImportRetry");
       const appVersionText = $("appVersionText");
       const appCommitLink = $("appCommitLink");
       const appRepoLink = $("appRepoLink");
@@ -6472,6 +6571,113 @@
         return esc(s).replace(/\"/g, "&quot;").replace(/'/g, "&#39;");
       }
 
+      function createChipEditor(rootEl, placeholder, onChange) {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.className = "chip-editor-input";
+        input.placeholder = placeholder || "";
+        let values = [];
+
+        function normalizeToken(s) {
+          return String(s || "").trim().replace(/\s+/g, "_");
+        }
+
+        function addToken(raw) {
+          const v = normalizeToken(raw);
+          if (!v) return;
+          if (values.includes(v)) return;
+          values.push(v);
+          if (typeof onChange === "function") onChange(values.slice());
+        }
+
+        function removeAt(idx) {
+          if (idx < 0 || idx >= values.length) return;
+          values.splice(idx, 1);
+          if (typeof onChange === "function") onChange(values.slice());
+          render(true);
+        }
+
+        function commitTyped() {
+          const txt = String(input.value || "");
+          const parts = txt.split(/[,\s]+/g).map(normalizeToken).filter(Boolean);
+          if (!parts.length) {
+            input.value = "";
+            return;
+          }
+          parts.forEach(addToken);
+          input.value = "";
+          render(true);
+        }
+
+        function render(preserveFocus) {
+          rootEl.innerHTML = "";
+          values.forEach((token, idx) => {
+            const chip = document.createElement("span");
+            chip.className = "chip";
+            const label = document.createElement("span");
+            label.className = "chip-label";
+            label.textContent = token;
+            const x = document.createElement("button");
+            x.type = "button";
+            x.className = "chip-x";
+            x.title = "Remove";
+            x.setAttribute("aria-label", "Remove");
+            x.textContent = "×";
+            x.addEventListener("click", () => removeAt(idx));
+            chip.appendChild(label);
+            chip.appendChild(x);
+            rootEl.appendChild(chip);
+          });
+          rootEl.appendChild(input);
+          if (preserveFocus) {
+            setTimeout(() => {
+              try { input.focus(); } catch (_) {}
+            }, 0);
+          }
+        }
+
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "," || e.key === " " || e.key === "Enter" || e.key === "Tab") {
+            if (String(input.value || "").trim()) {
+              e.preventDefault();
+              commitTyped();
+            }
+            return;
+          }
+          if (e.key === "Backspace" && !input.value && values.length > 0) {
+            e.preventDefault();
+            values.pop();
+            if (typeof onChange === "function") onChange(values.slice());
+            render(true);
+          }
+        });
+        input.addEventListener("blur", () => {
+          if (String(input.value || "").trim()) commitTyped();
+        });
+        input.addEventListener("paste", (e) => {
+          const txt = (e.clipboardData && e.clipboardData.getData("text")) || "";
+          if (!txt) return;
+          e.preventDefault();
+          const parts = txt.split(/[,\s]+/g).map(normalizeToken).filter(Boolean);
+          parts.forEach(addToken);
+          input.value = "";
+          render(true);
+        });
+        rootEl.addEventListener("click", () => input.focus());
+
+        render();
+        return {
+          getValues: () => values.slice(),
+          setValues: (arr) => {
+            values = Array.isArray(arr) ? arr.map(normalizeToken).filter(Boolean) : [];
+            values = Array.from(new Set(values));
+            if (typeof onChange === "function") onChange(values.slice());
+            render();
+          },
+          clear: () => { values = []; if (typeof onChange === "function") onChange(values.slice()); render(); },
+        };
+      }
+
       function setStatus(el, value) {
         el.textContent = value;
         el.classList.remove("ok", "offline", "starting", "stopping");
@@ -6492,6 +6698,7 @@
       let meSyncImportTimer = null;
       let meSyncImportStartedAt = 0;
       let meSyncImportInFlight = false;
+      let meSyncLastImportPayload = "";
       let meSyncLastObservedDownload = { id: "", count: 0 };
       let meSyncAutoRefreshInFlight = false;
       let meSyncLastAutoRefreshAt = 0;
@@ -6958,6 +7165,35 @@
       }
 
       async function refreshMeSyncStatus() {
+        if (meSyncActiveExport && String(meSyncActiveExport.transport || "") === "nearby_stream") {
+          const ticketId = String(meSyncActiveExport.ticket_id || meSyncActiveExport.id || "").trim();
+          if (!ticketId) return;
+          try {
+            const res = await fetch(API + "/me/sync/v3/ticket/status?ticket_id=" + encodeURIComponent(ticketId));
+            if (!res.ok) throw 0;
+            const data = await res.json().catch(() => ({}));
+            const t = data && data.ticket ? data.ticket : {};
+            const tr = data && data.transfer ? data.transfer : {};
+            meSyncActiveExport = Object.assign({}, meSyncActiveExport || {}, {
+              ticket_id: String(t.id || ticketId),
+              id: String(t.id || ticketId),
+              expires_at: Number(t.expires_at || meSyncActiveExport.expires_at || 0),
+              qr_data_url: String(t.qr_data_url || meSyncActiveExport.qr_data_url || ""),
+              me_sync_uri: String(t.ticket_uri || meSyncActiveExport.me_sync_uri || ""),
+              transmitting: !!tr.transmitting,
+              bytes_sent: Number(tr.bytes_sent || 0),
+              download_count: Number(tr.download_count || 0),
+              transfer_started_at: Number(tr.transfer_started_at || 0),
+              transfer_completed_at: Number(tr.transfer_completed_at || 0),
+            });
+            updateMeSyncSectionCountdown();
+            return;
+          } catch (_) {
+            meSyncStatus.textContent = "Sync status unavailable.";
+            setMeSyncTransferUi("hidden", "");
+            return;
+          }
+        }
         try {
           const res = await fetch(API + "/me/sync/status");
           if (!res.ok) throw 0;
@@ -7032,6 +7268,7 @@
       function showMeSyncImportModal(initialStatus) {
         meSyncImportModalStatus.textContent = String(initialStatus || "Importing...");
         meSyncImportProgressWrap.style.display = "block";
+        meSyncImportRetryWrap.style.display = "none";
         meSyncImportProgressText.textContent = "Elapsed " + formatDurationMMSS(0);
         meSyncImportInFlight = true;
         meSyncImportModalClose.disabled = true;
@@ -7054,6 +7291,7 @@
         stopMeSyncImportTimer();
         meSyncImportModalStatus.textContent = String(msg || (ok ? "Import completed." : "Import failed."));
         meSyncImportProgressWrap.style.display = "none";
+        meSyncImportRetryWrap.style.display = ok ? "none" : "flex";
         meSyncImportModalClose.disabled = false;
       }
 
@@ -7100,31 +7338,37 @@
         startMeSyncExpireTimer();
       }
 
-      async function importMeSyncByText(text) {
+      async function importMeSyncByText(text, opts) {
+        const options = opts || {};
+        const skipConfirm = !!options.skipConfirm;
         const payloadText = String(text || "").trim();
         if (!payloadText) {
           showToast("Invalid me.sync payload", 1600);
           return;
         }
-        let hasExisting = false;
-        try {
-          const sr = await fetch(API + "/me/sync/local_state");
-          if (sr.ok) {
-            const sd = await sr.json().catch(() => ({}));
-            hasExisting = !!(sd && sd.has_existing_data);
+        meSyncLastImportPayload = payloadText;
+        if (!skipConfirm) {
+          let hasExisting = false;
+          try {
+            const sr = await fetch(API + "/me/sync/local_state");
+            if (sr.ok) {
+              const sd = await sr.json().catch(() => ({}));
+              hasExisting = !!(sd && sd.has_existing_data);
+            }
+          } catch (_) {}
+          const intro = "Import data from source device?";
+          if (!await appConfirm("Import me.sync", intro)) return;
+          if (hasExisting) {
+            const wipeOk = await appConfirm(
+              "Wipe existing data",
+              "This import will wipe current local data first, then restore imported data. Continue?",
+              { cancel: "Cancel", ok: "Wipe and Import", okClass: "danger" }
+            );
+            if (!wipeOk) return;
           }
-        } catch (_) {}
-        const intro = "Import data from source device?";
-        if (!await appConfirm("Import me.sync", intro)) return;
-        if (hasExisting) {
-          const wipeOk = await appConfirm(
-            "Wipe existing data",
-            "This import will wipe current local data first, then restore imported data. Continue?",
-            { cancel: "Cancel", ok: "Wipe and Import", okClass: "danger" }
-          );
-          if (!wipeOk) return;
         }
         meSyncImport.disabled = true;
+        meSyncImportRetry.disabled = true;
         showMeSyncImportModal("Starting import...");
         setTimeout(() => updateMeSyncImportPhase("Downloading package..."), 600);
         setTimeout(() => updateMeSyncImportPhase("Wiping existing data..."), 3000);
@@ -7133,14 +7377,25 @@
         let timeoutId = 0;
         try {
           const maybeUrl = (/^https?:\/\//i.test(payloadText)) ? payloadText : "";
+          const isV3 = /^me\.things:me\.sync\.v3:/i.test(payloadText);
+          const endpoint = isV3 ? "/me/sync/v3/import/apply" : "/me/sync/import";
           const controller = new AbortController();
           timeoutId = setTimeout(() => {
             try { controller.abort(); } catch (_) {}
           }, 180000);
-          const res = await fetch(API + "/me/sync/import", {
+          const res = await fetch(API + endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ url: maybeUrl, payload: payloadText, wipe_existing: true }),
+            body: JSON.stringify(
+              isV3
+                ? {
+                    ticket_uri: payloadText,
+                    payload: payloadText,
+                    wipe_existing: true,
+                    allow_fallback: true,
+                  }
+                : { url: maybeUrl, payload: payloadText, wipe_existing: true }
+            ),
             signal: controller.signal,
           });
           const data = await res.json().catch(() => ({}));
@@ -7156,6 +7411,7 @@
         } finally {
           try { if (timeoutId) clearTimeout(timeoutId); } catch (_) {}
           meSyncImport.disabled = false;
+          meSyncImportRetry.disabled = false;
         }
       }
 
@@ -7772,7 +8028,7 @@
         meSyncExportReq = controller;
         showMeSyncExportModal(true);
         try {
-          const res = await fetch(API + "/me/sync/prepare_export", {
+          const res = await fetch(API + "/me/sync/v3/ticket/create", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({
@@ -7781,13 +8037,18 @@
               include_identity: false,
               mode: "export",
               ui_initiated: true,
-              force_refresh: force,
+              force_refresh: true,
             }),
             signal: controller.signal,
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(String(data.error || "prepare_failed"));
-          meSyncActiveExport = data || null;
+          meSyncActiveExport = Object.assign({}, data || {}, {
+            id: String((data && data.ticket_id) || (data && data.transfer_id) || ""),
+            ticket_id: String((data && data.ticket_id) || ""),
+            me_sync_uri: String((data && data.ticket_uri) || ""),
+            transport: String((data && data.transport) || "nearby_stream"),
+          });
           meSyncStatus.textContent = "Export prepared.";
           showMeSyncExportModal(false);
         } catch (e) {
@@ -7821,19 +8082,147 @@
         await runMeSyncExportFlow(false);
       });
 
-      meSyncImport.addEventListener("click", async () => {
+      async function startMeSyncImportScan() {
         try {
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.scanMeSyncQr) {
             AndroidBridge.scanMeSyncQr();
           } else {
-            const txt = await appPrompt("Import me.sync", "Paste me.sync URI (me.things:me.sync:...)");
-            if (!txt) return;
-            await importMeSyncByText(txt);
+            showToast("QR scan unavailable", 1600);
           }
         } catch (_) {
           showToast("QR scan unavailable", 1600);
         }
+      }
+
+      meSyncImport.addEventListener("click", async () => {
+        await startMeSyncImportScan();
       });
+
+      async function logsRefreshLatest() {
+        try {
+          const res = await fetch(API + "/debug/logs/list?limit=1", { cache: "no-store" });
+          const data = await res.json().catch(() => ({}));
+          const item = (data && Array.isArray(data.items) && data.items[0]) ? data.items[0] : null;
+          const rel = String((item && item.rel_path) || "").trim();
+          logsLastRelPath = rel;
+          if (rel) {
+            logsExportStatus.textContent = "Last exported: user/" + rel;
+            logsShareLastBtn.disabled = false;
+          } else {
+            logsExportStatus.textContent = "No saved logs.";
+            logsShareLastBtn.disabled = true;
+          }
+        } catch (_) {
+          logsExportStatus.textContent = "Failed to load saved logs.";
+          logsShareLastBtn.disabled = true;
+        }
+      }
+
+      function loadSavedLogFilters() {
+        try {
+          const k = JSON.parse(localStorage.getItem("logs_export_keywords") || "[]");
+          const t = JSON.parse(localStorage.getItem("logs_export_tags") || "[]");
+          return {
+            keywords: Array.isArray(k) ? k : [],
+            tags: Array.isArray(t) ? t : [],
+          };
+        } catch (_) {
+          return { keywords: [], tags: [] };
+        }
+      }
+
+      function saveLogFilters(kind, vals) {
+        try {
+          const key = kind === "tags" ? "logs_export_tags" : "logs_export_keywords";
+          localStorage.setItem(key, JSON.stringify(Array.isArray(vals) ? vals : []));
+        } catch (_) {}
+      }
+
+      const savedLogFilters = loadSavedLogFilters();
+      logsKeywordsEditor = createChipEditor(logsKeywordsEditorEl, "keywords (comma or space)", (vals) => saveLogFilters("keywords", vals));
+      logsTagsEditor = createChipEditor(logsTagsEditorEl, "tags (comma or space)", (vals) => saveLogFilters("tags", vals));
+      logsKeywordsEditor.setValues(savedLogFilters.keywords);
+      logsTagsEditor.setValues(savedLogFilters.tags);
+
+      async function logsShare(relPath) {
+        const rel = String(relPath || "").trim();
+        if (!rel) return;
+        try {
+          const res = await fetch(API + "/intent/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({
+              action: "android.intent.action.SEND",
+              type: "text/plain",
+              stream: rel,
+              chooser: true,
+              chooser_title: "Share diagnostics log",
+            }),
+          });
+          if (!res.ok) throw 0;
+        } catch (_) {
+          showToast("Failed to open share dialog", 1800);
+        }
+      }
+
+      logsExportBtn.addEventListener("click", async () => {
+        try {
+          logsExportBtn.disabled = true;
+          logsDeleteAllBtn.disabled = true;
+          logsExportStatus.textContent = "Exporting...";
+          const kw = (logsKeywordsEditor ? logsKeywordsEditor.getValues() : []).join(",");
+          const tags = (logsTagsEditor ? logsTagsEditor.getValues() : []).join(",");
+          const qp = new URLSearchParams();
+          qp.set("scope", "generic");
+          qp.set("role", "device");
+          qp.set("mode", "pid_and_tags");
+          qp.set("lines", "3000");
+          if (kw) qp.set("keywords", kw);
+          if (tags) qp.set("tags", tags);
+          const res = await fetch(API + "/debug/logs/export?" + qp.toString(), { cache: "no-store" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(String((data && data.error) || "export_failed"));
+          const rel = String((data && data.rel_path) || "").trim();
+          if (!rel) throw new Error("path_missing");
+          logsLastRelPath = rel;
+          logsExportStatus.textContent = "Saved: user/" + rel;
+          logsShareLastBtn.disabled = false;
+          showToast("Saved: user/" + rel, 2600);
+          addMsg("assistant", "Diagnostics exported: user/" + rel, { debug: true });
+        } catch (_) {
+          logsExportStatus.textContent = "Export failed.";
+          showToast("Failed to export diagnostics log", 2000);
+        } finally {
+          logsExportBtn.disabled = false;
+          logsDeleteAllBtn.disabled = false;
+        }
+      });
+
+      logsShareLastBtn.addEventListener("click", async () => {
+        await logsShare(logsLastRelPath);
+      });
+
+      logsDeleteAllBtn.addEventListener("click", async () => {
+        if (!await appConfirm("Delete logs", "Delete all saved diagnostics logs?")) return;
+        try {
+          logsDeleteAllBtn.disabled = true;
+          logsExportBtn.disabled = true;
+          const res = await fetch(API + "/debug/logs/delete_all", { method: "POST" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw 0;
+          logsLastRelPath = "";
+          logsShareLastBtn.disabled = true;
+          logsExportStatus.textContent = "No saved logs.";
+          showToast("Deleted " + String((data && data.removed) || 0) + " logs", 1800);
+        } catch (_) {
+          showToast("Failed to delete saved logs", 1800);
+        } finally {
+          logsDeleteAllBtn.disabled = false;
+          logsExportBtn.disabled = false;
+        }
+      });
+
+      logsRefreshLatest();
 
       meSyncModalClose.addEventListener("click", () => {
         closeMeSyncModal();
@@ -7841,6 +8230,11 @@
 
       meSyncImportModalClose.addEventListener("click", () => {
         closeMeSyncImportModal(false);
+      });
+      meSyncImportRetry.addEventListener("click", async () => {
+        if (meSyncImportInFlight) return;
+        closeMeSyncImportModal(false);
+        await startMeSyncImportScan();
       });
       meSyncImportModal.addEventListener("click", (e) => {
         if (e.target === meSyncImportModal) closeMeSyncImportModal(false);

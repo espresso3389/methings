@@ -192,6 +192,7 @@ class MainActivity : AppCompatActivity() {
 
         startForegroundService(Intent(this, AgentService::class.java))
         ensureNotificationPermission()
+        ensureNearbyPermissions()
 
         val root = FrameLayout(this)
         webView = WebView(this)
@@ -881,6 +882,18 @@ class MainActivity : AppCompatActivity() {
             arrayOf(Manifest.permission.POST_NOTIFICATIONS),
             1001
         )
+    }
+
+    private fun ensureNearbyPermissions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val needed = arrayOf(
+            Manifest.permission.NEARBY_WIFI_DEVICES,
+            Manifest.permission.BLUETOOTH_SCAN,
+            Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_ADVERTISE
+        ).filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (needed.isEmpty()) return
+        ActivityCompat.requestPermissions(this, needed.toTypedArray(), 1002)
     }
 
     // ==============================
