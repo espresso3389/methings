@@ -254,6 +254,27 @@ class LocalHttpServer(
                 runtimeManager.restartSoft()
                 jsonResponse(JSONObject().put("status", "starting"))
             }
+            uri == "/service/stop" && session.method == Method.POST -> {
+                val intent = Intent(context, AgentService::class.java).apply {
+                    action = AgentService.ACTION_STOP_SERVICE
+                }
+                context.startService(intent)
+                jsonResponse(JSONObject().put("status", "stopping"))
+            }
+            uri == "/service/prefs" && session.method == Method.GET -> {
+                val prefs = context.getSharedPreferences("service_prefs", Context.MODE_PRIVATE)
+                jsonResponse(JSONObject().put("start_on_boot", prefs.getBoolean("start_on_boot", true)))
+            }
+            uri == "/service/prefs" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val prefs = context.getSharedPreferences("service_prefs", Context.MODE_PRIVATE)
+                val editor = prefs.edit()
+                if (payload.has("start_on_boot")) {
+                    editor.putBoolean("start_on_boot", payload.getBoolean("start_on_boot"))
+                }
+                editor.apply()
+                jsonResponse(JSONObject().put("ok", true))
+            }
             uri == "/app/update/check" -> {
                 handleAppUpdateCheck()
             }

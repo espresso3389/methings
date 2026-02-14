@@ -1742,9 +1742,17 @@
             <div class="card-title">Agent Service</div>
             <div id="pythonStatus" class="status-badge offline" style="margin-left:auto;">offline</div>
           </div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="startOnBoot" data-setting-key="start_on_boot" checked />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Start on boot</span>
+          </div>
           <p class="muted">Emergency restart only.</p>
           <div class="btn-group">
             <button class="btn" id="restartPython">Restart</button>
+            <button class="btn danger" id="stopPython">Stop</button>
           </div>
           <p class="muted" id="pythonDetail" style="margin-top:6px;"></p>
         </section>
@@ -7897,6 +7905,16 @@
         setStatus(pythonStatus, "starting");
       });
 
+      $("stopPython").addEventListener("click", async () => {
+        if (typeof AndroidBridge !== "undefined" && AndroidBridge.stopService) {
+          AndroidBridge.stopService();
+        } else {
+          await fetch(API + "/service/stop", { method: "POST" });
+        }
+        pythonDetail.textContent = "Service stop requested";
+        setStatus(pythonStatus, "stopping");
+      });
+
       $("openAppSettings").addEventListener("click", () => {
         try {
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.openAppDetailsSettings) {
@@ -7930,6 +7948,35 @@
           AndroidBridge.setOpenLinksExternal(!!$("openLinksExternal").checked);
         } catch (_) {
           showToast("Failed to save browser pref", 1800);
+        }
+      });
+
+      // Service prefs (start on boot)
+      async function loadServicePrefs() {
+        try {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.getStartOnBoot) {
+            $("startOnBoot").checked = !!AndroidBridge.getStartOnBoot();
+          } else {
+            const r = await fetch(API + "/service/prefs");
+            const d = await r.json();
+            $("startOnBoot").checked = !!d.start_on_boot;
+          }
+        } catch (_) {}
+      }
+      $("startOnBoot").addEventListener("change", async () => {
+        const v = !!$("startOnBoot").checked;
+        try {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.setStartOnBoot) {
+            AndroidBridge.setStartOnBoot(v);
+          } else {
+            await fetch(API + "/service/prefs", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ start_on_boot: v })
+            });
+          }
+        } catch (_) {
+          showToast("Failed to save service pref", 1800);
         }
       });
 
@@ -8418,6 +8465,7 @@
       loadAudioRecSettings();
       loadVideoRecSettings();
       loadBrowserPrefs();
+      loadServicePrefs();
       refreshPython();
       updateAppUpdateButtons();
       refreshAppUpdate(true);

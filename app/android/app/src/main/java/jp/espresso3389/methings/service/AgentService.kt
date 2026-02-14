@@ -117,6 +117,10 @@ class AgentService : LifecycleService() {
                 android.util.Log.i("AgentService", "Stop action received")
                 runtimeManager.requestShutdown()
             }
+            ACTION_STOP_SERVICE -> {
+                android.util.Log.i("AgentService", "Stop service action received")
+                stopSelf()
+            }
             ACTION_SSH_PIN_STOP -> {
                 android.util.Log.i("AgentService", "SSH PIN stop requested")
                 sshPinManager?.stopPin()
@@ -602,6 +606,16 @@ class AgentService : LifecycleService() {
             .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .addAction(
+                android.R.drawable.ic_delete,
+                "Stop",
+                PendingIntent.getService(
+                    this,
+                    1003,
+                    Intent(this, AgentService::class.java).apply { action = ACTION_STOP_SERVICE },
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
 
         when (activeMode) {
             SshdManager.AUTH_MODE_PIN -> builder.addAction(
@@ -729,5 +743,6 @@ class AgentService : LifecycleService() {
         const val ACTION_STOP_PYTHON = "jp.espresso3389.methings.action.STOP_PYTHON"
         const val ACTION_SSH_PIN_STOP = "jp.espresso3389.methings.action.SSH_PIN_STOP"
         const val ACTION_SSH_NOAUTH_STOP = "jp.espresso3389.methings.action.SSH_NOAUTH_STOP"
+        const val ACTION_STOP_SERVICE = "jp.espresso3389.methings.action.STOP_SERVICE"
     }
 }

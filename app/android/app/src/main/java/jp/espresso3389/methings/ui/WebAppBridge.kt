@@ -27,6 +27,7 @@ class WebAppBridge(private val activity: MainActivity) {
     private val browserPrefs = activity.getSharedPreferences("browser_prefs", Context.MODE_PRIVATE)
     private val audioRecordPrefs = activity.getSharedPreferences("audio_record_config", Context.MODE_PRIVATE)
     private val videoRecordPrefs = activity.getSharedPreferences("video_record_config", Context.MODE_PRIVATE)
+    private val servicePrefs = activity.getSharedPreferences("service_prefs", Context.MODE_PRIVATE)
 
     @Volatile
     private var settingsUnlockedUntilMs: Long = 0L
@@ -58,6 +59,25 @@ class WebAppBridge(private val activity: MainActivity) {
             intent.action = AgentService.ACTION_STOP_PYTHON
             activity.startForegroundService(intent)
         }
+    }
+
+    @JavascriptInterface
+    fun stopService() {
+        handler.post {
+            val intent = Intent(activity, AgentService::class.java)
+            intent.action = AgentService.ACTION_STOP_SERVICE
+            activity.startForegroundService(intent)
+        }
+    }
+
+    @JavascriptInterface
+    fun getStartOnBoot(): Boolean {
+        return servicePrefs.getBoolean("start_on_boot", true)
+    }
+
+    @JavascriptInterface
+    fun setStartOnBoot(enabled: Boolean) {
+        servicePrefs.edit().putBoolean("start_on_boot", enabled).apply()
     }
 
     @JavascriptInterface
