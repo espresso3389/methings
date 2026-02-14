@@ -304,7 +304,6 @@ Details: [vision.md](vision.md)
 | `me.sync.status` | GET | `/me/sync/status` **[no perm]** |
 | `me.sync.local_state` | GET | `/me/sync/local_state` **[no perm]** |
 | `me.sync.prepare_export` | POST | `/me/sync/prepare_export` |
-| `me.sync.share_nearby` | POST | `/me/sync/share_nearby` |
 | `me.sync.import` | POST | `/me/sync/import` |
 | `me.sync.wipe_all` | POST | `/me/sync/wipe_all` |
 
@@ -422,15 +421,12 @@ One-time export/import endpoints for device-to-device transfer of chat memory/st
 | `GET` | `/me/sync/status` | — | List active export packages and expiry |
 | `GET` | `/me/sync/local_state` | — | Return whether receiver has existing local data to wipe |
 | `POST` | `/me/sync/prepare_export` | `{"include_user":true,"include_protected_db":true,"include_identity":false,"mode":"export"}` | Build one-time export package and return download links + payload |
-| `POST` | `/me/sync/share_nearby` | `{"id":"<transfer_id>"}` (optional) | Launch Android share sheet for the prepared `me_sync_uri` (Nearby Share, etc.) |
 | `GET` | `/me/sync/download` | `?id=<transfer_id>&token=<token>` | Download prepared ZIP package |
 | `POST` | `/me/sync/import` | `{"url":"http://.../me/sync/download?...","wipe_existing":true}` or `{"payload":"...","wipe_existing":true}` | Download package from source, wipe local state, then import |
 | `POST` | `/me/sync/wipe_all` | `{"restart_app":true}` | **Dangerous:** wipe all local app data and restart app (best effort) |
 
 Notes:
 - `prepare_export` returns `me_sync_uri` (`me.things:me.sync:<base64url>`), `qr_data_url`, and LAN/local download URLs.
-- `share_nearby` may reuse an active export or create one; optional fields: `transfer_id`, `force_refresh`, `include_user`, `include_protected_db`, `include_identity`, `chooser_title`.
-- `share_nearby` response includes `share.started` (bool) and returns `nearby_share_unavailable` when no share target is available.
 - `prepare_export` supports both modes:
   - Export mode (default): `include_identity=false` (or `mode:"export"`), excludes `user/.ssh/id_dropbear*`.
   - Migration mode: `include_identity=true` (or `mode:"migration"`), includes `user/.ssh/id_dropbear*`.

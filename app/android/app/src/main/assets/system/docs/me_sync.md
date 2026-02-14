@@ -34,14 +34,6 @@ Prepared exports provide metadata for transfer. Current payload supports:
 
 Importer attempts SSH/SCP first when metadata is present, then falls back to HTTP download.
 
-## Nearby Share Integration
-
-`/me/sync/share_nearby` launches Android share sheet with `me_sync_uri` text payload.
-
-- Can reuse existing active transfer or create a new one
-- Returns launch result in `share` object
-- Fails with `nearby_share_unavailable` when no share target can handle the payload
-
 ## Security Notes
 
 - Export packages are temporary and time-bounded.
@@ -51,7 +43,7 @@ Importer attempts SSH/SCP first when metadata is present, then falls back to HTT
 ## Typical Flow
 
 1. Source calls `prepare_export`
-2. Source shares `me_sync_uri` (QR/deep-link/Nearby)
+2. Source shares `me_sync_uri` (QR/deep-link)
 3. Target resolves payload and calls `import`
 4. Target wipes (default) and restores transferred state
 5. Runtime restarts and UI reloads to apply imported state

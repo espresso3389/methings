@@ -313,18 +313,6 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 handleMeSyncWipeAll(payload)
             }
-            uri == "/me/sync/share_nearby" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(
-                    session,
-                    payload,
-                    tool = "device.intent",
-                    capability = "intent",
-                    detail = "Share me.sync export via Nearby Share"
-                )
-                if (!ok.first) return ok.second!!
-                handleMeSyncShareNearby(payload)
-            }
             uri == "/agent/run" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val name = payload.optString("name", "task")
@@ -7077,97 +7065,6 @@ class LocalHttpServer(
             Log.e(TAG, "me.sync export failed", ex)
             jsonError(Response.Status.INTERNAL_ERROR, "me_sync_export_failed", JSONObject().put("detail", ex.message ?: ""))
         }
-    }
-
-    private fun handleMeSyncShareNearby(payload: JSONObject): Response {
-        return try {
-            cleanupExpiredMeSyncTransfers()
-            val includeUser = payload.optBoolean("include_user", true)
-            val includeProtectedDb = payload.optBoolean("include_protected_db", true)
-            val includeIdentity = payload.optBoolean("include_identity", false)
-            val forceRefresh = payload.optBoolean("force_refresh", false)
-            val transferId = payload.optString("transfer_id", "").trim()
-            val chooserTitle = payload.optString("chooser_title", "").trim().ifBlank { "Share me.sync" }
-            val now = System.currentTimeMillis()
-            val requested = if (transferId.isNotBlank()) meSyncTransfers[transferId] else null
-            val active = if (forceRefresh) {
-                null
-            } else {
-                requested?.takeIf { it.expiresAt <= 0L || now < it.expiresAt }
-                    ?: findReusableMeSyncTransfer(includeUser, includeProtectedDb, includeIdentity)
-            }
-            val transfer = active ?: buildMeSyncExport(
-                includeUser = includeUser,
-                includeProtectedDb = includeProtectedDb,
-                includeIdentity = includeIdentity
-            ).also {
-                meSyncTransfers[it.id] = it
-            }
-            val launch = launchMeSyncNearbyShare(transfer.meSyncUri, chooserTitle)
-            if (!launch.optBoolean("started", false)) {
-                return jsonError(
-                    Response.Status.BAD_REQUEST,
-                    "nearby_share_unavailable",
-                    JSONObject().put("detail", launch.optString("detail", "No share target available"))
-                )
-            }
-            jsonResponse(
-                JSONObject()
-                    .put("status", "ok")
-                    .put("transfer_id", transfer.id)
-                    .put("reused", active != null)
-                    .put("expires_at", transfer.expiresAt)
-                    .put("me_sync_uri", transfer.meSyncUri)
-                    .put("share", launch)
-            )
-        } catch (ex: Exception) {
-            Log.e(TAG, "me.sync nearby share failed", ex)
-            jsonError(Response.Status.INTERNAL_ERROR, "me_sync_share_nearby_failed", JSONObject().put("detail", ex.message ?: ""))
-        }
-    }
-
-    private fun launchMeSyncNearbyShare(meSyncUri: String, chooserTitle: String): JSONObject {
-        val text = meSyncUri.trim()
-        if (text.isBlank()) {
-            return JSONObject().put("started", false).put("detail", "Missing me.sync URI")
-        }
-        val pm = context.packageManager
-        val base = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, text)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        if (base.resolveActivity(pm) == null) {
-            return JSONObject().put("started", false).put("detail", "No app can handle text sharing")
-        }
-
-        val nearbyPackages = listOf(
-            "com.google.android.gms",
-            "com.samsung.android.app.sharelive"
-        )
-        var mode = "chooser"
-        var targetPackage = ""
-        val launchIntent = nearbyPackages
-            .asSequence()
-            .map { pkg -> pkg to Intent(base).setPackage(pkg) }
-            .firstOrNull { (_, it) -> it.resolveActivity(pm) != null }
-            ?.let { (pkg, intent) ->
-                mode = "nearby_direct"
-                targetPackage = pkg
-                intent
-            }
-            ?: Intent.createChooser(base, chooserTitle).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-
-        val posted = Handler(Looper.getMainLooper()).post {
-            runCatching { context.startActivity(launchIntent) }
-                .onFailure { Log.w(TAG, "Failed to launch me.sync share intent", it) }
-        }
-        return JSONObject()
-            .put("started", posted)
-            .put("mode", mode)
-            .put("target_package", if (targetPackage.isNotBlank()) targetPackage else JSONObject.NULL)
     }
 
     private fun shouldRequestPermissionForTempMeSyncSshd(): Boolean {

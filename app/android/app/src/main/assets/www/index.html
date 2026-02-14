@@ -1914,7 +1914,6 @@
           <img id="meSyncQrImage" alt="me.sync QR" style="width:260px; height:260px; image-rendering: pixelated; border:1px solid rgba(0,0,0,0.12); border-radius:10px; background:#fff;" />
         </div>
         <div class="btn-group" style="margin-top:12px;">
-          <button class="btn primary" id="meSyncShareNearby">Nearby Share</button>
           <button class="btn" id="meSyncExportCancel">Cancel</button>
         </div>
       </div>
@@ -6430,7 +6429,6 @@
       const meSyncPrepareText = $("meSyncPrepareText");
       const meSyncQrWrap = $("meSyncQrWrap");
       const meSyncQrImage = $("meSyncQrImage");
-      const meSyncShareNearby = $("meSyncShareNearby");
       const meSyncExportCancel = $("meSyncExportCancel");
       const meSyncImportModal = $("meSyncImportModal");
       const meSyncImportModalClose = $("meSyncImportModalClose");
@@ -7088,56 +7086,18 @@
           meSyncPrepareWrap.style.display = "block";
           meSyncQrWrap.style.display = "none";
           startMeSyncPrepareTimer();
-          meSyncShareNearby.disabled = true;
           meSyncExportCancel.disabled = false;
           return;
         }
         stopMeSyncPrepareTimer();
         meSyncPrepareWrap.style.display = "none";
         const a = meSyncActiveExport || {};
-        const meSyncUri = String(a.me_sync_uri || "").trim();
         const qr = String(a.qr_data_url || "").trim();
         meSyncModalStatus.textContent = "Export ready. Scan this QR on target device.";
         meSyncQrWrap.style.display = qr ? "block" : "none";
         meSyncQrImage.src = qr || "";
-        meSyncShareNearby.disabled = !meSyncUri;
         meSyncExportCancel.disabled = false;
         startMeSyncExpireTimer();
-      }
-
-      async function shareMeSyncNearbyFromModal() {
-        meSyncShareNearby.disabled = true;
-        try {
-          if (!meSyncActiveExport || !String(meSyncActiveExport.me_sync_uri || "").trim()) {
-            await runMeSyncExportFlow(false);
-          }
-          const active = meSyncActiveExport || {};
-          const transferId = String(active.transfer_id || active.id || "").trim();
-          const res = await fetch(API + "/me/sync/share_nearby", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({
-              transfer_id: transferId || undefined,
-              include_user: true,
-              include_protected_db: true,
-              include_identity: false,
-              ui_initiated: true,
-            }),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(String(data.error || "nearby_share_failed"));
-          if (data && typeof data === "object") {
-            const next = Object.assign({}, (meSyncActiveExport || {}), data);
-            if (!next.id && data.transfer_id) next.id = data.transfer_id;
-            meSyncActiveExport = next;
-          }
-          const mode = String((data && data.share && data.share.mode) || "").trim();
-          showToast(mode === "nearby_direct" ? "Opening Nearby Share..." : "Opening share sheet...", 1600);
-        } catch (_) {
-          showToast("Nearby Share unavailable", 1800);
-        } finally {
-          meSyncShareNearby.disabled = !String((meSyncActiveExport && meSyncActiveExport.me_sync_uri) || "").trim();
-        }
       }
 
       async function importMeSyncByText(text) {
@@ -7907,10 +7867,6 @@
         } finally {
           meSyncPrepareExport.disabled = false;
         }
-      });
-
-      meSyncShareNearby.addEventListener("click", async () => {
-        await shareMeSyncNearbyFromModal();
       });
 
       openLicensesPage.addEventListener("click", () => {

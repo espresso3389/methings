@@ -135,7 +135,6 @@ class DeviceApiTool:
         "me.sync.status": {"method": "GET", "path": "/me/sync/status", "permission": False},
         "me.sync.local_state": {"method": "GET", "path": "/me/sync/local_state", "permission": False},
         "me.sync.prepare_export": {"method": "POST", "path": "/me/sync/prepare_export", "permission": True},
-        "me.sync.share_nearby": {"method": "POST", "path": "/me/sync/share_nearby", "permission": True},
         "me.sync.import": {"method": "POST", "path": "/me/sync/import", "permission": True},
         "me.sync.wipe_all": {"method": "POST", "path": "/me/sync/wipe_all", "permission": True},
         "ui.settings.sections": {"method": "GET", "path": "/ui/settings/sections", "permission": False},
