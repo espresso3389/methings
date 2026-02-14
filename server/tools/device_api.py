@@ -135,6 +135,7 @@ class DeviceApiTool:
         "me.sync.status": {"method": "GET", "path": "/me/sync/status", "permission": False},
         "me.sync.local_state": {"method": "GET", "path": "/me/sync/local_state", "permission": False},
         "me.sync.prepare_export": {"method": "POST", "path": "/me/sync/prepare_export", "permission": True},
+        "me.sync.share_nearby": {"method": "POST", "path": "/me/sync/share_nearby", "permission": True},
         "me.sync.import": {"method": "POST", "path": "/me/sync/import", "permission": True},
         "me.sync.wipe_all": {"method": "POST", "path": "/me/sync/wipe_all", "permission": True},
         "ui.settings.sections": {"method": "GET", "path": "/ui/settings/sections", "permission": False},
@@ -142,6 +143,10 @@ class DeviceApiTool:
         "ui.me.sync.export.show": {"method": "POST", "path": "/ui/me/sync/export/show", "permission": False},
         "intent.send": {"method": "POST", "path": "/intent/send", "permission": True},
         "intent.share_app": {"method": "POST", "path": "/intent/share_app", "permission": True},
+        "work.app_update_check.status": {"method": "GET", "path": "/work/jobs/app_update_check", "permission": False},
+        "work.app_update_check.schedule": {"method": "POST", "path": "/work/jobs/app_update_check/schedule", "permission": True},
+        "work.app_update_check.run_once": {"method": "POST", "path": "/work/jobs/app_update_check/run_once", "permission": True},
+        "work.app_update_check.cancel": {"method": "POST", "path": "/work/jobs/app_update_check/cancel", "permission": True},
     }
 
     def __init__(self, base_url: str = "http://127.0.0.1:8765"):
@@ -647,6 +652,8 @@ class DeviceApiTool:
             return "device.vision", "vision", "session"
         if a.startswith("intent."):
             return "device.intent", "intent", "session"
+        if a.startswith("work."):
+            return "device.work", "workmanager", "session"
         # Default to session scope: approve once per chat session, then no repeated prompts.
         return "device_api", "device_api", "session"
 
