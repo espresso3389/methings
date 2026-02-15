@@ -7506,6 +7506,8 @@ class LocalHttpServer(
         message: String,
         source: String = "",
         bytesDownloaded: Long? = null,
+        bytesCopied: Long? = null,
+        totalBytes: Long? = null,
         detail: String? = null
     ) {
         synchronized(meSyncImportProgressLock) {
@@ -7516,6 +7518,11 @@ class LocalHttpServer(
                 state == "running" && prev.state != "running" -> now
                 else -> prev.startedAt
             }
+            val copyStartedAt = when {
+                state == "running" && (bytesCopied ?: 0L) > 0L && (prev.copyStartedAt <= 0L || prev.phase != phase) -> now
+                state == "running" && prev.copyStartedAt > 0L -> prev.copyStartedAt
+                else -> 0L
+            }
             meSyncImportProgress = MeSyncImportProgress(
                 state = state,
                 phase = phase,
@@ -7524,6 +7531,9 @@ class LocalHttpServer(
                 startedAt = startedAt,
                 updatedAt = now,
                 bytesDownloaded = bytesDownloaded ?: prev.bytesDownloaded,
+                bytesCopied = bytesCopied ?: prev.bytesCopied,
+                totalBytes = totalBytes ?: prev.totalBytes,
+                copyStartedAt = copyStartedAt,
                 detail = detail ?: prev.detail
             )
         }
@@ -8276,11 +8286,17 @@ class LocalHttpServer(
             val sourceName = payload.optString("source_name", "").trim()
                 .ifBlank { Build.MODEL?.trim().orEmpty() }
                 .ifBlank { "Android device" }
-            val active = if (forceRefresh) null else findReusableMeSyncTransfer(includeUser, includeProtectedDb, includeIdentity)
+            val active = if (forceRefresh) {
+                null
+            } else {
+                findReusableMeSyncTransfer(includeUser, includeProtectedDb, includeIdentity)
+                    ?.takeIf { hasMinimumTransferTtlRemaining(it, ME_SYNC_V3_TICKET_TTL_MS) }
+            }
             val transfer = active ?: buildMeSyncExport(
                 includeUser = includeUser,
                 includeProtectedDb = includeProtectedDb,
-                includeIdentity = includeIdentity
+                includeIdentity = includeIdentity,
+                ttlMs = ME_SYNC_V3_TRANSFER_TTL_MS
             ).also {
                 meSyncTransfers[it.id] = it
             }
@@ -8487,6 +8503,25 @@ class LocalHttpServer(
                         JSONObject().put("detail", ex.message ?: "")
                     )
                 }
+                val wifiConnected = ((network.wifiStatus()["connected"] as? Boolean) == true)
+                if (!wifiConnected) {
+                    val detail = "Nearby import failed and LAN fallback is unavailable because Wi-Fi is disconnected."
+                    updateMeSyncImportProgress(
+                        state = "failed",
+                        phase = "nearby_failed",
+                        message = "Nearby import failed. Connect Wi-Fi to use LAN fallback.",
+                        source = "nearby_v3",
+                        detail = detail
+                    )
+                    return jsonError(
+                        Response.Status.SERVICE_UNAVAILABLE,
+                        "me_sync_v3_nearby_failed_wifi_required",
+                        JSONObject()
+                            .put("detail", detail)
+                            .put("nearby_error", ex.message ?: "")
+                            .put("fallback", "skipped_wifi_disconnected")
+                    )
+                }
             }
         }
         if (!merged.has("max_bytes")) {
@@ -8498,11 +8533,29 @@ class LocalHttpServer(
     private fun openMeSyncTransferStreamForNearby(ticketId: String, transferId: String): InputStream? {
         cleanupExpiredMeSyncTransfers()
         cleanupExpiredMeSyncV3Tickets()
-        val ticket = meSyncV3Tickets[ticketId] ?: return null
-        if (ticket.transferId != transferId) return null
-        val tr = meSyncTransfers[transferId] ?: return null
+        val ticket = meSyncV3Tickets[ticketId] ?: run {
+            Log.w(TAG, "me.sync nearby stream unavailable: ticket_not_found (ticket_id=$ticketId transfer_id=$transferId)")
+            return null
+        }
+        if (ticket.transferId != transferId) {
+            Log.w(
+                TAG,
+                "me.sync nearby stream unavailable: ticket_transfer_mismatch " +
+                    "(ticket_id=$ticketId transfer_id=$transferId expected=${ticket.transferId})"
+            )
+            return null
+        }
+        val tr = meSyncTransfers[transferId] ?: run {
+            Log.w(TAG, "me.sync nearby stream unavailable: transfer_not_found (ticket_id=$ticketId transfer_id=$transferId)")
+            return null
+        }
         val now = System.currentTimeMillis()
         if (tr.expiresAt > 0L && now > tr.expiresAt) {
+            Log.w(
+                TAG,
+                "me.sync nearby stream unavailable: transfer_expired " +
+                    "(ticket_id=$ticketId transfer_id=$transferId expires_at=${tr.expiresAt} now=$now)"
+            )
             meSyncTransfers.remove(transferId)
             releaseMeSyncTransfer(tr)
             return null
@@ -9030,48 +9083,127 @@ class LocalHttpServer(
         if (!pkgFile.exists() || !pkgFile.isFile) throw IllegalStateException("missing package")
         val tmpDir = File(context.cacheDir, "me_sync_import_" + System.currentTimeMillis() + "_" + Random.nextInt(1000, 9999))
         tmpDir.mkdirs()
+        val rollbackDir = File(context.cacheDir, "me_sync_rollback_" + System.currentTimeMillis() + "_" + Random.nextInt(1000, 9999))
+        rollbackDir.mkdirs()
         try {
-            unzipInto(pkgFile, tmpDir)
-            var importedActiveSessionId = ""
-
-            if (wipeExisting) {
-                wipeMeSyncLocalState()
-                runCatching {
-                    context.sendBroadcast(
-                        Intent(ACTION_UI_CHAT_CACHE_CLEAR)
-                            .apply {
-                                setPackage(context.packageName)
-                                putExtra(EXTRA_CHAT_PRESERVE_SESSION_ID, "")
-                            }
-                    )
-                }
+            var copiedBytes = 0L
+            var totalBytes = pkgFile.length().coerceAtLeast(1L)
+            var lastProgressAt = 0L
+            fun reportProgress(phase: String, message: String, force: Boolean = false) {
+                val now = System.currentTimeMillis()
+                if (!force && (now - lastProgressAt) < 250L) return
+                lastProgressAt = now
+                updateMeSyncImportProgress(
+                    state = "running",
+                    phase = phase,
+                    message = message,
+                    bytesCopied = copiedBytes,
+                    totalBytes = totalBytes
+                )
             }
 
+            reportProgress("extracting", "Extracting package...", force = true)
+            unzipInto(pkgFile, tmpDir) { n ->
+                copiedBytes += n.coerceAtLeast(0L)
+                reportProgress("extracting", "Extracting package...")
+            }
+            reportProgress("extracting", "Extracting package...", force = true)
             val roomStateFile = File(tmpDir, "room/state.json")
-            if (roomStateFile.exists()) {
-                val state = JSONObject(roomStateFile.readText(Charsets.UTF_8))
-                importedActiveSessionId = readImportedActiveSessionId(state)
-                importRoomState(state)
+            val importedState = if (roomStateFile.exists()) {
+                JSONObject(roomStateFile.readText(Charsets.UTF_8))
+            } else {
+                null
             }
-
+            val importedActiveSessionId = if (importedState != null) readImportedActiveSessionId(importedState) else ""
             val importedUser = File(tmpDir, "user")
-            if (importedUser.exists() && importedUser.isDirectory) {
-                val userRoot = File(context.filesDir, "user")
-                userRoot.mkdirs()
-                copyDirectoryOverwrite(importedUser, userRoot)
-            }
-
             val importedProtectedDb = File(tmpDir, "protected/app.db")
-            if (importedProtectedDb.exists() && importedProtectedDb.isFile) {
-                runtimeManager.requestShutdown()
-                Thread.sleep(250)
-                val protectedDir = File(context.filesDir, "protected")
-                protectedDir.mkdirs()
-                val targetDb = File(protectedDir, "app.db")
-                copyFile(importedProtectedDb, targetDb)
-                runCatching { clearPendingPermissionsInProtectedDb(targetDb) }
+            val userRoot = File(context.filesDir, "user")
+            val protectedDir = File(context.filesDir, "protected")
+            val targetDb = File(protectedDir, "app.db")
+            val backupUser = File(rollbackDir, "user_prev")
+            val backupDb = File(rollbackDir, "protected_app.db_prev")
+            val importedUserBytes = if (importedUser.exists() && importedUser.isDirectory) directoryFileBytes(importedUser) else 0L
+            val importedDbBytes = if (importedProtectedDb.exists() && importedProtectedDb.isFile) importedProtectedDb.length() else 0L
+            totalBytes = (totalBytes + importedUserBytes + importedDbBytes).coerceAtLeast(totalBytes)
+
+            var swappedUser = false
+            var swappedDb = false
+            try {
+                if (wipeExisting) {
+                    if (userRoot.exists()) {
+                        movePath(userRoot, backupUser)
+                    }
+                    if (importedUser.exists() && importedUser.isDirectory) {
+                        movePath(importedUser, userRoot)
+                    } else {
+                        userRoot.mkdirs()
+                    }
+                    swappedUser = true
+
+                    runCatching { runtimeManager.requestShutdown() }
+                    runCatching { Thread.sleep(250) }
+                    protectedDir.mkdirs()
+                    if (targetDb.exists() && targetDb.isFile) {
+                        movePath(targetDb, backupDb)
+                    }
+                    if (importedProtectedDb.exists() && importedProtectedDb.isFile) {
+                        copyFile(importedProtectedDb, targetDb) { n ->
+                            copiedBytes += n.coerceAtLeast(0L)
+                            reportProgress("applying", "Applying imported data...")
+                        }
+                    } else {
+                        runCatching { targetDb.delete() }
+                    }
+                    swappedDb = true
+
+                    runCatching {
+                        context.sendBroadcast(
+                            Intent(ACTION_UI_CHAT_CACHE_CLEAR)
+                                .apply {
+                                    setPackage(context.packageName)
+                                    putExtra(EXTRA_CHAT_PRESERVE_SESSION_ID, "")
+                                }
+                        )
+                    }
+                }
+
+                if (!wipeExisting && importedUser.exists() && importedUser.isDirectory) {
+                    userRoot.mkdirs()
+                    copyDirectoryOverwrite(importedUser, userRoot) { n ->
+                        copiedBytes += n.coerceAtLeast(0L)
+                        reportProgress("applying", "Applying imported data...")
+                    }
+                }
+
+                if (!wipeExisting && importedProtectedDb.exists() && importedProtectedDb.isFile) {
+                    runtimeManager.requestShutdown()
+                    Thread.sleep(250)
+                    protectedDir.mkdirs()
+                    copyFile(importedProtectedDb, targetDb) { n ->
+                        copiedBytes += n.coerceAtLeast(0L)
+                        reportProgress("applying", "Applying imported data...")
+                    }
+                    runCatching { clearPendingPermissionsInProtectedDb(targetDb) }
+                } else if (wipeExisting && importedProtectedDb.exists() && importedProtectedDb.isFile) {
+                    runCatching { clearPendingPermissionsInProtectedDb(targetDb) }
+                }
+
+                if (importedState != null) {
+                    if (wipeExisting && !importedProtectedDb.exists()) {
+                        clearCredentialAndSshStores()
+                    }
+                    importRoomState(importedState)
+                }
+                reportProgress("applying", "Applying imported data...", force = true)
+            } catch (ex: Exception) {
+                if (wipeExisting) {
+                    restorePathFromBackup(userRoot, backupUser, swappedUser)
+                    restorePathFromBackup(targetDb, backupDb, swappedDb)
+                }
+                throw ex
             }
 
+            reportProgress("restarting_runtime", "Restarting local runtime...", force = true)
             runCatching { syncAuthorizedKeys() }
             runCatching { runtimeManager.restartSoft() }
             runCatching {
@@ -9101,6 +9233,7 @@ class LocalHttpServer(
         } finally {
             runCatching { pkgFile.delete() }
             runCatching { deleteRecursively(tmpDir) }
+            runCatching { deleteRecursively(rollbackDir) }
         }
     }
 
@@ -9500,7 +9633,12 @@ class LocalHttpServer(
     }
 
     private fun unzipInto(zipFile: File, outDir: File) {
+        unzipInto(zipFile, outDir, null)
+    }
+
+    private fun unzipInto(zipFile: File, outDir: File, onBytes: ((Long) -> Unit)?) {
         ZipInputStream(FileInputStream(zipFile)).use { zis ->
+            val buf = ByteArray(8192)
             while (true) {
                 val entry = zis.nextEntry ?: break
                 val name = entry.name ?: ""
@@ -9519,14 +9657,21 @@ class LocalHttpServer(
                     canonicalOut.mkdirs()
                 } else {
                     canonicalOut.parentFile?.mkdirs()
-                    FileOutputStream(canonicalOut).use { fos -> zis.copyTo(fos, 8192) }
+                    FileOutputStream(canonicalOut).use { fos ->
+                        while (true) {
+                            val n = zis.read(buf)
+                            if (n <= 0) break
+                            fos.write(buf, 0, n)
+                            onBytes?.invoke(n.toLong())
+                        }
+                    }
                 }
                 zis.closeEntry()
             }
         }
     }
 
-    private fun copyDirectoryOverwrite(srcDir: File, dstDir: File) {
+    private fun copyDirectoryOverwrite(srcDir: File, dstDir: File, onBytes: ((Long) -> Unit)? = null) {
         srcDir.walkTopDown().forEach { src ->
             val rel = src.relativeTo(srcDir)
             if (rel.path.isBlank()) return@forEach
@@ -9535,15 +9680,76 @@ class LocalHttpServer(
                 dst.mkdirs()
             } else if (src.isFile) {
                 dst.parentFile?.mkdirs()
-                copyFile(src, dst)
+                copyFile(src, dst, onBytes)
             }
         }
     }
 
-    private fun copyFile(src: File, dst: File) {
+    private fun copyFile(src: File, dst: File, onBytes: ((Long) -> Unit)? = null) {
         FileInputStream(src).use { input ->
             FileOutputStream(dst).use { output ->
-                input.copyTo(output, 8192)
+                val buf = ByteArray(8192)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n <= 0) break
+                    output.write(buf, 0, n)
+                    onBytes?.invoke(n.toLong())
+                }
+            }
+        }
+    }
+
+    private fun movePath(src: File, dst: File) {
+        if (!src.exists()) return
+        dst.parentFile?.mkdirs()
+        if (dst.exists()) {
+            deleteRecursively(dst)
+        }
+        if (src.renameTo(dst)) return
+        if (src.isDirectory) {
+            dst.mkdirs()
+            copyDirectoryOverwrite(src, dst)
+            deleteRecursively(src)
+            return
+        }
+        copyFile(src, dst)
+        runCatching { src.delete() }
+    }
+
+    private fun directoryFileBytes(dir: File): Long {
+        if (!dir.exists() || !dir.isDirectory) return 0L
+        var total = 0L
+        dir.walkTopDown().forEach { f ->
+            if (f.isFile) {
+                total += runCatching { f.length() }.getOrDefault(0L)
+            }
+        }
+        return total.coerceAtLeast(0L)
+    }
+
+    private fun restorePathFromBackup(target: File, backup: File, shouldRestore: Boolean) {
+        if (!shouldRestore) return
+        runCatching {
+            if (target.exists()) {
+                deleteRecursively(target)
+            }
+        }
+        runCatching {
+            if (backup.exists()) {
+                movePath(backup, target)
+            }
+        }
+    }
+
+    private fun clearCredentialAndSshStores() {
+        runCatching {
+            credentialStore.list().forEach { row ->
+                credentialStore.delete(row.name)
+            }
+        }
+        runCatching {
+            sshKeyStore.listAll().forEach { row ->
+                sshKeyStore.delete(row.fingerprint)
             }
         }
     }
@@ -9813,10 +10019,15 @@ class LocalHttpServer(
         val startedAt: Long = 0L,
         val updatedAt: Long = 0L,
         val bytesDownloaded: Long = 0L,
+        val bytesCopied: Long = 0L,
+        val totalBytes: Long = 0L,
+        val copyStartedAt: Long = 0L,
         val detail: String = ""
     ) {
         fun toJson(now: Long, active: Boolean): JSONObject {
             val elapsedMs = if (startedAt > 0L) (now - startedAt).coerceAtLeast(0L) else 0L
+            val copyElapsedMs = if (copyStartedAt > 0L) (now - copyStartedAt).coerceAtLeast(1L) else 0L
+            val copyBps = if (copyElapsedMs > 0L && bytesCopied > 0L) ((bytesCopied * 1000L) / copyElapsedMs).coerceAtLeast(0L) else 0L
             return JSONObject()
                 .put("active", active)
                 .put("state", state)
@@ -9827,6 +10038,9 @@ class LocalHttpServer(
                 .put("updated_at", if (updatedAt > 0L) updatedAt else JSONObject.NULL)
                 .put("elapsed_ms", elapsedMs)
                 .put("bytes_downloaded", bytesDownloaded.coerceAtLeast(0L))
+                .put("bytes_copied", bytesCopied.coerceAtLeast(0L))
+                .put("total_bytes", totalBytes.coerceAtLeast(0L))
+                .put("copy_bps", copyBps)
                 .put("detail", if (detail.isNotBlank()) detail else JSONObject.NULL)
         }
     }

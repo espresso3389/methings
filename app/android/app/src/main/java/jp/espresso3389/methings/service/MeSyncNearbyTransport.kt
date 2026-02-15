@@ -66,24 +66,52 @@ class MeSyncNearbyTransport(
             val transferId = req.optString("transfer_id", "").trim()
             val offer = offers[ticketId]
             if (offer == null) {
+                logger(
+                    "me.sync nearby reject: ticket_not_found " +
+                        "(endpoint=$endpointId ticket_id=$ticketId transfer_id=$transferId)",
+                    null
+                )
                 sendReject(endpointId, "ticket_not_found")
                 return
             }
             val now = System.currentTimeMillis()
             if (offer.expiresAt in 1..now) {
+                logger(
+                    "me.sync nearby reject: ticket_expired " +
+                        "(endpoint=$endpointId ticket_id=$ticketId transfer_id=${offer.transferId} " +
+                        "expires_at=${offer.expiresAt} now=$now)",
+                    null
+                )
                 sendReject(endpointId, "ticket_expired")
                 return
             }
             if (nonce.isBlank() || nonce != offer.sessionNonce) {
+                logger(
+                    "me.sync nearby reject: invalid_nonce " +
+                        "(endpoint=$endpointId ticket_id=$ticketId transfer_id=${offer.transferId} " +
+                        "nonce_len=${nonce.length} expected_len=${offer.sessionNonce.length})",
+                    null
+                )
                 sendReject(endpointId, "invalid_nonce")
                 return
             }
             if (transferId.isBlank() || transferId != offer.transferId) {
+                logger(
+                    "me.sync nearby reject: invalid_transfer " +
+                        "(endpoint=$endpointId ticket_id=$ticketId transfer_id=$transferId " +
+                        "expected_transfer_id=${offer.transferId})",
+                    null
+                )
                 sendReject(endpointId, "invalid_transfer")
                 return
             }
             val stream = runCatching { openOutgoingStream(ticketId, offer.transferId) }.getOrNull()
             if (stream == null) {
+                logger(
+                    "me.sync nearby reject: stream_unavailable " +
+                        "(endpoint=$endpointId ticket_id=$ticketId transfer_id=${offer.transferId})",
+                    null
+                )
                 sendReject(endpointId, "stream_unavailable")
                 return
             }
@@ -175,7 +203,13 @@ class MeSyncNearbyTransport(
                         }.getOrNull() ?: return
                         val op = obj.optString("op", "").trim()
                         if (op == "reject") {
-                            error.set(obj.optString("error", "rejected"))
+                            val reason = obj.optString("error", "rejected")
+                            logger(
+                                "me.sync nearby rejected by exporter: $reason " +
+                                    "(endpoint=$endpointId ticket_id=$ticketId transfer_id=$transferId)",
+                                null
+                            )
+                            error.set(reason)
                             done.countDown()
                         }
                     }
