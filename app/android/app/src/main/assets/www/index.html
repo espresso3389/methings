@@ -1103,6 +1103,49 @@
         background: rgba(255,255,255,0.04);
       }
 
+      /* Settings form (me.me modal) */
+      .setting-row { margin-top: 10px; }
+      .setting-label {
+        font-size: 12px; font-weight: 600; color: var(--ink-muted);
+        text-transform: uppercase; letter-spacing: 0.03em;
+        margin-bottom: 4px;
+      }
+      .setting-row input[type="text"],
+      .setting-row input[type="number"],
+      .setting-row input[type="url"],
+      .setting-row textarea {
+        width: 100%; padding: 9px 12px;
+        border: 1px solid var(--border); border-radius: var(--radius-sm);
+        font-family: inherit; font-size: 14px;
+        background: var(--surface); color: var(--ink); outline: none;
+        transition: border-color var(--transition);
+      }
+      .setting-row input:focus,
+      .setting-row textarea:focus { border-color: var(--border-focus); }
+      .setting-row input::placeholder,
+      .setting-row textarea::placeholder { color: var(--ink-muted); }
+      .setting-row textarea { resize: vertical; min-height: 48px; }
+      .setting-grid { display: grid; gap: 10px; margin-top: 10px; }
+      .setting-grid .setting-row { margin-top: 0; }
+      .setting-grid.two  { grid-template-columns: 1fr 1fr; }
+      .setting-grid.three { grid-template-columns: 1fr 1fr 1fr; }
+
+      /* Settings section dividers */
+      .stg-section {
+        margin-top: 16px; padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+      .stg-section-title {
+        font-size: 11px; font-weight: 700; color: var(--ink-muted);
+        text-transform: uppercase; letter-spacing: 0.06em;
+        margin-bottom: 6px;
+      }
+
+      /* Settings-detail entrance animation */
+      .modal.show .modal-card.settings-detail {
+        animation: dlgEnter 0.18s ease-out;
+      }
+
       /* Dialog prompt input */
       #dialogInput {
         width: 100%;
@@ -2108,12 +2151,18 @@
 
     <!-- me.me Settings Modal -->
     <div class="modal" id="meMeSettingsModal" role="dialog" aria-modal="true" aria-labelledby="meMeSettingsModalTitle">
-      <div class="modal-card settings-detail" data-settings-section="me_me">
+      <div class="modal-card settings-detail" data-settings-section="me_me" style="max-height:calc(100vh - 40px); display:flex; flex-direction:column; overflow:hidden;">
         <div class="card-header">
-          <div class="card-icon blue">&#128279;</div>
-          <div class="card-title" id="meMeSettingsModalTitle" style="margin-bottom:0;">me.me Settings</div>
+          <div class="card-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></div>
+          <div>
+            <div class="card-title" id="meMeSettingsModalTitle" style="margin-bottom:0;">me.me Settings</div>
+            <div class="muted" style="font-size:12px;">Device identity, discovery &amp; connection preferences</div>
+          </div>
           <button class="icon-btn secondary" id="meMeSettingsModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
         </div>
+
+        <div style="flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;">
+        <!-- Identity -->
         <div class="setting-row">
           <div class="setting-label">Device Name</div>
           <input type="text" id="meMeDeviceName" data-setting-key="me_me_device_name" placeholder="Android device" />
@@ -2126,73 +2175,98 @@
           <div class="setting-label">Icon URL</div>
           <input type="url" id="meMeDeviceIcon" data-setting-key="me_me_device_icon" placeholder="https://..." />
         </div>
-        <div class="toggle-row">
-          <label class="toggle">
-            <input type="checkbox" id="meMeAllowDiscovery" data-setting-key="me_me_allow_discovery" />
-            <span class="slider"></span>
-          </label>
-          <span class="toggle-label">Allow Discovery</span>
-        </div>
-        <div class="setting-row">
-          <div class="setting-label">Connection Methods (comma)</div>
-          <input type="text" id="meMeConnectionMethods" data-setting-key="me_me_connection_methods" placeholder="wifi,ble" />
-        </div>
-        <div class="setting-grid two">
-          <div class="setting-row">
-            <div class="setting-label">Timeout (s)</div>
-            <input type="number" id="meMeConnectionTimeout" data-setting-key="me_me_connection_timeout" min="5" max="300" step="1" />
+
+        <!-- Discovery -->
+        <div class="stg-section">
+          <div class="stg-section-title">Discovery</div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="meMeAllowDiscovery" data-setting-key="me_me_allow_discovery" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Allow Discovery</span>
           </div>
           <div class="setting-row">
-            <div class="setting-label">Max Connections</div>
-            <input type="number" id="meMeMaxConnections" data-setting-key="me_me_max_connections" min="1" max="32" step="1" />
+            <div class="setting-label">Connection Methods (comma)</div>
+            <input type="text" id="meMeConnectionMethods" data-setting-key="me_me_connection_methods" placeholder="wifi,ble" />
+          </div>
+          <div class="setting-grid two">
+            <div class="setting-row">
+              <div class="setting-label">Timeout (s)</div>
+              <input type="number" id="meMeConnectionTimeout" data-setting-key="me_me_connection_timeout" min="5" max="300" step="1" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">Max Connections</div>
+              <input type="number" id="meMeMaxConnections" data-setting-key="me_me_max_connections" min="1" max="32" step="1" />
+            </div>
           </div>
         </div>
-        <div class="toggle-row">
-          <label class="toggle">
-            <input type="checkbox" id="meMeAutoReconnect" data-setting-key="me_me_auto_reconnect" />
-            <span class="slider"></span>
-          </label>
-          <span class="toggle-label">Auto Reconnect</span>
+
+        <!-- Reconnection -->
+        <div class="stg-section">
+          <div class="stg-section-title">Reconnection</div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="meMeAutoReconnect" data-setting-key="me_me_auto_reconnect" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Auto Reconnect</span>
+          </div>
+          <div class="setting-grid three">
+            <div class="setting-row">
+              <div class="setting-label">Reconnect (s)</div>
+              <input type="number" id="meMeReconnectInterval" data-setting-key="me_me_reconnect_interval" min="3" max="3600" step="1" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">Discovery (s)</div>
+              <input type="number" id="meMeDiscoveryInterval" data-setting-key="me_me_discovery_interval" min="10" max="3600" step="1" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">Check (s)</div>
+              <input type="number" id="meMeConnectionCheckInterval" data-setting-key="me_me_connection_check_interval" min="5" max="3600" step="1" />
+            </div>
+          </div>
         </div>
-        <div class="setting-grid three">
+
+        <!-- Access Control -->
+        <div class="stg-section">
+          <div class="stg-section-title">Access Control</div>
           <div class="setting-row">
-            <div class="setting-label">Reconnect (s)</div>
-            <input type="number" id="meMeReconnectInterval" data-setting-key="me_me_reconnect_interval" min="3" max="3600" step="1" />
+            <div class="setting-label">Allowed Devices (comma/newline)</div>
+            <textarea id="meMeAllowedDevices" data-setting-key="me_me_allowed_devices" rows="2" placeholder="device_id_1, device_name_2"></textarea>
           </div>
           <div class="setting-row">
-            <div class="setting-label">Discovery (s)</div>
-            <input type="number" id="meMeDiscoveryInterval" data-setting-key="me_me_discovery_interval" min="10" max="3600" step="1" />
-          </div>
-          <div class="setting-row">
-            <div class="setting-label">Check (s)</div>
-            <input type="number" id="meMeConnectionCheckInterval" data-setting-key="me_me_connection_check_interval" min="5" max="3600" step="1" />
+            <div class="setting-label">Blocked Devices (comma/newline)</div>
+            <textarea id="meMeBlockedDevices" data-setting-key="me_me_blocked_devices" rows="2" placeholder="device_id_3"></textarea>
           </div>
         </div>
-        <div class="setting-row">
-          <div class="setting-label">Allowed Devices (comma/newline)</div>
-          <textarea id="meMeAllowedDevices" data-setting-key="me_me_allowed_devices" rows="2" placeholder="device_id_1, device_name_2"></textarea>
+
+        <!-- Notifications -->
+        <div class="stg-section">
+          <div class="stg-section-title">Notifications</div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="meMeNotifyOnConnection" data-setting-key="me_me_notify_on_connection" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Notify on Connection</span>
+          </div>
+          <div class="toggle-row">
+            <label class="toggle">
+              <input type="checkbox" id="meMeNotifyOnDisconnection" data-setting-key="me_me_notify_on_disconnection" />
+              <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Notify on Disconnection</span>
+          </div>
         </div>
-        <div class="setting-row">
-          <div class="setting-label">Blocked Devices (comma/newline)</div>
-          <textarea id="meMeBlockedDevices" data-setting-key="me_me_blocked_devices" rows="2" placeholder="device_id_3"></textarea>
+
+        <!-- Actions -->
+        <div class="stg-section">
+          <div class="btn-group">
+            <button class="btn" id="meMeRefreshBtn">Refresh</button>
+            <button class="btn primary" id="meMeSaveBtn">Save</button>
+          </div>
         </div>
-        <div class="toggle-row">
-          <label class="toggle">
-            <input type="checkbox" id="meMeNotifyOnConnection" data-setting-key="me_me_notify_on_connection" />
-            <span class="slider"></span>
-          </label>
-          <span class="toggle-label">Notify on Connection</span>
-        </div>
-        <div class="toggle-row">
-          <label class="toggle">
-            <input type="checkbox" id="meMeNotifyOnDisconnection" data-setting-key="me_me_notify_on_disconnection" />
-            <span class="slider"></span>
-          </label>
-          <span class="toggle-label">Notify on Disconnection</span>
-        </div>
-        <div class="btn-group">
-          <button class="btn" id="meMeRefreshBtn">Refresh</button>
-          <button class="btn primary" id="meMeSaveBtn">Save</button>
         </div>
       </div>
     </div>
