@@ -1234,6 +1234,35 @@
         padding: 20px; z-index: 999;
       }
       #dialogModal { z-index: 1100; }
+      @keyframes dlgEnter {
+        from { opacity: 0; transform: scale(0.95); }
+        to   { opacity: 1; transform: scale(1); }
+      }
+      #dialogModal.show .modal-card {
+        animation: dlgEnter 0.18s ease-out;
+      }
+      .dlg-icon {
+        width: 40px; height: 40px; border-radius: 50%;
+        display: flex; align-items: center; justify-content: center;
+        margin: 0 auto 10px;
+      }
+      .dlg-icon svg { width: 22px; height: 22px; }
+      .dlg-icon.warn  { background: rgba(245,158,11,0.14); color: #f59e0b; }
+      .dlg-icon.danger { background: rgba(239,68,68,0.14); color: #ef4444; }
+      .dlg-icon.info  { background: var(--accent-soft); color: var(--accent); }
+      #dialogModal .card-title {
+        font-size: 16px; font-weight: 700; text-align: center; margin-bottom: 6px;
+      }
+      #dialogModal .dlg-msg {
+        font-size: 13px; color: var(--ink-secondary); text-align: center;
+        white-space: pre-line; margin-bottom: 14px;
+      }
+      #dialogModal .btn-group {
+        gap: 10px; margin-top: 4px;
+      }
+      #dialogModal .btn-group .btn {
+        flex: 1; text-align: center; min-width: 0; padding: 10px 12px;
+      }
       .modal.show { display: flex; }
       .modal-card {
         width: 100%; max-width: 340px;
@@ -2042,9 +2071,10 @@
 
     <!-- App Dialog (replaces native confirm/prompt) -->
     <div class="modal" id="dialogModal" role="dialog" aria-modal="true">
-      <div class="modal-card" style="text-align:left; max-width:340px;">
-        <div class="card-title" id="dialogTitle" style="margin-bottom:8px; font-size:15px;"></div>
-        <div class="muted" id="dialogMessage" style="font-size:13px; margin-bottom:14px; white-space:pre-line;"></div>
+      <div class="modal-card" style="max-width:340px;">
+        <div class="dlg-icon" id="dialogIcon"></div>
+        <div class="card-title" id="dialogTitle"></div>
+        <div class="dlg-msg" id="dialogMessage"></div>
         <div id="dialogInputWrap" style="display:none; margin-bottom:14px;">
           <input type="text" id="dialogInput" autocomplete="off" autocapitalize="none" spellcheck="false" />
         </div>
@@ -2471,22 +2501,67 @@
       // ==============================
       // App Dialog (confirm / prompt)
       // ==============================
+      const _DLG_ICONS = {
+        warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+        danger: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg>',
+        info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
+        edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
+      };
+
       const _dlg = {
         modal: $("dialogModal"),
+        icon: $("dialogIcon"),
         title: $("dialogTitle"),
         message: $("dialogMessage"),
         inputWrap: $("dialogInputWrap"),
         input: $("dialogInput"),
         buttons: $("dialogButtons"),
         resolve: null,
+        backdropHandler: null,
       };
+
+      function _dlgSetIcon(type) {
+        if (type === "none" || !type) {
+          _dlg.icon.style.display = "none";
+          _dlg.icon.className = "dlg-icon";
+          _dlg.icon.innerHTML = "";
+          return;
+        }
+        var cls = (type === "edit") ? "info" : type;
+        _dlg.icon.style.display = "";
+        _dlg.icon.className = "dlg-icon " + cls;
+        _dlg.icon.innerHTML = _DLG_ICONS[type] || "";
+      }
+
+      function _dlgDismiss(value) {
+        if (_dlg.backdropHandler) {
+          _dlg.modal.removeEventListener("click", _dlg.backdropHandler);
+          _dlg.backdropHandler = null;
+        }
+        var r = _dlg.resolve;
+        _dlg.resolve = null;
+        _dlg.modal.classList.remove("show");
+        if (r) r(value);
+      }
+
+      function _dlgBackdrop(cancelValue) {
+        if (_dlg.backdropHandler) {
+          _dlg.modal.removeEventListener("click", _dlg.backdropHandler);
+        }
+        _dlg.backdropHandler = function (e) {
+          if (e.target === _dlg.modal) _dlgDismiss(cancelValue);
+        };
+        _dlg.modal.addEventListener("click", _dlg.backdropHandler);
+      }
 
       function appConfirm(title, message, opts) {
         var cancelLabel = (opts && opts.cancel) || "Cancel";
         var okLabel = (opts && opts.ok) || "Confirm";
         var okClass = (opts && opts.okClass) || "danger";
+        var iconType = (opts && opts.icon) || (okClass === "danger" ? "warn" : "info");
         return new Promise((resolve) => {
-          if (_dlg.resolve) { _dlg.resolve(null); }
+          if (_dlg.resolve) { _dlgDismiss(null); }
+          _dlgSetIcon(iconType);
           _dlg.title.textContent = title;
           _dlg.message.textContent = message;
           _dlg.inputWrap.style.display = "none";
@@ -2495,14 +2570,16 @@
             "<button class='btn " + okClass + "' id='_dlgOk'>" + okLabel + "</button>";
           _dlg.resolve = resolve;
           _dlg.modal.classList.add("show");
-          $("_dlgCancel").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(false); });
-          $("_dlgOk").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(true); });
+          _dlgBackdrop(false);
+          $("_dlgCancel").addEventListener("click", () => _dlgDismiss(false));
+          $("_dlgOk").addEventListener("click", () => _dlgDismiss(true));
         });
       }
 
       function appPrompt(title, message, placeholder) {
         return new Promise((resolve) => {
-          if (_dlg.resolve) { _dlg.resolve(null); }
+          if (_dlg.resolve) { _dlgDismiss(null); }
+          _dlgSetIcon("edit");
           _dlg.title.textContent = title;
           _dlg.message.textContent = message;
           _dlg.input.value = "";
@@ -2513,10 +2590,11 @@
             "<button class='btn primary' id='_dlgOk'>OK</button>";
           _dlg.resolve = resolve;
           _dlg.modal.classList.add("show");
+          _dlgBackdrop(null);
           setTimeout(() => _dlg.input.focus(), 60);
           _dlg.input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); $("_dlgOk").click(); } };
-          $("_dlgCancel").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(null); });
-          $("_dlgOk").addEventListener("click", () => { _dlg.resolve = null; _dlg.modal.classList.remove("show"); resolve(_dlg.input.value); });
+          $("_dlgCancel").addEventListener("click", () => _dlgDismiss(null));
+          $("_dlgOk").addEventListener("click", () => _dlgDismiss(_dlg.input.value));
         });
       }
 
@@ -7677,6 +7755,16 @@
         startMeSyncExpireTimer();
       }
 
+      function meSyncImportErrorMessage(errorCode, detail) {
+        const code = String(errorCode || "").trim();
+        const d = String(detail || "").trim();
+        if (code === "me_sync_v3_nearby_failed_wifi_required") {
+          return "Nearby import failed. This device is not connected to Wi-Fi, so LAN fallback cannot be used.";
+        }
+        if (d) return "Import failed: " + d;
+        return "Import failed. Please retry.";
+      }
+
       async function importMeSyncByText(text, opts) {
         const options = opts || {};
         const skipConfirm = !!options.skipConfirm;
@@ -7738,14 +7826,23 @@
             signal: controller.signal,
           });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(String(data.error || "import_failed"));
+          if (!res.ok) {
+            const errCode = String((data && data.error) || "import_failed");
+            const detail = String((data && data.detail) || "");
+            const e = new Error(errCode);
+            e.userMessage = meSyncImportErrorMessage(errCode, detail);
+            throw e;
+          }
           meSyncStatus.textContent = "Import completed.";
           finishMeSyncImportModal(true, "Import completed.");
           showToast("me.sync import complete", 1800);
         } catch (e) {
           meSyncStatus.textContent = "Import failed.";
           const timedOut = String((e && e.name) || "") === "AbortError";
-          finishMeSyncImportModal(false, timedOut ? "Import timed out. Check source and retry." : "Import failed. Please retry.");
+          const failureMsg = timedOut
+            ? "Import timed out. Check source and retry."
+            : String((e && e.userMessage) || "Import failed. Please retry.");
+          finishMeSyncImportModal(false, failureMsg);
           showToast("me.sync import failed", 2000);
         } finally {
           try { if (timeoutId) clearTimeout(timeoutId); } catch (_) {}
