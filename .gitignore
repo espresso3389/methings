@@ -24,3 +24,6 @@ app/android/app/src/main/assets/wheels/**/.facades_built
 
 # Generated native libs (built into app/android/app/src/main/jniLibs by gradle tasks).
 app/android/app/src/main/jniLibs/
+
+# logs
+logs/
