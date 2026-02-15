@@ -7506,7 +7506,10 @@
         meSyncPrepareWrap.style.display = "none";
         const a = meSyncActiveExport || {};
         const qr = String(a.qr_data_url || "").trim();
-        meSyncModalStatus.textContent = "Export ready. Scan this QR on target device.";
+        const deliveryNote = describeMeMeDelivery(a.me_me_offer_delivery);
+        meSyncModalStatus.textContent = deliveryNote
+          ? "Export ready. Scan this QR on target device. " + deliveryNote
+          : "Export ready. Scan this QR on target device.";
         meSyncQrWrap.style.display = qr ? "block" : "none";
         meSyncQrImage.src = qr || "";
         meSyncExportCancel.disabled = false;
@@ -8349,6 +8352,31 @@
         }
       }
 
+      function normalizeMeMeDelivery(raw, fallbackType, fallbackPeerId) {
+        if (!raw || typeof raw !== "object") return null;
+        const src = raw;
+        const nested = (src.result && typeof src.result === "object") ? src.result : src;
+        const ok = (typeof src.ok === "boolean") ? !!src.ok : !!nested.ok;
+        const delivered = (typeof src.delivered === "boolean") ? !!src.delivered : ok;
+        return {
+          ok: ok,
+          delivered: delivered,
+          peer_device_id: String(src.peer_device_id || fallbackPeerId || ""),
+          type: String(src.type || fallbackType || ""),
+          transport: String(src.transport || nested.transport || "unknown"),
+          result: nested,
+        };
+      }
+
+      function describeMeMeDelivery(delivery) {
+        if (!delivery || typeof delivery !== "object") return "";
+        const transport = String(delivery.transport || "unknown");
+        if (delivery.ok) return "Offer delivered via " + transport + ".";
+        const result = (delivery.result && typeof delivery.result === "object") ? delivery.result : {};
+        const err = String(result.error || "delivery_failed");
+        return "Offer delivery failed (" + err + ").";
+      }
+
       async function runMeSyncExportFlow(forceRefresh) {
         const force = !!forceRefresh;
         meSyncPrepareExport.disabled = true;
@@ -8383,13 +8411,22 @@
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(String(data.error || "prepare_failed"));
+          const offerDelivery = normalizeMeMeDelivery(
+            data && data.me_me_offer_delivery,
+            "me_sync.ticket.offer",
+            ""
+          );
           meSyncActiveExport = Object.assign({}, data || {}, {
             id: String((data && data.ticket_id) || (data && data.transfer_id) || ""),
             ticket_id: String((data && data.ticket_id) || ""),
             me_sync_uri: String((data && data.ticket_uri) || ""),
             transport: String((data && data.transport) || "nearby_stream"),
+            me_me_offer_delivery: offerDelivery,
           });
           meSyncStatus.textContent = "Export prepared.";
+          if (offerDelivery) {
+            showToast(describeMeMeDelivery(offerDelivery), offerDelivery.ok ? 1500 : 2200);
+          }
           showMeSyncExportModal(false);
         } catch (e) {
           if (String((e && e.name) || "") === "AbortError") {

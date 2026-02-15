@@ -2,7 +2,16 @@ package jp.espresso3389.methings.service
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattServer
+import android.bluetooth.BluetoothGattServerCallback
+import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
@@ -23,16 +32,20 @@ import android.os.ParcelUuid
 import androidx.core.content.ContextCompat
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class MeMeDiscoveryManager(
     private val context: Context,
     private val servicePort: Int,
-    private val logger: (String, Throwable?) -> Unit
+    private val logger: (String, Throwable?) -> Unit,
+    private val onBlePayload: (payload: ByteArray, sourceAddress: String) -> Unit = { _, _ -> }
 ) {
     data class Config(
         val deviceId: String,
@@ -85,11 +98,14 @@ class MeMeDiscoveryManager(
 
     private val handler = Handler(Looper.getMainLooper())
     private val peers = ConcurrentHashMap<String, Peer>()
+    private val bleSendExecutor = Executors.newSingleThreadExecutor()
+    private val bleRxBuffers = ConcurrentHashMap<String, ByteArrayOutputStream>()
 
     @Volatile private var registeredService: NsdServiceInfo? = null
     @Volatile private var registrationListener: NsdManager.RegistrationListener? = null
     @Volatile private var bleAdvertiser: BluetoothLeAdvertiser? = null
     @Volatile private var bleAdvertiseCallback: AdvertiseCallback? = null
+    @Volatile private var gattServer: BluetoothGattServer? = null
     @Volatile private var lastScanAt: Long = 0L
 
     fun applyConfig(config: Config) {
@@ -105,14 +121,18 @@ class MeMeDiscoveryManager(
         }
         if (config.connectionMethods.contains("ble")) {
             startBleAdvertise(config)
+            startBleDataServer()
         } else {
             stopBleAdvertise()
+            stopBleDataServer()
         }
     }
 
     fun shutdown() {
         stopWifiAdvertise()
         stopBleAdvertise()
+        stopBleDataServer()
+        bleSendExecutor.shutdownNow()
     }
 
     fun scan(config: Config, timeoutMs: Long): ScanSummary {
@@ -378,7 +398,7 @@ class MeMeDiscoveryManager(
         val settings = AdvertiseSettings.Builder()
             .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
             .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
-            .setConnectable(false)
+            .setConnectable(true)
             .build()
         val data = AdvertiseData.Builder()
             .addServiceUuid(ParcelUuid(BLE_SERVICE_UUID))
@@ -411,18 +431,263 @@ class MeMeDiscoveryManager(
         bleAdvertiseCallback = null
     }
 
+    fun sendBlePayload(targetDeviceId: String, payload: ByteArray, timeoutMs: Long = 12_000L): JSONObject {
+        val future = bleSendExecutor.submit<JSONObject> {
+            sendBlePayloadInternal(targetDeviceId, payload, timeoutMs.coerceIn(2000L, 30_000L))
+        }
+        return runCatching { future.get(timeoutMs.coerceIn(2000L, 30_000L) + 1000L, TimeUnit.MILLISECONDS) }
+            .getOrElse { JSONObject().put("ok", false).put("error", "ble_send_timeout") }
+    }
+
+    private fun sendBlePayloadInternal(targetDeviceId: String, payload: ByteArray, timeoutMs: Long): JSONObject {
+        if (Build.VERSION.SDK_INT >= 31 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return JSONObject().put("ok", false).put("error", "ble_connect_permission_missing")
+        }
+        val adapter = bluetoothAdapter() ?: return JSONObject().put("ok", false).put("error", "ble_unavailable")
+        if (!adapter.isEnabled) return JSONObject().put("ok", false).put("error", "ble_disabled")
+        val peer = peers[targetDeviceId]
+        val address = peer?.bleAddress?.trim().orEmpty()
+        if (address.isBlank()) return JSONObject().put("ok", false).put("error", "peer_ble_unavailable")
+        val device = runCatching { adapter.getRemoteDevice(address) }.getOrNull()
+            ?: return JSONObject().put("ok", false).put("error", "peer_ble_address_invalid")
+
+        val chunks = buildBleChunks(payload)
+        val done = CountDownLatch(1)
+        var wroteChunks = 0
+        var err: String? = null
+        var discovered = false
+        var gatt: BluetoothGatt? = null
+        var txChar: BluetoothGattCharacteristic? = null
+
+        fun fail(msg: String) {
+            if (err == null) {
+                err = msg
+                done.countDown()
+            }
+        }
+
+        fun writeNext() {
+            if (err != null) return
+            val g = gatt ?: run { fail("ble_gatt_missing"); return }
+            val ch = txChar ?: run { fail("ble_tx_characteristic_missing"); return }
+            if (wroteChunks >= chunks.size) {
+                done.countDown()
+                return
+            }
+            val next = chunks[wroteChunks]
+            val ok = if (Build.VERSION.SDK_INT >= 33) {
+                g.writeCharacteristic(ch, next, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothStatusCodes.SUCCESS
+            } else {
+                ch.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                ch.value = next
+                g.writeCharacteristic(ch)
+            }
+            if (!ok) fail("ble_write_start_failed")
+        }
+
+        val cb = object : BluetoothGattCallback() {
+            override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    fail("ble_connect_failed:$status")
+                    return
+                }
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    gatt = g
+                    runCatching { g.requestMtu(BLE_MTU) }
+                    if (!g.discoverServices()) fail("ble_discover_start_failed")
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED && err == null && !discovered) {
+                    fail("ble_disconnected")
+                }
+            }
+
+            override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    fail("ble_discover_failed:$status")
+                    return
+                }
+                val service = g.getService(BLE_GATT_SERVICE_UUID)
+                    ?: run { fail("ble_service_missing"); return }
+                txChar = service.getCharacteristic(BLE_RX_CHAR_UUID)
+                discovered = true
+                writeNext()
+            }
+
+            override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    fail("ble_write_failed:$status")
+                    return
+                }
+                wroteChunks += 1
+                writeNext()
+            }
+        }
+
+        gatt = if (Build.VERSION.SDK_INT >= 23) {
+            device.connectGatt(context, false, cb, BluetoothDevice.TRANSPORT_LE)
+        } else {
+            device.connectGatt(context, false, cb)
+        }
+        if (gatt == null) return JSONObject().put("ok", false).put("error", "ble_connect_start_failed")
+        val completed = done.await(timeoutMs, TimeUnit.MILLISECONDS)
+        if (!completed && err == null) {
+            err = "ble_send_timeout"
+        }
+        runCatching { gatt?.disconnect() }
+        runCatching { gatt?.close() }
+        return if (err == null && wroteChunks == chunks.size) {
+            JSONObject()
+                .put("ok", true)
+                .put("transport", "ble")
+                .put("peer_address", address)
+                .put("chunks", chunks.size)
+                .put("bytes", payload.size)
+        } else {
+            JSONObject()
+                .put("ok", false)
+                .put("transport", "ble")
+                .put("peer_address", address)
+                .put("error", err ?: "ble_send_failed")
+                .put("chunks_sent", wroteChunks)
+        }
+    }
+
+    private fun startBleDataServer() {
+        if (Build.VERSION.SDK_INT >= 31 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+        ) return
+        if (gattServer != null) return
+        val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager ?: return
+        val adapter = manager.adapter ?: return
+        if (!adapter.isEnabled) return
+
+        val callback = object : BluetoothGattServerCallback() {
+            override fun onCharacteristicWriteRequest(
+                device: BluetoothDevice,
+                requestId: Int,
+                characteristic: BluetoothGattCharacteristic,
+                preparedWrite: Boolean,
+                responseNeeded: Boolean,
+                offset: Int,
+                value: ByteArray
+            ) {
+                val ok = characteristic.uuid == BLE_RX_CHAR_UUID && offset == 0 && !preparedWrite && value.isNotEmpty()
+                if (responseNeeded) {
+                    gattServer?.sendResponse(
+                        device,
+                        requestId,
+                        if (ok) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_INVALID_ATTRIBUTE_LENGTH,
+                        0,
+                        null
+                    )
+                }
+                if (!ok) return
+                ingestBleChunk(device.address ?: "", value)
+            }
+        }
+
+        val server = manager.openGattServer(context, callback) ?: return
+        val service = BluetoothGattService(BLE_GATT_SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
+        val rx = BluetoothGattCharacteristic(
+            BLE_RX_CHAR_UUID,
+            BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE,
+            BluetoothGattCharacteristic.PERMISSION_WRITE
+        )
+        service.addCharacteristic(rx)
+        if (!server.addService(service)) {
+            runCatching { server.close() }
+            logger("me.me BLE gatt addService failed", null)
+            return
+        }
+        gattServer = server
+    }
+
+    private fun stopBleDataServer() {
+        val server = gattServer ?: return
+        runCatching { server.clearServices() }
+        runCatching { server.close() }
+        gattServer = null
+        bleRxBuffers.clear()
+    }
+
+    private fun ingestBleChunk(sourceAddress: String, chunk: ByteArray) {
+        if (chunk.isEmpty()) return
+        val flags = chunk[0].toInt()
+        val isStart = (flags and BLE_FLAG_START) != 0
+        val isEnd = (flags and BLE_FLAG_END) != 0
+        val body = if (chunk.size > 1) chunk.copyOfRange(1, chunk.size) else ByteArray(0)
+        val key = sourceAddress.ifBlank { "unknown" }
+        val buffer = bleRxBuffers.computeIfAbsent(key) { ByteArrayOutputStream() }
+        synchronized(buffer) {
+            if (isStart) buffer.reset()
+            if (body.isNotEmpty()) buffer.write(body)
+            if (buffer.size() > BLE_MAX_REASSEMBLED_BYTES) {
+                buffer.reset()
+                logger("me.me BLE rx dropped oversized payload", null)
+                return
+            }
+            if (isEnd) {
+                val payload = buffer.toByteArray()
+                buffer.reset()
+                if (payload.isNotEmpty()) {
+                    runCatching { onBlePayload(payload, sourceAddress) }
+                        .onFailure { logger("me.me BLE payload callback failed", it) }
+                }
+            }
+        }
+    }
+
+    private fun buildBleChunks(payload: ByteArray): List<ByteArray> {
+        if (payload.isEmpty()) return emptyList()
+        val out = mutableListOf<ByteArray>()
+        var offset = 0
+        while (offset < payload.size) {
+            val rem = payload.size - offset
+            val n = rem.coerceAtMost(BLE_CHUNK_BODY_MAX)
+            val part = payload.copyOfRange(offset, offset + n)
+            val start = offset == 0
+            val end = offset + n >= payload.size
+            var flags = 0
+            if (start) flags = flags or BLE_FLAG_START
+            if (end) flags = flags or BLE_FLAG_END
+            out += byteArrayOf(flags.toByte()) + part
+            offset += n
+        }
+        return out
+    }
+
     private fun bluetoothAdapter(): BluetoothAdapter? {
         val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         return manager?.adapter
     }
 
     private fun buildBleServiceData(config: Config): ByteArray {
-        val raw = "id=${config.deviceId};name=${sanitizeForBle(config.deviceName, 24)};" +
-            "desc=${sanitizeForBle(config.deviceDescription, 20)};icon=${sanitizeForBle(config.deviceIcon, 16)}"
-        return raw.take(120).toByteArray(StandardCharsets.UTF_8)
+        // Keep BLE payload tiny. Legacy ASCII payload frequently exceeds advertisement limits.
+        // v1 binary format: [1-byte version=1][16-byte UUID(deviceId without "mm_")]
+        val uuid = runCatching {
+            UUID.fromString(config.deviceId.removePrefix("mm_"))
+        }.getOrNull()
+        if (uuid != null) {
+            return ByteBuffer.allocate(17)
+                .put(1.toByte())
+                .putLong(uuid.mostSignificantBits)
+                .putLong(uuid.leastSignificantBits)
+                .array()
+        }
+        val fallback = "id=${sanitizeForBle(config.deviceId, 24)}"
+        return fallback.toByteArray(StandardCharsets.UTF_8)
     }
 
     private fun parseBleServiceData(data: ByteArray): Map<String, String> {
+        if (data.size == 17 && data[0] == 1.toByte()) {
+            return runCatching {
+                val buf = ByteBuffer.wrap(data)
+                buf.get() // version
+                val uuid = UUID(buf.long, buf.long)
+                mapOf("id" to "mm_$uuid")
+            }.getOrDefault(emptyMap())
+        }
         val raw = data.toString(StandardCharsets.UTF_8)
         val out = mutableMapOf<String, String>()
         raw.split(';').forEach { segment ->
@@ -446,6 +711,14 @@ class MeMeDiscoveryManager(
     companion object {
         private const val NSD_SERVICE_TYPE = "_me_things._tcp."
         private const val NSD_NAME_PREFIX = "me-things-"
-        private val BLE_SERVICE_UUID: UUID = UUID.fromString("2585d3ed-971b-4bfd-8f13-bda58ac27f6e")
+        // 16-bit based UUID keeps BLE advertisement payload compact enough for legacy 31-byte limit.
+        private val BLE_SERVICE_UUID: UUID = UUID.fromString("0000F0F0-0000-1000-8000-00805F9B34FB")
+        private val BLE_GATT_SERVICE_UUID: UUID = UUID.fromString("0000F0F1-0000-1000-8000-00805F9B34FB")
+        private val BLE_RX_CHAR_UUID: UUID = UUID.fromString("0000F0F2-0000-1000-8000-00805F9B34FB")
+        private const val BLE_FLAG_START = 1
+        private const val BLE_FLAG_END = 2
+        private const val BLE_CHUNK_BODY_MAX = 180
+        private const val BLE_MAX_REASSEMBLED_BYTES = 1_200_000
+        private const val BLE_MTU = 247
     }
 }

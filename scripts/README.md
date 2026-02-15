@@ -34,3 +34,46 @@ Use this if `jniLibs/` got out of sync (e.g. after a clean) and the app fails at
 The script copies:
 - `.../dists/<DIST_NAME>/_python_bundle__<ARCH>/_python_bundle/*` -> `app/android/app/src/main/assets/pyenv/`
 - `.../dists/<DIST_NAME>/libs/<ARCH>/*` -> `app/android/app/src/main/jniLibs/<ARCH>/`
+
+## me_sync_adb_run.sh
+Runs a real me.sync v3 export/import flow between two Android devices over ADB
+without QR scanning.
+
+It performs:
+1. `ticket/create` on exporter
+2. passes `ticket_uri` via host script
+3. `import/apply` on importer
+
+Usage:
+
+```bash
+scripts/me_sync_adb_run.sh \
+  --exporter-serial <serial-a> \
+  --importer-serial <serial-b>
+```
+
+Optional:
+- `--auto-allow` to run best-effort permission auto tap on both devices
+- `--nearby-timeout-ms <ms>`
+- `--nearby-max-bytes <bytes>`
+- `--max-bytes <bytes>`
+- `--allow-fallback true|false`
+- `--wipe-existing true|false`
+
+## me_sync_adb_regression.sh
+Runs a two-case regression test for real me.sync transfer over ADB:
+1. `wifi_on`
+2. `wifi_off`
+
+For each case it executes `me_sync_adb_run.sh`, then saves:
+- `<out-dir>/wifi_on.log`, `<out-dir>/wifi_off.log`
+- `<out-dir>/wifi_on.json`, `<out-dir>/wifi_off.json`
+- `<out-dir>/summary.json`
+
+Usage:
+
+```bash
+scripts/me_sync_adb_regression.sh \
+  --exporter-serial <serial-a> \
+  --importer-serial <serial-b>
+```

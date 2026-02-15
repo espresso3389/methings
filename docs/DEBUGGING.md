@@ -73,6 +73,58 @@ Notes:
 - This changes the *device* UI only. To make changes permanent, also commit them in the repo and later rebuild/install normally.
 - `Reset UI` in the app settings overwrites `files/www` from the APK assets.
 
+## me.sync Real Run Over ADB (No QR Scan)
+
+To run actual me.sync v3 export/import between two devices without scanning QR:
+
+```bash
+scripts/me_sync_adb_run.sh \
+  --exporter-serial <serial-a> \
+  --importer-serial <serial-b>
+```
+
+This script:
+1. creates a v3 ticket on exporter
+2. transfers `ticket_uri` through host
+3. calls importer `/me/sync/v3/import/apply` with that ticket
+
+Useful options:
+
+```bash
+scripts/me_sync_adb_run.sh \
+  --exporter-serial <serial-a> \
+  --importer-serial <serial-b> \
+  --auto-allow \
+  --nearby-timeout-ms 180000 \
+  --allow-fallback true \
+  --wipe-existing true
+```
+
+Notes:
+- If permission approval is pending, the script exits and tells you to approve then re-run.
+- `--auto-allow` uses `scripts/adb_auto_allow.sh` and is best-effort only.
+
+## me.sync Regression Run (Wi-Fi ON/OFF)
+
+To run a repeatable two-case regression test on two connected devices:
+
+```bash
+scripts/me_sync_adb_regression.sh \
+  --exporter-serial <serial-a> \
+  --importer-serial <serial-b>
+```
+
+The script runs:
+1. `wifi_on` case
+2. `wifi_off` case
+
+and writes logs/results under `logs/me_sync_regression_<timestamp>/`:
+- `wifi_on.log`, `wifi_off.log` (raw command output)
+- `wifi_on.json`, `wifi_off.json` (parsed per-case summary)
+- `summary.json` (combined result with `all_passed`)
+
+If any case fails, the script exits non-zero so it can be used in CI-like local checks.
+
 ## Sync user defaults (device <-> repo)
 
 Normal builds do not auto-sync `user/` into APK assets anymore. This prevents surprise git changes.
