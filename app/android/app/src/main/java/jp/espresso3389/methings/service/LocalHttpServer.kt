@@ -142,7 +142,11 @@ class LocalHttpServer(
     private val meMeConnectIntents = ConcurrentHashMap<String, MeMeConnectIntent>()
     private val meMeConnections = ConcurrentHashMap<String, MeMeConnection>()
     private val meMeInboundMessages = ConcurrentHashMap<String, MutableList<JSONObject>>()
+    private val meMeRelayEvents = mutableListOf<JSONObject>()
+    private val meMeRelayEventsLock = Any()
     @Volatile private var meMeLastScanAtMs: Long = 0L
+    @Volatile private var meMeRelayLastRegisterAtMs: Long = 0L
+    @Volatile private var meMeRelayLastNotifyAtMs: Long = 0L
     private val meMeDiscovery = MeMeDiscoveryManager(
         context = context,
         servicePort = ME_ME_LAN_PORT,
@@ -482,6 +486,64 @@ class LocalHttpServer(
                 )
                 if (!ok.first) return ok.second!!
                 handleMeMeMessagesPull(payload)
+            }
+            uri == "/me/me/relay/status" && session.method == Method.GET -> {
+                handleMeMeRelayStatus()
+            }
+            uri == "/me/me/relay/config" && session.method == Method.GET -> {
+                handleMeMeRelayConfigGet()
+            }
+            uri == "/me/me/relay/config" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.relay",
+                    detail = "Update me.me relay server configuration"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeRelayConfigSet(payload)
+            }
+            uri == "/me/me/relay/register" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.relay",
+                    detail = "Register this device push token to me.me relay server"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeRelayRegister(payload)
+            }
+            uri == "/me/me/relay/notify" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.relay",
+                    detail = "Send relay notification to a peer device"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeRelayNotify(payload)
+            }
+            uri == "/me/me/relay/ingest" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleMeMeRelayIngest(payload)
+            }
+            uri == "/me/me/relay/events/pull" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.relay",
+                    detail = "Read relay events received from server push"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeRelayEventsPull(payload)
             }
             uri == "/me/me/data/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -7542,6 +7604,8 @@ class LocalHttpServer(
     private fun handleMeMeStatus(): Response {
         cleanupExpiredMeMeState()
         val cfg = currentMeMeConfig()
+        val relayCfg = currentMeMeRelayConfig()
+        val relayQueueCount = synchronized(meMeRelayEventsLock) { meMeRelayEvents.size }
         val self = JSONObject()
             .put("device_id", cfg.deviceId)
             .put("device_name", cfg.deviceName)
@@ -7572,6 +7636,8 @@ class LocalHttpServer(
                 .put("connections", connections)
                 .put("discovered", runtime.optJSONArray("discovered") ?: org.json.JSONArray())
                 .put("advertising", runtime.optJSONObject("advertising") ?: JSONObject())
+                .put("relay", relayCfg.toJson(includeSecrets = false))
+                .put("relay_event_queue_count", relayQueueCount)
                 .put("last_scan_at", runtime.opt("last_scan_at"))
         )
     }
@@ -7968,6 +8034,177 @@ class LocalHttpServer(
         )
     }
 
+    private fun handleMeMeRelayStatus(): Response {
+        val cfg = currentMeMeRelayConfig()
+        val relayEvents = synchronized(meMeRelayEventsLock) { meMeRelayEvents.size }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("relay", cfg.toJson(includeSecrets = false))
+                .put("event_queue_count", relayEvents)
+                .put("last_register_at", if (meMeRelayLastRegisterAtMs > 0L) meMeRelayLastRegisterAtMs else JSONObject.NULL)
+                .put("last_notify_at", if (meMeRelayLastNotifyAtMs > 0L) meMeRelayLastNotifyAtMs else JSONObject.NULL)
+        )
+    }
+
+    private fun handleMeMeRelayConfigGet(): Response {
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false))
+        )
+    }
+
+    private fun handleMeMeRelayConfigSet(payload: JSONObject): Response {
+        val prev = currentMeMeRelayConfig()
+        val next = MeMeRelayConfig(
+            enabled = if (payload.has("enabled")) payload.optBoolean("enabled", prev.enabled) else prev.enabled,
+            gatewayBaseUrl = normalizeMeMeRelayBaseUrl(payload.optString("gateway_base_url", prev.gatewayBaseUrl)),
+            provider = payload.optString("provider", prev.provider).trim().ifBlank { prev.provider },
+            routeTokenTtlSec = payload.optInt("route_token_ttl_sec", prev.routeTokenTtlSec).coerceIn(30, 86_400),
+            devicePushToken = payload.optString("device_push_token", prev.devicePushToken).trim(),
+            gatewayAdminSecret = prev.gatewayAdminSecret
+        )
+        val adminSecretOverride = if (payload.has("gateway_admin_secret")) payload.optString("gateway_admin_secret", "").trim() else null
+        val clearAdminSecret = payload.optBoolean("clear_gateway_admin_secret", false)
+        saveMeMeRelayConfig(next, adminSecretOverride = adminSecretOverride, clearAdminSecret = clearAdminSecret)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false))
+        )
+    }
+
+    private fun handleMeMeRelayRegister(payload: JSONObject): Response {
+        val cfg = currentMeMeRelayConfig()
+        val pushToken = payload.optString("device_push_token", cfg.devicePushToken).trim()
+        if (pushToken.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "device_push_token_required")
+        val body = JSONObject()
+            .put("device_id", currentMeMeConfig().deviceId)
+            .put("fcm_token", pushToken)
+            .put("platform", "android")
+        val result = postMeMeRelayJson(
+            baseUrl = cfg.gatewayBaseUrl,
+            path = "/devices/register",
+            payload = body
+        )
+        if (!result.optBoolean("ok", false)) {
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "relay_register_failed", result)
+        }
+        val saved = cfg.copy(devicePushToken = pushToken)
+        saveMeMeRelayConfig(saved, adminSecretOverride = null, clearAdminSecret = false)
+        meMeRelayLastRegisterAtMs = System.currentTimeMillis()
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("registered", true)
+                .put("relay_result", result)
+                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false))
+        )
+    }
+
+    private fun handleMeMeRelayNotify(payload: JSONObject): Response {
+        val cfg = currentMeMeRelayConfig()
+        if (!cfg.enabled) return jsonError(Response.Status.FORBIDDEN, "relay_disabled")
+        val adminSecret = cfg.gatewayAdminSecret
+        if (adminSecret.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "gateway_admin_secret_missing")
+        val targetDeviceId = payload.optString("target_device_id", "").trim()
+        if (targetDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "target_device_id_required")
+        val source = payload.optString("source", "me_me").trim().ifBlank { "me_me" }
+        val provider = payload.optString("provider", cfg.provider).trim().ifBlank { cfg.provider }
+        val ttlSec = payload.optInt("route_token_ttl_sec", cfg.routeTokenTtlSec).coerceIn(30, 86_400)
+        val issueBody = JSONObject()
+            .put("device_id", targetDeviceId)
+            .put("source", source)
+            .put("ttl_sec", ttlSec)
+        val issue = postMeMeRelayJson(
+            baseUrl = cfg.gatewayBaseUrl,
+            path = "/route_token/issue",
+            payload = issueBody,
+            headers = mapOf("X-Admin-Secret" to adminSecret)
+        )
+        if (!issue.optBoolean("ok", false)) {
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "relay_route_token_issue_failed", issue)
+        }
+        val routeToken = issue.optJSONObject("body")?.optString("route_token", "")?.trim().orEmpty()
+        if (routeToken.isBlank()) {
+            return jsonError(Response.Status.INTERNAL_ERROR, "relay_route_token_missing", issue)
+        }
+        val body = JSONObject()
+            .put("event", payload.optString("event", "me_me_notify").trim().ifBlank { "me_me_notify" })
+            .put("from_device_id", currentMeMeConfig().deviceId)
+            .put("to_device_id", targetDeviceId)
+            .put("sent_at", System.currentTimeMillis())
+        if (payload.has("payload")) body.put("payload", payload.opt("payload"))
+        if (payload.has("meta")) body.put("meta", payload.opt("meta"))
+        val webhook = postMeMeRelayJson(
+            baseUrl = cfg.gatewayBaseUrl,
+            path = "/webhook/$routeToken?provider=${URLEncoder.encode(provider, StandardCharsets.UTF_8.name())}",
+            payload = body
+        )
+        if (!webhook.optBoolean("ok", false)) {
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "relay_notify_failed", JSONObject().put("issue", issue).put("webhook", webhook))
+        }
+        meMeRelayLastNotifyAtMs = System.currentTimeMillis()
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("target_device_id", targetDeviceId)
+                .put("provider", provider)
+                .put("route_token_issued", true)
+                .put("issue_result", issue)
+                .put("webhook_result", webhook)
+        )
+    }
+
+    private fun handleMeMeRelayIngest(payload: JSONObject): Response {
+        val event = JSONObject()
+            .put("received_at", System.currentTimeMillis())
+            .put("source", payload.optString("source", "relay").trim().ifBlank { "relay" })
+            .put("event_id", payload.optString("event_id", "").trim())
+            .put("payload", payload)
+        synchronized(meMeRelayEventsLock) {
+            meMeRelayEvents.add(event)
+            while (meMeRelayEvents.size > 500) meMeRelayEvents.removeAt(0)
+        }
+
+        var meMeIngested = false
+        val directEncrypted = payload.optJSONObject("payload") ?: payload
+        if (
+            directEncrypted.has("session_id") &&
+            directEncrypted.has("from_device_id") &&
+            directEncrypted.has("iv_b64") &&
+            directEncrypted.has("ciphertext_b64")
+        ) {
+            val resp = handleMeMeDataIngest(directEncrypted, sourceIp = "relay")
+            meMeIngested = resp.status == Response.Status.OK
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("stored", true)
+                .put("me_me_data_ingested", meMeIngested)
+        )
+    }
+
+    private fun handleMeMeRelayEventsPull(payload: JSONObject): Response {
+        val limit = payload.optInt("limit", 50).coerceIn(1, 500)
+        val consume = payload.optBoolean("consume", true)
+        val items = synchronized(meMeRelayEventsLock) {
+            val take = meMeRelayEvents.takeLast(limit)
+            if (consume && take.isNotEmpty()) {
+                repeat(take.size) { meMeRelayEvents.removeAt(0) }
+            }
+            take
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("items", JSONArray(items))
+                .put("count", items.size)
+        )
+    }
+
     private fun handleMeMeDataIngest(payload: JSONObject, sourceIp: String): Response {
         val sessionId = payload.optString("session_id", "").trim()
         val fromDeviceId = payload.optString("from_device_id", "").trim()
@@ -8109,6 +8346,40 @@ class LocalHttpServer(
         }
     }
 
+    private fun postMeMeRelayJson(
+        baseUrl: String,
+        path: String,
+        payload: JSONObject,
+        headers: Map<String, String> = emptyMap()
+    ): JSONObject {
+        return try {
+            val normalizedBase = normalizeMeMeRelayBaseUrl(baseUrl)
+            val normalizedPath = if (path.startsWith("/")) path else "/$path"
+            val url = URI("$normalizedBase$normalizedPath").toURL()
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 6000
+                readTimeout = 10000
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Connection", "close")
+                headers.forEach { (k, v) -> if (v.isNotBlank()) setRequestProperty(k, v) }
+            }
+            conn.outputStream.use { it.write(payload.toString().toByteArray(StandardCharsets.UTF_8)) }
+            val code = conn.responseCode
+            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)?.use {
+                it.readBytes().toString(StandardCharsets.UTF_8)
+            } ?: ""
+            val parsed = runCatching { JSONObject(body) }.getOrNull() ?: JSONObject()
+            JSONObject()
+                .put("ok", code in 200..299)
+                .put("http_status", code)
+                .put("body", parsed)
+        } catch (ex: Exception) {
+            JSONObject().put("ok", false).put("error", ex.message ?: "request_failed")
+        }
+    }
+
     private fun handleMeMeBlePayload(raw: ByteArray, sourceAddress: String) {
         val obj = runCatching {
             JSONObject(String(raw, StandardCharsets.UTF_8))
@@ -8141,6 +8412,49 @@ class LocalHttpServer(
             allowDiscovery = cfg.allowDiscovery,
             connectionMethods = cfg.connectionMethods
         )
+    }
+
+    private fun currentMeMeRelayConfig(): MeMeRelayConfig {
+        val adminSecret = runCatching {
+            credentialStore.get(ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL)?.value.orEmpty()
+        }.getOrDefault("")
+        return MeMeRelayConfig(
+            enabled = meMePrefs.getBoolean("relay_enabled", false),
+            gatewayBaseUrl = normalizeMeMeRelayBaseUrl(meMePrefs.getString("relay_gateway_base_url", DEFAULT_ME_ME_RELAY_BASE_URL) ?: DEFAULT_ME_ME_RELAY_BASE_URL),
+            provider = (meMePrefs.getString("relay_provider", "me_me") ?: "me_me").trim().ifBlank { "me_me" },
+            routeTokenTtlSec = meMePrefs.getInt("relay_route_token_ttl_sec", 300).coerceIn(30, 86_400),
+            devicePushToken = (meMePrefs.getString("relay_device_push_token", "") ?: "").trim(),
+            gatewayAdminSecret = adminSecret
+        )
+    }
+
+    private fun saveMeMeRelayConfig(
+        cfg: MeMeRelayConfig,
+        adminSecretOverride: String?,
+        clearAdminSecret: Boolean
+    ) {
+        meMePrefs.edit()
+            .putBoolean("relay_enabled", cfg.enabled)
+            .putString("relay_gateway_base_url", normalizeMeMeRelayBaseUrl(cfg.gatewayBaseUrl))
+            .putString("relay_provider", cfg.provider.trim().ifBlank { "me_me" })
+            .putInt("relay_route_token_ttl_sec", cfg.routeTokenTtlSec.coerceIn(30, 86_400))
+            .putString("relay_device_push_token", cfg.devicePushToken.trim())
+            .apply()
+        if (clearAdminSecret) {
+            runCatching { credentialStore.delete(ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL) }
+        } else if (adminSecretOverride != null) {
+            val secret = adminSecretOverride.trim()
+            if (secret.isBlank()) {
+                runCatching { credentialStore.delete(ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL) }
+            } else {
+                runCatching { credentialStore.set(ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL, secret) }
+            }
+        }
+    }
+
+    private fun normalizeMeMeRelayBaseUrl(raw: String): String {
+        val trimmed = raw.trim().ifBlank { DEFAULT_ME_ME_RELAY_BASE_URL }.trimEnd('/')
+        return if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) trimmed else "https://$trimmed"
     }
 
     private fun currentMeMeConfig(): MeMeConfig {
@@ -10084,6 +10398,29 @@ class LocalHttpServer(
         }
     }
 
+    private data class MeMeRelayConfig(
+        val enabled: Boolean,
+        val gatewayBaseUrl: String,
+        val provider: String,
+        val routeTokenTtlSec: Int,
+        val devicePushToken: String,
+        val gatewayAdminSecret: String
+    ) {
+        fun toJson(includeSecrets: Boolean): JSONObject {
+            val out = JSONObject()
+                .put("enabled", enabled)
+                .put("gateway_base_url", gatewayBaseUrl)
+                .put("provider", provider)
+                .put("route_token_ttl_sec", routeTokenTtlSec)
+                .put("device_push_token", devicePushToken)
+                .put("gateway_admin_secret_configured", gatewayAdminSecret.isNotBlank())
+            if (includeSecrets) {
+                out.put("gateway_admin_secret", gatewayAdminSecret)
+            }
+            return out
+        }
+    }
+
     private data class MeMeConnectIntent(
         val id: String,
         val sourceDeviceId: String,
@@ -10378,6 +10715,8 @@ class LocalHttpServer(
         private const val ME_SYNC_V3_TICKET_TTL_MS = 5L * 60L * 1000L
         private const val NEARBY_ME_SYNC_SERVICE_ID = "jp.espresso3389.methings.me_sync.v3"
         private const val ME_ME_PREFS = "me_me_prefs"
+        private const val DEFAULT_ME_ME_RELAY_BASE_URL = "https://hooks.methings.org"
+        private const val ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL = "me_me.relay.gateway_admin_secret"
         private const val HOUSEKEEPING_INITIAL_DELAY_SEC = 120L
         private const val HOUSEKEEPING_INTERVAL_SEC = 60L * 60L
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
