@@ -136,6 +136,8 @@ class LocalHttpServer(
     private val workJobManager = WorkJobManager(context)
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
+    private val meSyncImportProgressLock = Any()
+    @Volatile private var meSyncImportProgress = MeSyncImportProgress()
     private val meMePrefs = context.getSharedPreferences(ME_ME_PREFS, Context.MODE_PRIVATE)
     private val meMeConnectIntents = ConcurrentHashMap<String, MeMeConnectIntent>()
     private val meMeConnections = ConcurrentHashMap<String, MeMeConnection>()
@@ -375,6 +377,9 @@ class LocalHttpServer(
             }
             uri == "/me/sync/status" && session.method == Method.GET -> {
                 handleMeSyncStatus()
+            }
+            uri == "/me/sync/progress" && session.method == Method.GET -> {
+                handleMeSyncProgress()
             }
             uri == "/me/me/status" && session.method == Method.GET -> {
                 handleMeMeStatus()
@@ -7483,6 +7488,47 @@ class LocalHttpServer(
         return jsonResponse(JSONObject().put("status", "ok").put("items", arr))
     }
 
+    private fun handleMeSyncProgress(): Response {
+        val now = System.currentTimeMillis()
+        val progress = synchronized(meSyncImportProgressLock) { meSyncImportProgress }
+        val sticky = progress.state == "running" || (progress.state != "idle" && (now - progress.updatedAt) <= ME_SYNC_PROGRESS_STICKY_MS)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("active", sticky)
+                .put("import", progress.toJson(now, sticky))
+        )
+    }
+
+    private fun updateMeSyncImportProgress(
+        state: String,
+        phase: String,
+        message: String,
+        source: String = "",
+        bytesDownloaded: Long? = null,
+        detail: String? = null
+    ) {
+        synchronized(meSyncImportProgressLock) {
+            val now = System.currentTimeMillis()
+            val prev = meSyncImportProgress
+            val startedAt = when {
+                state == "running" && prev.startedAt <= 0L -> now
+                state == "running" && prev.state != "running" -> now
+                else -> prev.startedAt
+            }
+            meSyncImportProgress = MeSyncImportProgress(
+                state = state,
+                phase = phase,
+                message = message,
+                source = source.ifBlank { prev.source },
+                startedAt = startedAt,
+                updatedAt = now,
+                bytesDownloaded = bytesDownloaded ?: prev.bytesDownloaded,
+                detail = detail ?: prev.detail
+            )
+        }
+    }
+
     private fun handleMeMeStatus(): Response {
         cleanupExpiredMeMeState()
         val cfg = currentMeMeConfig()
@@ -8386,6 +8432,12 @@ class LocalHttpServer(
             tmpRoot.mkdirs()
             val inFile = File(tmpRoot, "import_nearby_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}.zip")
             try {
+                updateMeSyncImportProgress(
+                    state = "running",
+                    phase = "nearby_receiving",
+                    message = "Receiving data from nearby device...",
+                    source = "nearby_v3"
+                )
                 val recv = meSyncNearbyTransport.receiveToFile(
                     ticketId = parsed.ticketId,
                     transferId = parsed.transferId,
@@ -8393,6 +8445,13 @@ class LocalHttpServer(
                     destFile = inFile,
                     timeoutMs = timeoutMs,
                     maxBytes = maxBytes
+                )
+                updateMeSyncImportProgress(
+                    state = "running",
+                    phase = "applying",
+                    message = "Applying imported data...",
+                    source = "nearby_v3",
+                    bytesDownloaded = recv.bytesReceived
                 )
                 val result = importMeSyncPackage(inFile, wipeExisting = wipeExisting)
                 result.put("transport", "nearby_stream")
@@ -8403,9 +8462,23 @@ class LocalHttpServer(
                         .put("endpoint_id", recv.endpointId)
                         .put("bytes_received", recv.bytesReceived)
                 )
+                updateMeSyncImportProgress(
+                    state = "completed",
+                    phase = "completed",
+                    message = "Import completed.",
+                    source = "nearby_v3",
+                    bytesDownloaded = recv.bytesReceived
+                )
                 return jsonResponse(result)
             } catch (ex: Exception) {
                 Log.w(TAG, "me.sync v3 nearby import failed, fallback=${allowFallback}", ex)
+                updateMeSyncImportProgress(
+                    state = "failed",
+                    phase = "nearby_failed",
+                    message = "Nearby import failed.",
+                    source = "nearby_v3",
+                    detail = ex.message ?: ""
+                )
                 runCatching { inFile.delete() }
                 if (!allowFallback) {
                     return jsonError(
@@ -8519,6 +8592,13 @@ class LocalHttpServer(
             val rawUrl = payload.optString("url", "").trim()
                 .ifBlank { payload.optString("download_url", "").trim() }
             val wipeExisting = payload.optBoolean("wipe_existing", true)
+            val sourceHint = if (rawPayload.startsWith(ME_SYNC_V3_URI_PREFIX, ignoreCase = true)) "nearby_v3_fallback" else "direct"
+            updateMeSyncImportProgress(
+                state = "running",
+                phase = "preparing",
+                message = "Preparing import...",
+                source = sourceHint
+            )
             val source = parseMeSyncImportSource(rawPayload, rawUrl)
             if (!source.hasAnySource()) {
                 return jsonError(Response.Status.BAD_REQUEST, "url_or_payload_required")
@@ -8531,7 +8611,20 @@ class LocalHttpServer(
             var downloadError: Exception? = null
             if (source.hasSshSource()) {
                 try {
+                    updateMeSyncImportProgress(
+                        state = "running",
+                        phase = "downloading",
+                        message = "Downloading package (scp)...",
+                        source = sourceHint
+                    )
                     downloadMeSyncPackageViaScp(source, inFile, maxBytes)
+                    updateMeSyncImportProgress(
+                        state = "running",
+                        phase = "downloading",
+                        message = "Package downloaded.",
+                        source = sourceHint,
+                        bytesDownloaded = inFile.length()
+                    )
                 } catch (ex: Exception) {
                     downloadError = ex
                     runCatching { inFile.delete() }
@@ -8542,12 +8635,46 @@ class LocalHttpServer(
                 if (httpUrl.isBlank()) {
                     throw downloadError ?: IllegalStateException("no_download_source")
                 }
-                downloadMeSyncPackage(httpUrl, inFile, maxBytes = maxBytes)
+                updateMeSyncImportProgress(
+                    state = "running",
+                    phase = "downloading",
+                    message = "Downloading package...",
+                    source = sourceHint
+                )
+                downloadMeSyncPackage(httpUrl, inFile, maxBytes = maxBytes) { total ->
+                    updateMeSyncImportProgress(
+                        state = "running",
+                        phase = "downloading",
+                        message = "Downloading package...",
+                        source = sourceHint,
+                        bytesDownloaded = total
+                    )
+                }
             }
+            updateMeSyncImportProgress(
+                state = "running",
+                phase = "applying",
+                message = "Applying imported data...",
+                source = sourceHint,
+                bytesDownloaded = inFile.length()
+            )
             val result = importMeSyncPackage(inFile, wipeExisting = wipeExisting)
+            updateMeSyncImportProgress(
+                state = "completed",
+                phase = "completed",
+                message = "Import completed.",
+                source = sourceHint,
+                bytesDownloaded = inFile.length()
+            )
             jsonResponse(result)
         } catch (ex: Exception) {
             Log.e(TAG, "me.sync import failed", ex)
+            updateMeSyncImportProgress(
+                state = "failed",
+                phase = "failed",
+                message = "Import failed.",
+                detail = ex.message ?: ""
+            )
             jsonError(Response.Status.INTERNAL_ERROR, "me_sync_import_failed", JSONObject().put("detail", ex.message ?: ""))
         }
     }
@@ -9219,7 +9346,7 @@ class LocalHttpServer(
         }
     }
 
-    private fun downloadMeSyncPackage(url: String, destFile: File, maxBytes: Long) {
+    private fun downloadMeSyncPackage(url: String, destFile: File, maxBytes: Long, onProgress: ((Long) -> Unit)? = null) {
         val conn = URI(url).toURL().openConnection() as HttpURLConnection
         conn.connectTimeout = 12_000
         conn.readTimeout = 30_000
@@ -9232,12 +9359,17 @@ class LocalHttpServer(
         }
         conn.inputStream.use { inp ->
             FileOutputStream(destFile).use { out ->
-                copyStreamWithLimit(inp, out, maxBytes)
+                copyStreamWithLimit(inp, out, maxBytes, onProgress)
             }
         }
     }
 
-    private fun copyStreamWithLimit(input: InputStream, output: OutputStream, maxBytes: Long) {
+    private fun copyStreamWithLimit(
+        input: InputStream,
+        output: OutputStream,
+        maxBytes: Long,
+        onProgress: ((Long) -> Unit)? = null
+    ) {
         val buf = ByteArray(8192)
         var total = 0L
         while (true) {
@@ -9246,6 +9378,7 @@ class LocalHttpServer(
             total += n.toLong()
             if (total > maxBytes) throw IllegalStateException("package_too_large")
             output.write(buf, 0, n)
+            onProgress?.invoke(total)
         }
     }
 
@@ -9672,6 +9805,32 @@ class LocalHttpServer(
         @Volatile var claimedOnce: Boolean = false
     )
 
+    private data class MeSyncImportProgress(
+        val state: String = "idle",
+        val phase: String = "",
+        val message: String = "",
+        val source: String = "",
+        val startedAt: Long = 0L,
+        val updatedAt: Long = 0L,
+        val bytesDownloaded: Long = 0L,
+        val detail: String = ""
+    ) {
+        fun toJson(now: Long, active: Boolean): JSONObject {
+            val elapsedMs = if (startedAt > 0L) (now - startedAt).coerceAtLeast(0L) else 0L
+            return JSONObject()
+                .put("active", active)
+                .put("state", state)
+                .put("phase", phase)
+                .put("message", message)
+                .put("source", source)
+                .put("started_at", if (startedAt > 0L) startedAt else JSONObject.NULL)
+                .put("updated_at", if (updatedAt > 0L) updatedAt else JSONObject.NULL)
+                .put("elapsed_ms", elapsedMs)
+                .put("bytes_downloaded", bytesDownloaded.coerceAtLeast(0L))
+                .put("detail", if (detail.isNotBlank()) detail else JSONObject.NULL)
+        }
+    }
+
     private data class MeMeConfig(
         val deviceId: String,
         val deviceName: String,
@@ -9996,6 +10155,7 @@ class LocalHttpServer(
         private const val ME_SYNC_QR_TTL_MS = 40L * 1000L
         private const val ME_SYNC_V3_TRANSFER_TTL_MS = 20L * 60L * 1000L
         private const val ME_SYNC_V3_MIN_TRANSFER_REMAINING_MS = 3L * 60L * 1000L
+        private const val ME_SYNC_PROGRESS_STICKY_MS = 20L * 1000L
         private const val ME_SYNC_IMPORT_MAX_BYTES_MIN = 64L * 1024L * 1024L
         private const val ME_SYNC_IMPORT_MAX_BYTES_DEFAULT = 2L * 1024L * 1024L * 1024L
         private const val ME_SYNC_IMPORT_MAX_BYTES_LIMIT = 8L * 1024L * 1024L * 1024L
