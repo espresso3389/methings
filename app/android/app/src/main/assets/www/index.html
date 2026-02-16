@@ -1353,9 +1353,9 @@
       /* Toast */
       .toast {
         position: fixed;
-        bottom: 70px;
+        top: 48px;
         left: 50%;
-        transform: translateX(-50%) translateY(10px);
+        transform: translateX(-50%) translateY(-10px);
         background: var(--ink);
         color: var(--bg);
         padding: 10px 20px;
@@ -2568,7 +2568,7 @@
         const t = $("toast");
         t.textContent = msg;
         t.classList.add("show");
-        setTimeout(() => t.classList.remove("show"), ms || 2000);
+        setTimeout(() => t.classList.remove("show"), Math.max(ms || 3000, 2000));
       }
 
       // ==============================

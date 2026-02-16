@@ -1143,6 +1143,7 @@ class BrainRuntime:
             "latest_user_request",
             "ssh_target",
             "active_ssh_target",
+            "recent_events",
             "last_tool",
             "last_tool_status",
             "last_tool_error",
@@ -1154,6 +1155,29 @@ class BrainRuntime:
             if isinstance(v, str) and v.strip():
                 out[k] = v
         return out
+
+    def _append_recent_event_note(
+        self,
+        session_id: str,
+        *,
+        name: str,
+        summary: str,
+        priority: str,
+        source: str,
+        max_items: int = 12,
+    ) -> None:
+        sid = str(session_id or "").strip() or "default"
+        notes = dict(self._session_notes.get(sid) or {})
+        prev_raw = str(notes.get("recent_events") or "").strip()
+        lines = [ln.strip() for ln in prev_raw.split("\n") if ln.strip()]
+        ts = int(time.time() * 1000)
+        item = f"{ts}|{priority}|{name}|{source}|{summary}"
+        lines.append(item)
+        if len(lines) > max_items:
+            lines = lines[-max_items:]
+        notes["recent_events"] = "\n".join(lines)
+        notes["updated_at_ms"] = str(ts)
+        self._session_notes[sid] = notes
 
     def _process_item(self, item: Dict) -> None:
         self._check_interrupt()
@@ -1253,19 +1277,34 @@ class BrainRuntime:
             summary = str(payload.get("summary") or payload.get("message") or "").strip()
             if not summary:
                 summary = f"Event received: {name}"
-            self._record_message(
-                "assistant",
-                summary,
-                {
-                    "item_id": item.get("id"),
-                    "session_id": sid,
-                    "actor": "system",
-                    "tag": "event_alert",
-                    "event_name": name,
-                    "event_priority": priority,
-                    "event_source": str(payload.get("source") or "").strip(),
-                },
-            )
+            source = str(payload.get("source") or "").strip()
+            ui_visible = bool(payload.get("ui_visible", True))
+            if ui_visible:
+                self._record_message(
+                    "assistant",
+                    summary,
+                    {
+                        "item_id": item.get("id"),
+                        "session_id": sid,
+                        "actor": "system",
+                        "tag": "event_alert",
+                        "event_name": name,
+                        "event_priority": priority,
+                        "event_source": source,
+                    },
+                )
+            else:
+                self._append_recent_event_note(
+                    sid,
+                    name=name,
+                    summary=summary,
+                    priority=priority,
+                    source=source,
+                )
+                self._emit_log(
+                    "brain_event_hidden",
+                    {"id": item.get("id"), "name": name, "session_id": sid, "priority": priority},
+                )
             # Optional escalation: enqueue a system chat request so the agent reasons on this event.
             if bool(payload.get("run_agent")):
                 prompt = str(payload.get("prompt") or "").strip()

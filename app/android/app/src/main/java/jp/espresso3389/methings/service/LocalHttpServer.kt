@@ -7628,6 +7628,7 @@ class LocalHttpServer(
                     payload = JSONObject()
                         .put("session_id", "default")
                         .put("source", source)
+                        .put("ui_visible", false)
                         .put("device_id", did)
                         .put("device_name", peerName)
                         .put("summary", "Nearby device discovered: $did"),
@@ -7647,6 +7648,7 @@ class LocalHttpServer(
                     payload = JSONObject()
                         .put("session_id", "default")
                         .put("source", source)
+                        .put("ui_visible", false)
                         .put("device_id", did)
                         .put("device_name", prev.deviceName)
                         .put("summary", "Nearby device discovered: $did"),
@@ -7670,6 +7672,7 @@ class LocalHttpServer(
                     payload = JSONObject()
                         .put("session_id", "default")
                         .put("source", source)
+                        .put("ui_visible", false)
                         .put("device_id", did)
                         .put("device_name", state.deviceName)
                         .put("summary", "Nearby device unavailable: $did"),
