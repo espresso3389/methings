@@ -3,16 +3,51 @@ import os
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
 class CloudRequestTool:
     """
     Thin Python wrapper around Kotlin's /cloud/request endpoint.
 
-    The model crafts the request template; Kotlin expands placeholders and injects secrets
-    server-side (vault/config/file expansion) and enforces permission prompts.
+    Supports two input styles:
+    - Raw request passthrough (existing behavior):
+      {request:{url, method, headers, json/body/...}}
+    - Provider adapter mode:
+      {
+        adapter:{provider, task, model, text/messages/image_path(s)/audio_path,...}
+      }
+
+    The model can use adapter mode to avoid per-provider wire-format differences.
+    Kotlin still enforces permission gating and placeholder expansion server-side.
     """
+
+    _PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
+        "openai": {
+            "credential": "openai_api_key",
+            "chat_url": "https://api.openai.com/v1/chat/completions",
+            "responses_url": "https://api.openai.com/v1/responses",
+        },
+        "deepseek": {
+            "credential": "deepseek_api_key",
+            "chat_url": "https://api.deepseek.com/v1/chat/completions",
+            "responses_url": "https://api.deepseek.com/v1/responses",
+        },
+        "kimi": {
+            "credential": "kimi_api_key",
+            "chat_url": "https://api.moonshot.cn/v1/chat/completions",
+            "responses_url": "https://api.moonshot.cn/v1/responses",
+        },
+        "gemini": {
+            "credential": "gemini_api_key",
+            "chat_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            "responses_url": "https://generativelanguage.googleapis.com/v1beta/openai/responses",
+        },
+        "anthropic": {
+            "credential": "anthropic_api_key",
+            "messages_url": "https://api.anthropic.com/v1/messages",
+        },
+    }
 
     def __init__(self, base_url: str = "http://127.0.0.1:33389"):
         self.base_url = base_url.rstrip("/")
@@ -29,8 +64,6 @@ class CloudRequestTool:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         if self._identity:
-            # Back-compat: accept either header name server-side; send both client-side.
-            headers["X-Methings-Identity"] = self._identity
             headers["X-Methings-Identity"] = self._identity
         req = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
@@ -51,13 +84,248 @@ class CloudRequestTool:
         except Exception as e:
             return {"status": "error", "error": "request_failed", "detail": str(e)}
 
+    @staticmethod
+    def _image_media_type(path: str) -> str:
+        p = str(path or "").lower()
+        if p.endswith(".png"):
+            return "image/png"
+        if p.endswith(".webp"):
+            return "image/webp"
+        if p.endswith(".gif"):
+            return "image/gif"
+        return "image/jpeg"
+
+    @staticmethod
+    def _audio_format(path: str, explicit_fmt: str = "") -> str:
+        fmt = str(explicit_fmt or "").strip().lower()
+        if fmt:
+            return fmt
+        p = str(path or "").lower()
+        if p.endswith(".mp3"):
+            return "mp3"
+        if p.endswith(".m4a"):
+            return "m4a"
+        if p.endswith(".ogg"):
+            return "ogg"
+        if p.endswith(".flac"):
+            return "flac"
+        return "wav"
+
+    @staticmethod
+    def _ensure_messages(adapter: Dict[str, Any], default_text: str) -> List[Dict[str, Any]]:
+        msgs = adapter.get("messages")
+        if isinstance(msgs, list) and msgs:
+            out: List[Dict[str, Any]] = []
+            for m in msgs:
+                if not isinstance(m, dict):
+                    continue
+                role = str(m.get("role") or "user").strip() or "user"
+                content = m.get("content")
+                if isinstance(content, str):
+                    out.append({"role": role, "content": content})
+                elif isinstance(content, list):
+                    out.append({"role": role, "content": content})
+            if out:
+                return out
+        text = default_text if isinstance(default_text, str) else ""
+        return [{"role": "user", "content": text or "Hello"}]
+
+    def _build_adapter_request(self, adapter: Dict[str, Any]) -> Dict[str, Any]:
+        provider = str(adapter.get("provider") or "").strip().lower()
+        task = str(adapter.get("task") or "chat").strip().lower() or "chat"
+        model = str(adapter.get("model") or "").strip()
+        if provider not in self._PROVIDER_DEFAULTS:
+            return {"status": "error", "error": "unsupported_provider", "provider": provider}
+
+        defaults = self._PROVIDER_DEFAULTS[provider]
+        credential = str(adapter.get("api_key_credential") or defaults.get("credential") or "").strip()
+        if not credential:
+            return {"status": "error", "error": "missing_api_key_credential", "provider": provider}
+
+        temp = adapter.get("temperature")
+        max_tokens = adapter.get("max_tokens")
+        timeout_s = adapter.get("timeout_s")
+        allow_insecure = bool(adapter.get("allow_insecure_http", False))
+
+        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        if provider == "anthropic":
+            headers["x-api-key"] = "${vault:%s}" % credential
+            headers["anthropic-version"] = str(adapter.get("anthropic_version") or "2023-06-01")
+        else:
+            headers["Authorization"] = "Bearer ${vault:%s}" % credential
+
+        if task in {"chat", "vision"}:
+            if provider == "anthropic":
+                url = str(adapter.get("base_url") or defaults.get("messages_url") or "").strip()
+                if not url:
+                    return {"status": "error", "error": "missing_base_url", "provider": provider, "task": task}
+                text = str(adapter.get("text") or "").strip()
+                messages = self._ensure_messages(adapter, text)
+                if task == "vision":
+                    image_paths: List[str] = []
+                    one = str(adapter.get("image_path") or "").strip()
+                    if one:
+                        image_paths.append(one)
+                    many = adapter.get("image_paths")
+                    if isinstance(many, list):
+                        image_paths.extend([str(x).strip() for x in many if str(x).strip()])
+                    if image_paths:
+                        blocks: List[Dict[str, Any]] = []
+                        if text:
+                            blocks.append({"type": "text", "text": text})
+                        for p in image_paths[:8]:
+                            blocks.append(
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": self._image_media_type(p),
+                                        "data": "${file:%s:base64}" % p,
+                                    },
+                                }
+                            )
+                        messages = [{"role": "user", "content": blocks}]
+                body: Dict[str, Any] = {
+                    "model": model,
+                    "messages": messages,
+                    "max_tokens": int(max_tokens) if isinstance(max_tokens, (int, float, str)) and str(max_tokens).strip() else 1024,
+                }
+                if isinstance(temp, (int, float)):
+                    body["temperature"] = float(temp)
+                return {
+                    "status": "ok",
+                    "request": {
+                        "method": "POST",
+                        "url": url,
+                        "headers": headers,
+                        "json": body,
+                        "timeout_s": float(timeout_s) if isinstance(timeout_s, (int, float, str)) and str(timeout_s).strip() else 45.0,
+                        "allow_insecure_http": allow_insecure,
+                    },
+                }
+
+            # OpenAI-compatible providers (OpenAI/DeepSeek/Kimi/Gemini OpenAI-compat)
+            url = str(adapter.get("base_url") or defaults.get("chat_url") or "").strip()
+            if not url:
+                return {"status": "error", "error": "missing_base_url", "provider": provider, "task": task}
+            text = str(adapter.get("text") or "").strip()
+            messages = self._ensure_messages(adapter, text)
+            if task == "vision":
+                image_paths: List[str] = []
+                one = str(adapter.get("image_path") or "").strip()
+                if one:
+                    image_paths.append(one)
+                many = adapter.get("image_paths")
+                if isinstance(many, list):
+                    image_paths.extend([str(x).strip() for x in many if str(x).strip()])
+                if image_paths:
+                    content: List[Dict[str, Any]] = []
+                    if text:
+                        content.append({"type": "text", "text": text})
+                    for p in image_paths[:8]:
+                        content.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": "data:%s;base64,${file:%s:base64}" % (self._image_media_type(p), p)
+                                },
+                            }
+                        )
+                    messages = [{"role": "user", "content": content}]
+            body = {
+                "model": model,
+                "messages": messages,
+            }
+            if isinstance(temp, (int, float)):
+                body["temperature"] = float(temp)
+            if isinstance(max_tokens, (int, float)):
+                body["max_tokens"] = int(max_tokens)
+            return {
+                "status": "ok",
+                "request": {
+                    "method": "POST",
+                    "url": url,
+                    "headers": headers,
+                    "json": body,
+                    "timeout_s": float(timeout_s) if isinstance(timeout_s, (int, float, str)) and str(timeout_s).strip() else 45.0,
+                    "allow_insecure_http": allow_insecure,
+                },
+            }
+
+        if task == "stt":
+            # JSON STT adapter currently implemented for OpenAI-compatible Responses API only.
+            if provider not in {"openai", "deepseek", "kimi", "gemini"}:
+                return {
+                    "status": "error",
+                    "error": "unsupported_task_for_provider",
+                    "provider": provider,
+                    "task": task,
+                }
+            audio_path = str(adapter.get("audio_path") or "").strip()
+            if not audio_path:
+                return {"status": "error", "error": "audio_path_required", "provider": provider, "task": task}
+            prompt = str(adapter.get("prompt") or "Transcribe the audio.").strip()
+            audio_fmt = self._audio_format(audio_path, str(adapter.get("audio_format") or ""))
+            url = str(adapter.get("base_url") or defaults.get("responses_url") or "").strip()
+            if not url:
+                return {"status": "error", "error": "missing_base_url", "provider": provider, "task": task}
+            body = {
+                "model": model,
+                "input": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": prompt},
+                            {
+                                "type": "input_audio",
+                                "input_audio": {
+                                    "data": "${file:%s:base64}" % audio_path,
+                                    "format": audio_fmt,
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+            return {
+                "status": "ok",
+                "request": {
+                    "method": "POST",
+                    "url": url,
+                    "headers": headers,
+                    "json": body,
+                    "timeout_s": float(timeout_s) if isinstance(timeout_s, (int, float, str)) and str(timeout_s).strip() else 90.0,
+                    "allow_insecure_http": allow_insecure,
+                },
+            }
+
+        return {"status": "error", "error": "unsupported_task", "task": task}
+
     def run(self, args: Dict[str, Any]) -> Dict[str, Any]:
         identity = str(args.get("identity") or args.get("session_id") or "").strip()
         if identity:
             self.set_identity(identity)
 
+        adapter = args.get("adapter") if isinstance(args.get("adapter"), dict) else None
+        if adapter is None and isinstance(args.get("provider_adapter"), dict):
+            adapter = args.get("provider_adapter")
+
         req = args.get("request")
-        payload = req if isinstance(req, dict) else args
+        payload: Dict[str, Any]
+
+        if adapter is not None:
+            adapted = self._build_adapter_request(adapter)
+            if adapted.get("status") != "ok":
+                return adapted
+            payload = adapted.get("request") if isinstance(adapted.get("request"), dict) else {}
+            # Optional raw request overlay for advanced users.
+            if isinstance(req, dict):
+                merged = dict(payload)
+                merged.update(req)
+                payload = merged
+        else:
+            payload = req if isinstance(req, dict) else args
+
         if not isinstance(payload, dict):
             return {"status": "error", "error": "invalid_request"}
 

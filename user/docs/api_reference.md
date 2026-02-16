@@ -505,6 +505,9 @@ Details: [brain_journal.md](brain_journal.md)
 | `GET` | `/cloud/prefs` | — | Read cloud broker preferences |
 | `POST` | `/cloud/prefs` | Preferences JSON | Update resize/threshold preferences |
 
+Notes:
+- `cloud_request` tool supports adapter mode for `openai`, `deepseek`, `kimi`, `gemini`, `anthropic` (see `cloud_broker.md`).
+
 Details: [cloud_broker.md](cloud_broker.md)
 
 ### Notifications

@@ -227,6 +227,7 @@ class BrainRuntime:
         return {
             "enabled": False,
             "auto_start": False,
+            "vendor": "openai",
             "provider_url": "https://api.openai.com/v1/chat/completions",
             "model": "",
             "api_key_credential": "openai_api_key",
@@ -1400,6 +1401,28 @@ class BrainRuntime:
 
         self._emit_log("brain_item_done", {"id": item.get("id"), "actions": total_actions, "session_id": self._session_id_for_item(item)})
 
+    def _provider_kind(self, provider_url: str, vendor: str) -> str:
+        v = str(vendor or "").strip().lower()
+        u = str(provider_url or "").strip().lower()
+        if v == "anthropic" or "anthropic.com" in u:
+            return "anthropic"
+        return "openai_compat"
+
+    def _provider_headers(self, provider_kind: str, api_key: str, cfg: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        if provider_kind == "anthropic":
+            version = "2023-06-01"
+            if isinstance(cfg, dict):
+                version = str(cfg.get("anthropic_version") or version).strip() or version
+            return {
+                "x-api-key": api_key,
+                "anthropic-version": version,
+                "Content-Type": "application/json",
+            }
+        return {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+
     def _provider_post(
         self,
         url: str,
@@ -1771,6 +1794,7 @@ class BrainRuntime:
         if dialogue and dialogue[-1].get("role") == "user" and dialogue[-1].get("text") == str(item.get("text") or ""):
             dialogue = dialogue[:-1]
         provider_url = str(cfg.get("provider_url") or "").strip()
+        vendor = str(cfg.get("vendor") or "").strip().lower()
         key_name = str(cfg.get("api_key_credential") or "").strip()
         tool_policy = str(cfg.get("tool_policy") or "auto").strip().lower()
         require_tool = tool_policy == "required" and self._needs_tool_for_text(str(item.get("text") or ""))
@@ -1789,6 +1813,16 @@ class BrainRuntime:
                 "assistant",
                 f"Missing API credential '{key_name}'. Configure it in Settings -> Brain (recommended), or set it in vault and retry.",
                 {"item_id": item.get("id")},
+            )
+            return
+
+        provider_kind = self._provider_kind(provider_url, vendor)
+        if provider_kind == "anthropic":
+            self._record_message(
+                "assistant",
+                "Current Brain tool-loop mode requires a Responses-style provider endpoint. "
+                "For Anthropic, configure a chat-completions compatible endpoint for Brain, or use cloud_request adapter mode for provider-specific calls.",
+                {"item_id": item.get("id"), "session_id": session_id},
             )
             return
 
@@ -1887,10 +1921,7 @@ class BrainRuntime:
             if previous_response_id:
                 body["previous_response_id"] = previous_response_id
 
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            }
+            headers = self._provider_headers(provider_kind, api_key, cfg=cfg)
             last_ex: Optional[Exception] = None
             for attempt in range(max_retries + 1):
                 try:
@@ -2345,6 +2376,7 @@ class BrainRuntime:
         model = str(cfg.get("model") or "").strip()
         profile = self._model_profile_overrides(model, cfg)
         provider_url = str(cfg.get("provider_url") or "").strip()
+        vendor = str(cfg.get("vendor") or "").strip().lower()
         key_name = str(cfg.get("api_key_credential") or "").strip()
 
         if not model or not provider_url or not key_name:
@@ -2364,6 +2396,7 @@ class BrainRuntime:
                 "actions": [],
             }
 
+        provider_kind = self._provider_kind(provider_url, vendor)
         session_id = self._session_id_for_item(item)
         persistent_memory = self._get_persistent_memory()
         journal_current = self._get_journal_current(session_id)
@@ -2432,7 +2465,15 @@ class BrainRuntime:
         policy_blob = self._user_root_policy_blob()
         if policy_blob:
             system_prompt = (system_prompt + "\n\n" + policy_blob).strip()
-        if provider_url.rstrip("/").endswith("/responses"):
+        if provider_kind == "anthropic":
+            body = {
+                "model": model,
+                "max_tokens": int(self._config.get("anthropic_max_tokens", 1536) or 1536),
+                "messages": [{"role": "user", "content": planner_prompt}],
+            }
+            if system_prompt.strip():
+                body["system"] = system_prompt
+        elif provider_url.rstrip("/").endswith("/responses"):
             body = {
                 "model": model,
                 "instructions": system_prompt,
@@ -2451,20 +2492,30 @@ class BrainRuntime:
 
         resp = requests.post(
             provider_url,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=self._provider_headers(provider_kind, api_key, cfg=cfg),
             data=json.dumps(body),
             timeout=25,
         )
         resp.raise_for_status()
         payload = resp.json()
-        content = (
-            payload.get("output_text")
-            or (((payload.get("choices") or [{}])[0]).get("message") or {}).get("content")
-            or "{}"
-        )
+        if provider_kind == "anthropic":
+            content = "{}"
+            content_blocks = payload.get("content")
+            if isinstance(content_blocks, list):
+                texts: List[str] = []
+                for block in content_blocks:
+                    if isinstance(block, dict) and str(block.get("type") or "") == "text":
+                        t = str(block.get("text") or "").strip()
+                        if t:
+                            texts.append(t)
+                if texts:
+                    content = "\n".join(texts)
+        else:
+            content = (
+                payload.get("output_text")
+                or (((payload.get("choices") or [{}])[0]).get("message") or {}).get("content")
+                or "{}"
+            )
         if not isinstance(content, str):
             content = "{}"
             for out_item in payload.get("output") or []:
