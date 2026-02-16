@@ -16,6 +16,14 @@ Notes:
 - `GET /me/me/status` is the single snapshot API for peer visibility and runtime state.
 - `POST /me/me/message/send` is the single send API. It accepts message metadata plus payload/file attachment fields.
 - Internal connection/scan/relay endpoints exist but are debug-only and intentionally omitted from agent workflow.
+- Connection handshake security:
+  - Offer token is signed with source identity key:
+    - preferred: `Ed25519`
+    - fallback: `ECDSA P-256`
+  - Session key is derived from ephemeral key exchange + `HKDF-SHA256`:
+    - preferred: `X25519`
+    - fallback: `ECDH P-256`
+  - Message payload is encrypted with `AES-GCM` using the derived session key.
 
 Agent alert integration:
 - me.me runtime forwards key events to the local agent inbox (`/brain/inbox/event`) with `priority` and `interrupt_policy`.

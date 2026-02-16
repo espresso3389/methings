@@ -67,8 +67,16 @@ import android.util.Base64
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.ByteArrayOutputStream
+import java.security.KeyFactory
+import java.security.KeyPairGenerator
 import java.security.MessageDigest
+import java.security.PrivateKey
+import java.security.PublicKey
 import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.ECGenParameterSpec
+import java.security.spec.PKCS8EncodedKeySpec
+import java.security.spec.X509EncodedKeySpec
 import java.util.Locale
 import java.util.UUID
 import kotlin.random.Random
@@ -76,6 +84,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import javax.crypto.Cipher
+import javax.crypto.KeyAgreement
+import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import com.google.zxing.BarcodeFormat
@@ -473,6 +483,30 @@ class LocalHttpServer(
                 )
                 if (!ok.first) return ok.second!!
                 handleMeMeAccept(payload)
+            }
+            uri == "/me/me/request/reject" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.accept",
+                    detail = "Reject me.things connection request"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeRequestReject(payload)
+            }
+            uri == "/me/me/policy/set" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.config",
+                    detail = "Update me.things peer policy"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMePeerPolicySet(payload)
             }
             uri == "/me/me/disconnect" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -7507,6 +7541,9 @@ class LocalHttpServer(
             if (!cfg.connectionMethods.contains("wifi") && !cfg.connectionMethods.contains("ble")) return
             val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(cfg), ME_ME_DISCOVERY_SCAN_TIMEOUT_MS)
             handleMeMePresenceUpdates(summary.discovered, source = "me_me.scan")
+            if (cfg.autoReconnect) {
+                runMeMeAutoConnectFromDiscovered(summary.discovered, cfg)
+            }
         }.onFailure {
             Log.w(TAG, "me.me discovery tick failed", it)
         }
@@ -7601,6 +7638,9 @@ class LocalHttpServer(
             if (did.isBlank()) return@forEach
             seenIds += did
             val peerName = peer.optString("device_name", "").trim()
+            if (peerName.isNotBlank()) {
+                maybeUpdateMeMeConnectionNameFromDiscovery(did, peerName)
+            }
             val peerLastSeenAt = peer.optLong("last_seen_at", now).let { if (it > 0L) it else now }
             val prev = meMePeerPresence[did]
             if (prev == null) {
@@ -7690,6 +7730,48 @@ class LocalHttpServer(
             val label = sanitizeSshKeyLabel(parsed.comment ?: "")
             // Merge into DB without clobbering existing metadata.
             sshKeyStore.upsertMerge(parsed.canonicalNoComment(), label, expiresAt = null)
+        }
+    }
+
+    private fun maybeUpdateMeMeConnectionNameFromDiscovery(deviceId: String, discoveredName: String) {
+        val did = deviceId.trim()
+        val name = discoveredName.trim()
+        if (did.isBlank() || name.isBlank()) return
+        val current = meMeConnections[did] ?: return
+        if (current.peerDeviceName.trim() == name) return
+        meMeConnections[did] = current.copy(peerDeviceName = name)
+    }
+
+    private fun runMeMeAutoConnectFromDiscovered(discovered: List<JSONObject>, cfg: MeMeConfig) {
+        if (discovered.isEmpty()) return
+        if (meMeConnections.size >= cfg.maxConnections) return
+        val now = System.currentTimeMillis()
+        val minGapMs = cfg.reconnectIntervalSec.coerceIn(3, 3600) * 1000L
+        var attempts = 0
+        discovered.forEach { peer ->
+            if (attempts >= ME_ME_AUTO_CONNECT_MAX_ATTEMPTS_PER_TICK) return@forEach
+            val did = peer.optString("device_id", "").trim()
+            if (did.isBlank() || did == cfg.deviceId) return@forEach
+            if (meMeConnections.containsKey(did)) return@forEach
+            if (cfg.blockedDevices.contains(did)) return@forEach
+            if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(did)) return@forEach
+            if (meMeConnections.size >= cfg.maxConnections) return@forEach
+            val hasPending = meMeConnectIntents.values.any { !it.accepted && it.targetDeviceId == did && it.expiresAt > now }
+            if (hasPending) return@forEach
+            val lastAttempt = meMeReconnectAttemptAt[did] ?: 0L
+            if ((now - lastAttempt) < minGapMs) return@forEach
+            meMeReconnectAttemptAt[did] = now
+            attempts += 1
+            val payload = JSONObject()
+                .put("target_device_id", did)
+                .put("method", "auto")
+                .put("auto_scan", false)
+                .put("auto_delivery_retries", 1)
+                .put("auto_delivery_retry_delay_ms", ME_ME_AUTO_CONNECT_RETRY_DELAY_MS)
+                .put("connect_wait_budget_ms", ME_ME_AUTO_CONNECT_WAIT_BUDGET_MS)
+                .put("auto_delivery_settle_wait_ms", ME_ME_AUTO_CONNECT_SETTLE_WAIT_MS)
+            runCatching { handleMeMeConnect(payload) }
+                .onFailure { Log.w(TAG, "me.me auto-connect attempt failed for $did", it) }
         }
     }
 
@@ -7938,6 +8020,9 @@ class LocalHttpServer(
             reconnectIntervalSec = payload.optInt("reconnect_interval", prev.reconnectIntervalSec).coerceIn(3, 3600),
             discoveryIntervalSec = payload.optInt("discovery_interval", prev.discoveryIntervalSec).coerceIn(10, 3600),
             connectionCheckIntervalSec = payload.optInt("connection_check_interval", prev.connectionCheckIntervalSec).coerceIn(5, 3600),
+            blePreferredMaxBytes = payload.optInt("ble_preferred_max_bytes", prev.blePreferredMaxBytes).coerceIn(ME_ME_BLE_PREFERRED_MAX_BYTES_MIN, ME_ME_BLE_MAX_MESSAGE_BYTES),
+            autoApproveOwnDevices = if (payload.has("auto_approve_own_devices")) payload.optBoolean("auto_approve_own_devices", prev.autoApproveOwnDevices) else prev.autoApproveOwnDevices,
+            ownerIdentities = readIdentityList(payload, "owner_identities", prev.ownerIdentities),
             allowedDevices = readStringList(payload, "allowed_devices", prev.allowedDevices),
             blockedDevices = readStringList(payload, "blocked_devices", prev.blockedDevices),
             notifyOnConnection = if (payload.has("notify_on_connection")) payload.optBoolean("notify_on_connection", prev.notifyOnConnection) else prev.notifyOnConnection,
@@ -8020,9 +8105,25 @@ class LocalHttpServer(
         val createdAt = System.currentTimeMillis()
         val expiresAt = createdAt + cfg.connectionTimeoutSec * 1000L
         val sessionId = "mms_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
-        val sessionKey = ByteArray(32).also { SecureRandom().nextBytes(it) }
-        val sessionKeyB64 = Base64.encodeToString(sessionKey, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-        val acceptToken = encodeMeMeAcceptToken(reqId, cfg.deviceId, targetDeviceId, sessionId, sessionKeyB64, expiresAt)
+        val identity = currentMeMeIdentityKeyPair()
+            ?: return jsonError(Response.Status.INTERNAL_ERROR, "identity_key_unavailable")
+        val sourceEphemeral = generateMeMeEphemeralKeyPairB64()
+            ?: return jsonError(Response.Status.INTERNAL_ERROR, "ephemeral_key_unavailable")
+        val nonce = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val nonceB64 = Base64.encodeToString(nonce, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val acceptToken = encodeMeMeAcceptToken(
+            requestId = reqId,
+            sourceDeviceId = cfg.deviceId,
+            targetDeviceId = targetDeviceId,
+            sessionId = sessionId,
+            sourceSigAlgorithm = identity.algorithm,
+            sourceKexAlgorithm = sourceEphemeral.algorithm,
+            sourceSigPublicKeyB64 = identity.publicKeyB64,
+            sourceEphemeralPublicKeyB64 = sourceEphemeral.publicKeyB64,
+            nonceB64 = nonceB64,
+            expiresAt = expiresAt,
+            sourceSigPrivateKeyB64 = identity.privateKeyB64
+        ) ?: return jsonError(Response.Status.INTERNAL_ERROR, "accept_token_sign_failed")
         val req = MeMeConnectIntent(
             id = reqId,
             sourceDeviceId = cfg.deviceId,
@@ -8035,7 +8136,13 @@ class LocalHttpServer(
             acceptToken = acceptToken,
             methodHint = payload.optString("method", "").trim().ifBlank { "auto" },
             sessionId = sessionId,
-            sessionKeyB64 = sessionKeyB64
+            sessionKeyB64 = "",
+            sourceOwnerIdentities = cfg.ownerIdentities,
+            sourceSigAlgorithm = identity.algorithm,
+            sourceKexAlgorithm = sourceEphemeral.algorithm,
+            sourceSigPublicKeyB64 = identity.publicKeyB64,
+            sourceEphemeralPublicKeyB64 = sourceEphemeral.publicKeyB64,
+            sourceEphemeralPrivateKeyB64 = sourceEphemeral.privateKeyB64
         )
         meMeConnectIntents[req.id] = req
         val connectWaitBudgetMs = payload.optLong("connect_wait_budget_ms", 15_000L).coerceIn(2_000L, 60_000L)
@@ -8119,6 +8226,7 @@ class LocalHttpServer(
             .put("request_id", req.id)
             .put("source_device_id", req.sourceDeviceId)
             .put("source_device_name", req.sourceDeviceName)
+            .put("source_owner_identities", org.json.JSONArray(req.sourceOwnerIdentities))
             .put("method", req.methodHint)
         val delivery = deliverMeMeBootstrapPayload(
             peerDeviceId = req.targetDeviceId,
@@ -8154,6 +8262,7 @@ class LocalHttpServer(
         if (!effective.has("source_port")) {
             effective.put("source_port", ME_ME_LAN_PORT)
         }
+        effective.put("auto_path", true)
         return handleMeMeAccept(effective)
     }
 
@@ -8162,11 +8271,14 @@ class LocalHttpServer(
         val cfg = currentMeMeConfig()
         val token = payload.optString("accept_token", "").trim()
         val requestId = payload.optString("request_id", "").trim()
+        val isAutoPath = payload.optBoolean("auto_path", false)
+        val forceAccept = payload.optBoolean("force_accept", false)
         val req = when {
             token.isNotBlank() -> {
                 val parsed = decodeMeMeAcceptToken(token) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_accept_token")
                 if (parsed.expiresAt in 1..System.currentTimeMillis()) return jsonError(Response.Status.GONE, "request_expired")
                 if (parsed.targetDeviceId != cfg.deviceId) return jsonError(Response.Status.FORBIDDEN, "token_target_mismatch")
+                if (!verifyMeMeOfferSignature(parsed)) return jsonError(Response.Status.FORBIDDEN, "token_signature_invalid")
                 meMeConnectIntents[parsed.requestId] ?: MeMeConnectIntent(
                     id = parsed.requestId,
                     sourceDeviceId = parsed.sourceDeviceId,
@@ -8179,7 +8291,13 @@ class LocalHttpServer(
                     acceptToken = token,
                     methodHint = payload.optString("method", "").trim().ifBlank { "auto" },
                     sessionId = parsed.sessionId,
-                    sessionKeyB64 = parsed.sessionKeyB64
+                    sessionKeyB64 = "",
+                    sourceOwnerIdentities = readIdentityList(payload, "source_owner_identities", emptyList()),
+                    sourceSigAlgorithm = parsed.sourceSigAlgorithm,
+                    sourceKexAlgorithm = parsed.sourceKexAlgorithm,
+                    sourceSigPublicKeyB64 = parsed.sourceSigPublicKeyB64,
+                    sourceEphemeralPublicKeyB64 = parsed.sourceEphemeralPublicKeyB64,
+                    sourceEphemeralPrivateKeyB64 = ""
                 )
             }
             requestId.isNotBlank() -> meMeConnectIntents[requestId]
@@ -8193,6 +8311,35 @@ class LocalHttpServer(
         if (meMeConnections.size >= cfg.maxConnections && !meMeConnections.containsKey(req.sourceDeviceId)) {
             return jsonError(Response.Status.FORBIDDEN, "max_connections_reached")
         }
+        val canAutoApprove = cfg.autoApproveOwnDevices &&
+            hasOwnerIdentityMatch(cfg.ownerIdentities, req.sourceOwnerIdentities)
+        val manualAction = forceAccept || (requestId.isNotBlank() && !isAutoPath)
+        if (!manualAction && !canAutoApprove) {
+            meMeConnectIntents[req.id] = req.copy(accepted = false)
+            return jsonResponse(
+                JSONObject()
+                    .put("status", "pending")
+                    .put("request", req.toJson(includeToken = false))
+                    .put("reason", "approval_required")
+            )
+        }
+        val parsedToken = decodeMeMeAcceptToken(req.acceptToken) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_accept_token")
+        if (!verifyMeMeOfferSignature(parsedToken)) return jsonError(Response.Status.FORBIDDEN, "token_signature_invalid")
+        val responderIdentity = currentMeMeIdentityKeyPair() ?: return jsonError(Response.Status.INTERNAL_ERROR, "identity_key_unavailable")
+        val responderEphemeral = generateMeMeEphemeralKeyPairB64(parsedToken.sourceKexAlgorithm)
+            ?: return jsonError(Response.Status.INTERNAL_ERROR, "ephemeral_key_unavailable")
+        val sessionKeyB64 = deriveMeMeSessionKeyB64(
+            kexAlgorithm = parsedToken.sourceKexAlgorithm,
+            ownEphemeralPrivateKeyB64 = responderEphemeral.privateKeyB64,
+            peerEphemeralPublicKeyB64 = parsedToken.sourceEphemeralPublicKeyB64,
+            contextParts = listOf(
+                parsedToken.requestId,
+                parsedToken.sessionId,
+                parsedToken.sourceDeviceId,
+                parsedToken.targetDeviceId,
+                parsedToken.nonceB64
+            )
+        ) ?: return jsonError(Response.Status.FORBIDDEN, "session_key_derive_failed")
         val connId = "mmc_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
         val conn = MeMeConnection(
             id = connId,
@@ -8203,16 +8350,22 @@ class LocalHttpServer(
             state = "connected",
             role = "acceptor",
             sessionId = req.sessionId,
-            sessionKeyB64 = req.sessionKeyB64
+            sessionKeyB64 = sessionKeyB64
         )
         meMeConnections[conn.peerDeviceId] = conn
         meMeReconnectAttemptAt.remove(conn.peerDeviceId)
-        meMeConnectIntents[req.id] = req.copy(accepted = true)
+        meMeConnectIntents[req.id] = req.copy(
+            accepted = true,
+            sessionKeyB64 = sessionKeyB64
+        )
         clearResolvedMeMeConnectIntents(sessionId = req.sessionId, requestId = req.id)
         val autoConfirm = runAutoConfirmMeMeAccept(
             req = req,
             payload = payload,
-            acceptedByName = cfg.deviceName
+            acceptedByName = cfg.deviceName,
+            parsedToken = parsedToken,
+            responderIdentity = responderIdentity,
+            responderEphemeral = responderEphemeral
         )
         return jsonResponse(
             JSONObject()
@@ -8231,6 +8384,44 @@ class LocalHttpServer(
         val parsed = decodeMeMeAcceptToken(token) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_accept_token")
         if (parsed.expiresAt in 1..System.currentTimeMillis()) return jsonError(Response.Status.GONE, "request_expired")
         if (parsed.sourceDeviceId != cfg.deviceId) return jsonError(Response.Status.FORBIDDEN, "token_source_mismatch")
+        if (!verifyMeMeOfferSignature(parsed)) return jsonError(Response.Status.FORBIDDEN, "token_signature_invalid")
+        val responderSigAlgorithm = normalizeMeMeSigAlgorithm(payload.optString("responder_sig_algorithm", "").trim())
+            ?: parsed.sourceSigAlgorithm
+        val responderKexAlgorithm = normalizeMeMeKexAlgorithm(payload.optString("responder_kex_algorithm", "").trim())
+            ?: parsed.sourceKexAlgorithm
+        val responderSigPublicKeyB64 = payload.optString("responder_sig_public_key", "").trim()
+        val responderEphemeralPublicKeyB64 = payload.optString("responder_ephemeral_public_key", "").trim()
+        val responderSignatureB64 = payload.optString("responder_signature", "").trim()
+        if (responderSigPublicKeyB64.isBlank() || responderEphemeralPublicKeyB64.isBlank() || responderSignatureB64.isBlank()) {
+            return jsonError(Response.Status.BAD_REQUEST, "confirm_signature_required")
+        }
+        if (!verifyMeMeConfirmSignature(
+                responderSigAlgorithm = responderSigAlgorithm,
+                responderSigPublicKeyB64 = responderSigPublicKeyB64,
+                responderSignatureB64 = responderSignatureB64,
+                token = parsed,
+                responderEphemeralPublicKeyB64 = responderEphemeralPublicKeyB64
+            )
+        ) {
+            return jsonError(Response.Status.FORBIDDEN, "confirm_signature_invalid")
+        }
+        val req = meMeConnectIntents[parsed.requestId] ?: return jsonError(Response.Status.NOT_FOUND, "request_not_found")
+        if (req.sourceEphemeralPrivateKeyB64.isBlank()) return jsonError(Response.Status.FORBIDDEN, "request_ephemeral_key_missing")
+        if (responderKexAlgorithm != parsed.sourceKexAlgorithm) {
+            return jsonError(Response.Status.FORBIDDEN, "confirm_kex_algorithm_mismatch")
+        }
+        val sessionKeyB64 = deriveMeMeSessionKeyB64(
+            kexAlgorithm = parsed.sourceKexAlgorithm,
+            ownEphemeralPrivateKeyB64 = req.sourceEphemeralPrivateKeyB64,
+            peerEphemeralPublicKeyB64 = responderEphemeralPublicKeyB64,
+            contextParts = listOf(
+                parsed.requestId,
+                parsed.sessionId,
+                parsed.sourceDeviceId,
+                parsed.targetDeviceId,
+                parsed.nonceB64
+            )
+        ) ?: return jsonError(Response.Status.FORBIDDEN, "session_key_derive_failed")
 
         val conn = MeMeConnection(
             id = "mmc_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}",
@@ -8241,7 +8432,7 @@ class LocalHttpServer(
             state = "connected",
             role = "initiator",
             sessionId = parsed.sessionId,
-            sessionKeyB64 = parsed.sessionKeyB64
+            sessionKeyB64 = sessionKeyB64
         )
         meMeConnections[conn.peerDeviceId] = conn
         meMeReconnectAttemptAt.remove(conn.peerDeviceId)
@@ -8253,7 +8444,10 @@ class LocalHttpServer(
     private fun runAutoConfirmMeMeAccept(
         req: MeMeConnectIntent,
         payload: JSONObject,
-        acceptedByName: String
+        acceptedByName: String,
+        parsedToken: MeMeAcceptToken,
+        responderIdentity: MeMeIdentityKeyPair,
+        responderEphemeral: MeMeIdentityKeyPair
     ): JSONObject {
         val sourceHostOverride = payload.optString("source_host", "").trim()
         val sourcePortOverride = payload.optInt("source_port", 0).takeIf { it in 1..65535 }
@@ -8261,10 +8455,26 @@ class LocalHttpServer(
         val route = resolveMeMePeerRoute(req.sourceDeviceId)
         val host = sourceHostOverride.ifBlank { route?.host.orEmpty() }
         val port = sourcePortOverride ?: route?.port ?: ME_ME_LAN_PORT
+        val responderSigB64 = signMeMeConfirm(
+            sourceSigPrivateKeyB64 = responderIdentity.privateKeyB64,
+            sourceSigAlgorithm = responderIdentity.algorithm,
+            token = parsedToken,
+            responderEphemeralPublicKeyB64 = responderEphemeral.publicKeyB64
+        ) ?: return JSONObject()
+            .put("attempted", false)
+            .put("confirmed", false)
+            .put("transport", "none")
+            .put("target_device_id", req.sourceDeviceId)
+            .put("result", JSONObject().put("ok", false).put("error", "confirm_sign_failed"))
         val confirmPayload = JSONObject()
             .put("accept_token", req.acceptToken)
             .put("peer_device_name", acceptedByName)
             .put("method", req.methodHint)
+            .put("responder_sig_algorithm", responderIdentity.algorithm)
+            .put("responder_kex_algorithm", responderEphemeral.algorithm)
+            .put("responder_sig_public_key", responderIdentity.publicKeyB64)
+            .put("responder_ephemeral_public_key", responderEphemeral.publicKeyB64)
+            .put("responder_signature", responderSigB64)
         val timeoutMs = payload.optLong("auto_confirm_timeout_ms", 4500L).coerceIn(1500L, 12_000L)
         val retries = payload.optInt("auto_confirm_retries", 2).coerceIn(0, 5)
         val retryDelayMs = payload.optLong("auto_confirm_retry_delay_ms", 700L).coerceIn(100L, 5_000L)
@@ -8274,21 +8484,24 @@ class LocalHttpServer(
             } else if (sourceBleAddress.isNotBlank()) {
                 val wire = JSONObject().put("kind", "connect_confirm").put("payload", confirmPayload)
                 val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
-                val direct = meMeDiscovery.sendBlePayloadToAddress(sourceBleAddress, bytes, timeoutMs).put("transport", "ble")
-                if (direct.optBoolean("ok", false)) {
-                    direct
-                } else {
-                    // Source BLE address may rotate or become stale. Fall back to peer-id route
-                    // if discoverable.
-                    deliverMeMePayload(
-                        peerDeviceId = req.sourceDeviceId,
-                        transportHint = "ble",
-                        timeoutMs = timeoutMs,
-                        lanPath = "/me/me/connect/confirm",
-                        lanPayload = confirmPayload,
-                        bleKind = "connect_confirm"
-                    )
-                }
+                // Prefer same-session BLE notify first so connect->accept->confirm can finish
+                // in a single BLE session without opening a second GATT connection.
+                val notifyOut = meMeDiscovery.sendBleNotificationToAddress(sourceBleAddress, bytes, timeoutMs)
+                    .put("transport", "ble_notify")
+                if (notifyOut.optBoolean("ok", false)) return notifyOut
+                val direct = meMeDiscovery.sendBlePayloadToAddress(sourceBleAddress, bytes, timeoutMs)
+                    .put("transport", "ble")
+                if (direct.optBoolean("ok", false)) return direct
+                // Source BLE address may rotate or become stale. Fall back to peer-id route
+                // if discoverable.
+                deliverMeMePayload(
+                    peerDeviceId = req.sourceDeviceId,
+                    transportHint = "ble",
+                    timeoutMs = timeoutMs,
+                    lanPath = "/me/me/connect/confirm",
+                    lanPayload = confirmPayload,
+                    bleKind = "connect_confirm"
+                )
             } else {
                 deliverMeMePayload(
                     peerDeviceId = req.sourceDeviceId,
@@ -8332,6 +8545,53 @@ class LocalHttpServer(
         meMeInboundMessages.remove(removed.peerDeviceId)
         meMeReconnectAttemptAt.remove(removed.peerDeviceId)
         return jsonResponse(JSONObject().put("status", "ok").put("disconnected", true).put("connection", removed.toJson()))
+    }
+
+    private fun handleMeMeRequestReject(payload: JSONObject): Response {
+        cleanupExpiredMeMeState()
+        val requestId = payload.optString("request_id", "").trim()
+        if (requestId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "request_id_required")
+        val req = meMeConnectIntents.remove(requestId) ?: return jsonError(Response.Status.NOT_FOUND, "request_not_found")
+        if (payload.optBoolean("block_source", false)) {
+            val cfg = currentMeMeConfig()
+            if (!cfg.blockedDevices.contains(req.sourceDeviceId)) {
+                val next = cfg.copy(blockedDevices = (cfg.blockedDevices + req.sourceDeviceId).distinct())
+                saveMeMeConfig(next)
+            }
+        }
+        return jsonResponse(JSONObject().put("status", "ok").put("rejected", true).put("request_id", requestId))
+    }
+
+    private fun handleMeMePeerPolicySet(payload: JSONObject): Response {
+        val peerDeviceId = payload.optString("peer_device_id", "").trim()
+        if (peerDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "peer_device_id_required")
+        val policy = payload.optString("policy", "").trim().lowercase(Locale.US)
+        if (policy !in setOf("allow", "block", "clear")) {
+            return jsonError(Response.Status.BAD_REQUEST, "policy_invalid")
+        }
+        val cfg = currentMeMeConfig()
+        val next = when (policy) {
+            "allow" -> cfg.copy(
+                allowedDevices = (cfg.allowedDevices + peerDeviceId).distinct(),
+                blockedDevices = cfg.blockedDevices.filter { it != peerDeviceId }
+            )
+            "block" -> cfg.copy(
+                blockedDevices = (cfg.blockedDevices + peerDeviceId).distinct(),
+                allowedDevices = cfg.allowedDevices.filter { it != peerDeviceId }
+            )
+            else -> cfg.copy(
+                allowedDevices = cfg.allowedDevices.filter { it != peerDeviceId },
+                blockedDevices = cfg.blockedDevices.filter { it != peerDeviceId }
+            )
+        }
+        saveMeMeConfig(next)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("policy", policy)
+                .put("peer_device_id", peerDeviceId)
+                .put("config", next.toJson())
+        )
     }
 
     private fun handleMeMeMessageSend(payload: JSONObject): Response {
@@ -8464,20 +8724,35 @@ class LocalHttpServer(
         allowRelayFallback: Boolean = false
     ): JSONObject {
         val conn = meMeConnections[peerDeviceId] ?: return JSONObject().put("ok", false).put("error", "connection_not_found")
+        val cfg = currentMeMeConfig()
         val route = resolveMeMePeerRoute(peerDeviceId)
         val normalizedHint = transportHint.trim().lowercase(Locale.US)
         val forceRelay = normalizedHint == "relay"
+        val wire = JSONObject().put("kind", bleKind).put("payload", lanPayload)
+        val bleBytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
+        val blePreferredMaxBytes = cfg.blePreferredMaxBytes.coerceIn(ME_ME_BLE_PREFERRED_MAX_BYTES_MIN, ME_ME_BLE_MAX_MESSAGE_BYTES)
+        val bleWithinPreferred = bleBytes.size <= blePreferredMaxBytes
+        val bleWithinHardLimit = bleBytes.size <= ME_ME_BLE_MAX_MESSAGE_BYTES
         val shouldUseBle = when (normalizedHint) {
-            "ble" -> true
+            "ble" -> bleWithinHardLimit
             "lan", "wifi" -> false
             "relay" -> false
-            else -> conn.method.trim().lowercase(Locale.US) == "ble" || (route?.host.isNullOrBlank() && (route?.hasBle ?: false))
+            else -> (route?.hasBle == true && bleWithinPreferred) ||
+                (conn.method.trim().lowercase(Locale.US) == "ble" && route?.host.isNullOrBlank() && bleWithinHardLimit)
         }
         val decisionReason = when (normalizedHint) {
-            "ble" -> "transport_forced_ble"
+            "ble" -> if (bleWithinHardLimit) "transport_forced_ble" else "transport_forced_ble_payload_too_large"
             "lan", "wifi" -> "transport_forced_lan"
             "relay" -> "transport_forced_relay"
-            else -> if (conn.method.trim().lowercase(Locale.US) == "ble") "conn_method_ble" else if (route?.host.isNullOrBlank() && (route?.hasBle ?: false)) "peer_host_unavailable_ble_present" else "prefer_lan"
+            else -> if (route?.hasBle == true && bleWithinPreferred) {
+                "ble_preferred_size_window"
+            } else if (conn.method.trim().lowercase(Locale.US) == "ble" && route?.host.isNullOrBlank() && bleWithinHardLimit) {
+                "conn_method_ble_host_unavailable"
+            } else if (route?.hasBle == true && !bleWithinPreferred) {
+                "prefer_lan_ble_size_over_preferred"
+            } else {
+                "prefer_lan"
+            }
         }
         if (forceRelay) {
             val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
@@ -8505,6 +8780,8 @@ class LocalHttpServer(
                 .put("route_host", route?.host ?: "")
                 .put("route_port", route?.port ?: ME_ME_LAN_PORT)
                 .put("route_has_ble", route?.hasBle ?: false)
+                .put("ble_payload_bytes", bleBytes.size)
+                .put("ble_preferred_max_bytes", blePreferredMaxBytes)
                 .put("lan_path", lanPath)
         )
         if (shouldUseBle) {
@@ -8513,9 +8790,7 @@ class LocalHttpServer(
             if (ackWaiter != null) {
                 meMeBleDataAckWaiters[deliveryId] = ackWaiter
             }
-            val wire = JSONObject().put("kind", bleKind).put("payload", lanPayload)
-            val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
-            if (bytes.size > ME_ME_BLE_MAX_MESSAGE_BYTES) {
+            if (!bleWithinHardLimit) {
                 if (deliveryId.isNotBlank()) meMeBleDataAckWaiters.remove(deliveryId)
                 logMeMeTrace(
                     event = "message.delivery",
@@ -8525,17 +8800,17 @@ class LocalHttpServer(
                         .put("resolved_transport", "ble")
                         .put("ok", false)
                         .put("error", "ble_payload_too_large")
-                        .put("bytes", bytes.size)
+                        .put("bytes", bleBytes.size)
                         .put("max_bytes", ME_ME_BLE_MAX_MESSAGE_BYTES)
                 )
                 return JSONObject()
                     .put("ok", false)
                     .put("transport", "ble")
                     .put("error", "ble_payload_too_large")
-                    .put("bytes", bytes.size)
+                    .put("bytes", bleBytes.size)
                     .put("max_bytes", ME_ME_BLE_MAX_MESSAGE_BYTES)
             }
-            val out = meMeDiscovery.sendBlePayload(peerDeviceId, bytes, timeoutMs).put("transport", "ble")
+            val out = meMeDiscovery.sendBlePayload(peerDeviceId, bleBytes, timeoutMs).put("transport", "ble")
             if (ackWaiter != null) {
                 try {
                     if (out.optBoolean("ok", false)) {
@@ -8556,6 +8831,25 @@ class LocalHttpServer(
                     }
                 } finally {
                     if (deliveryId.isNotBlank()) meMeBleDataAckWaiters.remove(deliveryId)
+                }
+            }
+            if (!out.optBoolean("ok", false) && normalizedHint.isBlank()) {
+                val host = route?.host.orEmpty()
+                if (host.isNotBlank()) {
+                    val port = route?.port ?: ME_ME_LAN_PORT
+                    val lanOut = postMeMeLanJson(host, port, lanPath, lanPayload).put("transport", "lan")
+                    if (lanOut.optBoolean("ok", false)) {
+                        logMeMeTrace(
+                            event = "message.delivery.fallback",
+                            messageId = messageId,
+                            fields = JSONObject()
+                                .put("peer_device_id", peerDeviceId)
+                                .put("from_transport", "ble")
+                                .put("to_transport", "lan")
+                                .put("reason", out.optString("error", "ble_failed"))
+                        )
+                        return lanOut
+                    }
                 }
             }
             if (!out.optBoolean("ok", false) && normalizedHint.isBlank() && allowRelayFallback) {
@@ -8587,7 +8881,7 @@ class LocalHttpServer(
         val host = route?.host.orEmpty()
         val port = route?.port ?: ME_ME_LAN_PORT
         if (host.isBlank()) {
-            if (normalizedHint.isBlank() && allowRelayFallback && !(route?.hasBle ?: false)) {
+            if (normalizedHint.isBlank() && allowRelayFallback) {
                 val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
                 if (relayOut.optBoolean("ok", false)) {
                     logMeMeTrace(
@@ -8615,11 +8909,9 @@ class LocalHttpServer(
         }
         var out = postMeMeLanJson(host, port, lanPath, lanPayload).put("transport", "lan")
         if (!out.optBoolean("ok", false) && normalizedHint.isBlank()) {
-            if (route?.hasBle == true) {
-                val wire = JSONObject().put("kind", bleKind).put("payload", lanPayload)
-                val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
-                if (bytes.size <= ME_ME_BLE_MAX_MESSAGE_BYTES) {
-                    val bleOut = meMeDiscovery.sendBlePayload(peerDeviceId, bytes, timeoutMs).put("transport", "ble")
+            if (route?.hasBle == true && bleWithinPreferred) {
+                if (bleWithinHardLimit) {
+                    val bleOut = meMeDiscovery.sendBlePayload(peerDeviceId, bleBytes, timeoutMs).put("transport", "ble")
                     if (bleOut.optBoolean("ok", false)) {
                         logMeMeTrace(
                             event = "message.delivery.fallback",
@@ -9099,23 +9391,23 @@ class LocalHttpServer(
         val fromDeviceId = payload.optString("from_device_id", "").trim()
         val deliveryId = payload.optString("delivery_id", "").trim()
         if (sessionId.isBlank() || fromDeviceId.isBlank()) {
-            maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "invalid_ingest_payload")
+            maybeSendMeMeDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "invalid_ingest_payload")
             return jsonError(Response.Status.BAD_REQUEST, "invalid_ingest_payload")
         }
         val conn = meMeConnections[fromDeviceId]
         if (conn == null) {
-            maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "connection_not_found")
+            maybeSendMeMeDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "connection_not_found")
             return jsonError(Response.Status.NOT_FOUND, "connection_not_found")
         }
         if (conn.sessionId != sessionId) {
-            maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "session_mismatch")
+            maybeSendMeMeDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "session_mismatch")
             return jsonError(Response.Status.FORBIDDEN, "session_mismatch")
         }
         val iv = payload.optString("iv_b64", "").trim()
         val ct = payload.optString("ciphertext_b64", "").trim()
         val plain = decryptMeMePayload(conn.sessionKeyB64, iv, ct)
             ?: run {
-                maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "decrypt_failed")
+                maybeSendMeMeDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "decrypt_failed")
                 return jsonError(Response.Status.BAD_REQUEST, "decrypt_failed")
             }
         val fromDeviceNameHint = plain.optString("from_device_name", "").trim()
@@ -9172,11 +9464,23 @@ class LocalHttpServer(
             coalesceKey = if (messagePriority == "low") "me_me_message_from_$fromDeviceId" else null,
             coalesceWindowMs = if (messagePriority == "low") 2_500L else null
         )
-        maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = true, error = "")
+        maybeSendMeMeDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = true, error = "")
         return jsonResponse(JSONObject().put("status", "ok").put("stored", true))
     }
 
-    private fun maybeSendMeMeBleDataAck(
+    private fun handleMeMeDataAck(payload: JSONObject, sourceIp: String): Response {
+        val deliveryId = payload.optString("delivery_id", "").trim()
+        if (deliveryId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "delivery_id_required")
+        meMeBleDataAckWaiters[deliveryId]?.let { waiter ->
+            val ack = JSONObject(payload.toString())
+                .put("source_ip", sourceIp)
+            waiter.ack = ack
+            waiter.latch.countDown()
+        }
+        return jsonResponse(JSONObject().put("status", "ok").put("stored", true))
+    }
+
+    private fun maybeSendMeMeDataAck(
         sourceIp: String,
         deliveryId: String,
         sessionId: String,
@@ -9186,9 +9490,7 @@ class LocalHttpServer(
     ) {
         val did = deliveryId.trim()
         if (did.isBlank()) return
-        if (!sourceIp.startsWith("ble:")) return
-        val sourceAddress = sourceIp.removePrefix("ble:").trim()
-        if (sourceAddress.isBlank()) return
+        val sourceAddress = if (sourceIp.startsWith("ble:")) sourceIp.removePrefix("ble:").trim() else ""
         val selfCfg = currentMeMeConfig()
         val ackPayload = JSONObject()
             .put("delivery_id", did)
@@ -9198,33 +9500,46 @@ class LocalHttpServer(
             .put("ok", ok)
             .put("error", if (ok) JSONObject.NULL else error.trim().ifBlank { "ingest_failed" })
             .put("ack_at", System.currentTimeMillis())
-        val wire = JSONObject().put("kind", "data_ack").put("payload", ackPayload)
-        val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
-        if (bytes.size > ME_ME_BLE_MAX_MESSAGE_BYTES) return
-        runCatching {
-            val ackOut = meMeDiscovery.sendBlePayloadToAddress(sourceAddress, bytes, 2500L)
-            logMeMeTrace(
-                event = "message.ingest_ack",
-                messageId = did,
-                fields = JSONObject()
-                    .put("delivery_id", did)
-                    .put("ok", ackOut.optBoolean("ok", false))
-                    .put("ack_status", if (ok) "stored" else "failed")
-                    .put("ack_error", ackOut.optString("error", "").trim().takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                    .put("ingest_error", if (ok) JSONObject.NULL else error.trim().ifBlank { "ingest_failed" })
-            )
-        }.onFailure {
-            logMeMeTrace(
-                event = "message.ingest_ack",
-                messageId = did,
-                fields = JSONObject()
-                    .put("delivery_id", did)
-                    .put("ok", false)
-                    .put("ack_status", if (ok) "stored" else "failed")
-                    .put("ack_error", it.message ?: "ack_send_failed")
-                    .put("ingest_error", if (ok) JSONObject.NULL else error.trim().ifBlank { "ingest_failed" })
-            )
+        var ackTransport = ""
+        var ackOut = JSONObject().put("ok", false).put("error", "ack_not_attempted")
+        if (sourceAddress.isNotBlank()) {
+            val wire = JSONObject().put("kind", "data_ack").put("payload", ackPayload)
+            val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
+            if (bytes.size <= ME_ME_BLE_MAX_MESSAGE_BYTES) {
+                ackOut = meMeDiscovery.sendBleNotificationToAddress(sourceAddress, bytes, 2500L)
+                ackTransport = "ble_notify"
+            } else {
+                ackOut = JSONObject().put("ok", false).put("error", "ble_payload_too_large")
+                ackTransport = "ble_notify"
+            }
         }
+        if (!ackOut.optBoolean("ok", false)) {
+            val route = resolveMeMePeerRoute(fromDeviceId)
+            val host = route?.host.orEmpty().trim()
+            if (host.isNotBlank()) {
+                val port = route?.port ?: ME_ME_LAN_PORT
+                val lanOut = postMeMeLanJson(host, port, "/me/me/data/ack", ackPayload)
+                    .put("transport", "lan")
+                if (lanOut.optBoolean("ok", false)) {
+                    ackOut = lanOut
+                    ackTransport = "lan"
+                } else if (ackTransport.isBlank()) {
+                    ackOut = lanOut
+                    ackTransport = "lan"
+                }
+            }
+        }
+        logMeMeTrace(
+            event = "message.ingest_ack",
+            messageId = did,
+            fields = JSONObject()
+                .put("delivery_id", did)
+                .put("ok", ackOut.optBoolean("ok", false))
+                .put("ack_status", if (ok) "stored" else "failed")
+                .put("ack_transport", ackTransport.ifBlank { "none" })
+                .put("ack_error", ackOut.optString("error", "").trim().takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                .put("ingest_error", if (ok) JSONObject.NULL else error.trim().ifBlank { "ingest_failed" })
+        )
     }
 
     private fun resolveMeMePeerDisplayName(deviceId: String, hintName: String = ""): String {
@@ -9472,17 +9787,40 @@ class LocalHttpServer(
         sourceDeviceId: String,
         targetDeviceId: String,
         sessionId: String,
-        sessionKeyB64: String,
-        expiresAt: Long
-    ): String {
+        sourceSigAlgorithm: String,
+        sourceKexAlgorithm: String,
+        sourceSigPublicKeyB64: String,
+        sourceEphemeralPublicKeyB64: String,
+        nonceB64: String,
+        expiresAt: Long,
+        sourceSigPrivateKeyB64: String
+    ): String? {
+        val sig = signMeMeOffer(
+            sourceSigPrivateKeyB64 = sourceSigPrivateKeyB64,
+            requestId = requestId,
+            sourceDeviceId = sourceDeviceId,
+            targetDeviceId = targetDeviceId,
+            sessionId = sessionId,
+            sourceSigAlgorithm = sourceSigAlgorithm,
+            sourceKexAlgorithm = sourceKexAlgorithm,
+            sourceSigPublicKeyB64 = sourceSigPublicKeyB64,
+            sourceEphemeralPublicKeyB64 = sourceEphemeralPublicKeyB64,
+            nonceB64 = nonceB64,
+            expiresAt = expiresAt
+        ) ?: return null
         val payload = JSONObject()
-            .put("v", 1)
+            .put("v", 2)
             .put("request_id", requestId)
             .put("source_device_id", sourceDeviceId)
             .put("target_device_id", targetDeviceId)
             .put("session_id", sessionId)
-            .put("session_key", sessionKeyB64)
+            .put("source_sig_algorithm", sourceSigAlgorithm)
+            .put("source_kex_algorithm", sourceKexAlgorithm)
+            .put("source_sig_public_key", sourceSigPublicKeyB64)
+            .put("source_ephemeral_public_key", sourceEphemeralPublicKeyB64)
+            .put("nonce", nonceB64)
             .put("expires_at", expiresAt)
+            .put("sig", sig)
         val b64 = Base64.encodeToString(
             payload.toString().toByteArray(StandardCharsets.UTF_8),
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
@@ -9503,13 +9841,428 @@ class LocalHttpServer(
                 sourceDeviceId = obj.optString("source_device_id", "").trim(),
                 targetDeviceId = obj.optString("target_device_id", "").trim(),
                 sessionId = obj.optString("session_id", "").trim(),
-                sessionKeyB64 = obj.optString("session_key", "").trim(),
+                sourceSigAlgorithm = normalizeMeMeSigAlgorithm(obj.optString("source_sig_algorithm", "").trim()) ?: "ed25519",
+                sourceKexAlgorithm = normalizeMeMeKexAlgorithm(obj.optString("source_kex_algorithm", "").trim()) ?: "x25519",
+                sourceSigPublicKeyB64 = obj.optString("source_sig_public_key", "").trim(),
+                sourceEphemeralPublicKeyB64 = obj.optString("source_ephemeral_public_key", "").trim(),
+                nonceB64 = obj.optString("nonce", "").trim(),
+                signatureB64 = obj.optString("sig", "").trim(),
                 expiresAt = obj.optLong("expires_at", 0L)
             )
         }.getOrNull()?.takeIf {
             it.requestId.isNotBlank() && it.sourceDeviceId.isNotBlank() &&
-                it.targetDeviceId.isNotBlank() && it.sessionId.isNotBlank() && it.sessionKeyB64.isNotBlank()
+                it.targetDeviceId.isNotBlank() && it.sessionId.isNotBlank() &&
+                it.sourceSigPublicKeyB64.isNotBlank() && it.sourceEphemeralPublicKeyB64.isNotBlank() &&
+                it.nonceB64.isNotBlank() && it.signatureB64.isNotBlank()
         }
+    }
+
+    private fun currentMeMeIdentityKeyPair(): MeMeIdentityKeyPair? {
+        val alg = normalizeMeMeSigAlgorithm(meMePrefs.getString("identity_sig_algorithm", "")?.trim().orEmpty())
+        val priv = meMePrefs.getString("identity_sig_private_pkcs8", "")?.trim().orEmpty()
+        val pub = meMePrefs.getString("identity_sig_public_x509", "")?.trim().orEmpty()
+        if (alg != null && priv.isNotBlank() && pub.isNotBlank()) {
+            return MeMeIdentityKeyPair(algorithm = alg, privateKeyB64 = priv, publicKeyB64 = pub)
+        }
+        // Migrate from old ed25519-only prefs if present.
+        val legacyPriv = meMePrefs.getString("identity_ed25519_private_pkcs8", "")?.trim().orEmpty()
+        val legacyPub = meMePrefs.getString("identity_ed25519_public_x509", "")?.trim().orEmpty()
+        if (legacyPriv.isNotBlank() && legacyPub.isNotBlank()) {
+            val legacy = MeMeIdentityKeyPair(algorithm = "ed25519", privateKeyB64 = legacyPriv, publicKeyB64 = legacyPub)
+            meMePrefs.edit()
+                .putString("identity_sig_algorithm", legacy.algorithm)
+                .putString("identity_sig_private_pkcs8", legacy.privateKeyB64)
+                .putString("identity_sig_public_x509", legacy.publicKeyB64)
+                .apply()
+            return legacy
+        }
+        val generated = generateMeMeSignatureKeyPairB64() ?: return null
+        meMePrefs.edit()
+            .putString("identity_sig_algorithm", generated.algorithm)
+            .putString("identity_sig_private_pkcs8", generated.privateKeyB64)
+            .putString("identity_sig_public_x509", generated.publicKeyB64)
+            .apply()
+        return generated
+    }
+
+    private fun normalizeMeMeSigAlgorithm(raw: String): String? {
+        return when (raw.trim().lowercase(Locale.US)) {
+            "ed25519", "eddsa" -> "ed25519"
+            "ecdsa_p256", "ecdsa-p256", "p256", "ec_p256" -> "ecdsa_p256"
+            else -> null
+        }
+    }
+
+    private fun normalizeMeMeKexAlgorithm(raw: String): String? {
+        return when (raw.trim().lowercase(Locale.US)) {
+            "x25519", "xdh" -> "x25519"
+            "ecdh_p256", "ecdh-p256", "p256", "ec_p256" -> "ecdh_p256"
+            else -> null
+        }
+    }
+
+    private fun generateMeMeSignatureKeyPairB64(): MeMeIdentityKeyPair? {
+        generateEd25519KeyPairB64()?.let { return it }
+        generateEcP256KeyPairB64(usage = "sign")?.let { return it.copy(algorithm = "ecdsa_p256") }
+        return null
+    }
+
+    private fun generateMeMeEphemeralKeyPairB64(preferredAlgorithm: String = ""): MeMeIdentityKeyPair? {
+        when (normalizeMeMeKexAlgorithm(preferredAlgorithm)) {
+            "x25519" -> {
+                generateX25519KeyPairB64()?.let { return it }
+                return null
+            }
+            "ecdh_p256" -> {
+                generateEcP256KeyPairB64(usage = "kex")?.let { return it.copy(algorithm = "ecdh_p256") }
+                return null
+            }
+        }
+        generateX25519KeyPairB64()?.let { return it }
+        generateEcP256KeyPairB64(usage = "kex")?.let { return it.copy(algorithm = "ecdh_p256") }
+        return null
+    }
+
+    private fun generateEd25519KeyPairB64(): MeMeIdentityKeyPair? {
+        val kp = runCatching { KeyPairGenerator.getInstance("Ed25519").generateKeyPair() }
+            .onFailure { Log.w(TAG, "me.me Ed25519 keygen failed via Ed25519(default)", it) }
+            .getOrNull()
+        if (kp != null) {
+            return MeMeIdentityKeyPair(
+                algorithm = "ed25519",
+                privateKeyB64 = Base64.encodeToString(kp.private.encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING),
+                publicKeyB64 = Base64.encodeToString(kp.public.encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            )
+        }
+        Log.e(TAG, "me.me Ed25519 key generation unavailable on this device")
+        return null
+    }
+
+    private fun generateX25519KeyPairB64(): MeMeIdentityKeyPair? {
+        val attempts = ArrayList<Pair<String, () -> KeyPairGenerator>>()
+        attempts += "X25519(default)" to { KeyPairGenerator.getInstance("X25519") }
+        attempts += "XDH+X25519(default)" to {
+            KeyPairGenerator.getInstance("XDH").apply { initialize(ECGenParameterSpec("X25519")) }
+        }
+        for ((label, factory) in attempts) {
+            val kp = runCatching { factory().generateKeyPair() }
+                .onFailure { Log.w(TAG, "me.me X25519 keygen failed via $label", it) }
+                .getOrNull() ?: continue
+            return MeMeIdentityKeyPair(
+                algorithm = "x25519",
+                privateKeyB64 = Base64.encodeToString(kp.private.encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING),
+                publicKeyB64 = Base64.encodeToString(kp.public.encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            )
+        }
+        Log.e(TAG, "me.me X25519 key generation unavailable on this device")
+        return null
+    }
+
+    private fun generateEcP256KeyPairB64(usage: String): MeMeIdentityKeyPair? {
+        val attempts = ArrayList<Pair<String, () -> KeyPairGenerator>>()
+        attempts += "EC(secp256r1,default)" to {
+            KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }
+        }
+        attempts += "EC(prime256v1,default)" to {
+            KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("prime256v1")) }
+        }
+        for ((label, factory) in attempts) {
+            val kp = runCatching { factory().generateKeyPair() }
+                .onFailure { Log.w(TAG, "me.me P-256 keygen failed via $label", it) }
+                .getOrNull() ?: continue
+            return MeMeIdentityKeyPair(
+                algorithm = if (usage == "kex") "ecdh_p256" else "ecdsa_p256",
+                privateKeyB64 = Base64.encodeToString(kp.private.encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING),
+                publicKeyB64 = Base64.encodeToString(kp.public.encoded, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            )
+        }
+        Log.e(TAG, "me.me P-256 key generation unavailable for usage=$usage")
+        return null
+    }
+
+    private fun loadEd25519PrivateKey(privateKeyB64: String): PrivateKey? {
+        return runCatching {
+            val bytes = Base64.decode(privateKeyB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            KeyFactory.getInstance("Ed25519").generatePrivate(PKCS8EncodedKeySpec(bytes))
+        }.getOrNull()
+    }
+
+    private fun loadEd25519PublicKey(publicKeyB64: String): PublicKey? {
+        return runCatching {
+            val bytes = Base64.decode(publicKeyB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            KeyFactory.getInstance("Ed25519").generatePublic(X509EncodedKeySpec(bytes))
+        }.getOrNull()
+    }
+
+    private fun loadX25519PrivateKey(privateKeyB64: String): PrivateKey? {
+        return runCatching {
+            val bytes = Base64.decode(privateKeyB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            KeyFactory.getInstance("X25519").generatePrivate(PKCS8EncodedKeySpec(bytes))
+        }.getOrNull()
+    }
+
+    private fun loadX25519PublicKey(publicKeyB64: String): PublicKey? {
+        return runCatching {
+            val bytes = Base64.decode(publicKeyB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            KeyFactory.getInstance("X25519").generatePublic(X509EncodedKeySpec(bytes))
+        }.getOrNull()
+    }
+
+    private fun loadEcPrivateKey(privateKeyB64: String): PrivateKey? {
+        return runCatching {
+            val bytes = Base64.decode(privateKeyB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            KeyFactory.getInstance("EC").generatePrivate(PKCS8EncodedKeySpec(bytes))
+        }.getOrNull()
+    }
+
+    private fun loadEcPublicKey(publicKeyB64: String): PublicKey? {
+        return runCatching {
+            val bytes = Base64.decode(publicKeyB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+            KeyFactory.getInstance("EC").generatePublic(X509EncodedKeySpec(bytes))
+        }.getOrNull()
+    }
+
+    private fun loadMeMeSigPrivateKey(sigAlgorithm: String, privateKeyB64: String): PrivateKey? {
+        return when (normalizeMeMeSigAlgorithm(sigAlgorithm)) {
+            "ed25519" -> loadEd25519PrivateKey(privateKeyB64)
+            "ecdsa_p256" -> loadEcPrivateKey(privateKeyB64)
+            else -> null
+        }
+    }
+
+    private fun loadMeMeSigPublicKey(sigAlgorithm: String, publicKeyB64: String): PublicKey? {
+        return when (normalizeMeMeSigAlgorithm(sigAlgorithm)) {
+            "ed25519" -> loadEd25519PublicKey(publicKeyB64)
+            "ecdsa_p256" -> loadEcPublicKey(publicKeyB64)
+            else -> null
+        }
+    }
+
+    private fun loadMeMeKexPrivateKey(kexAlgorithm: String, privateKeyB64: String): PrivateKey? {
+        return when (normalizeMeMeKexAlgorithm(kexAlgorithm)) {
+            "x25519" -> loadX25519PrivateKey(privateKeyB64)
+            "ecdh_p256" -> loadEcPrivateKey(privateKeyB64)
+            else -> null
+        }
+    }
+
+    private fun loadMeMeKexPublicKey(kexAlgorithm: String, publicKeyB64: String): PublicKey? {
+        return when (normalizeMeMeKexAlgorithm(kexAlgorithm)) {
+            "x25519" -> loadX25519PublicKey(publicKeyB64)
+            "ecdh_p256" -> loadEcPublicKey(publicKeyB64)
+            else -> null
+        }
+    }
+
+    private fun buildMeMeOfferSignatureMessage(
+        requestId: String,
+        sourceDeviceId: String,
+        targetDeviceId: String,
+        sessionId: String,
+        sourceSigAlgorithm: String,
+        sourceKexAlgorithm: String,
+        sourceSigPublicKeyB64: String,
+        sourceEphemeralPublicKeyB64: String,
+        nonceB64: String,
+        expiresAt: Long
+    ): ByteArray {
+        val text = listOf(
+            "v2",
+            requestId,
+            sourceDeviceId,
+            targetDeviceId,
+            sessionId,
+            sourceSigAlgorithm,
+            sourceKexAlgorithm,
+            sourceSigPublicKeyB64,
+            sourceEphemeralPublicKeyB64,
+            nonceB64,
+            expiresAt.toString()
+        ).joinToString("\n")
+        return text.toByteArray(StandardCharsets.UTF_8)
+    }
+
+    private fun signMeMeOffer(
+        sourceSigPrivateKeyB64: String,
+        sourceSigAlgorithm: String,
+        sourceKexAlgorithm: String,
+        requestId: String,
+        sourceDeviceId: String,
+        targetDeviceId: String,
+        sessionId: String,
+        sourceSigPublicKeyB64: String,
+        sourceEphemeralPublicKeyB64: String,
+        nonceB64: String,
+        expiresAt: Long
+    ): String? {
+        val sigAlgorithm = normalizeMeMeSigAlgorithm(sourceSigAlgorithm) ?: return null
+        val kexAlgorithm = normalizeMeMeKexAlgorithm(sourceKexAlgorithm) ?: return null
+        val key = loadMeMeSigPrivateKey(sigAlgorithm, sourceSigPrivateKeyB64) ?: return null
+        val msg = buildMeMeOfferSignatureMessage(
+            requestId = requestId,
+            sourceDeviceId = sourceDeviceId,
+            targetDeviceId = targetDeviceId,
+            sessionId = sessionId,
+            sourceSigAlgorithm = sigAlgorithm,
+            sourceKexAlgorithm = kexAlgorithm,
+            sourceSigPublicKeyB64 = sourceSigPublicKeyB64,
+            sourceEphemeralPublicKeyB64 = sourceEphemeralPublicKeyB64,
+            nonceB64 = nonceB64,
+            expiresAt = expiresAt
+        )
+        return runCatching {
+            val sig = Signature.getInstance(
+                if (sigAlgorithm == "ed25519") "Ed25519" else "SHA256withECDSA"
+            )
+            sig.initSign(key)
+            sig.update(msg)
+            Base64.encodeToString(sig.sign(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        }.getOrNull()
+    }
+
+    private fun verifyMeMeOfferSignature(token: MeMeAcceptToken): Boolean {
+        val sigAlgorithm = normalizeMeMeSigAlgorithm(token.sourceSigAlgorithm) ?: return false
+        val kexAlgorithm = normalizeMeMeKexAlgorithm(token.sourceKexAlgorithm) ?: return false
+        val key = loadMeMeSigPublicKey(sigAlgorithm, token.sourceSigPublicKeyB64) ?: return false
+        val sigBytes = runCatching {
+            Base64.decode(token.signatureB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        }.getOrNull() ?: return false
+        val msg = buildMeMeOfferSignatureMessage(
+            requestId = token.requestId,
+            sourceDeviceId = token.sourceDeviceId,
+            targetDeviceId = token.targetDeviceId,
+            sessionId = token.sessionId,
+            sourceSigAlgorithm = sigAlgorithm,
+            sourceKexAlgorithm = kexAlgorithm,
+            sourceSigPublicKeyB64 = token.sourceSigPublicKeyB64,
+            sourceEphemeralPublicKeyB64 = token.sourceEphemeralPublicKeyB64,
+            nonceB64 = token.nonceB64,
+            expiresAt = token.expiresAt
+        )
+        return runCatching {
+            val sig = Signature.getInstance(
+                if (sigAlgorithm == "ed25519") "Ed25519" else "SHA256withECDSA"
+            )
+            sig.initVerify(key)
+            sig.update(msg)
+            sig.verify(sigBytes)
+        }.getOrDefault(false)
+    }
+
+    private fun buildMeMeConfirmSignatureMessage(
+        token: MeMeAcceptToken,
+        responderEphemeralPublicKeyB64: String
+    ): ByteArray {
+        val offerDigest = MessageDigest.getInstance("SHA-256").digest(
+            buildMeMeOfferSignatureMessage(
+                requestId = token.requestId,
+                sourceDeviceId = token.sourceDeviceId,
+                targetDeviceId = token.targetDeviceId,
+                sessionId = token.sessionId,
+                sourceSigAlgorithm = token.sourceSigAlgorithm,
+                sourceKexAlgorithm = token.sourceKexAlgorithm,
+                sourceSigPublicKeyB64 = token.sourceSigPublicKeyB64,
+                sourceEphemeralPublicKeyB64 = token.sourceEphemeralPublicKeyB64,
+                nonceB64 = token.nonceB64,
+                expiresAt = token.expiresAt
+            )
+        )
+        val offerDigestB64 = Base64.encodeToString(offerDigest, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        val text = listOf(
+            "v2-confirm",
+            token.requestId,
+            token.sessionId,
+            offerDigestB64,
+            responderEphemeralPublicKeyB64
+        ).joinToString("\n")
+        return text.toByteArray(StandardCharsets.UTF_8)
+    }
+
+    private fun signMeMeConfirm(
+        sourceSigPrivateKeyB64: String,
+        sourceSigAlgorithm: String,
+        token: MeMeAcceptToken,
+        responderEphemeralPublicKeyB64: String
+    ): String? {
+        val sigAlgorithm = normalizeMeMeSigAlgorithm(sourceSigAlgorithm) ?: return null
+        val key = loadMeMeSigPrivateKey(sigAlgorithm, sourceSigPrivateKeyB64) ?: return null
+        val msg = buildMeMeConfirmSignatureMessage(token, responderEphemeralPublicKeyB64)
+        return runCatching {
+            val sig = Signature.getInstance(
+                if (sigAlgorithm == "ed25519") "Ed25519" else "SHA256withECDSA"
+            )
+            sig.initSign(key)
+            sig.update(msg)
+            Base64.encodeToString(sig.sign(), Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        }.getOrNull()
+    }
+
+    private fun verifyMeMeConfirmSignature(
+        responderSigAlgorithm: String,
+        responderSigPublicKeyB64: String,
+        responderSignatureB64: String,
+        token: MeMeAcceptToken,
+        responderEphemeralPublicKeyB64: String
+    ): Boolean {
+        val sigAlgorithm = normalizeMeMeSigAlgorithm(responderSigAlgorithm) ?: return false
+        val key = loadMeMeSigPublicKey(sigAlgorithm, responderSigPublicKeyB64) ?: return false
+        val sigBytes = runCatching {
+            Base64.decode(responderSignatureB64, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        }.getOrNull() ?: return false
+        val msg = buildMeMeConfirmSignatureMessage(token, responderEphemeralPublicKeyB64)
+        return runCatching {
+            val sig = Signature.getInstance(
+                if (sigAlgorithm == "ed25519") "Ed25519" else "SHA256withECDSA"
+            )
+            sig.initVerify(key)
+            sig.update(msg)
+            sig.verify(sigBytes)
+        }.getOrDefault(false)
+    }
+
+    private fun deriveMeMeSessionKeyB64(
+        kexAlgorithm: String,
+        ownEphemeralPrivateKeyB64: String,
+        peerEphemeralPublicKeyB64: String,
+        contextParts: List<String>
+    ): String? {
+        val kex = normalizeMeMeKexAlgorithm(kexAlgorithm) ?: return null
+        val ownPrivate = loadMeMeKexPrivateKey(kex, ownEphemeralPrivateKeyB64) ?: return null
+        val peerPublic = loadMeMeKexPublicKey(kex, peerEphemeralPublicKeyB64) ?: return null
+        return runCatching {
+            val ka = KeyAgreement.getInstance(if (kex == "x25519") "X25519" else "ECDH")
+            ka.init(ownPrivate)
+            ka.doPhase(peerPublic, true)
+            val shared = ka.generateSecret()
+            val salt = MessageDigest.getInstance("SHA-256")
+                .digest(contextParts.joinToString("\n").toByteArray(StandardCharsets.UTF_8))
+            val info = "me.me.session.v2".toByteArray(StandardCharsets.UTF_8)
+            val key = hkdfSha256(shared, salt, info, 32)
+            Base64.encodeToString(key, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
+        }.getOrNull()
+    }
+
+    private fun hkdfSha256(ikm: ByteArray, salt: ByteArray, info: ByteArray, length: Int): ByteArray {
+        val prk = run {
+            val mac = Mac.getInstance("HmacSHA256")
+            mac.init(SecretKeySpec(salt, "HmacSHA256"))
+            mac.doFinal(ikm)
+        }
+        val out = ByteArrayOutputStream()
+        var t = ByteArray(0)
+        var counter: Byte = 1
+        while (out.size() < length) {
+            val mac = Mac.getInstance("HmacSHA256")
+            mac.init(SecretKeySpec(prk, "HmacSHA256"))
+            mac.update(t)
+            mac.update(info)
+            mac.update(counter)
+            t = mac.doFinal()
+            out.write(t)
+            counter = (counter + 1).toByte()
+        }
+        val bytes = out.toByteArray()
+        return if (bytes.size == length) bytes else bytes.copyOf(length)
     }
 
     private data class EncryptedMessage(val ivB64: String, val ciphertextB64: String)
@@ -9619,13 +10372,7 @@ class LocalHttpServer(
             }
             "data_ack" -> {
                 val payload = obj.optJSONObject("payload") ?: obj
-                val deliveryId = payload.optString("delivery_id", "").trim()
-                if (deliveryId.isNotBlank()) {
-                    meMeBleDataAckWaiters[deliveryId]?.let { waiter ->
-                        waiter.ack = JSONObject(payload.toString())
-                        waiter.latch.countDown()
-                    }
-                }
+                handleMeMeDataAck(payload, sourceIp = "ble:$sourceAddress")
             }
             "data_ingest", "" -> {
                 val payload = obj.optJSONObject("payload") ?: obj
@@ -9710,6 +10457,10 @@ class LocalHttpServer(
             reconnectIntervalSec = meMePrefs.getInt("reconnect_interval", 10).coerceIn(3, 3600),
             discoveryIntervalSec = meMePrefs.getInt("discovery_interval", 60).coerceIn(10, 3600),
             connectionCheckIntervalSec = meMePrefs.getInt("connection_check_interval", 30).coerceIn(5, 3600),
+            blePreferredMaxBytes = meMePrefs.getInt("ble_preferred_max_bytes", ME_ME_BLE_PREFERRED_MAX_BYTES_DEFAULT)
+                .coerceIn(ME_ME_BLE_PREFERRED_MAX_BYTES_MIN, ME_ME_BLE_MAX_MESSAGE_BYTES),
+            autoApproveOwnDevices = meMePrefs.getBoolean("auto_approve_own_devices", false),
+            ownerIdentities = meMePrefs.getStringSet("owner_identities", emptySet())?.toList()?.map { normalizeOwnerIdentity(it) }?.filter { it.isNotBlank() }?.distinct() ?: emptyList(),
             allowedDevices = meMePrefs.getStringSet("allowed_devices", emptySet())?.toList()?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList(),
             blockedDevices = meMePrefs.getStringSet("blocked_devices", emptySet())?.toList()?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList(),
             notifyOnConnection = meMePrefs.getBoolean("notify_on_connection", true),
@@ -9732,11 +10483,39 @@ class LocalHttpServer(
             .putInt("reconnect_interval", cfg.reconnectIntervalSec)
             .putInt("discovery_interval", cfg.discoveryIntervalSec)
             .putInt("connection_check_interval", cfg.connectionCheckIntervalSec)
+            .putInt("ble_preferred_max_bytes", cfg.blePreferredMaxBytes)
+            .putBoolean("auto_approve_own_devices", cfg.autoApproveOwnDevices)
+            .putStringSet("owner_identities", cfg.ownerIdentities.toSet())
             .putStringSet("allowed_devices", cfg.allowedDevices.toSet())
             .putStringSet("blocked_devices", cfg.blockedDevices.toSet())
             .putBoolean("notify_on_connection", cfg.notifyOnConnection)
             .putBoolean("notify_on_disconnection", cfg.notifyOnDisconnection)
             .apply()
+    }
+
+    private fun normalizeOwnerIdentity(raw: String): String {
+        val v = raw.trim().lowercase(Locale.US)
+        val idx = v.indexOf(':')
+        if (idx <= 0 || idx >= v.length - 1) return ""
+        val issuer = v.substring(0, idx).trim()
+        val sub = v.substring(idx + 1).trim()
+        if (issuer !in setOf("google", "github")) return ""
+        if (sub.isBlank()) return ""
+        return "$issuer:$sub"
+    }
+
+    private fun readIdentityList(payload: JSONObject, key: String, fallback: List<String>): List<String> {
+        val raw = readStringList(payload, key, fallback)
+        return raw.map { normalizeOwnerIdentity(it) }.filter { it.isNotBlank() }.distinct()
+    }
+
+    private fun hasOwnerIdentityMatch(local: List<String>, remote: List<String>): Boolean {
+        if (local.isEmpty() || remote.isEmpty()) return false
+        val l = local.map { normalizeOwnerIdentity(it) }.filter { it.isNotBlank() }.toSet()
+        if (l.isEmpty()) return false
+        val r = remote.map { normalizeOwnerIdentity(it) }.filter { it.isNotBlank() }.toSet()
+        if (r.isEmpty()) return false
+        return l.any { r.contains(it) }
     }
 
     private fun readStringList(payload: JSONObject, key: String, fallback: List<String>): List<String> {
@@ -11605,6 +12384,9 @@ class LocalHttpServer(
         val reconnectIntervalSec: Int,
         val discoveryIntervalSec: Int,
         val connectionCheckIntervalSec: Int,
+        val blePreferredMaxBytes: Int,
+        val autoApproveOwnDevices: Boolean,
+        val ownerIdentities: List<String>,
         val allowedDevices: List<String>,
         val blockedDevices: List<String>,
         val notifyOnConnection: Boolean,
@@ -11624,6 +12406,9 @@ class LocalHttpServer(
                 .put("reconnect_interval", reconnectIntervalSec)
                 .put("discovery_interval", discoveryIntervalSec)
                 .put("connection_check_interval", connectionCheckIntervalSec)
+                .put("ble_preferred_max_bytes", blePreferredMaxBytes)
+                .put("auto_approve_own_devices", autoApproveOwnDevices)
+                .put("owner_identities", org.json.JSONArray(ownerIdentities))
                 .put("allowed_devices", org.json.JSONArray(allowedDevices))
                 .put("blocked_devices", org.json.JSONArray(blockedDevices))
                 .put("notify_on_connection", notifyOnConnection)
@@ -11666,7 +12451,13 @@ class LocalHttpServer(
         val acceptToken: String,
         val methodHint: String,
         val sessionId: String,
-        val sessionKeyB64: String
+        val sessionKeyB64: String,
+        val sourceOwnerIdentities: List<String> = emptyList(),
+        val sourceSigAlgorithm: String = "ed25519",
+        val sourceKexAlgorithm: String = "x25519",
+        val sourceSigPublicKeyB64: String = "",
+        val sourceEphemeralPublicKeyB64: String = "",
+        val sourceEphemeralPrivateKeyB64: String = ""
     ) {
         fun toJson(includeToken: Boolean): JSONObject {
             val out = JSONObject()
@@ -11680,6 +12471,7 @@ class LocalHttpServer(
                 .put("accepted", accepted)
                 .put("method", methodHint)
                 .put("session_id", sessionId)
+                .put("source_owner_identities", org.json.JSONArray(sourceOwnerIdentities))
             if (includeToken) out.put("accept_token", acceptToken)
             return out
         }
@@ -11714,8 +12506,19 @@ class LocalHttpServer(
         val sourceDeviceId: String,
         val targetDeviceId: String,
         val sessionId: String,
-        val sessionKeyB64: String,
+        val sourceSigAlgorithm: String,
+        val sourceKexAlgorithm: String,
+        val sourceSigPublicKeyB64: String,
+        val sourceEphemeralPublicKeyB64: String,
+        val nonceB64: String,
+        val signatureB64: String,
         val expiresAt: Long
+    )
+
+    private data class MeMeIdentityKeyPair(
+        val algorithm: String,
+        val privateKeyB64: String,
+        val publicKeyB64: String
     )
 
     private data class MeMePeerPresence(
@@ -11948,6 +12751,10 @@ class LocalHttpServer(
                     val payload = JSONObject(readBody(session).ifBlank { "{}" })
                     handleMeMeDataIngest(payload, sourceIp = session.remoteIpAddress ?: "")
                 }
+                session.method == Method.POST && uri == "/me/me/data/ack" -> {
+                    val payload = JSONObject(readBody(session).ifBlank { "{}" })
+                    handleMeMeDataAck(payload, sourceIp = session.remoteIpAddress ?: "")
+                }
                 session.method == Method.POST && uri == "/me/me/connect/confirm" -> {
                     val payload = JSONObject(readBody(session).ifBlank { "{}" })
                     handleMeMeConnectConfirm(payload)
@@ -11968,6 +12775,8 @@ class LocalHttpServer(
         private const val ME_SYNC_LAN_PORT = 8766
         private const val ME_ME_LAN_PORT = 8767
         private const val ME_ME_BLE_MAX_MESSAGE_BYTES = 1_000_000
+        private const val ME_ME_BLE_PREFERRED_MAX_BYTES_DEFAULT = 512 * 1024
+        private const val ME_ME_BLE_PREFERRED_MAX_BYTES_MIN = 32 * 1024
         private const val ME_SYNC_QR_TTL_MS = 40L * 1000L
         private const val ME_SYNC_V3_TRANSFER_TTL_MS = 20L * 60L * 1000L
         private const val ME_SYNC_V3_MIN_TRANSFER_REMAINING_MS = 3L * 60L * 1000L
@@ -11990,6 +12799,10 @@ class LocalHttpServer(
         private const val ME_ME_DEVICE_LOST_MIN_MS = 90_000L
         private const val ME_ME_DEVICE_PRESENCE_TTL_MS = 24L * 60L * 60L * 1000L
         private const val ME_ME_CONNECTION_CHECK_INITIAL_DELAY_SEC = 10L
+        private const val ME_ME_AUTO_CONNECT_MAX_ATTEMPTS_PER_TICK = 2
+        private const val ME_ME_AUTO_CONNECT_WAIT_BUDGET_MS = 4_000L
+        private const val ME_ME_AUTO_CONNECT_SETTLE_WAIT_MS = 1_600L
+        private const val ME_ME_AUTO_CONNECT_RETRY_DELAY_MS = 500L
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
         private const val SOCKET_READ_TIMEOUT = 0
         private const val BRAIN_SYSTEM_PROMPT = """You are the me.things Brain, an AI assistant running on an Android device.
