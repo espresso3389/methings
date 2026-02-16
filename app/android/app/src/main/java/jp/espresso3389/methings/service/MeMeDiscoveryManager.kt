@@ -691,7 +691,8 @@ class MeMeDiscoveryManager(
 
     private fun buildBleServiceData(config: Config): ByteArray {
         // Keep BLE payload tiny. Legacy ASCII payload frequently exceeds advertisement limits.
-        // v1 binary format: [1-byte version=1][16-byte UUID(deviceId without "install_")]
+        // v1 binary format: [1-byte version=1][16-byte UUID(legacy install_ suffix)].
+        // New short IDs (d_xxxxxx) use compact ASCII fallback below.
         val uuid = runCatching {
             UUID.fromString(config.deviceId.removePrefix("install_"))
         }.getOrNull()
@@ -712,6 +713,7 @@ class MeMeDiscoveryManager(
                 val buf = ByteBuffer.wrap(data)
                 buf.get() // version
                 val uuid = UUID(buf.long, buf.long)
+                // Legacy format compatibility: keep original install_ style ID.
                 mapOf("id" to "install_$uuid")
             }.getOrDefault(emptyMap())
         }

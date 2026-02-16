@@ -7839,11 +7839,33 @@ class LocalHttpServer(
             .put("allow_discovery", cfg.allowDiscovery)
             .put("connection_methods", org.json.JSONArray(cfg.connectionMethods))
         val runtime = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig(cfg))
-        val connections = org.json.JSONArray(
-            meMeConnections.values
-                .sortedByDescending { it.connectedAt }
-                .map { it.toJson() }
-        )
+        val connectionList = meMeConnections.values
+            .sortedByDescending { it.connectedAt }
+        val connections = org.json.JSONArray(connectionList.map { it.toJson() })
+        val connNameByDeviceId = connectionList
+            .mapNotNull { conn ->
+                val did = conn.peerDeviceId.trim()
+                val name = conn.peerDeviceName.trim()
+                if (did.isBlank() || name.isBlank()) null else did to name
+            }
+            .toMap()
+        val discoveredRaw = runtime.optJSONArray("discovered") ?: org.json.JSONArray()
+        val discovered = org.json.JSONArray()
+        for (i in 0 until discoveredRaw.length()) {
+            val src = discoveredRaw.optJSONObject(i)
+            if (src == null) {
+                discovered.put(discoveredRaw.opt(i))
+                continue
+            }
+            val row = JSONObject(src.toString())
+            val did = row.optString("device_id", "").trim()
+            val dname = row.optString("device_name", "").trim()
+            if (did.isNotBlank() && dname.isBlank()) {
+                val merged = connNameByDeviceId[did].orEmpty().trim()
+                if (merged.isNotBlank()) row.put("device_name", merged)
+            }
+            discovered.put(row)
+        }
         val pending = org.json.JSONArray(
             meMeConnectIntents.values
                 .filter { !it.accepted }
@@ -7860,7 +7882,7 @@ class LocalHttpServer(
                 .put("pending_request_count", pending.length())
                 .put("pending_requests", pending)
                 .put("connections", connections)
-                .put("discovered", runtime.optJSONArray("discovered") ?: org.json.JSONArray())
+                .put("discovered", discovered)
                 .put("advertising", runtime.optJSONObject("advertising") ?: JSONObject())
                 .put("relay", relayCfg.toJson(includeSecrets = false))
                 .put("relay_event_queue_count", relayQueueCount)

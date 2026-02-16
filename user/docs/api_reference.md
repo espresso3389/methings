@@ -422,7 +422,7 @@ Chat prefix shortcut in the app UI:
 | Method | Endpoint | Body | Effect |
 |--------|----------|------|--------|
 | `GET` | `/me/me/status` | — | Return self profile plus current peer/discovery summary |
-| `POST` | `/me/me/message/send` | `{"peer_device_id":"install_...","type":"task","payload":{...}}` | Send encrypted content to a peer using automatic route selection |
+| `POST` | `/me/me/message/send` | `{"peer_device_id":"d_a1b2c3","type":"task","payload":{...}}` | Send encrypted content to a peer using automatic route selection |
 
 Notes:
 - `/me/me/status` includes peer presence/connection snapshots and discovery runtime state.
