@@ -23,7 +23,7 @@ class PermissionBroker(private val context: Context) {
     /**
      * Show a native consent UI (biometric or AlertDialog).
      * Returns true if a native dialog was shown (onResult will be called).
-     * Returns false if skipped because the app is foreground and non-biometric
+     * Returns false if skipped because the app is foreground
      * (the WebView perm-card handles consent instead; onResult will NOT be called).
      */
     fun requestConsent(tool: String, detail: String, forceBiometric: Boolean, onResult: (Boolean) -> Unit): Boolean {
@@ -68,8 +68,11 @@ class PermissionBroker(private val context: Context) {
             }
         }
 
-        // Foreground + non-biometric: let the WebView perm-card handle consent.
-        if (!needsBiometric && AppForegroundState.isForeground) {
+        // Foreground: let the WebView perm-card handle consent.
+        // This covers both non-biometric tools and biometric tools whose biometric
+        // check is unavailable — the WebView card is always preferable to a native
+        // AlertDialog when the user is already looking at the app.
+        if (AppForegroundState.isForeground) {
             android.util.Log.d("MethingsPerm", "skipping native dialog — foreground, WebView perm-card handles consent")
             return false
         }

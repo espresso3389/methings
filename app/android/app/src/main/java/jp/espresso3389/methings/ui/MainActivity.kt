@@ -386,8 +386,6 @@ class MainActivity : AppCompatActivity() {
         }
         onBackPressedDispatcher.addCallback(this, backCallback!!)
 
-        // If launched from a permission notification, handle it immediately.
-        maybeHandlePermissionIntent(intent)
         maybeHandleDeepLinkIntent(intent)
     }
 
@@ -482,6 +480,10 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         AppForegroundState.isForeground = true
+        // Process permission intent now that isForeground is true.
+        // This must run after isForeground=true so PermissionBroker routes foreground
+        // requests to the WebView perm-card instead of a native AlertDialog.
+        maybeHandlePermissionIntent(intent)
         // Heal possible WebView CSS/state desync after activity/window transitions.
         if (!isImmersive) {
             evalJs("window.onExitImmersiveMode && window.onExitImmersiveMode()")
