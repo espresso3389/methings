@@ -1423,6 +1423,35 @@ class BrainRuntime:
             "Content-Type": "application/json",
         }
 
+    def _raise_for_status_with_detail(self, resp: requests.Response, *, url: str = "") -> None:
+        if resp.status_code < 400:
+            return
+        detail = ""
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                err = body.get("error")
+                if isinstance(err, dict):
+                    msg = str(err.get("message") or "").strip()
+                    typ = str(err.get("type") or "").strip()
+                    code = str(err.get("code") or "").strip()
+                    parts = [p for p in [msg, typ, code] if p]
+                    detail = " | ".join(parts)
+                elif isinstance(err, str):
+                    detail = err.strip()
+            if not detail:
+                detail = json.dumps(body, ensure_ascii=True)[:400]
+        except Exception:
+            try:
+                detail = (resp.text or "").strip()[:400]
+            except Exception:
+                detail = ""
+        status = f"{resp.status_code} {resp.reason}"
+        where = f" url={url}" if url else ""
+        if detail:
+            raise requests.HTTPError(f"{status}{where}: {detail}", response=resp)
+        raise requests.HTTPError(f"{status}{where}", response=resp)
+
     def _provider_post(
         self,
         url: str,
@@ -1452,7 +1481,7 @@ class BrainRuntime:
             timeout=(connect_timeout_s, read_timeout_s),
             stream=True,
         )
-        resp.raise_for_status()
+        self._raise_for_status_with_detail(resp, url=url)
 
         content_type = resp.headers.get("content-type", "")
         if "text/event-stream" not in content_type:
@@ -2496,7 +2525,7 @@ class BrainRuntime:
             data=json.dumps(body),
             timeout=25,
         )
-        resp.raise_for_status()
+        self._raise_for_status_with_detail(resp, url=provider_url)
         payload = resp.json()
         if provider_kind == "anthropic":
             content = "{}"

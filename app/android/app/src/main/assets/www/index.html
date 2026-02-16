@@ -1714,31 +1714,30 @@
             <div class="card-title">Brain</div>
           </div>
           <div class="field">
-            <label>Model</label>
-            <select id="brainVendorModel">
-              <option value="" disabled>Choose a model...</option>
-              <optgroup label="OpenAI">
-                <option data-vendor="openai" data-url="https://api.openai.com/v1" value="gpt-5.2-codex">GPT-5.2 Codex</option>
-                <option data-vendor="openai" data-url="https://api.openai.com/v1" value="gpt-5.2">GPT-5.2</option>
-                <option data-vendor="openai" data-url="https://api.openai.com/v1" value="gpt-5.1-codex-mini">GPT-5.1 Codex Mini</option>
-              </optgroup>
-              <optgroup label="Anthropic">
-                <option data-vendor="anthropic" data-url="https://api.anthropic.com" value="claude-opus-4-6">Claude Opus 4.6</option>
-                <option data-vendor="anthropic" data-url="https://api.anthropic.com" value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
-                <option data-vendor="anthropic" data-url="https://api.anthropic.com" value="claude-haiku-4-5">Claude Haiku 4.5</option>
-              </optgroup>
-              <option data-vendor="custom" value="custom">Custom...</option>
+            <label>Provider</label>
+            <select id="brainProvider">
+              <option value="" disabled selected>Choose a provider...</option>
+              <option value="openai">OpenAI</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="kimi">Kimi</option>
+              <option value="gemini">Gemini</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="custom">Custom...</option>
             </select>
           </div>
-          <div id="brainCustomFields" style="display:none;">
-            <div class="field">
-              <label>Base URL</label>
-              <input type="url" id="brainBaseUrl" placeholder="https://api.openai.com/v1" />
-            </div>
-            <div class="field">
-              <label>Model ID</label>
-              <input type="text" id="brainModelId" placeholder="gpt-5.2" />
-            </div>
+          <div class="field" id="brainModelField">
+            <label>Model</label>
+            <select id="brainModelPreset">
+              <option value="" disabled selected>Choose a model...</option>
+            </select>
+          </div>
+          <div class="field" id="brainBaseUrlField" style="display:none;">
+            <label>Base URL</label>
+            <input type="url" id="brainBaseUrl" placeholder="https://api.openai.com/v1" />
+          </div>
+          <div class="field" id="brainModelIdField" style="display:none;">
+            <label>Model ID</label>
+            <input type="text" id="brainModelId" placeholder="gpt-5.2" />
           </div>
           <div class="field">
             <label>API Key</label>
@@ -2918,12 +2917,12 @@
         return String(el.value || "") !== String(el.dataset.secretOriginal || "");
       }
       function currentBrainKeyContext() {
-        const preset = getSelectedPreset ? getSelectedPreset() : null;
-        if (!preset) return { vendor: "", base_url: "" };
-        if (preset.vendor === "custom") {
-          return { vendor: "custom", base_url: String($("brainBaseUrl").value || "").trim() };
-        }
-        return { vendor: String(preset.vendor || ""), base_url: String(preset.base_url || "") };
+        const state = readBrainUiState ? readBrainUiState() : null;
+        if (!state) return { vendor: "", base_url: "" };
+        return {
+          vendor: String(state.vendor || ""),
+          base_url: String(state.base_url || "").trim(),
+        };
       }
       async function unlockBrainKeyField() {
         const el = $("brainApiKey");
@@ -4879,8 +4878,17 @@
 
       // --- SSE connection for real-time brain events ---
       let _brainSSE = null;
-      // item_id -> { resolve } for waitForAgentReply SSE path.
+      // item_id -> { resolve, lastText, failed, failMsg } for waitForAgentReply SSE path.
       const _sseWaiters = new Map();
+      function resolveSseWaiter(itemId, fallbackText) {
+        const key = String(itemId || "").trim();
+        if (!key || !_sseWaiters.has(key)) return;
+        const w = _sseWaiters.get(key);
+        _sseWaiters.delete(key);
+        if (!w || !w.resolve) return;
+        const out = String((w.lastText || fallbackText || "")).trim();
+        w.resolve(out);
+      }
 
       function connectBrainSSE() {
         closeBrainSSE();
@@ -4905,8 +4913,13 @@
               // Resolve SSE waiters.
               if (role === "assistant" && itemId && _sseWaiters.has(itemId)) {
                 const w = _sseWaiters.get(itemId);
-                _sseWaiters.delete(itemId);
-                if (w && w.resolve) w.resolve(text);
+                if (w) {
+                  w.lastText = text;
+                  if (String(meta.error || "") === "brain_item_failed" || /^Error:/i.test(text)) {
+                    w.failed = true;
+                    w.failMsg = text;
+                  }
+                }
               }
               // Update lastServerTs so the slow poll doesn't re-process.
               if (ts && ts > lastServerTs) lastServerTs = ts;
@@ -4916,10 +4929,11 @@
                 if (existing) {
                   existing.dataset.ts = String(ts || "");
                   if (meta.debug) existing.classList.add("debug");
-                  if (role === "assistant" && existing.querySelector(".thinking-dots")) {
+                  if (role === "assistant") {
                     if (_thinking.el === existing) _thinking.el = null;
+                    // Always reflect the latest assistant text for the same item_id.
                     existing.innerHTML = renderMarkdown(text);
-                    if (streaming && !activeAgentItemId) {
+                    if (streaming && !activeAgentItemId && String(meta.error || "") === "brain_item_failed") {
                       streaming = false;
                       chatSend.disabled = false;
                       setInterruptUi(false, "");
@@ -4971,14 +4985,35 @@
           });
           es.addEventListener("brain_item_failed", function(e) {
             try {
+              const data = JSON.parse((e && e.data) || "{}");
+              const id = String(data.id || data.item_id || "").trim();
+              const err = String(data.error || "").trim();
+              if (id && _sseWaiters.has(id)) {
+                const w = _sseWaiters.get(id);
+                if (w) {
+                  w.failed = true;
+                  w.failMsg = w.failMsg || (err ? ("Error: " + err) : "");
+                }
+                resolveSseWaiter(id, err ? ("Error: " + err) : "");
+              }
               if (streaming) return;
               if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
               _thinking.el = null;
               chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
             } catch (_) {}
           });
+          es.addEventListener("brain_item_done", function(e) {
+            try {
+              const data = JSON.parse((e && e.data) || "{}");
+              const id = String(data.id || data.item_id || "").trim();
+              if (id) resolveSseWaiter(id, "");
+            } catch (_) {}
+          });
           es.addEventListener("brain_item_interrupted", function(e) {
             try {
+              const data = JSON.parse((e && e.data) || "{}");
+              const id = String(data.id || data.item_id || "").trim();
+              if (id && _sseWaiters.has(id)) resolveSseWaiter(id, "Interrupted.");
               if (streaming) return;
               if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
               _thinking.el = null;
@@ -5426,16 +5461,17 @@
               continue;
             }
             if (msg.role !== "user" && msg.role !== "assistant") continue;
-            if (itemId) {
-              const existing = findRenderedByItem(msg.role, itemId);
-              if (existing) {
-                existing.dataset.ts = String(ts || "");
-                if (meta.debug) existing.classList.add("debug");
-                if (msg.role === "assistant" && existing.querySelector(".thinking-dots")) {
-                  if (_thinking.el === existing) _thinking.el = null;
-                  existing.innerHTML = renderMarkdown(text);
-                  // Clean up recovered-streaming state if applicable.
-                  if (streaming && !activeAgentItemId) {
+              if (itemId) {
+                const existing = findRenderedByItem(msg.role, itemId);
+                if (existing) {
+                  existing.dataset.ts = String(ts || "");
+                  if (meta.debug) existing.classList.add("debug");
+                  if (msg.role === "assistant") {
+                    if (_thinking.el === existing) _thinking.el = null;
+                    // Always keep the newest assistant content for the same item_id.
+                    existing.innerHTML = renderMarkdown(text);
+                    // Clean up recovered-streaming state if applicable.
+                    if (streaming && !activeAgentItemId) {
                     streaming = false;
                     chatSend.disabled = false;
                     setInterruptUi(false, "");
@@ -5974,7 +6010,7 @@
 
           const answer = await waitForAgentReply(itemId);
           if (!answer) {
-            throw new Error("Agent timed out");
+            throw new Error("Agent finished without response");
           }
           const memRe = /<<MEMORY_UPDATE>>([\s\S]*?)<<END_MEMORY>>/g;
           const cleaned = (answer || "").replace(memRe, "").trim();
@@ -6057,7 +6093,7 @@
           try { if (fallbackText) _sentTextByItemId.set(String(newId), fallbackText); } catch (_) {}
 
           const answer = await waitForAgentReply(newId);
-          if (!answer) throw new Error("Agent timed out");
+          if (!answer) throw new Error("Agent finished without response");
           const cleaned = String(answer || "").trim();
           if (cleaned) {
             if (_thinking.el === aDiv) _thinking.el = null;
@@ -6432,12 +6468,13 @@
       async function waitForAgentReply(itemId) {
         // SSE-primary: register a waiter resolved by the brain_message handler.
         const ssePromise = new Promise(resolve => {
-          _sseWaiters.set(itemId, { resolve });
+          _sseWaiters.set(itemId, { resolve, lastText: "", failed: false, failMsg: "" });
         });
 
         // Slow polling fallback (15s intervals) as safety net.
         const pollPromise = (async () => {
           const deadline = Date.now() + 15 * 60 * 1000;
+          let lastAssistant = "";
           let lastToolError = "";
           while (Date.now() < deadline) {
             await new Promise(r => setTimeout(r, 15000));
@@ -6452,7 +6489,11 @@
                 const meta = msg && msg.meta ? msg.meta : {};
                 if (meta.item_id !== itemId) continue;
                 if (msg.role === "assistant" && typeof msg.text === "string" && msg.text.trim()) {
-                  return msg.text.trim();
+                  const t = msg.text.trim();
+                  lastAssistant = t;
+                  if (String(meta.error || "") === "brain_item_failed" || /^Error:/i.test(t)) {
+                    return t;
+                  }
                 }
                 if (msg.role === "tool" && typeof msg.text === "string") {
                   try {
@@ -6462,10 +6503,18 @@
                   } catch (_) {}
                 }
               }
+              const sr = await fetch(API + "/brain/status");
+              if (sr.ok) {
+                const st = await sr.json().catch(() => ({}));
+                if (!isSessionBusy(st, chatSessionId) && lastAssistant) {
+                  return lastAssistant;
+                }
+              }
             } catch (_) {}
           }
+          if (lastAssistant) return lastAssistant;
           if (lastToolError) throw new Error(lastToolError);
-          return "";
+          return "Agent finished without a visible response.";
         })();
 
         const result = await Promise.race([ssePromise, pollPromise]);
@@ -6477,26 +6526,192 @@
       // ==============================
       // Brain Config
       // ==============================
-      const brainSelect = $("brainVendorModel");
-      const brainCustom = $("brainCustomFields");
+      const brainProviderSelect = $("brainProvider");
+      const brainModelSelect = $("brainModelPreset");
+      const brainModelField = $("brainModelField");
+      const brainBaseUrlField = $("brainBaseUrlField");
+      const brainModelIdField = $("brainModelIdField");
+      const BRAIN_PROVIDER_PRESETS = {
+        openai: {
+          base_url: "https://api.openai.com/v1",
+          models: [
+            { id: "gpt-5.2-codex", label: "GPT-5.2 Codex" },
+            { id: "gpt-5.2", label: "GPT-5.2" },
+            { id: "gpt-5.1-codex-mini", label: "GPT-5.1 Codex Mini" },
+          ],
+        },
+        deepseek: {
+          base_url: "https://api.deepseek.com/v1",
+          models: [
+            { id: "deepseek-chat", label: "DeepSeek Chat" },
+            { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
+          ],
+        },
+        kimi: {
+          base_url: "https://api.moonshot.ai/v1",
+          models: [
+            { id: "kimi-k2.5", label: "Kimi K2.5" },
+            { id: "kimi-k2-0711-preview", label: "Kimi K2" },
+            { id: "moonshot-v1-8k", label: "Moonshot v1 8K" },
+            { id: "moonshot-v1-32k", label: "Moonshot v1 32K" },
+          ],
+        },
+        gemini: {
+          base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
+          models: [
+            { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+            { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+            { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+          ],
+        },
+        anthropic: {
+          base_url: "https://api.anthropic.com",
+          models: [
+            { id: "claude-opus-4-6", label: "Claude Opus 4.6" },
+            { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
+            { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
+          ],
+        },
+      };
+
+      function getProviderPreset(vendor) {
+        const key = String(vendor || "").trim().toLowerCase();
+        return BRAIN_PROVIDER_PRESETS[key] || null;
+      }
+
+      function renderBrainModelOptions(vendor, selectedModel) {
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.disabled = true;
+        placeholder.textContent = "Choose a model...";
+
+        brainModelSelect.innerHTML = "";
+        brainModelSelect.appendChild(placeholder);
+
+        const preset = getProviderPreset(vendor);
+        if (!vendor || vendor === "custom" || !preset) {
+          placeholder.selected = true;
+          brainModelSelect.disabled = true;
+          return;
+        }
+
+        for (const m of preset.models) {
+          const opt = document.createElement("option");
+          opt.value = m.id;
+          opt.textContent = m.label;
+          brainModelSelect.appendChild(opt);
+        }
+        const customOpt = document.createElement("option");
+        customOpt.value = "__custom__";
+        customOpt.textContent = "Custom model...";
+        brainModelSelect.appendChild(customOpt);
+        brainModelSelect.disabled = false;
+
+        const model = String(selectedModel || "").trim();
+        if (!model) {
+          placeholder.selected = true;
+          return;
+        }
+        let matched = false;
+        for (const opt of brainModelSelect.options) {
+          if (opt.value === model) {
+            opt.selected = true;
+            matched = true;
+            break;
+          }
+        }
+        if (!matched) customOpt.selected = true;
+      }
+
+      function syncBrainCustomFields() {
+        const provider = String(brainProviderSelect.value || "").trim();
+        const modelChoice = String(brainModelSelect.value || "").trim();
+        const isCustomProvider = provider === "custom";
+        const isCustomModel = !isCustomProvider && modelChoice === "__custom__";
+
+        if (!provider) {
+          brainModelField.style.display = "block";
+          brainBaseUrlField.style.display = "none";
+          brainModelIdField.style.display = "none";
+          return;
+        }
+
+        if (isCustomProvider) {
+          brainModelField.style.display = "none";
+          brainBaseUrlField.style.display = "block";
+          brainModelIdField.style.display = "block";
+          return;
+        }
+
+        brainModelField.style.display = "block";
+        if (isCustomModel) {
+          const preset = getProviderPreset(provider);
+          if (preset && !$("brainBaseUrl").value.trim()) $("brainBaseUrl").value = preset.base_url;
+          brainBaseUrlField.style.display = "none";
+          brainModelIdField.style.display = "block";
+          return;
+        }
+
+        const preset = getProviderPreset(provider);
+        if (preset) {
+          $("brainBaseUrl").value = preset.base_url;
+          $("brainModelId").value = "";
+        }
+        brainBaseUrlField.style.display = "none";
+        brainModelIdField.style.display = "none";
+      }
 
       function getSelectedPreset() {
-        const opt = brainSelect.selectedOptions[0];
-        if (!opt || !opt.dataset.vendor) return null;
-        if (opt.dataset.vendor === "custom") return { vendor: "custom" };
+        const provider = String(brainProviderSelect.value || "").trim();
+        if (!provider) return null;
+        if (provider === "custom") return { vendor: "custom" };
+        const preset = getProviderPreset(provider);
+        if (!preset) return { vendor: provider, base_url: "", model: "" };
+        const model = String(brainModelSelect.value || "").trim();
+        if (model === "__custom__") {
+          return {
+            vendor: provider,
+            base_url: preset.base_url,
+            model: $("brainModelId").value.trim(),
+          };
+        }
         return {
-          vendor: opt.dataset.vendor,
-          base_url: opt.dataset.url,
-          model: opt.value,
+          vendor: provider,
+          base_url: preset.base_url,
+          model,
         };
       }
 
-      brainSelect.addEventListener("change", () => {
-        const p = getSelectedPreset();
-        brainCustom.style.display = (p && p.vendor === "custom") ? "block" : "none";
+      brainProviderSelect.addEventListener("change", () => {
+        const provider = String(brainProviderSelect.value || "").trim();
+        let selectedModel = "";
+        if (provider && provider === String(brainInitial.vendor || "").trim()) {
+          const savedModel = String(brainInitial.model || "").trim();
+          const savedBaseUrl = String(brainInitial.base_url || "").trim();
+          const preset = getProviderPreset(provider);
+          if (preset && savedModel) {
+            if (!savedBaseUrl || savedBaseUrl === preset.base_url) {
+              selectedModel = savedModel;
+              if (!preset.models.some((m) => m.id === savedModel)) {
+                $("brainModelId").value = savedModel;
+              }
+            }
+          }
+        }
+        renderBrainModelOptions(provider, selectedModel);
+        if (provider !== "custom") {
+          const preset = getProviderPreset(provider);
+          if (preset) $("brainBaseUrl").value = preset.base_url;
+          if (brainModelSelect.value !== "__custom__") $("brainModelId").value = "";
+        }
+        syncBrainCustomFields();
         // Switching providers changes which API key slot will be used. Keep the key field locked
         // until the user taps it and authenticates.
         try { lockSecretField($("brainApiKey")); } catch (_) {}
+        try { updateBrainSaveEnabled(); } catch (_) {}
+      });
+      brainModelSelect.addEventListener("change", () => {
+        syncBrainCustomFields();
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
 
@@ -6534,27 +6749,44 @@
           const data = await res.json();
           $("brainKeyStatus").textContent = data.has_api_key ? "API key is set." : "No API key configured.";
 
-          const vendor = data.vendor || "";
-          const model = data.model || "";
-          let matched = false;
-          for (const opt of brainSelect.options) {
-            if (opt.dataset.vendor && opt.dataset.vendor !== "custom"
-                && opt.dataset.vendor === vendor && opt.value === model) {
-              opt.selected = true;
-              matched = true;
-              break;
+          const vendor = String(data.vendor || "").trim();
+          const model = String(data.model || "").trim();
+          const baseUrl = String(data.base_url || "").trim();
+          const preset = getProviderPreset(vendor);
+
+          if (preset) {
+            const modelKnown = preset.models.some((m) => m.id === model);
+            const baseKnown = !baseUrl || baseUrl === preset.base_url;
+            if (!baseKnown) {
+              brainProviderSelect.value = "custom";
+              renderBrainModelOptions("custom", "");
+              $("brainBaseUrl").value = baseUrl || preset.base_url;
+              $("brainModelId").value = model;
+            } else {
+              brainProviderSelect.value = vendor;
+              renderBrainModelOptions(vendor, model);
+              if (modelKnown) {
+                brainModelSelect.value = model;
+                $("brainBaseUrl").value = preset.base_url;
+                $("brainModelId").value = "";
+              } else {
+                brainModelSelect.value = "__custom__";
+                $("brainBaseUrl").value = preset.base_url;
+                $("brainModelId").value = model;
+              }
             }
-          }
-          if (!matched && model) {
-            for (const opt of brainSelect.options) {
-              if (opt.value === "custom") { opt.selected = true; break; }
-            }
-            brainCustom.style.display = "block";
-            $("brainBaseUrl").value = data.base_url || "";
+          } else if (vendor) {
+            brainProviderSelect.value = "custom";
+            renderBrainModelOptions("custom", "");
+            $("brainBaseUrl").value = baseUrl;
             $("brainModelId").value = model;
           } else {
-            brainCustom.style.display = "none";
+            brainProviderSelect.value = "";
+            renderBrainModelOptions("", "");
+            $("brainBaseUrl").value = baseUrl;
+            $("brainModelId").value = model;
           }
+          syncBrainCustomFields();
           brainInitial = { vendor: data.vendor || "", base_url: data.base_url || "", model: data.model || "" };
           try { lockSecretField($("brainApiKey")); } catch (_) {}
           updateBrainSaveEnabled();
@@ -6563,7 +6795,7 @@
 
       $("brainSave").addEventListener("click", async () => {
         const preset = getSelectedPreset();
-        if (!preset) { showToast("Choose a model first"); return; }
+        if (!preset) { showToast("Choose a provider first"); return; }
 
         const payload = {};
         if (preset.vendor === "custom") {
@@ -6574,9 +6806,23 @@
           payload.base_url = baseUrl;
           payload.model = modelId;
         } else {
-          payload.vendor = preset.vendor;
-          payload.base_url = preset.base_url;
-          payload.model = preset.model;
+          if (!preset.model) { showToast("Choose a model first"); return; }
+          if (brainModelSelect.value === "__custom__") {
+            const modelId = $("brainModelId").value.trim();
+            if (!modelId) { showToast("Fill in Model ID"); return; }
+            payload.vendor = preset.vendor;
+            payload.base_url = preset.base_url;
+            payload.model = modelId;
+          } else {
+            payload.vendor = preset.vendor;
+            payload.base_url = preset.base_url;
+            payload.model = preset.model;
+          }
+        }
+
+        if (!payload.base_url || !payload.model) {
+          showToast("Fill in Base URL and Model");
+          return;
         }
 
         const keyEl = $("brainApiKey");

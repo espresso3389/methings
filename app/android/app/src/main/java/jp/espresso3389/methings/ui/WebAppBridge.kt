@@ -251,10 +251,7 @@ class WebAppBridge(private val activity: MainActivity) {
     fun getBrainApiKeyFor(vendor: String, baseUrl: String): String {
         if (getSettingsUnlockRemainingMs() <= 0) return ""
         val slot = keySlotFor(vendor, baseUrl)
-        val v = brainPrefs.getString(slot, "")?.trim().orEmpty()
-        if (v.isNotBlank()) return v
-        // Fallback to active key if slot doesn't exist yet (backward compatibility).
-        return brainPrefs.getString("api_key", "")?.trim().orEmpty()
+        return brainPrefs.getString(slot, "")?.trim().orEmpty()
     }
 
     @JavascriptInterface
