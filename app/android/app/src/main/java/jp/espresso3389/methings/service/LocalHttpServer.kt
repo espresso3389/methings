@@ -144,7 +144,7 @@ class LocalHttpServer(
     private val meMeInboundMessages = ConcurrentHashMap<String, MutableList<JSONObject>>()
     private val meMeRelayEvents = mutableListOf<JSONObject>()
     private val meMeRelayEventsLock = Any()
-    private val meMeDiscoveryAlertLastAt = ConcurrentHashMap<String, Long>()
+    private val meMePeerPresence = ConcurrentHashMap<String, MeMePeerPresence>()
     private val meMeReconnectAttemptAt = ConcurrentHashMap<String, Long>()
     @Volatile private var meMeLastScanAtMs: Long = 0L
     @Volatile private var meMeRelayLastRegisterAtMs: Long = 0L
@@ -7520,7 +7520,7 @@ class LocalHttpServer(
             if (!cfg.allowDiscovery) return
             if (!cfg.connectionMethods.contains("wifi") && !cfg.connectionMethods.contains("ble")) return
             val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(cfg), ME_ME_DISCOVERY_SCAN_TIMEOUT_MS)
-            handleMeMeDiscoveredAlerts(summary.discovered)
+            handleMeMePresenceUpdates(summary.discovered, source = "me_me.scan")
         }.onFailure {
             Log.w(TAG, "me.me discovery tick failed", it)
         }
@@ -7602,28 +7602,89 @@ class LocalHttpServer(
         )
     }
 
-    private fun handleMeMeDiscoveredAlerts(discovered: List<JSONObject>) {
+    private fun handleMeMePresenceUpdates(discovered: List<JSONObject>, source: String) {
         val now = System.currentTimeMillis()
+        val cfg = currentMeMeConfig()
+        val lostGraceMs = maxOf(
+            ME_ME_DEVICE_LOST_MIN_MS,
+            cfg.discoveryIntervalSec.coerceIn(10, 3600).toLong() * 3_000L
+        )
+        val seenIds = HashSet<String>()
         discovered.forEach { peer ->
             val did = peer.optString("device_id", "").trim()
             if (did.isBlank()) return@forEach
-            val last = meMeDiscoveryAlertLastAt[did] ?: 0L
-            if (now - last < 60_000L) return@forEach
-            meMeDiscoveryAlertLastAt[did] = now
-            notifyBrainEvent(
-                name = "me.me.device.discovered",
-                payload = JSONObject()
-                    .put("session_id", "default")
-                    .put("source", "me_me.scan")
-                    .put("device_id", did)
-                    .put("device_name", peer.optString("device_name", "").trim())
-                    .put("summary", "Nearby device discovered: $did"),
-                priority = "low",
-                interruptPolicy = "never",
-                coalesceKey = "me_me_device_discovered_$did",
-                coalesceWindowMs = 60_000L
-            )
+            seenIds += did
+            val peerName = peer.optString("device_name", "").trim()
+            val peerLastSeenAt = peer.optLong("last_seen_at", now).let { if (it > 0L) it else now }
+            val prev = meMePeerPresence[did]
+            if (prev == null) {
+                meMePeerPresence[did] = MeMePeerPresence(
+                    deviceName = peerName,
+                    lastSeenAt = peerLastSeenAt,
+                    online = true
+                )
+                notifyBrainEvent(
+                    name = "me.me.device.discovered",
+                    payload = JSONObject()
+                        .put("session_id", "default")
+                        .put("source", source)
+                        .put("device_id", did)
+                        .put("device_name", peerName)
+                        .put("summary", "Nearby device discovered: $did"),
+                    priority = "low",
+                    interruptPolicy = "never",
+                    coalesceKey = "me_me_device_discovered_$did",
+                    coalesceWindowMs = 60_000L
+                )
+                return@forEach
+            }
+            prev.deviceName = peerName.ifBlank { prev.deviceName }
+            prev.lastSeenAt = maxOf(prev.lastSeenAt, peerLastSeenAt)
+            if (!prev.online) {
+                prev.online = true
+                notifyBrainEvent(
+                    name = "me.me.device.discovered",
+                    payload = JSONObject()
+                        .put("session_id", "default")
+                        .put("source", source)
+                        .put("device_id", did)
+                        .put("device_name", prev.deviceName)
+                        .put("summary", "Nearby device discovered: $did"),
+                    priority = "low",
+                    interruptPolicy = "never",
+                    coalesceKey = "me_me_device_discovered_$did",
+                    coalesceWindowMs = 60_000L
+                )
+            }
         }
+
+        val staleOffline = ArrayList<String>()
+        for ((did, state) in meMePeerPresence.entries) {
+            // Keep recent positives online. Emit "lost" only when absent for a while.
+            if (seenIds.contains(did)) continue
+            val silentForMs = now - state.lastSeenAt
+            if (state.online && silentForMs >= lostGraceMs) {
+                state.online = false
+                notifyBrainEvent(
+                    name = "me.me.device.lost",
+                    payload = JSONObject()
+                        .put("session_id", "default")
+                        .put("source", source)
+                        .put("device_id", did)
+                        .put("device_name", state.deviceName)
+                        .put("summary", "Nearby device unavailable: $did"),
+                    priority = "low",
+                    interruptPolicy = "never",
+                    coalesceKey = "me_me_device_lost_$did",
+                    coalesceWindowMs = 60_000L
+                )
+            }
+            // Prune long-idle offline peers to avoid unbounded map growth.
+            if (!state.online && silentForMs >= ME_ME_DEVICE_PRESENCE_TTL_MS) {
+                staleOffline += did
+            }
+        }
+        staleOffline.forEach { did -> meMePeerPresence.remove(did) }
     }
 
     private fun importAuthorizedKeysFromFile() {
@@ -7863,7 +7924,7 @@ class LocalHttpServer(
         meMeLastScanAtMs = System.currentTimeMillis()
         val timeoutMs = payload.optLong("timeout_ms", 3000L).coerceIn(500L, 30_000L)
         val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(), timeoutMs)
-        handleMeMeDiscoveredAlerts(summary.discovered)
+        handleMeMePresenceUpdates(summary.discovered, source = "me_me.scan")
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
@@ -10830,6 +10891,12 @@ class LocalHttpServer(
         val expiresAt: Long
     )
 
+    private data class MeMePeerPresence(
+        var deviceName: String,
+        var lastSeenAt: Long,
+        var online: Boolean
+    )
+
     private data class MeSyncImportSource(
         val httpUrl: String = "",
         val sshHost: String = "",
@@ -11089,6 +11156,8 @@ class LocalHttpServer(
         private const val HOUSEKEEPING_INTERVAL_SEC = 60L * 60L
         private const val ME_ME_DISCOVERY_INITIAL_DELAY_SEC = 8L
         private const val ME_ME_DISCOVERY_SCAN_TIMEOUT_MS = 2500L
+        private const val ME_ME_DEVICE_LOST_MIN_MS = 90_000L
+        private const val ME_ME_DEVICE_PRESENCE_TTL_MS = 24L * 60L * 60L * 1000L
         private const val ME_ME_CONNECTION_CHECK_INITIAL_DELAY_SEC = 10L
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
         private const val SOCKET_READ_TIMEOUT = 0
