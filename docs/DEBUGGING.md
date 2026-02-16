@@ -125,6 +125,30 @@ and writes logs/results under `logs/me_sync_regression_<timestamp>/`:
 
 If any case fails, the script exits non-zero so it can be used in CI-like local checks.
 
+## me.me Internal Endpoints (Debug Only)
+
+These `me.me` endpoints are internal plumbing and are intentionally excluded from normal
+agent-facing documentation. Use them only for debugging/verification:
+
+- `GET /me/me/routes`
+- `GET /me/me/config`
+- `POST /me/me/config`
+- `POST /me/me/scan`
+- `POST /me/me/connect`
+- `POST /me/me/accept`
+- `POST /me/me/disconnect`
+- `POST /me/me/messages/pull`
+- `GET /me/me/relay/status`
+- `GET /me/me/relay/config`
+- `POST /me/me/relay/config`
+- `POST /me/me/relay/register`
+- `POST /me/me/relay/ingest`
+
+Debug intent:
+- Transport/route diagnosis (`lan`, `ble`, `gateway`) and fallback reasoning.
+- Connection state repair and one-shot scanning during local experiments.
+- Relay bridge integration testing (for example FCM adapter -> local ingest).
+
 ## Sync user defaults (device <-> repo)
 
 Normal builds do not auto-sync `user/` into APK assets anymore. This prevents surprise git changes.

@@ -280,22 +280,7 @@ Details: [vision.md](vision.md)
 | `notifications.prefs.get` | GET | `/notifications/prefs` **[no perm]** |
 | `notifications.prefs.set` | POST | `/notifications/prefs` **[no perm]** |
 | `me.me.status` | GET | `/me/me/status` **[no perm]** |
-| `me.me.config.get` | GET | `/me/me/config` **[no perm]** |
-| `me.me.config.set` | POST | `/me/me/config` |
-| `me.me.scan` | POST | `/me/me/scan` |
-| `me.me.connect` | POST | `/me/me/connect` |
-| `me.me.accept` | POST | `/me/me/accept` |
-| `me.me.connect.confirm` | POST | `/me/me/connect/confirm` |
-| `me.me.disconnect` | POST | `/me/me/disconnect` |
 | `me.me.message.send` | POST | `/me/me/message/send` |
-| `me.me.messages.pull` | POST | `/me/me/messages/pull` |
-| `me.me.relay.status` | GET | `/me/me/relay/status` **[no perm]** |
-| `me.me.relay.config.get` | GET | `/me/me/relay/config` **[no perm]** |
-| `me.me.relay.config.set` | POST | `/me/me/relay/config` |
-| `me.me.relay.register` | POST | `/me/me/relay/register` |
-| `me.me.relay.notify` | POST | `/me/me/relay/notify` |
-| `me.me.relay.events.pull` | POST | `/me/me/relay/events/pull` |
-| `me.me.relay.pull_gateway` | POST | `/me/me/relay/pull_gateway` |
 | `me.sync.status` | GET | `/me/sync/status` **[no perm]** |
 | `me.sync.local_state` | GET | `/me/sync/local_state` **[no perm]** |
 | `me.sync.prepare_export` | POST | `/me/sync/prepare_export` |
@@ -436,37 +421,13 @@ Chat prefix shortcut in the app UI:
 
 | Method | Endpoint | Body | Effect |
 |--------|----------|------|--------|
-| `GET` | `/me/me/status` | — | Return self profile and current discovery/connection summary |
-| `GET` | `/me/me/config` | — | Return current `me.me` config |
-| `POST` | `/me/me/config` | `{"allow_discovery":true,...}` | Update `me.me` config |
-| `POST` | `/me/me/scan` | `{"timeout_ms":3000}` | Trigger one-shot Wi-Fi/BLE discovery scan and return discovered peers |
-| `POST` | `/me/me/connect` | `{"target_device_id":"install_...","method":"auto"}` | Create a pending connection intent and return `accept_token` |
-| `POST` | `/me/me/accept` | `{"accept_token":"me.things:me.me.conn:..."}` | Accept connection intent on target and create a logical connection |
-| `POST` | `/me/me/connect/confirm` | `{"accept_token":"me.things:me.me.conn:..."}` | Confirm accepted connection on initiator and create logical connection |
-| `POST` | `/me/me/disconnect` | `{"peer_device_id":"install_..."}` or `{"connection_id":"mmc_..."}` | Remove logical connection |
-| `POST` | `/me/me/message/send` | `{"peer_device_id":"install_...","type":"task","payload":{...}}` | Encrypt and send data-plane message to peer |
-| `POST` | `/me/me/messages/pull` | `{"peer_device_id":"install_...","limit":50,"consume":true}` | Pull/dequeue received messages for peer |
-| `GET` | `/me/me/relay/status` | — | Return relay runtime status and queue counters |
-| `GET` | `/me/me/relay/config` | — | Return relay configuration (secret value is not returned) |
-| `POST` | `/me/me/relay/config` | `{"enabled":true,"gateway_base_url":"https://hooks.methings.org",...}` | Update relay configuration and optional admin secret |
-| `POST` | `/me/me/relay/register` | `{"device_push_token":"<fcm_token>"}` | Register this device/token to relay gateway (`/devices/register`) |
-| `POST` | `/me/me/relay/notify` | `{"target_device_id":"install_...","event":"...","payload":{...}}` | Issue route token then call relay webhook |
-| `POST` | `/me/me/relay/events/pull` | `{"limit":50,"consume":true}` | Pull/dequeue relay events received from push ingest |
-| `POST` | `/me/me/relay/pull_gateway` | `{"limit":50,"consume":true}` | Pull queued events directly from gateway (`/events/pull`) and ingest locally |
-| `POST` | `/me/me/relay/ingest` | `{"source":"fcm","event_id":"...","payload":{...}}` | Receiver-side ingest endpoint for push bridge (FCM adapter) |
+| `GET` | `/me/me/status` | — | Return self profile plus current peer/discovery summary |
+| `POST` | `/me/me/message/send` | `{"peer_device_id":"install_...","type":"task","payload":{...}}` | Send encrypted content to a peer using automatic route selection |
 
 Notes:
-- `/me/me/status` includes `advertising` state and cached `discovered` peers.
-- `/me/me/scan` response includes `warnings` when a method cannot run (for example missing BLE runtime permission).
-- Background low-duty discovery runs automatically using `discovery_interval` and updates cached `discovered` peers.
-- `/me/me/status` also includes `pending_requests` and `connections`.
-- Data-plane currently uses LAN HTTP (`8767`) and AES-GCM session encryption.
-- Relay mode foundation is available via `/me/me/relay/*`:
-  - Caller side: `register` + `notify`.
-  - Receiver side: push adapter should post to `/me/me/relay/ingest`, then consumer reads via `events/pull`.
-  - `events/pull` items include top-level `provider`, `kind`, and `summary` fields for quick routing/display.
-  - Admin secret is stored in encrypted credential store, not returned from config/status APIs.
-- `/me/me/accept` attempts auto-confirm to initiator over LAN; include `source_host`/`source_port` when discovery info is unavailable.
+- `/me/me/status` includes peer presence/connection snapshots and discovery runtime state.
+- me.me discovery/route/relay plumbing is internal. Agent-facing behavior is send (`me.me.message.send`) + receive (`me.me.received` event).
+- Internal and troubleshooting-only me.me endpoints are documented in `docs/DEBUGGING.md`.
 - me.me runtime emits agent alert events through internal `POST /brain/inbox/event` with optional controls:
   - `priority`: `low|normal|high|critical`
   - `interrupt_policy`: `never|turn_end|immediate`

@@ -6,28 +6,24 @@ This guide defines how an agent should assist users when they say:
 
 The target path is always:
 - External platform webhook -> `https://hooks.methings.org/webhook/<route_token>?provider=<provider>`
-- Gateway queue -> device `POST /me/me/relay/pull_gateway`
-- Local consume -> `POST /me/me/relay/events/pull`
+- Gateway queue -> device runtime delivery
+- Local agent event -> `me.me.received`
 
 ## Agent-Assisted Onboarding Contract
 
 When a user asks to connect Slack or Discord, the agent should:
 
 1. Confirm target provider (`slack` or `discord`).
-2. Confirm target device (`device_id`) and check relay status.
-3. Ensure relay config on device:
-   - `enabled=true`
-   - `gateway_base_url=https://hooks.methings.org`
-   - `gateway_admin_secret` configured
-4. Ensure device is registered at gateway (`/me/me/relay/register`).
-5. Issue route token (`/route_token/issue`) for that target device.
-6. Present the exact webhook URL to paste into provider settings.
-7. Run one verification event and show the received summary.
+2. Confirm target device (`device_id`) from me.me status/config in the app.
+3. Ensure gateway linkage is enabled in app settings.
+4. Issue route token (`/route_token/issue`) for that target device.
+5. Present the exact webhook URL to paste into provider settings.
+6. Run one verification event and show the received summary.
 
 ## Required Inputs (Minimal)
 
 - Provider: `slack` or `discord`
-- Target device ID (usually from `GET /me/me/config`)
+- Target device ID (from app me.me settings/status)
 - Provider-side signing secret (already managed in gateway secrets)
 
 Optional but recommended:
@@ -63,11 +59,7 @@ After changing scopes/events, reinstall the app to workspace.
 ## 4) Verify
 
 - Send a Slack message in subscribed channel.
-- On device, run `POST /me/me/relay/pull_gateway`.
-- Confirm `POST /me/me/relay/events/pull` includes:
-  - `provider=slack`
-  - `kind=slack.event`
-  - meaningful `summary`
+- Confirm the app/agent receives `me.me.received` with `received_origin=external` and `received_provider=slack`.
 
 ## Discord Setup
 
@@ -88,11 +80,7 @@ Verification base string:
 ## 3) Verify
 
 - Send a signed test payload.
-- Pull from device via `POST /me/me/relay/pull_gateway`.
-- Confirm latest event contains:
-  - `provider=discord`
-  - `kind=discord.message`
-  - summary generated from author/content.
+- Confirm the app/agent receives `me.me.received` with `received_origin=external` and `received_provider=discord`.
 
 ## Operational Limits
 
@@ -102,3 +90,5 @@ Verification base string:
   - App split mode: separate Slack app per destination.
 
 Hub mode is usually easier to operate.
+
+For endpoint-level relay debugging details, see `docs/DEBUGGING.md`.

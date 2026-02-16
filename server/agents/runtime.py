@@ -2769,6 +2769,7 @@ class BrainRuntime:
             "\"actions\":[{\"type\":\"tool_invoke\",\"tool\":\"device_api\",\"args\":{\"action\":\"sshd.status\",\"payload\":{},\"detail\":\"Check SSH service status\"}},"
             "{\"type\":\"tool_invoke\",\"tool\":\"device_api\",\"args\":{\"action\":\"python.status\",\"payload\":{},\"detail\":\"Check Python worker status\"}}]}. "
             "If Input.tool_results is non-empty, use those results to decide next actions or final responses. "
+            "When presenting files/media to the user, include one or more lines in exact format `rel_path: <relative/path>`. "
             "Set actions=[] when the task is complete. "
             "Input:\n" + json.dumps(user_payload)
         )
@@ -2845,7 +2846,44 @@ class BrainRuntime:
             return {"responses": ["Model response was not valid JSON."], "actions": []}
         parsed.setdefault("responses", [])
         parsed.setdefault("actions", [])
+        wants_rel_path = self._user_wants_rel_path_output(str(item.get("text") or ""))
+        rel_candidates = self._image_rel_paths_from_tool_results(tool_results)
+        if (
+            wants_rel_path
+            and rel_candidates
+            and not parsed.get("actions")
+            and not self._responses_contain_rel_path(parsed.get("responses"))
+        ):
+            repaired = self._repair_rel_path_plan(
+                cfg=cfg,
+                provider_kind=provider_kind,
+                provider_url=provider_url,
+                api_key=api_key,
+                system_prompt=system_prompt,
+                user_text=str(item.get("text") or ""),
+                rel_candidates=rel_candidates,
+            )
+            if isinstance(repaired, dict):
+                repaired.setdefault("responses", [])
+                repaired.setdefault("actions", [])
+                if repaired.get("responses") and self._responses_contain_rel_path(repaired.get("responses")):
+                    parsed = repaired
         if not parsed.get("responses") and not parsed.get("actions"):
+            if wants_rel_path and rel_candidates:
+                repaired = self._repair_rel_path_plan(
+                    cfg=cfg,
+                    provider_kind=provider_kind,
+                    provider_url=provider_url,
+                    api_key=api_key,
+                    system_prompt=system_prompt,
+                    user_text=str(item.get("text") or ""),
+                    rel_candidates=rel_candidates,
+                )
+                if isinstance(repaired, dict):
+                    repaired.setdefault("responses", [])
+                    repaired.setdefault("actions", [])
+                    if repaired.get("responses") and self._responses_contain_rel_path(repaired.get("responses")):
+                        return repaired
             heuristic = self._heuristic_plan(item)
             if heuristic.get("responses") or heuristic.get("actions"):
                 return heuristic
@@ -2856,6 +2894,161 @@ class BrainRuntime:
                 "actions": [],
             }
         return parsed
+
+    def _user_wants_rel_path_output(self, text: str) -> bool:
+        t = str(text or "").strip().lower()
+        if not t:
+            return False
+        keys = (
+            "show", "preview", "list", "display", "see",
+            "photo", "image", "picture", "gallery", "rel_path",
+            "見せ", "表示", "一覧", "写真", "画像", "プレビュー",
+        )
+        return any(k in t for k in keys)
+
+    def _responses_contain_rel_path(self, responses: Any) -> bool:
+        if not isinstance(responses, list):
+            return False
+        for r in responses:
+            if not isinstance(r, str):
+                continue
+            if re.search(r"(?im)^\s*rel_path\s*:\s*\S+", r):
+                return True
+        return False
+
+    def _image_rel_paths_from_tool_results(self, tool_results: Optional[List[Dict]]) -> List[str]:
+        if not isinstance(tool_results, list):
+            return []
+        root = self._user_dir.resolve()
+        image_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif", ".bmp", ".avif"}
+        out: List[str] = []
+        seen: set[str] = set()
+
+        def _add(rel: str) -> None:
+            v = str(rel or "").strip().replace("\\", "/")
+            if not v or v in seen:
+                return
+            seen.add(v)
+            out.append(v)
+
+        for tr in tool_results:
+            if not isinstance(tr, dict):
+                continue
+            action = tr.get("action") if isinstance(tr.get("action"), dict) else {}
+            result = tr.get("result") if isinstance(tr.get("result"), dict) else {}
+            if str(action.get("type") or "") != "filesystem" or str(action.get("op") or "") != "list_dir":
+                continue
+            entries = result.get("entries") if isinstance(result.get("entries"), list) else []
+            action_path = str(action.get("path") or "").strip()
+            result_path = str(result.get("path") or "").strip()
+            base_rel = ""
+            if action_path and not Path(action_path).is_absolute():
+                base_rel = "." if action_path in {".", "./"} else action_path.strip("/").replace("\\", "/")
+            elif result_path:
+                try:
+                    rp = Path(result_path).resolve()
+                    if str(rp).startswith(str(root)):
+                        base_rel = str(rp.relative_to(root)).replace("\\", "/").strip("/")
+                except Exception:
+                    base_rel = ""
+
+            for e in entries:
+                if not isinstance(e, dict):
+                    continue
+                name = str(e.get("name") or "").strip()
+                if not name:
+                    continue
+                ext = Path(name).suffix.lower()
+                if ext not in image_exts:
+                    continue
+                rel = f"{base_rel}/{name}" if base_rel else name
+                _add(rel)
+        return out[:40]
+
+    def _repair_rel_path_plan(
+        self,
+        *,
+        cfg: Dict[str, Any],
+        provider_kind: str,
+        provider_url: str,
+        api_key: str,
+        system_prompt: str,
+        user_text: str,
+        rel_candidates: List[str],
+    ) -> Dict[str, Any]:
+        candidates = [str(x) for x in rel_candidates if isinstance(x, str) and x.strip()][:30]
+        if not candidates:
+            return {}
+        repair_prompt = (
+            "Return strict JSON object with keys responses (string[]) and actions (object[]). "
+            "actions MUST be []. "
+            "You MUST include one or more lines in exact format `rel_path: <path>` in responses. "
+            "Use ONLY paths from CandidateRelPaths (no guessing). "
+            "Keep text concise. "
+            "Input:\n"
+            + json.dumps(
+                {
+                    "user_request": str(user_text or ""),
+                    "candidate_rel_paths": candidates,
+                },
+                ensure_ascii=True,
+            )
+        )
+        if provider_kind == "anthropic":
+            body: Dict[str, Any] = {
+                "model": str(cfg.get("model") or ""),
+                "max_tokens": int(self._config.get("anthropic_max_tokens", 512) or 512),
+                "messages": [{"role": "user", "content": repair_prompt}],
+            }
+            if system_prompt.strip():
+                body["system"] = system_prompt
+        elif provider_url.rstrip("/").endswith("/responses"):
+            body = {
+                "model": str(cfg.get("model") or ""),
+                "instructions": system_prompt,
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": repair_prompt}]}],
+                "truncation": "auto",
+            }
+        else:
+            body = {
+                "model": str(cfg.get("model") or ""),
+                "temperature": 0.0,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": repair_prompt},
+                ],
+            }
+        try:
+            resp = requests.post(
+                provider_url,
+                headers=self._provider_headers(provider_kind, api_key, cfg=cfg),
+                data=json.dumps(body),
+                timeout=20,
+            )
+            self._raise_for_status_with_detail(resp, url=provider_url)
+            payload = resp.json()
+        except Exception:
+            return {}
+        if provider_kind == "anthropic":
+            content = "{}"
+            blocks = payload.get("content")
+            if isinstance(blocks, list):
+                texts: List[str] = []
+                for block in blocks:
+                    if isinstance(block, dict) and str(block.get("type") or "") == "text":
+                        t = str(block.get("text") or "").strip()
+                        if t:
+                            texts.append(t)
+                if texts:
+                    content = "\n".join(texts)
+        else:
+            content = (
+                payload.get("output_text")
+                or (((payload.get("choices") or [{}])[0]).get("message") or {}).get("content")
+                or "{}"
+            )
+        parsed = self._parse_json_object(str(content or ""))
+        return parsed if isinstance(parsed, dict) else {}
 
     def _parse_json_object(self, raw: str) -> Dict:
         try:

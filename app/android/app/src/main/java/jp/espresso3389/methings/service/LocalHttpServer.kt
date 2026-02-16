@@ -142,6 +142,11 @@ class LocalHttpServer(
     private val meMeConnectIntents = ConcurrentHashMap<String, MeMeConnectIntent>()
     private val meMeConnections = ConcurrentHashMap<String, MeMeConnection>()
     private val meMeInboundMessages = ConcurrentHashMap<String, MutableList<JSONObject>>()
+    private data class MeMeBleDataAckWaiter(
+        val latch: CountDownLatch = CountDownLatch(1),
+        @Volatile var ack: JSONObject? = null
+    )
+    private val meMeBleDataAckWaiters = ConcurrentHashMap<String, MeMeBleDataAckWaiter>()
     private val meMeRelayEvents = mutableListOf<JSONObject>()
     private val meMeRelayEventsLock = Any()
     private val meMePeerPresence = ConcurrentHashMap<String, MeMePeerPresence>()
@@ -415,6 +420,9 @@ class LocalHttpServer(
             uri == "/me/me/status" && session.method == Method.GET -> {
                 handleMeMeStatus()
             }
+            uri == "/me/me/routes" && session.method == Method.GET -> {
+                handleMeMeRoutes()
+            }
             uri == "/me/me/config" && session.method == Method.GET -> {
                 handleMeMeConfigGet()
             }
@@ -465,18 +473,6 @@ class LocalHttpServer(
                 )
                 if (!ok.first) return ok.second!!
                 handleMeMeAccept(payload)
-            }
-            uri == "/me/me/connect/confirm" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(
-                    session,
-                    payload,
-                    tool = "device.me_me",
-                    capability = "me_me.connect",
-                    detail = "Confirm me.things connection request"
-                )
-                if (!ok.first) return ok.second!!
-                handleMeMeConnectConfirm(payload)
             }
             uri == "/me/me/disconnect" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -544,45 +540,9 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 handleMeMeRelayRegister(payload)
             }
-            uri == "/me/me/relay/notify" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(
-                    session,
-                    payload,
-                    tool = "device.me_me",
-                    capability = "me_me.relay",
-                    detail = "Send relay notification to a peer device"
-                )
-                if (!ok.first) return ok.second!!
-                handleMeMeRelayNotify(payload)
-            }
             uri == "/me/me/relay/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 handleMeMeRelayIngest(payload)
-            }
-            uri == "/me/me/relay/events/pull" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(
-                    session,
-                    payload,
-                    tool = "device.me_me",
-                    capability = "me_me.relay",
-                    detail = "Read relay events received from server push"
-                )
-                if (!ok.first) return ok.second!!
-                handleMeMeRelayEventsPull(payload)
-            }
-            uri == "/me/me/relay/pull_gateway" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(
-                    session,
-                    payload,
-                    tool = "device.me_me",
-                    capability = "me_me.relay",
-                    detail = "Pull queued me.me relay events from gateway"
-                )
-                if (!ok.first) return ok.second!!
-                handleMeMeRelayPullFromGateway(payload, force = true)
             }
             uri == "/me/me/data/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -946,7 +906,11 @@ class LocalHttpServer(
                         // Notify the foreground service so it can advance queued permission notifications.
                         sendPermissionResolved(updated.id, updated.status)
                         // Also notify the Python agent runtime so it can resume automatically.
-                        notifyBrainPermissionResolved(updated)
+                        // Run this off-thread so /permissions/{id}/approve responds immediately even if
+                        // the worker is slow or temporarily blocked.
+                        Thread {
+                            notifyBrainPermissionResolved(updated)
+                        }.apply { isDaemon = true }.start()
                         jsonResponse(
                             JSONObject()
                                 .put("id", updated.id)
@@ -5271,6 +5235,22 @@ class LocalHttpServer(
             }
         }
 
+        // me.me is used as the core device-to-device control plane. Requiring a manual
+        // permission approval here breaks nearby flows (connect/accept/message) and causes
+        // stale "accept not done" style failures in agent automation. Keep consent explicit
+        // at feature/config level, but auto-approve me.me tool calls at runtime.
+        if (tool == "device.me_me" && !isPermissionApproved(permissionId, consume = true)) {
+            val approved = autoApprovePermission(
+                tool = tool,
+                detail = detail,
+                scope = scope,
+                identity = identity,
+                capability = capability
+            )
+            payload.put("permission_id", approved.id)
+            return Pair(true, null)
+        }
+
         if (!isPermissionApproved(permissionId, consume = true)) {
             if (permissionPrefs.dangerouslySkipPermissions()) {
                 autoApprovePermission(
@@ -7360,6 +7340,12 @@ class LocalHttpServer(
                 ?.ifBlank { null }
                 ?: "UTF-8"
             val len = (headers["content-length"] ?: headers["Content-Length"] ?: "").trim().toIntOrNull()
+            val te = (headers["transfer-encoding"] ?: headers["Transfer-Encoding"] ?: "").trim().lowercase(Locale.US)
+            // If Content-Length is absent and request is not chunked, treat as empty body.
+            // Waiting for EOF here can hang on keep-alive clients that send no body.
+            if ((len == null || len < 0) && !te.contains("chunked")) {
+                return ""
+            }
             val bytes = if (len != null && len >= 0) readExactly(session.inputStream, len) else session.inputStream.readBytes()
             String(bytes, java.nio.charset.Charset.forName(charset))
         } catch (_: Exception) {
@@ -7861,6 +7847,7 @@ class LocalHttpServer(
         val pending = org.json.JSONArray(
             meMeConnectIntents.values
                 .filter { !it.accepted }
+                .filter { req -> meMeConnections.values.none { conn -> conn.sessionId == req.sessionId } }
                 .sortedByDescending { it.createdAt }
                 .map { it.toJson(includeToken = false) }
         )
@@ -7878,6 +7865,30 @@ class LocalHttpServer(
                 .put("relay", relayCfg.toJson(includeSecrets = false))
                 .put("relay_event_queue_count", relayQueueCount)
                 .put("last_scan_at", runtime.opt("last_scan_at"))
+        )
+    }
+
+    private fun handleMeMeRoutes(): Response {
+        cleanupExpiredMeMeState()
+        val cfg = currentMeMeConfig()
+        val runtime = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig(cfg))
+        val discovered = runtime.optJSONArray("discovered")
+        val peerIds = LinkedHashSet<String>()
+        meMeConnections.keys.forEach { peerIds += it }
+        for (i in 0 until (discovered?.length() ?: 0)) {
+            val obj = discovered?.optJSONObject(i) ?: continue
+            val did = obj.optString("device_id", "").trim()
+            if (did.isNotBlank()) peerIds += did
+        }
+        val routes = JSONArray()
+        peerIds.forEach { did ->
+            routes.put(evaluateMeMeRoute(peerDeviceId = did, transportHint = "auto", probeLan = true))
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("count", routes.length())
+                .put("routes", routes)
         )
     }
 
@@ -7942,6 +7953,8 @@ class LocalHttpServer(
         cleanupExpiredMeMeState()
         val cfg = currentMeMeConfig()
         val targetDeviceId = payload.optString("target_device_id", "").trim()
+            .ifBlank { payload.optString("peer_device_id", "").trim() }
+            .ifBlank { payload.optString("device_id", "").trim() }
         if (targetDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "target_device_id_required")
         if (targetDeviceId == cfg.deviceId) return jsonError(Response.Status.BAD_REQUEST, "cannot_connect_self")
         if (cfg.blockedDevices.contains(targetDeviceId)) {
@@ -7952,13 +7965,32 @@ class LocalHttpServer(
         }
         val existing = meMeConnections[targetDeviceId]
         if (existing != null) {
-            return jsonResponse(JSONObject().put("status", "ok").put("connection", existing.toJson()).put("already_connected", true))
+            if (existing.state == "connected") {
+                return jsonResponse(JSONObject().put("status", "ok").put("connection", existing.toJson()).put("already_connected", true))
+            }
+            // Stale disconnected entry should not block reconnect attempts.
+            meMeConnections.remove(targetDeviceId)
+            meMeReconnectAttemptAt.remove(targetDeviceId)
         }
         if (meMeConnections.size >= cfg.maxConnections) {
             return jsonError(Response.Status.FORBIDDEN, "max_connections_reached")
         }
-        val discovered = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig(cfg)).optJSONArray("discovered")
-        val peer = findDiscoveredPeer(discovered, targetDeviceId)
+        var discovered = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig(cfg)).optJSONArray("discovered")
+        var peer = findDiscoveredPeer(discovered, targetDeviceId)
+        if (peer == null && !payload.optBoolean("allow_unknown", false) && payload.optBoolean("auto_scan", true)) {
+            val scanAttempts = payload.optInt("scan_attempts", 2).coerceIn(1, 4)
+            val scanTimeoutMs = payload.optLong("scan_timeout_ms", 2500L).coerceIn(500L, 10_000L)
+            repeat(scanAttempts) { idx ->
+                val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(cfg), scanTimeoutMs)
+                handleMeMePresenceUpdates(summary.discovered, source = "me_me.connect")
+                discovered = org.json.JSONArray(summary.discovered)
+                peer = findDiscoveredPeer(discovered, targetDeviceId)
+                if (peer != null) return@repeat
+                if (idx < (scanAttempts - 1)) {
+                    Thread.sleep(250L)
+                }
+            }
+        }
         if (peer == null && !payload.optBoolean("allow_unknown", false)) {
             return jsonError(Response.Status.NOT_FOUND, "target_not_discovered")
         }
@@ -7984,12 +8016,123 @@ class LocalHttpServer(
             sessionKeyB64 = sessionKeyB64
         )
         meMeConnectIntents[req.id] = req
+        val connectWaitBudgetMs = payload.optLong("connect_wait_budget_ms", 15_000L).coerceIn(2_000L, 60_000L)
+        val connectWaitStartedAt = System.currentTimeMillis()
+        val autoDelivery = runAutoDeliverMeMeConnectOffer(req, payload)
+        var autoDelivered = autoDelivery.optBoolean("delivered", false)
+        var deliveredAtLeastOnce = autoDelivered
+        val settleWaitMs = payload.optLong("auto_delivery_settle_wait_ms", 1600L).coerceIn(300L, 8_000L)
+        val firstSettleWaitMs = (connectWaitBudgetMs - (System.currentTimeMillis() - connectWaitStartedAt)).coerceAtLeast(0L)
+        var connected = if (autoDelivered && firstSettleWaitMs > 0L) {
+            waitForMeMeConnection(req.targetDeviceId, minOf(settleWaitMs, firstSettleWaitMs))
+        } else {
+            null
+        }
+        val retryCount = payload.optInt("auto_delivery_retries", 2).coerceIn(0, 5)
+        val retryDelayMs = payload.optLong("auto_delivery_retry_delay_ms", 700L).coerceIn(100L, 5_000L)
+        var retriesUsed = 0
+        var lastAutoDelivery = autoDelivery
+        while (connected == null && retriesUsed < retryCount) {
+            val elapsed = System.currentTimeMillis() - connectWaitStartedAt
+            if (elapsed >= connectWaitBudgetMs) break
+            if (autoDelivered) {
+                val sleepMs = minOf(retryDelayMs, connectWaitBudgetMs - elapsed)
+                if (sleepMs > 0L) Thread.sleep(sleepMs)
+            }
+            lastAutoDelivery = runAutoDeliverMeMeConnectOffer(req, payload)
+            autoDelivered = lastAutoDelivery.optBoolean("delivered", false)
+            if (autoDelivered) deliveredAtLeastOnce = true
+            retriesUsed += 1
+            if (autoDelivered) {
+                val remainingMs = (connectWaitBudgetMs - (System.currentTimeMillis() - connectWaitStartedAt)).coerceAtLeast(0L)
+                if (remainingMs <= 0L) break
+                connected = waitForMeMeConnection(req.targetDeviceId, minOf(settleWaitMs, remainingMs))
+            }
+        }
+        if (connected != null) {
+            return jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("connection", connected.toJson())
+                    .put("auto_connected", true)
+                    .put("request", req.toJson(includeToken = true))
+                    .put("auto_delivery", JSONObject(lastAutoDelivery.toString()).put("retry_count", retriesUsed))
+            )
+        }
         return jsonResponse(
             JSONObject()
                 .put("status", "pending")
                 .put("request", req.toJson(includeToken = true))
-                .put("note", "Share accept_token with target device, then call /me/me/accept on the target.")
+                .put("auto_delivery", JSONObject(lastAutoDelivery.toString()).put("retry_count", retriesUsed))
+                .put(
+                    "note",
+                    if (deliveredAtLeastOnce) {
+                        "Connection offer auto-delivered. Waiting for peer confirmation."
+                    } else {
+                        "Automatic offer delivery failed; share accept_token with target and call /me/me/accept on target."
+                    }
+                )
         )
+    }
+
+    private fun waitForMeMeConnection(peerDeviceId: String, timeoutMs: Long): MeMeConnection? {
+        val deadline = System.currentTimeMillis() + timeoutMs.coerceIn(100L, 15_000L)
+        while (System.currentTimeMillis() < deadline) {
+            val conn = meMeConnections[peerDeviceId]
+            if (conn != null && conn.state == "connected") {
+                return conn
+            }
+            Thread.sleep(120L)
+        }
+        return null
+    }
+
+    private fun runAutoDeliverMeMeConnectOffer(req: MeMeConnectIntent, payload: JSONObject): JSONObject {
+        val targetHostOverride = payload.optString("target_host", "").trim()
+        val targetPortOverride = payload.optInt("target_port", 0).takeIf { it in 1..65535 }
+        val transportHint = payload.optString("transport", req.methodHint).trim()
+        val timeoutMs = payload.optLong("auto_delivery_timeout_ms", 4500L).coerceIn(1500L, 12_000L)
+        val offerPayload = JSONObject()
+            .put("accept_token", req.acceptToken)
+            .put("request_id", req.id)
+            .put("source_device_id", req.sourceDeviceId)
+            .put("source_device_name", req.sourceDeviceName)
+            .put("method", req.methodHint)
+        val delivery = deliverMeMeBootstrapPayload(
+            peerDeviceId = req.targetDeviceId,
+            transportHint = transportHint,
+            timeoutMs = timeoutMs,
+            lanPath = "/me/me/connect/offer",
+            lanPayload = offerPayload,
+            bleKind = "connect_offer",
+            lanHostOverride = targetHostOverride,
+            lanPortOverride = targetPortOverride
+        )
+        return JSONObject()
+            .put("attempted", true)
+            .put("delivered", delivery.optBoolean("ok", false))
+            .put("transport", delivery.optString("transport", "unknown"))
+            .put("target_device_id", req.targetDeviceId)
+            .put("result", delivery)
+    }
+
+    private fun handleMeMeConnectOffer(payload: JSONObject, sourceIp: String): Response {
+        val effective = JSONObject(payload.toString())
+        if (sourceIp.isNotBlank() && sourceIp != "0:0:0:0:0:0:0:1" && sourceIp != "::1") {
+            val hostMissing = effective.optString("source_host", "").trim().isBlank()
+            if (sourceIp.startsWith("ble:")) {
+                val bleAddr = sourceIp.removePrefix("ble:").trim()
+                if (bleAddr.isNotBlank() && effective.optString("source_ble_address", "").trim().isBlank()) {
+                    effective.put("source_ble_address", bleAddr)
+                }
+            } else if (hostMissing) {
+                effective.put("source_host", sourceIp)
+            }
+        }
+        if (!effective.has("source_port")) {
+            effective.put("source_port", ME_ME_LAN_PORT)
+        }
+        return handleMeMeAccept(effective)
     }
 
     private fun handleMeMeAccept(payload: JSONObject): Response {
@@ -8043,6 +8186,7 @@ class LocalHttpServer(
         meMeConnections[conn.peerDeviceId] = conn
         meMeReconnectAttemptAt.remove(conn.peerDeviceId)
         meMeConnectIntents[req.id] = req.copy(accepted = true)
+        clearResolvedMeMeConnectIntents(sessionId = req.sessionId, requestId = req.id)
         val autoConfirm = runAutoConfirmMeMeAccept(
             req = req,
             payload = payload,
@@ -8079,6 +8223,8 @@ class LocalHttpServer(
         )
         meMeConnections[conn.peerDeviceId] = conn
         meMeReconnectAttemptAt.remove(conn.peerDeviceId)
+        markMeMeConnectIntentAccepted(parsed.requestId)
+        clearResolvedMeMeConnectIntents(sessionId = parsed.sessionId, requestId = parsed.requestId)
         return jsonResponse(JSONObject().put("status", "ok").put("connection", conn.toJson()))
     }
 
@@ -8089,6 +8235,7 @@ class LocalHttpServer(
     ): JSONObject {
         val sourceHostOverride = payload.optString("source_host", "").trim()
         val sourcePortOverride = payload.optInt("source_port", 0).takeIf { it in 1..65535 }
+        val sourceBleAddress = payload.optString("source_ble_address", "").trim()
         val route = resolveMeMePeerRoute(req.sourceDeviceId)
         val host = sourceHostOverride.ifBlank { route?.host.orEmpty() }
         val port = sourcePortOverride ?: route?.port ?: ME_ME_LAN_PORT
@@ -8096,23 +8243,55 @@ class LocalHttpServer(
             .put("accept_token", req.acceptToken)
             .put("peer_device_name", acceptedByName)
             .put("method", req.methodHint)
-        val delivery = if (host.isNotBlank()) {
-            postMeMeLanJson(host, port, "/me/me/connect/confirm", confirmPayload).put("transport", "lan")
-        } else {
-            deliverMeMePayload(
-                peerDeviceId = req.sourceDeviceId,
-                transportHint = "ble",
-                timeoutMs = 12_000L,
-                lanPath = "/me/me/connect/confirm",
-                lanPayload = confirmPayload,
-                bleKind = "connect_confirm"
-            )
+        val timeoutMs = payload.optLong("auto_confirm_timeout_ms", 4500L).coerceIn(1500L, 12_000L)
+        val retries = payload.optInt("auto_confirm_retries", 2).coerceIn(0, 5)
+        val retryDelayMs = payload.optLong("auto_confirm_retry_delay_ms", 700L).coerceIn(100L, 5_000L)
+        fun deliverOnce(): JSONObject {
+            return if (host.isNotBlank()) {
+                postMeMeLanJson(host, port, "/me/me/connect/confirm", confirmPayload).put("transport", "lan")
+            } else if (sourceBleAddress.isNotBlank()) {
+                val wire = JSONObject().put("kind", "connect_confirm").put("payload", confirmPayload)
+                val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
+                val direct = meMeDiscovery.sendBlePayloadToAddress(sourceBleAddress, bytes, timeoutMs).put("transport", "ble")
+                if (direct.optBoolean("ok", false)) {
+                    direct
+                } else {
+                    // Source BLE address may rotate or become stale. Fall back to peer-id route
+                    // if discoverable.
+                    deliverMeMePayload(
+                        peerDeviceId = req.sourceDeviceId,
+                        transportHint = "ble",
+                        timeoutMs = timeoutMs,
+                        lanPath = "/me/me/connect/confirm",
+                        lanPayload = confirmPayload,
+                        bleKind = "connect_confirm"
+                    )
+                }
+            } else {
+                deliverMeMePayload(
+                    peerDeviceId = req.sourceDeviceId,
+                    transportHint = "ble",
+                    timeoutMs = timeoutMs,
+                    lanPath = "/me/me/connect/confirm",
+                    lanPayload = confirmPayload,
+                    bleKind = "connect_confirm"
+                )
+            }
+        }
+        var attempts = 0
+        var delivery = JSONObject().put("ok", false).put("error", "auto_confirm_not_attempted")
+        while (attempts <= retries) {
+            if (attempts > 0) Thread.sleep(retryDelayMs)
+            delivery = deliverOnce()
+            attempts += 1
+            if (delivery.optBoolean("ok", false)) break
         }
         return JSONObject()
             .put("attempted", true)
             .put("transport", delivery.optString("transport", if (host.isNotBlank()) "lan" else "ble"))
             .put("target_device_id", req.sourceDeviceId)
             .put("confirmed", delivery.optBoolean("ok", false))
+            .put("attempts", attempts)
             .put("result", delivery)
     }
 
@@ -8137,25 +8316,66 @@ class LocalHttpServer(
         cleanupExpiredMeMeState()
         val peerDeviceId = payload.optString("peer_device_id", "").trim()
         if (peerDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "peer_device_id_required")
-        val type = payload.optString("type", "message").trim().ifBlank { "message" }
+        val messageId = payload.optString("message_id", "").trim()
+            .ifBlank { "mmm_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}" }
+        val nestedMessage = payload.optJSONObject("message")
+        val type = payload.optString("type", "").trim()
+            .ifBlank { nestedMessage?.optString("type", "")?.trim().orEmpty() }
+            .ifBlank { "message" }
+        val payloadValue: Any? = when {
+            payload.has("payload") -> payload.opt("payload")
+            nestedMessage?.has("payload") == true -> nestedMessage.opt("payload")
+            else -> buildLegacyMeMePayload(payload)
+        }
         val send = sendMeMeEncryptedMessage(
             peerDeviceId = peerDeviceId,
             type = type,
-            payloadValue = payload.opt("payload") ?: JSONObject.NULL,
+            payloadValue = payloadValue ?: JSONObject.NULL,
             transportHint = payload.optString("transport", ""),
-            timeoutMs = payload.optLong("timeout_ms", 12_000L)
+            timeoutMs = payload.optLong("timeout_ms", 12_000L),
+            messageId = messageId
         )
         val delivery = formatMeMeDelivery(peerDeviceId = peerDeviceId, type = type, send = send)
+        logMeMeTrace(
+            event = "message.send",
+            messageId = messageId,
+            fields = JSONObject()
+                .put("endpoint", "/me/me/message/send")
+                .put("peer_device_id", peerDeviceId)
+                .put("requested_transport", payload.optString("transport", "").trim().ifBlank { "auto" })
+                .put("resolved_transport", delivery.optString("transport", "unknown"))
+                .put("ok", delivery.optBoolean("ok", false))
+                .put(
+                    "error",
+                    delivery.optJSONObject("result")?.optString("error", "")?.trim()?.takeIf { it.isNotBlank() }
+                        ?: JSONObject.NULL
+                )
+        )
         if (!delivery.optBoolean("ok", false)) return jsonError(Response.Status.SERVICE_UNAVAILABLE, "peer_delivery_failed", delivery)
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
+                .put("message_id", messageId)
                 .put("delivered", delivery.optBoolean("delivered", false))
                 .put("transport", delivery.optString("transport", "unknown"))
                 .put("peer_device_id", peerDeviceId)
                 .put("result", delivery.optJSONObject("result") ?: JSONObject())
                 .put("delivery", delivery)
         )
+    }
+
+    private fun buildLegacyMeMePayload(payload: JSONObject): Any? {
+        val out = JSONObject()
+        val directText = payload.optString("text", "").trim()
+        if (directText.isNotBlank()) out.put("text", directText)
+        val relPath = payload.optString("rel_path", "").trim()
+        if (relPath.isNotBlank()) out.put("rel_path", relPath)
+        val fileName = payload.optString("file_name", "").trim()
+        if (fileName.isNotBlank()) out.put("file_name", fileName)
+        val mimeType = payload.optString("mime_type", "").trim()
+        if (mimeType.isNotBlank()) out.put("mime_type", mimeType)
+        if (out.length() <= 0) return null
+        return out
     }
 
     private fun formatMeMeDelivery(
@@ -8178,21 +8398,25 @@ class LocalHttpServer(
         type: String,
         payloadValue: Any?,
         transportHint: String = "",
-        timeoutMs: Long = 12_000L
+        timeoutMs: Long = 12_000L,
+        messageId: String = ""
     ): JSONObject {
+        val selfCfg = currentMeMeConfig()
         val conn = meMeConnections[peerDeviceId] ?: return JSONObject().put("ok", false).put("error", "connection_not_found")
         if (conn.state != "connected") return JSONObject().put("ok", false).put("error", "connection_not_ready")
         val plaintext = JSONObject()
             .put("type", type.ifBlank { "message" })
             .put("payload", payloadValue ?: JSONObject.NULL)
             .put("sent_at", System.currentTimeMillis())
-            .put("from_device_id", currentMeMeConfig().deviceId)
+            .put("from_device_id", selfCfg.deviceId)
+            .put("from_device_name", selfCfg.deviceName)
         val encrypted = encryptMeMePayload(conn.sessionKeyB64, plaintext)
             ?: return JSONObject().put("ok", false).put("error", "encrypt_failed")
         val req = JSONObject()
             .put("session_id", conn.sessionId)
-            .put("from_device_id", currentMeMeConfig().deviceId)
+            .put("from_device_id", selfCfg.deviceId)
             .put("to_device_id", peerDeviceId)
+            .put("delivery_id", "mda_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}")
             .put("iv_b64", encrypted.ivB64)
             .put("ciphertext_b64", encrypted.ciphertextB64)
         return deliverMeMePayload(
@@ -8201,7 +8425,9 @@ class LocalHttpServer(
             timeoutMs = timeoutMs,
             lanPath = "/me/me/data/ingest",
             lanPayload = req,
-            bleKind = "data_ingest"
+            bleKind = "data_ingest",
+            messageId = messageId,
+            allowRelayFallback = true
         )
     }
 
@@ -8211,15 +8437,326 @@ class LocalHttpServer(
         timeoutMs: Long,
         lanPath: String,
         lanPayload: JSONObject,
-        bleKind: String
+        bleKind: String,
+        messageId: String = "",
+        allowRelayFallback: Boolean = false
     ): JSONObject {
         val conn = meMeConnections[peerDeviceId] ?: return JSONObject().put("ok", false).put("error", "connection_not_found")
+        val route = resolveMeMePeerRoute(peerDeviceId)
+        val normalizedHint = transportHint.trim().lowercase(Locale.US)
+        val forceRelay = normalizedHint == "relay"
+        val shouldUseBle = when (normalizedHint) {
+            "ble" -> true
+            "lan", "wifi" -> false
+            "relay" -> false
+            else -> conn.method.trim().lowercase(Locale.US) == "ble" || (route?.host.isNullOrBlank() && (route?.hasBle ?: false))
+        }
+        val decisionReason = when (normalizedHint) {
+            "ble" -> "transport_forced_ble"
+            "lan", "wifi" -> "transport_forced_lan"
+            "relay" -> "transport_forced_relay"
+            else -> if (conn.method.trim().lowercase(Locale.US) == "ble") "conn_method_ble" else if (route?.host.isNullOrBlank() && (route?.hasBle ?: false)) "peer_host_unavailable_ble_present" else "prefer_lan"
+        }
+        if (forceRelay) {
+            val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
+            logMeMeTrace(
+                event = "message.delivery",
+                messageId = messageId,
+                fields = JSONObject()
+                    .put("peer_device_id", peerDeviceId)
+                    .put("resolved_transport", "relay")
+                    .put("ok", relayOut.optBoolean("ok", false))
+                    .put("error", relayOut.optString("error", "").trim().takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            )
+            return relayOut
+        }
+        logMeMeTrace(
+            event = "message.route_decision",
+            messageId = messageId,
+            fields = JSONObject()
+                .put("peer_device_id", peerDeviceId)
+                .put("requested_transport", normalizedHint.ifBlank { "auto" })
+                .put("resolved_transport", if (shouldUseBle) "ble" else "lan")
+                .put("decision_reason", decisionReason)
+                .put("connection_state", conn.state)
+                .put("connection_method", conn.method)
+                .put("route_host", route?.host ?: "")
+                .put("route_port", route?.port ?: ME_ME_LAN_PORT)
+                .put("route_has_ble", route?.hasBle ?: false)
+                .put("lan_path", lanPath)
+        )
+        if (shouldUseBle) {
+            val deliveryId = if (bleKind == "data_ingest") lanPayload.optString("delivery_id", "").trim() else ""
+            val ackWaiter = if (deliveryId.isNotBlank()) MeMeBleDataAckWaiter() else null
+            if (ackWaiter != null) {
+                meMeBleDataAckWaiters[deliveryId] = ackWaiter
+            }
+            val wire = JSONObject().put("kind", bleKind).put("payload", lanPayload)
+            val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
+            if (bytes.size > ME_ME_BLE_MAX_MESSAGE_BYTES) {
+                if (deliveryId.isNotBlank()) meMeBleDataAckWaiters.remove(deliveryId)
+                logMeMeTrace(
+                    event = "message.delivery",
+                    messageId = messageId,
+                    fields = JSONObject()
+                        .put("peer_device_id", peerDeviceId)
+                        .put("resolved_transport", "ble")
+                        .put("ok", false)
+                        .put("error", "ble_payload_too_large")
+                        .put("bytes", bytes.size)
+                        .put("max_bytes", ME_ME_BLE_MAX_MESSAGE_BYTES)
+                )
+                return JSONObject()
+                    .put("ok", false)
+                    .put("transport", "ble")
+                    .put("error", "ble_payload_too_large")
+                    .put("bytes", bytes.size)
+                    .put("max_bytes", ME_ME_BLE_MAX_MESSAGE_BYTES)
+            }
+            val out = meMeDiscovery.sendBlePayload(peerDeviceId, bytes, timeoutMs).put("transport", "ble")
+            if (ackWaiter != null) {
+                try {
+                    if (out.optBoolean("ok", false)) {
+                        val ackWaitMs = timeoutMs.coerceIn(1500L, 12_000L)
+                        val ackArrived = ackWaiter.latch.await(ackWaitMs, TimeUnit.MILLISECONDS)
+                        val ack = ackWaiter.ack
+                        if (!ackArrived || ack == null) {
+                            out.put("ok", false)
+                                .put("error", "ble_data_ack_timeout")
+                                .put("ack_wait_ms", ackWaitMs)
+                        } else if (!ack.optBoolean("ok", false)) {
+                            out.put("ok", false)
+                                .put("error", ack.optString("error", "").trim().ifBlank { "ble_data_ack_failed" })
+                                .put("ack", ack)
+                        } else {
+                            out.put("ack", ack)
+                        }
+                    }
+                } finally {
+                    if (deliveryId.isNotBlank()) meMeBleDataAckWaiters.remove(deliveryId)
+                }
+            }
+            if (!out.optBoolean("ok", false) && normalizedHint.isBlank() && allowRelayFallback) {
+                val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
+                if (relayOut.optBoolean("ok", false)) {
+                    logMeMeTrace(
+                        event = "message.delivery.fallback",
+                        messageId = messageId,
+                        fields = JSONObject()
+                            .put("peer_device_id", peerDeviceId)
+                            .put("from_transport", "ble")
+                            .put("to_transport", "relay")
+                            .put("reason", out.optString("error", "ble_failed"))
+                    )
+                    return relayOut
+                }
+            }
+            logMeMeTrace(
+                event = "message.delivery",
+                messageId = messageId,
+                fields = JSONObject()
+                    .put("peer_device_id", peerDeviceId)
+                    .put("resolved_transport", "ble")
+                    .put("ok", out.optBoolean("ok", false))
+                    .put("error", out.optString("error", "").trim().takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            )
+            return out
+        }
+        val host = route?.host.orEmpty()
+        val port = route?.port ?: ME_ME_LAN_PORT
+        if (host.isBlank()) {
+            if (normalizedHint.isBlank() && allowRelayFallback && !(route?.hasBle ?: false)) {
+                val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
+                if (relayOut.optBoolean("ok", false)) {
+                    logMeMeTrace(
+                        event = "message.delivery.fallback",
+                        messageId = messageId,
+                        fields = JSONObject()
+                            .put("peer_device_id", peerDeviceId)
+                            .put("from_transport", "lan")
+                            .put("to_transport", "relay")
+                            .put("reason", "peer_host_unavailable")
+                    )
+                    return relayOut
+                }
+            }
+            logMeMeTrace(
+                event = "message.delivery",
+                messageId = messageId,
+                fields = JSONObject()
+                    .put("peer_device_id", peerDeviceId)
+                    .put("resolved_transport", "lan")
+                    .put("ok", false)
+                    .put("error", "peer_host_unavailable")
+            )
+            return JSONObject().put("ok", false).put("transport", "lan").put("error", "peer_host_unavailable")
+        }
+        var out = postMeMeLanJson(host, port, lanPath, lanPayload).put("transport", "lan")
+        if (!out.optBoolean("ok", false) && normalizedHint.isBlank()) {
+            if (route?.hasBle == true) {
+                val wire = JSONObject().put("kind", bleKind).put("payload", lanPayload)
+                val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
+                if (bytes.size <= ME_ME_BLE_MAX_MESSAGE_BYTES) {
+                    val bleOut = meMeDiscovery.sendBlePayload(peerDeviceId, bytes, timeoutMs).put("transport", "ble")
+                    if (bleOut.optBoolean("ok", false)) {
+                        logMeMeTrace(
+                            event = "message.delivery.fallback",
+                            messageId = messageId,
+                            fields = JSONObject()
+                                .put("peer_device_id", peerDeviceId)
+                                .put("from_transport", "lan")
+                                .put("to_transport", "ble")
+                                .put("reason", out.optString("error", "lan_failed"))
+                        )
+                        out = bleOut
+                    }
+                }
+            }
+            if (!out.optBoolean("ok", false) && allowRelayFallback) {
+                val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
+                if (relayOut.optBoolean("ok", false)) {
+                    logMeMeTrace(
+                        event = "message.delivery.fallback",
+                        messageId = messageId,
+                        fields = JSONObject()
+                            .put("peer_device_id", peerDeviceId)
+                            .put("from_transport", "lan")
+                            .put("to_transport", "relay")
+                            .put("reason", out.optString("error", "lan_failed"))
+                    )
+                    out = relayOut
+                }
+            }
+        }
+        logMeMeTrace(
+            event = "message.delivery",
+            messageId = messageId,
+            fields = JSONObject()
+                .put("peer_device_id", peerDeviceId)
+                .put("resolved_transport", "lan")
+                .put("ok", out.optBoolean("ok", false))
+                .put("error", out.optString("error", "").trim().takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                .put("http_status", out.optInt("http_status", 0))
+        )
+        return out
+    }
+
+    private fun evaluateMeMeRoute(
+        peerDeviceId: String,
+        transportHint: String = "auto",
+        probeLan: Boolean = true
+    ): JSONObject {
+        val route = resolveMeMePeerRoute(peerDeviceId)
+        val conn = meMeConnections[peerDeviceId]
+        val lanHost = route?.host.orEmpty()
+        val lanPort = route?.port ?: ME_ME_LAN_PORT
+        val lanVisible = lanHost.isNotBlank()
+        val lanReachable = lanVisible && (!probeLan || probeMeMeLanHealth(lanHost, lanPort))
+        val bleReachable = route?.hasBle == true
+        val relayCfg = currentMeMeRelayConfig()
+        val relayReachable = relayCfg.enabled && relayCfg.gatewayBaseUrl.isNotBlank() && relayCfg.gatewayAdminSecret.isNotBlank()
+        val normalizedHint = transportHint.trim().lowercase(Locale.US)
+        val selected = when (normalizedHint) {
+            "lan", "wifi" -> if (lanReachable) "lan" else "unavailable"
+            "ble" -> if (bleReachable) "ble" else "unavailable"
+            "relay" -> if (relayReachable) "relay" else "unavailable"
+            else -> when {
+                lanReachable -> "lan"
+                bleReachable -> "ble"
+                relayReachable -> "relay"
+                else -> "unavailable"
+            }
+        }
+        val reason = when {
+            selected == "lan" -> "lan_reachable"
+            selected == "ble" -> "lan_unreachable_ble_visible"
+            selected == "relay" -> "direct_unavailable_relay_enabled"
+            normalizedHint in setOf("lan", "wifi") -> "lan_forced_unavailable"
+            normalizedHint == "ble" -> "ble_forced_unavailable"
+            normalizedHint == "relay" -> "relay_forced_unavailable"
+            else -> "no_route_available"
+        }
+        return JSONObject()
+            .put("peer_device_id", peerDeviceId)
+            .put("connection_state", conn?.state ?: "none")
+            .put("connection_method", conn?.method ?: "")
+            .put("lan_host", lanHost)
+            .put("lan_port", lanPort)
+            .put("lan_visible", lanVisible)
+            .put("lan_reachable", lanReachable)
+            .put("ble_reachable", bleReachable)
+            .put("relay_reachable", relayReachable)
+            .put("nearby", lanVisible || bleReachable)
+            .put("same_lan", lanReachable)
+            .put("selected_transport", selected)
+            .put("selection_reason", reason)
+            .put("checked_at", System.currentTimeMillis())
+    }
+
+    private fun deliverMeMeRelayPayload(peerDeviceId: String, encryptedPayload: JSONObject): JSONObject {
+        val cfg = currentMeMeRelayConfig()
+        if (!cfg.enabled) return JSONObject().put("ok", false).put("transport", "relay").put("error", "relay_disabled")
+        val adminSecret = cfg.gatewayAdminSecret.trim()
+        if (adminSecret.isBlank()) return JSONObject().put("ok", false).put("transport", "relay").put("error", "gateway_admin_secret_missing")
+        val issue = postMeMeRelayJson(
+            baseUrl = cfg.gatewayBaseUrl,
+            path = "/route_token/issue",
+            payload = JSONObject()
+                .put("device_id", peerDeviceId)
+                .put("source", "me_me_data")
+                .put("ttl_sec", cfg.routeTokenTtlSec.coerceIn(30, 86_400)),
+            headers = mapOf("X-Admin-Secret" to adminSecret)
+        )
+        if (!issue.optBoolean("ok", false)) {
+            return JSONObject()
+                .put("ok", false)
+                .put("transport", "relay")
+                .put("error", "relay_route_token_issue_failed")
+                .put("result", issue)
+        }
+        val routeToken = issue.optJSONObject("body")?.optString("route_token", "")?.trim().orEmpty()
+        if (routeToken.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("transport", "relay")
+                .put("error", "relay_route_token_missing")
+        }
+        val webhook = postMeMeRelayJson(
+            baseUrl = cfg.gatewayBaseUrl,
+            path = "/webhook/$routeToken?provider=${URLEncoder.encode(cfg.provider.ifBlank { "generic" }, StandardCharsets.UTF_8.name())}",
+            payload = encryptedPayload
+        )
+        if (!webhook.optBoolean("ok", false)) {
+            return JSONObject()
+                .put("ok", false)
+                .put("transport", "relay")
+                .put("error", "relay_notify_failed")
+                .put("result", webhook)
+        }
+        meMeRelayLastNotifyAtMs = System.currentTimeMillis()
+        return JSONObject()
+            .put("ok", true)
+            .put("transport", "relay")
+            .put("issue_result", issue)
+            .put("webhook_result", webhook)
+    }
+
+    private fun deliverMeMeBootstrapPayload(
+        peerDeviceId: String,
+        transportHint: String,
+        timeoutMs: Long,
+        lanPath: String,
+        lanPayload: JSONObject,
+        bleKind: String,
+        lanHostOverride: String = "",
+        lanPortOverride: Int? = null
+    ): JSONObject {
         val route = resolveMeMePeerRoute(peerDeviceId)
         val normalizedHint = transportHint.trim().lowercase(Locale.US)
         val shouldUseBle = when (normalizedHint) {
             "ble" -> true
             "lan", "wifi" -> false
-            else -> conn.method.trim().lowercase(Locale.US) == "ble" || (route?.host.isNullOrBlank() && (route?.hasBle ?: false))
+            else -> lanHostOverride.isBlank() && (route?.host.isNullOrBlank() || (route?.hasBle ?: false))
         }
         if (shouldUseBle) {
             val wire = JSONObject().put("kind", bleKind).put("payload", lanPayload)
@@ -8234,8 +8771,8 @@ class LocalHttpServer(
             }
             return meMeDiscovery.sendBlePayload(peerDeviceId, bytes, timeoutMs).put("transport", "ble")
         }
-        val host = route?.host.orEmpty()
-        val port = route?.port ?: ME_ME_LAN_PORT
+        val host = lanHostOverride.ifBlank { route?.host.orEmpty() }
+        val port = lanPortOverride ?: route?.port ?: ME_ME_LAN_PORT
         if (host.isBlank()) return JSONObject().put("ok", false).put("transport", "lan").put("error", "peer_host_unavailable")
         return postMeMeLanJson(host, port, lanPath, lanPayload).put("transport", "lan")
     }
@@ -8349,60 +8886,6 @@ class LocalHttpServer(
         )
     }
 
-    private fun handleMeMeRelayNotify(payload: JSONObject): Response {
-        val cfg = currentMeMeRelayConfig()
-        if (!cfg.enabled) return jsonError(Response.Status.FORBIDDEN, "relay_disabled")
-        val adminSecret = cfg.gatewayAdminSecret
-        if (adminSecret.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "gateway_admin_secret_missing")
-        val targetDeviceId = payload.optString("target_device_id", "").trim()
-        if (targetDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "target_device_id_required")
-        val source = payload.optString("source", "me_me").trim().ifBlank { "me_me" }
-        val provider = payload.optString("provider", cfg.provider).trim().ifBlank { cfg.provider }
-        val ttlSec = payload.optInt("route_token_ttl_sec", cfg.routeTokenTtlSec).coerceIn(30, 86_400)
-        val issueBody = JSONObject()
-            .put("device_id", targetDeviceId)
-            .put("source", source)
-            .put("ttl_sec", ttlSec)
-        val issue = postMeMeRelayJson(
-            baseUrl = cfg.gatewayBaseUrl,
-            path = "/route_token/issue",
-            payload = issueBody,
-            headers = mapOf("X-Admin-Secret" to adminSecret)
-        )
-        if (!issue.optBoolean("ok", false)) {
-            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "relay_route_token_issue_failed", issue)
-        }
-        val routeToken = issue.optJSONObject("body")?.optString("route_token", "")?.trim().orEmpty()
-        if (routeToken.isBlank()) {
-            return jsonError(Response.Status.INTERNAL_ERROR, "relay_route_token_missing", issue)
-        }
-        val body = JSONObject()
-            .put("event", payload.optString("event", "me_me_notify").trim().ifBlank { "me_me_notify" })
-            .put("from_device_id", currentMeMeConfig().deviceId)
-            .put("to_device_id", targetDeviceId)
-            .put("sent_at", System.currentTimeMillis())
-        if (payload.has("payload")) body.put("payload", payload.opt("payload"))
-        if (payload.has("meta")) body.put("meta", payload.opt("meta"))
-        val webhook = postMeMeRelayJson(
-            baseUrl = cfg.gatewayBaseUrl,
-            path = "/webhook/$routeToken?provider=${URLEncoder.encode(provider, StandardCharsets.UTF_8.name())}",
-            payload = body
-        )
-        if (!webhook.optBoolean("ok", false)) {
-            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "relay_notify_failed", JSONObject().put("issue", issue).put("webhook", webhook))
-        }
-        meMeRelayLastNotifyAtMs = System.currentTimeMillis()
-        return jsonResponse(
-            JSONObject()
-                .put("status", "ok")
-                .put("target_device_id", targetDeviceId)
-                .put("provider", provider)
-                .put("route_token_issued", true)
-                .put("issue_result", issue)
-                .put("webhook_result", webhook)
-        )
-    }
-
     private fun handleMeMeRelayIngest(payload: JSONObject): Response {
         val source = payload.optString("source", "relay").trim().ifBlank { "relay" }
         val alert = buildRelayAlert(payload, source = source)
@@ -8431,18 +8914,21 @@ class LocalHttpServer(
             meMeIngested = resp.status == Response.Status.OK
         }
         notifyBrainEvent(
-            name = alert.optString("name", "me.me.relay.event.received"),
+            name = "me.me.received",
             payload = JSONObject()
                 .put("session_id", "default")
-                .put("source", "me_me.relay")
+                .put("source", "me_me.receive")
+                .put("ui_visible", false)
                 .put("event_id", payload.optString("event_id", "").trim())
-                .put("relay_source", source)
-                .put("relay_provider", alert.optString("provider", source))
-                .put("relay_kind", alert.optString("kind", "generic.event"))
-                .put("summary", alert.optString("summary", "Relay event received from $source")),
+                .put("received_origin", "external")
+                .put("received_transport", "gateway")
+                .put("received_source", source)
+                .put("received_provider", alert.optString("provider", source))
+                .put("received_kind", alert.optString("kind", "generic.event"))
+                .put("summary", alert.optString("summary", "Received event from $source")),
             priority = alert.optString("priority", "normal"),
             interruptPolicy = "turn_end",
-            coalesceKey = alert.optString("coalesce_key", "me_me_relay_received"),
+            coalesceKey = alert.optString("coalesce_key", "me_me_received_external"),
             coalesceWindowMs = 5_000L
         )
         return jsonResponse(
@@ -8474,9 +8960,8 @@ class LocalHttpServer(
             } else {
                 "Discord: $authorName - ${truncateRelaySummary(content, 100)}"
             }
-            val coalesce = "me_me_relay_discord_${channelId.ifBlank { "na" }}_${authorId.ifBlank { "na" }}"
+            val coalesce = "me_me_received_discord_${channelId.ifBlank { "na" }}_${authorId.ifBlank { "na" }}"
             return JSONObject()
-                .put("name", "me.me.relay.discord.message")
                 .put("provider", provider)
                 .put("kind", kind)
                 .put("summary", summary)
@@ -8494,9 +8979,8 @@ class LocalHttpServer(
             } else {
                 "Slack $eventType: ${truncateRelaySummary(text, 100)}"
             }
-            val coalesce = "me_me_relay_slack_${channelId.ifBlank { "na" }}_${eventType}"
+            val coalesce = "me_me_received_slack_${channelId.ifBlank { "na" }}_${eventType}"
             return JSONObject()
-                .put("name", "me.me.relay.slack.event")
                 .put("provider", provider)
                 .put("kind", kind)
                 .put("summary", summary)
@@ -8508,17 +8992,16 @@ class LocalHttpServer(
         val rawEvent = raw?.optString("event", "")?.trim().orEmpty()
         val rawFromDevice = raw?.optString("from_device_id", "")?.trim().orEmpty()
         val summary = when {
-            rawEvent.isNotBlank() && rawFromDevice.isNotBlank() -> "Relay $rawEvent from $rawFromDevice"
-            rawEvent.isNotBlank() -> "Relay $rawEvent received"
-            else -> "Relay event received from $topSource"
+            rawEvent.isNotBlank() && rawFromDevice.isNotBlank() -> "Received $rawEvent from $rawFromDevice"
+            rawEvent.isNotBlank() -> "Received $rawEvent"
+            else -> "Received event from $topSource"
         }
         return JSONObject()
-            .put("name", "me.me.relay.event.received")
             .put("provider", provider)
             .put("kind", kind)
             .put("summary", summary)
             .put("priority", "normal")
-            .put("coalesce_key", "me_me_relay_received")
+            .put("coalesce_key", "me_me_received_external")
             .put("event_id", eventId)
     }
 
@@ -8528,28 +9011,14 @@ class LocalHttpServer(
         return compact.substring(0, maxChars.coerceAtLeast(1)) + "..."
     }
 
-    private fun handleMeMeRelayEventsPull(payload: JSONObject): Response {
-        val limit = payload.optInt("limit", 50).coerceIn(1, 500)
-        val consume = payload.optBoolean("consume", true)
-        val items = synchronized(meMeRelayEventsLock) {
-            val take = meMeRelayEvents.takeLast(limit)
-            if (consume && take.isNotEmpty()) {
-                repeat(take.size) { meMeRelayEvents.removeAt(0) }
-            }
-            take
-        }
-        return jsonResponse(
-            JSONObject()
-                .put("status", "ok")
-                .put("items", JSONArray(items))
-                .put("count", items.size)
-        )
-    }
-
-    private fun handleMeMeRelayPullFromGateway(payload: JSONObject, force: Boolean): Response {
-        val limit = payload.optInt("limit", 50).coerceIn(1, 200)
-        val consume = payload.optBoolean("consume", true)
-        return jsonResponse(maybePullMeMeRelayEventsFromGateway(force = force, limit = limit, consume = consume))
+    private fun logMeMeTrace(event: String, messageId: String, fields: JSONObject) {
+        val payload = JSONObject()
+            .put("component", "me.me")
+            .put("event", event)
+            .put("message_id", messageId.trim().takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            .put("ts_ms", System.currentTimeMillis())
+            .put("fields", fields)
+        Log.i(TAG, "me.me.trace ${payload}")
     }
 
     private fun maybePullMeMeRelayEventsFromGateway(
@@ -8606,13 +9075,45 @@ class LocalHttpServer(
     private fun handleMeMeDataIngest(payload: JSONObject, sourceIp: String): Response {
         val sessionId = payload.optString("session_id", "").trim()
         val fromDeviceId = payload.optString("from_device_id", "").trim()
-        if (sessionId.isBlank() || fromDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "invalid_ingest_payload")
-        val conn = meMeConnections[fromDeviceId] ?: return jsonError(Response.Status.NOT_FOUND, "connection_not_found")
-        if (conn.sessionId != sessionId) return jsonError(Response.Status.FORBIDDEN, "session_mismatch")
+        val deliveryId = payload.optString("delivery_id", "").trim()
+        if (sessionId.isBlank() || fromDeviceId.isBlank()) {
+            maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "invalid_ingest_payload")
+            return jsonError(Response.Status.BAD_REQUEST, "invalid_ingest_payload")
+        }
+        val conn = meMeConnections[fromDeviceId]
+        if (conn == null) {
+            maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "connection_not_found")
+            return jsonError(Response.Status.NOT_FOUND, "connection_not_found")
+        }
+        if (conn.sessionId != sessionId) {
+            maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "session_mismatch")
+            return jsonError(Response.Status.FORBIDDEN, "session_mismatch")
+        }
         val iv = payload.optString("iv_b64", "").trim()
         val ct = payload.optString("ciphertext_b64", "").trim()
         val plain = decryptMeMePayload(conn.sessionKeyB64, iv, ct)
-            ?: return jsonError(Response.Status.BAD_REQUEST, "decrypt_failed")
+            ?: run {
+                maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = false, error = "decrypt_failed")
+                return jsonError(Response.Status.BAD_REQUEST, "decrypt_failed")
+            }
+        val fromDeviceNameHint = plain.optString("from_device_name", "").trim()
+        val fromDeviceName = resolveMeMePeerDisplayName(fromDeviceId, fromDeviceNameHint)
+        val summary = buildMeMeIncomingSummary(fromDeviceName, plain)
+        val messagePriority = resolveMeMeMessagePriority(plain)
+        val messageType = plain.optString("type", "message").trim().ifBlank { "message" }
+        val messagePreview = buildMeMeMessagePreview(plain)
+        val runAgent = shouldRunAgentForMeMeMessage(plain, messageType, messagePriority)
+        val agentPrompt = if (runAgent) {
+            buildMeMeAgentFollowupPrompt(
+                fromDeviceId = fromDeviceId,
+                fromDeviceName = fromDeviceName,
+                messageType = messageType,
+                messagePriority = messagePriority,
+                messagePreview = messagePreview
+            )
+        } else {
+            ""
+        }
         val bucket = meMeInboundMessages.computeIfAbsent(fromDeviceId) { mutableListOf() }
         synchronized(bucket) {
             bucket.add(
@@ -8620,23 +9121,276 @@ class LocalHttpServer(
                     .put("received_at", System.currentTimeMillis())
                     .put("source_ip", sourceIp)
                     .put("session_id", sessionId)
+                    .put("from_device_name", fromDeviceName)
                     .put("message", plain)
             )
             while (bucket.size > 200) bucket.removeAt(0)
         }
         notifyBrainEvent(
-            name = "me.me.message.received",
+            name = "me.me.received",
             payload = JSONObject()
                 .put("session_id", "default")
-                .put("source", "me_me.data")
+                .put("source", "me_me.receive")
+                .put("received_origin", "peer")
+                .put("received_transport", if (sourceIp.startsWith("ble:")) "ble" else if (sourceIp == "relay") "gateway" else "lan")
+                .put("received_source", sourceIp)
+                .put("received_provider", if (sourceIp == "relay") "generic" else "direct")
+                .put("received_kind", messageType)
                 .put("from_device_id", fromDeviceId)
-                .put("summary", "Message received from $fromDeviceId"),
-            priority = "high",
-            interruptPolicy = "turn_end",
-            coalesceKey = "me_me_message_from_$fromDeviceId",
-            coalesceWindowMs = 3_000L
+                .put("from_device_name", fromDeviceName)
+                .put("message_type", messageType)
+                .put("message_priority", messagePriority)
+                .put("message_preview", messagePreview)
+                .put("summary", summary)
+                .put("ui_visible", false)
+                .put("run_agent", runAgent)
+                .put("prompt", agentPrompt),
+            priority = messagePriority,
+            interruptPolicy = if (messagePriority == "low") "never" else "turn_end",
+            coalesceKey = if (messagePriority == "low") "me_me_message_from_$fromDeviceId" else null,
+            coalesceWindowMs = if (messagePriority == "low") 2_500L else null
         )
+        maybeSendMeMeBleDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = true, error = "")
         return jsonResponse(JSONObject().put("status", "ok").put("stored", true))
+    }
+
+    private fun maybeSendMeMeBleDataAck(
+        sourceIp: String,
+        deliveryId: String,
+        sessionId: String,
+        fromDeviceId: String,
+        ok: Boolean,
+        error: String
+    ) {
+        val did = deliveryId.trim()
+        if (did.isBlank()) return
+        if (!sourceIp.startsWith("ble:")) return
+        val sourceAddress = sourceIp.removePrefix("ble:").trim()
+        if (sourceAddress.isBlank()) return
+        val selfCfg = currentMeMeConfig()
+        val ackPayload = JSONObject()
+            .put("delivery_id", did)
+            .put("session_id", sessionId)
+            .put("from_device_id", selfCfg.deviceId)
+            .put("to_device_id", fromDeviceId)
+            .put("ok", ok)
+            .put("error", if (ok) JSONObject.NULL else error.trim().ifBlank { "ingest_failed" })
+            .put("ack_at", System.currentTimeMillis())
+        val wire = JSONObject().put("kind", "data_ack").put("payload", ackPayload)
+        val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
+        if (bytes.size > ME_ME_BLE_MAX_MESSAGE_BYTES) return
+        runCatching {
+            val ackOut = meMeDiscovery.sendBlePayloadToAddress(sourceAddress, bytes, 2500L)
+            logMeMeTrace(
+                event = "message.ingest_ack",
+                messageId = did,
+                fields = JSONObject()
+                    .put("delivery_id", did)
+                    .put("ok", ackOut.optBoolean("ok", false))
+                    .put("ack_status", if (ok) "stored" else "failed")
+                    .put("ack_error", ackOut.optString("error", "").trim().takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                    .put("ingest_error", if (ok) JSONObject.NULL else error.trim().ifBlank { "ingest_failed" })
+            )
+        }.onFailure {
+            logMeMeTrace(
+                event = "message.ingest_ack",
+                messageId = did,
+                fields = JSONObject()
+                    .put("delivery_id", did)
+                    .put("ok", false)
+                    .put("ack_status", if (ok) "stored" else "failed")
+                    .put("ack_error", it.message ?: "ack_send_failed")
+                    .put("ingest_error", if (ok) JSONObject.NULL else error.trim().ifBlank { "ingest_failed" })
+            )
+        }
+    }
+
+    private fun resolveMeMePeerDisplayName(deviceId: String, hintName: String = ""): String {
+        val hinted = hintName.trim()
+        if (hinted.isNotBlank()) return hinted
+        val connName = meMeConnections[deviceId]?.peerDeviceName?.trim().orEmpty()
+        if (connName.isNotBlank()) return connName
+        val presenceName = meMePeerPresence[deviceId]?.deviceName?.trim().orEmpty()
+        if (presenceName.isNotBlank()) return presenceName
+        return deviceId
+    }
+
+    private fun buildMeMeIncomingSummary(fromDeviceName: String, message: JSONObject): String {
+        val type = message.optString("type", "message").trim().ifBlank { "message" }.lowercase(Locale.US)
+        val payload = message.opt("payload")
+        val fileName = if (hasMeMeAttachmentPayload(payload)) extractMeMeFileName(payload) else ""
+        if (fileName.isNotBlank()) {
+            return "File received from $fromDeviceName: $fileName"
+        }
+        val text = when (payload) {
+            is JSONObject -> payload.optString("text", "").ifBlank { payload.optString("message", "") }.trim()
+            is String -> payload.trim()
+            else -> ""
+        }
+        if (text.isNotBlank()) {
+            return "Message received from $fromDeviceName: ${truncateMeMeSummary(text, 80)}"
+        }
+        return when (type) {
+            "image", "photo" -> "Image received from $fromDeviceName"
+            "video" -> "Video received from $fromDeviceName"
+            "audio", "voice" -> "Audio received from $fromDeviceName"
+            else -> "Message received from $fromDeviceName"
+        }
+    }
+
+    private fun hasMeMeAttachmentPayload(payload: Any?): Boolean {
+        fun objHasAttachment(obj: JSONObject): Boolean {
+            val directKeys = listOf("attachment_id", "attachment_b64", "file_b64", "bytes_b64", "content_b64", "data_b64")
+            if (directKeys.any { k -> obj.optString(k, "").trim().isNotBlank() }) return true
+            val attachment = obj.optJSONObject("attachment")
+            if (attachment != null && objHasAttachment(attachment)) return true
+            val files = obj.optJSONArray("files")
+            if (files != null) {
+                for (i in 0 until files.length()) {
+                    val fileObj = files.optJSONObject(i)
+                    if (fileObj != null && objHasAttachment(fileObj)) return true
+                }
+            }
+            return false
+        }
+        return when (payload) {
+            is JSONObject -> objHasAttachment(payload)
+            is JSONArray -> {
+                for (i in 0 until payload.length()) {
+                    val fileObj = payload.optJSONObject(i)
+                    if (fileObj != null && objHasAttachment(fileObj)) return true
+                }
+                false
+            }
+            else -> false
+        }
+    }
+
+    private fun extractMeMeFileName(payload: Any?): String {
+        fun fromObj(obj: JSONObject): String {
+            val direct = listOf("file_name", "filename", "name")
+            for (k in direct) {
+                val v = obj.optString(k, "").trim()
+                if (v.isNotBlank()) return basenameForMeMeSummary(v)
+            }
+            val files = obj.optJSONArray("files")
+            if (files != null && files.length() > 0) {
+                val firstObj = files.optJSONObject(0)
+                if (firstObj != null) {
+                    val nested = fromObj(firstObj)
+                    if (nested.isNotBlank()) return nested
+                }
+                val firstStr = files.optString(0, "").trim()
+                if (firstStr.isNotBlank()) return basenameForMeMeSummary(firstStr)
+            }
+            return ""
+        }
+        return when (payload) {
+            is JSONObject -> fromObj(payload)
+            is JSONArray -> {
+                if (payload.length() <= 0) return ""
+                val o = payload.optJSONObject(0)
+                if (o != null) fromObj(o) else basenameForMeMeSummary(payload.optString(0, "").trim())
+            }
+            is String -> {
+                val s = payload.trim()
+                if (s.startsWith("rel_path:", ignoreCase = true)) {
+                    basenameForMeMeSummary(s.substringAfter(':', "").trim())
+                } else {
+                    ""
+                }
+            }
+            else -> ""
+        }
+    }
+
+    private fun basenameForMeMeSummary(rawPath: String): String {
+        val trimmed = rawPath.trim().ifBlank { return "" }
+        val noQuery = trimmed.substringBefore('?').substringBefore('#')
+        val normalized = noQuery.replace('\\', '/')
+        return normalized.substringAfterLast('/', normalized).ifBlank { trimmed }
+    }
+
+    private fun truncateMeMeSummary(text: String, maxChars: Int): String {
+        val compact = text.replace("\\s+".toRegex(), " ").trim()
+        if (compact.length <= maxChars) return compact
+        return compact.substring(0, maxChars.coerceAtLeast(1)) + "..."
+    }
+
+    private fun resolveMeMeMessagePriority(message: JSONObject): String {
+        fun normalize(raw: String): String {
+            return when (raw.trim().lowercase(Locale.US)) {
+                "urgent", "critical", "immediate", "p0" -> "urgent"
+                "high", "important", "p1" -> "high"
+                "low", "minor", "background", "p3" -> "low"
+                else -> "normal"
+            }
+        }
+        val explicitTop = message.optString("priority", "").trim()
+        if (explicitTop.isNotBlank()) return normalize(explicitTop)
+        val payload = message.opt("payload")
+        if (payload is JSONObject) {
+            val explicitPayload = payload.optString("priority", "").trim()
+            if (explicitPayload.isNotBlank()) return normalize(explicitPayload)
+            if (payload.optBoolean("urgent", false)) return "urgent"
+            if (payload.optBoolean("important", false)) return "high"
+        }
+        return when (message.optString("type", "").trim().lowercase(Locale.US)) {
+            "command", "task", "alert" -> "high"
+            "ping", "presence", "heartbeat" -> "low"
+            else -> "normal"
+        }
+    }
+
+    private fun buildMeMeMessagePreview(message: JSONObject): String {
+        val payload = message.opt("payload")
+        val text = when (payload) {
+            is JSONObject -> payload.optString("text", "").ifBlank { payload.optString("message", "") }.trim()
+            is String -> payload.trim()
+            else -> ""
+        }
+        if (text.isNotBlank()) return truncateMeMeSummary(text, 120)
+        val file = extractMeMeFileName(payload)
+        if (file.isNotBlank()) return "file:$file"
+        val type = message.optString("type", "message").trim().ifBlank { "message" }
+        return "type:$type"
+    }
+
+    private fun shouldRunAgentForMeMeMessage(
+        message: JSONObject,
+        messageType: String,
+        messagePriority: String
+    ): Boolean {
+        if (messagePriority == "low") return false
+        val normalizedType = messageType.trim().lowercase(Locale.US)
+        if (normalizedType in setOf("agent_request", "request", "task", "command", "agent_task")) {
+            return true
+        }
+        val payload = message.opt("payload")
+        if (payload is JSONObject) {
+            if (payload.optBoolean("run_agent", false)) return true
+            if (payload.optBoolean("requires_action", false)) return true
+            val direct = payload.optString("agent_prompt", "").trim()
+            if (direct.isNotBlank()) return true
+        }
+        return normalizedType == "message" && messagePriority in setOf("high", "urgent")
+    }
+
+    private fun buildMeMeAgentFollowupPrompt(
+        fromDeviceId: String,
+        fromDeviceName: String,
+        messageType: String,
+        messagePriority: String,
+        messagePreview: String
+    ): String {
+        val safeName = fromDeviceName.trim().ifBlank { fromDeviceId }
+        val safePreview = messagePreview.trim().ifBlank { "none" }
+        return (
+            "A me.me message requiring action was received from '$safeName' ($fromDeviceId). " +
+                "Type=$messageType, priority=$messagePriority, preview='$safePreview'. " +
+                "Use device_api action me.me.messages.pull with peer_device_id='$fromDeviceId' to fetch the latest inbound message, " +
+                "perform the requested action if possible, and reply via me.me.message.send when needed."
+            )
     }
 
     private fun findDiscoveredPeer(discovered: JSONArray?, deviceId: String): JSONObject? {
@@ -8650,10 +9404,44 @@ class LocalHttpServer(
 
     private fun cleanupExpiredMeMeState() {
         val now = System.currentTimeMillis()
+        val activeSessionIds = meMeConnections.values.map { it.sessionId }.toSet()
         val it = meMeConnectIntents.entries.iterator()
         while (it.hasNext()) {
             val e = it.next()
-            if (e.value.expiresAt in 1..now) it.remove()
+            val req = e.value
+            if (req.expiresAt in 1..now) {
+                it.remove()
+                continue
+            }
+            if (req.accepted || activeSessionIds.contains(req.sessionId)) {
+                it.remove()
+            }
+        }
+    }
+
+    private fun markMeMeConnectIntentAccepted(requestId: String) {
+        val reqId = requestId.trim()
+        if (reqId.isBlank()) return
+        val current = meMeConnectIntents[reqId] ?: return
+        if (!current.accepted) {
+            meMeConnectIntents[reqId] = current.copy(accepted = true)
+        }
+    }
+
+    private fun clearResolvedMeMeConnectIntents(sessionId: String, requestId: String = "") {
+        val sid = sessionId.trim()
+        val rid = requestId.trim()
+        val it = meMeConnectIntents.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            val req = e.value
+            if (rid.isNotBlank() && req.id == rid) {
+                it.remove()
+                continue
+            }
+            if (sid.isNotBlank() && req.sessionId == sid) {
+                it.remove()
+            }
         }
     }
 
@@ -8799,9 +9587,23 @@ class LocalHttpServer(
         }
         val kind = obj.optString("kind", "").trim().lowercase(Locale.US)
         when (kind) {
+            "connect_offer" -> {
+                val payload = obj.optJSONObject("payload") ?: obj
+                handleMeMeConnectOffer(payload, sourceIp = "ble:$sourceAddress")
+            }
             "connect_confirm" -> {
                 val payload = obj.optJSONObject("payload") ?: obj
                 handleMeMeConnectConfirm(payload)
+            }
+            "data_ack" -> {
+                val payload = obj.optJSONObject("payload") ?: obj
+                val deliveryId = payload.optString("delivery_id", "").trim()
+                if (deliveryId.isNotBlank()) {
+                    meMeBleDataAckWaiters[deliveryId]?.let { waiter ->
+                        waiter.ack = JSONObject(payload.toString())
+                        waiter.latch.countDown()
+                    }
+                }
             }
             "data_ingest", "" -> {
                 val payload = obj.optJSONObject("payload") ?: obj
@@ -11127,6 +11929,10 @@ class LocalHttpServer(
                 session.method == Method.POST && uri == "/me/me/connect/confirm" -> {
                     val payload = JSONObject(readBody(session).ifBlank { "{}" })
                     handleMeMeConnectConfirm(payload)
+                }
+                session.method == Method.POST && uri == "/me/me/connect/offer" -> {
+                    val payload = JSONObject(readBody(session).ifBlank { "{}" })
+                    handleMeMeConnectOffer(payload, sourceIp = session.remoteIpAddress ?: "")
                 }
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "application/json", "{\"error\":\"not_found\"}")
             }

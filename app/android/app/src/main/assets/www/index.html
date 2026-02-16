@@ -1982,7 +1982,7 @@
           <p class="muted" id="meMeStatus" style="margin-top:8px;">Discovery disabled</p>
           <div class="btn-group">
             <button class="btn" id="openMeMeSettingsModalBtn">me.me Settings</button>
-            <button class="btn" id="meMeScanNowBtn">Scan Now</button>
+            <button class="btn" id="openMeMePeersModalBtn">Connected Devices</button>
           </div>
         </section>
 
@@ -2267,6 +2267,25 @@
           </div>
         </div>
         </div>
+      </div>
+    </div>
+
+    <!-- me.me Connected Devices Modal -->
+    <div class="modal" id="meMePeersModal" role="dialog" aria-modal="true" aria-labelledby="meMePeersModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="me_me" style="max-height:calc(100vh - 40px); display:flex; flex-direction:column; overflow:hidden;">
+        <div class="card-header">
+          <div class="card-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01"/><path d="M7 17h.01"/></svg></div>
+          <div>
+            <div class="card-title" id="meMePeersModalTitle" style="margin-bottom:0;">Connected Devices</div>
+            <div class="muted" style="font-size:12px;">Current me.me device connections</div>
+          </div>
+          <button class="icon-btn secondary" id="meMePeersModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
+        </div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn" id="meMePeersRefreshBtn">Refresh</button>
+        </div>
+        <div class="muted" id="meMePeersSummary" style="margin-top:8px;">Loading...</div>
+        <div id="meMePeersList" style="margin-top:10px; display:grid; gap:8px; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:120px; flex:1 1 auto;"></div>
       </div>
     </div>
 
@@ -2762,6 +2781,9 @@
               try { localStorage.removeItem(CHAT_STORAGE_PREFIX + sid); } catch (_) {}
               removeKnownSession(sid);
               if (sid === String(chatSessionId || "").trim()) {
+                // Deleting the active "default" session needs a forced reload.
+                // switchChatSession("default") is otherwise a no-op when already on default.
+                if (sid === "default") chatSessionId = "__session_deleted__";
                 await switchChatSession("default");
               }
               await refreshSessionMenu();
@@ -7120,9 +7142,14 @@
       const permApprovalsList = $("permApprovalsList");
       const meMeStatus = $("meMeStatus");
       const openMeMeSettingsModalBtn = $("openMeMeSettingsModalBtn");
-      const meMeScanNowBtn = $("meMeScanNowBtn");
+      const openMeMePeersModalBtn = $("openMeMePeersModalBtn");
       const meMeSettingsModal = $("meMeSettingsModal");
       const meMeSettingsModalClose = $("meMeSettingsModalClose");
+      const meMePeersModal = $("meMePeersModal");
+      const meMePeersModalClose = $("meMePeersModalClose");
+      const meMePeersRefreshBtn = $("meMePeersRefreshBtn");
+      const meMePeersSummary = $("meMePeersSummary");
+      const meMePeersList = $("meMePeersList");
       const meMeDeviceName = $("meMeDeviceName");
       const meMeDeviceDescription = $("meMeDeviceDescription");
       const meMeDeviceIcon = $("meMeDeviceIcon");
@@ -8835,6 +8862,7 @@
       wireSimpleModal(autoUpdateSettingsModal, openAutoUpdateSettingsModalBtn, autoUpdateSettingsModalClose);
       wireSimpleModal(permApprovalsModal, openPermApprovalsModalBtn, permApprovalsModalClose);
       wireSimpleModal(meMeSettingsModal, openMeMeSettingsModalBtn, meMeSettingsModalClose);
+      wireSimpleModal(meMePeersModal, openMeMePeersModalBtn, meMePeersModalClose);
       openPermApprovalsModalBtn.addEventListener("click", async () => {
         await refreshPermApprovals();
       });
@@ -8897,8 +8925,11 @@
       meMeSaveBtn.addEventListener("click", async () => {
         await saveMeMeConfig();
       });
-      meMeScanNowBtn.addEventListener("click", async () => {
-        await triggerMeMeScan();
+      openMeMePeersModalBtn.addEventListener("click", async () => {
+        await refreshMeMePeersModal();
+      });
+      meMePeersRefreshBtn.addEventListener("click", async () => {
+        await refreshMeMePeersModal();
       });
 
       function splitDeviceListText(text) {
@@ -8994,22 +9025,62 @@
         }
       }
 
-      async function triggerMeMeScan() {
+      function formatEpochLocal(ms) {
+        const n = Number(ms || 0);
+        if (!Number.isFinite(n) || n <= 0) return "-";
+        const d = new Date(n);
+        if (Number.isNaN(d.getTime())) return "-";
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mi = String(d.getMinutes()).padStart(2, "0");
+        const ss = String(d.getSeconds()).padStart(2, "0");
+        return yyyy + "-" + mm + "-" + dd + " " + hh + ":" + mi + ":" + ss;
+      }
+
+      async function refreshMeMePeersModal() {
         try {
-          meMeScanNowBtn.disabled = true;
-          const res = await fetch(API + "/me/me/scan", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ timeout_ms: 3000 }),
-          });
+          meMePeersRefreshBtn.disabled = true;
+          meMePeersSummary.textContent = "Loading...";
+          meMePeersList.innerHTML = "";
+          const res = await fetch(API + "/me/me/status", { cache: "no-store" });
           const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(String(data.error || "scan_failed"));
-          showToast("me.me scan started", 1400);
-          await refreshMeMeStatus();
+          if (!res.ok) throw new Error(String(data.error || "status_failed"));
+          const connections = Array.isArray(data.connections) ? data.connections : [];
+          meMePeersSummary.textContent = connections.length > 0
+            ? (String(connections.length) + " active connection(s)")
+            : "No active connections";
+          if (connections.length <= 0) {
+            const empty = document.createElement("div");
+            empty.className = "muted";
+            empty.textContent = "No connected device.";
+            meMePeersList.appendChild(empty);
+            return;
+          }
+          connections.forEach((conn) => {
+            const item = document.createElement("div");
+            item.style.border = "1px solid var(--border)";
+            item.style.borderRadius = "10px";
+            item.style.padding = "10px";
+            item.style.background = "rgba(255,255,255,0.02)";
+            const peerName = String(conn.peer_device_name || conn.peer_device_id || "unknown");
+            const peerId = String(conn.peer_device_id || "");
+            const method = String(conn.method || "auto");
+            const state = String(conn.state || "unknown");
+            const connectedAt = formatEpochLocal(conn.connected_at);
+            item.innerHTML =
+              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + "</div>" +
+              "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
+              "<div class='muted' style='margin-top:2px;'>method " + escapeHtml(method) + " · state " + escapeHtml(state) + "</div>" +
+              "<div class='muted' style='margin-top:2px;'>connected " + escapeHtml(connectedAt) + "</div>";
+            meMePeersList.appendChild(item);
+          });
         } catch (_) {
-          showToast("Failed to scan me.me devices", 1800);
+          meMePeersSummary.textContent = "Failed to load connected devices";
+          showToast("Failed to load connected devices", 1800);
         } finally {
-          meMeScanNowBtn.disabled = false;
+          meMePeersRefreshBtn.disabled = false;
         }
       }
 

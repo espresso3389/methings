@@ -453,7 +453,22 @@ class MeMeDiscoveryManager(
             .getOrElse { JSONObject().put("ok", false).put("error", "ble_send_timeout") }
     }
 
+    fun sendBlePayloadToAddress(targetAddress: String, payload: ByteArray, timeoutMs: Long = 12_000L): JSONObject {
+        val future = bleSendExecutor.submit<JSONObject> {
+            sendBlePayloadInternalByAddress(targetAddress.trim(), payload, timeoutMs.coerceIn(2000L, 30_000L))
+        }
+        return runCatching { future.get(timeoutMs.coerceIn(2000L, 30_000L) + 1000L, TimeUnit.MILLISECONDS) }
+            .getOrElse { JSONObject().put("ok", false).put("error", "ble_send_timeout") }
+    }
+
     private fun sendBlePayloadInternal(targetDeviceId: String, payload: ByteArray, timeoutMs: Long): JSONObject {
+        val peer = peers[targetDeviceId]
+        val address = peer?.bleAddress?.trim().orEmpty()
+        if (address.isBlank()) return JSONObject().put("ok", false).put("error", "peer_ble_unavailable")
+        return sendBlePayloadInternalByAddress(address, payload, timeoutMs)
+    }
+
+    private fun sendBlePayloadInternalByAddress(address: String, payload: ByteArray, timeoutMs: Long): JSONObject {
         if (Build.VERSION.SDK_INT >= 31 &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -461,9 +476,7 @@ class MeMeDiscoveryManager(
         }
         val adapter = bluetoothAdapter() ?: return JSONObject().put("ok", false).put("error", "ble_unavailable")
         if (!adapter.isEnabled) return JSONObject().put("ok", false).put("error", "ble_disabled")
-        val peer = peers[targetDeviceId]
-        val address = peer?.bleAddress?.trim().orEmpty()
-        if (address.isBlank()) return JSONObject().put("ok", false).put("error", "peer_ble_unavailable")
+        if (address.isBlank()) return JSONObject().put("ok", false).put("error", "peer_ble_address_missing")
         val device = runCatching { adapter.getRemoteDevice(address) }.getOrNull()
             ?: return JSONObject().put("ok", false).put("error", "peer_ble_address_invalid")
 

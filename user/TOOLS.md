@@ -257,7 +257,7 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 ## Docs Index
 
 Read the relevant doc when working in that domain (use `read_file("$sys/docs/<name>")`):
-- `$sys/docs/api_reference.md` — **complete action map**, all endpoints, WebSocket protocols
+- `$sys/docs/api_reference.md` — agent-facing action map, key endpoints, WebSocket protocols
 - `$sys/docs/camera.md` — CameraX still capture + preview stream
 - `$sys/docs/uvc.md` — UVC MJPEG capture + PTZ
 - `$sys/docs/usb.md` — USB device enumeration + transfers + streaming

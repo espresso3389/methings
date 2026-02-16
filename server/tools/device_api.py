@@ -123,12 +123,12 @@ class DeviceApiTool:
         "notifications.prefs.set": {"method": "POST", "path": "/notifications/prefs", "permission": False},
         "me.sync.status": {"method": "GET", "path": "/me/sync/status", "permission": False},
         "me.me.status": {"method": "GET", "path": "/me/me/status", "permission": False},
+        "me.me.routes": {"method": "GET", "path": "/me/me/routes", "permission": False},
         "me.me.config.get": {"method": "GET", "path": "/me/me/config", "permission": False},
         "me.me.config.set": {"method": "POST", "path": "/me/me/config", "permission": True},
         "me.me.scan": {"method": "POST", "path": "/me/me/scan", "permission": True},
         "me.me.connect": {"method": "POST", "path": "/me/me/connect", "permission": True},
         "me.me.accept": {"method": "POST", "path": "/me/me/accept", "permission": True},
-        "me.me.connect.confirm": {"method": "POST", "path": "/me/me/connect/confirm", "permission": True},
         "me.me.disconnect": {"method": "POST", "path": "/me/me/disconnect", "permission": True},
         "me.me.message.send": {"method": "POST", "path": "/me/me/message/send", "permission": True},
         "me.me.messages.pull": {"method": "POST", "path": "/me/me/messages/pull", "permission": True},
@@ -136,9 +136,6 @@ class DeviceApiTool:
         "me.me.relay.config.get": {"method": "GET", "path": "/me/me/relay/config", "permission": False},
         "me.me.relay.config.set": {"method": "POST", "path": "/me/me/relay/config", "permission": True},
         "me.me.relay.register": {"method": "POST", "path": "/me/me/relay/register", "permission": True},
-        "me.me.relay.notify": {"method": "POST", "path": "/me/me/relay/notify", "permission": True},
-        "me.me.relay.events.pull": {"method": "POST", "path": "/me/me/relay/events/pull", "permission": True},
-        "me.me.relay.pull_gateway": {"method": "POST", "path": "/me/me/relay/pull_gateway", "permission": True},
         "me.sync.local_state": {"method": "GET", "path": "/me/sync/local_state", "permission": False},
         "me.sync.prepare_export": {"method": "POST", "path": "/me/sync/prepare_export", "permission": True},
         "me.sync.import": {"method": "POST", "path": "/me/sync/import", "permission": True},
@@ -192,8 +189,6 @@ class DeviceApiTool:
             "video.stream.start": 25.0,
             "screenrec.start": 45.0,
             "me.me.relay.register": 20.0,
-            "me.me.relay.notify": 20.0,
-            "me.me.relay.pull_gateway": 20.0,
             "screenrec.stop": 25.0,
             "me.sync.v3.ticket.create": 30.0,
             "me.sync.v3.import.apply": 300.0,
@@ -268,7 +263,30 @@ class DeviceApiTool:
             if cmd not in {"python", "pip", "curl"}:
                 return {"status": "error", "error": "command_not_allowed"}
 
-        if spec["permission"]:
+        if action == "me.me.connect":
+            target = str(
+                payload.get("target_device_id")
+                or payload.get("peer_device_id")
+                or payload.get("device_id")
+                or ""
+            ).strip()
+            if target and not str(payload.get("target_device_id") or "").strip():
+                payload["target_device_id"] = target
+
+        if action == "me.me.message.send":
+            peer = str(
+                payload.get("peer_device_id")
+                or payload.get("target_device_id")
+                or payload.get("device_id")
+                or ""
+            ).strip()
+            if peer and not str(payload.get("peer_device_id") or "").strip():
+                payload["peer_device_id"] = peer
+
+        # me.me permissions are auto-approved server-side to keep nearby device workflows
+        # (connect/accept/message) non-blocking for agents and users.
+        needs_permission = bool(spec["permission"]) and not action.startswith("me.me.")
+        if needs_permission:
             detail = str(args.get("detail") or "").strip()
             if not detail:
                 detail = f"{action}: {json.dumps(payload, ensure_ascii=True)[:240]}"
@@ -302,7 +320,64 @@ class DeviceApiTool:
                 payload.setdefault("session_id", sid)
 
         body = payload if spec["method"] == "POST" else None
-        return self._request_json(spec["method"], spec["path"], body, timeout_s=timeout_s)
+        first = self._request_json(spec["method"], spec["path"], body, timeout_s=timeout_s)
+        if action != "me.me.message.send":
+            return first
+        if not self._should_retry_me_me_message_send(first):
+            return first
+        peer_device_id = str(payload.get("peer_device_id") or "").strip()
+        if not peer_device_id:
+            return first
+        # One-shot auto-connect + retry path to keep "send photo to the other device"
+        # simple for users and agents.
+        connect_payload: Dict[str, Any] = {"target_device_id": peer_device_id}
+        if isinstance(payload.get("permission_id"), str) and payload.get("permission_id"):
+            connect_payload["permission_id"] = payload.get("permission_id")
+        transport = str(payload.get("transport") or "").strip()
+        if transport:
+            connect_payload["transport"] = transport
+        self._request_json("POST", "/me/me/connect", connect_payload, timeout_s=max(8.0, min(20.0, timeout_s)))
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            status = self._request_json("GET", "/me/me/status", None, timeout_s=6.0)
+            body_status = status.get("body") if isinstance(status, dict) else None
+            if isinstance(body_status, dict):
+                conns = body_status.get("connections")
+                if isinstance(conns, list):
+                    found = any(
+                        isinstance(c, dict) and str(c.get("peer_device_id") or "").strip() == peer_device_id
+                        for c in conns
+                    )
+                    if found:
+                        break
+            time.sleep(0.4)
+        second = self._request_json(spec["method"], spec["path"], body, timeout_s=timeout_s)
+        if isinstance(second, dict):
+            second["auto_connect_attempted"] = True
+        return second
+
+    def _should_retry_me_me_message_send(self, resp: Dict[str, Any]) -> bool:
+        if not isinstance(resp, dict):
+            return False
+        if resp.get("status") != "http_error":
+            return False
+        body = resp.get("body")
+        if not isinstance(body, dict):
+            return False
+        if str(body.get("error") or "").strip() != "peer_delivery_failed":
+            return False
+        result = body.get("result")
+        if not isinstance(result, dict):
+            return False
+        err = str(result.get("error") or "").strip()
+        if err in {"connection_not_found", "connection_not_ready"}:
+            return True
+        nested = result.get("result")
+        if isinstance(nested, dict):
+            nested_err = str(nested.get("error") or "").strip()
+            if nested_err in {"connection_not_found", "connection_not_ready"}:
+                return True
+        return False
 
     def _run_uvc_action(self, action: str, args: Dict[str, Any]) -> Dict[str, Any]:
         """
