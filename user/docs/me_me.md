@@ -25,6 +25,7 @@ Endpoints:
 - `POST /me/me/relay/register`
 - `POST /me/me/relay/notify`
 - `POST /me/me/relay/events/pull`
+- `POST /me/me/relay/pull_gateway`
 - `POST /me/me/relay/ingest`
 
 Config fields:
@@ -39,6 +40,10 @@ Config fields:
 Notes:
 - `connection_methods` supports `wifi`, `ble`, `other`.
 - `POST /me/me/scan` now returns discovered peers and `warnings` for partial failures (for example, missing BLE runtime permission).
+- Automatic nearby discovery runs in background at `discovery_interval` with a short intermittent scan window (low-duty cycle).
+- Discovered peers are pruned automatically when they are stale (not seen for a while).
+- Connection health checks run in background at `connection_check_interval`.
+- If a logical connection becomes unreachable it is marked `disconnected`; when route visibility returns, `auto_reconnect` + `reconnect_interval` can restore it to `connected`.
 - `GET /me/me/status` includes:
   - `discovered` / `discovered_count`
   - `pending_requests` / `pending_request_count`
@@ -62,6 +67,17 @@ Relay foundation:
 - Receiver-side APIs:
   - `POST /me/me/relay/ingest`: push bridge endpoint (for example FCM adapter -> local server).
   - `POST /me/me/relay/events/pull`: read/dequeue ingested relay events.
+  - `POST /me/me/relay/pull_gateway`: pull queued events from relay gateway (`/events/pull`) and ingest locally.
+- Runtime:
+  - connection-check tick also performs throttled gateway pull when relay is enabled and admin secret is configured.
 - Config:
   - `enabled`, `gateway_base_url`, `provider`, `route_token_ttl_sec`, `device_push_token`.
   - `gateway_admin_secret` is accepted on config-set but never returned; it is stored in encrypted credential storage.
+
+Agent alert integration:
+- me.me runtime forwards key events to the local agent inbox (`/brain/inbox/event`) with `priority` and `interrupt_policy`.
+- Current forwarded events:
+  - `me.me.device.discovered` (low, `never`, coalesced per device)
+  - `me.me.relay.event.received` (normal, `turn_end`)
+  - `me.me.message.received` (high, `turn_end`)
+- Event payload includes short `summary` text for timeline visibility.

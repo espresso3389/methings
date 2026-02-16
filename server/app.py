@@ -907,9 +907,23 @@ async def brain_inbox_chat(payload: Dict):
 async def brain_inbox_event(payload: Dict):
     name = str(payload.get("name") or "")
     body = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+    priority = str(payload.get("priority") or "normal")
+    interrupt_policy = str(payload.get("interrupt_policy") or payload.get("interruptPolicy") or "turn_end")
+    coalesce_key = str(payload.get("coalesce_key") or payload.get("coalesceKey") or "")
+    try:
+        coalesce_window_ms = int(payload.get("coalesce_window_ms") or payload.get("coalesceWindowMs") or 0)
+    except Exception:
+        coalesce_window_ms = 0
     if not name.strip():
         raise HTTPException(status_code=400, detail="missing_name")
-    return BRAIN_RUNTIME.enqueue_event(name=name, payload=body)
+    return BRAIN_RUNTIME.enqueue_event(
+        name=name,
+        payload=body,
+        priority=priority,
+        interrupt_policy=interrupt_policy,
+        coalesce_key=coalesce_key,
+        coalesce_window_ms=coalesce_window_ms,
+    )
 
 
 @app.get("/brain/messages")

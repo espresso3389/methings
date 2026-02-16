@@ -643,12 +643,28 @@ class WorkerHandler(BaseHTTPRequestHandler):
         if parsed.path == "/brain/inbox/event":
             name = str((payload or {}).get("name") or "")
             body = (payload or {}).get("payload")
+            priority = str((payload or {}).get("priority") or "normal")
+            interrupt_policy = str((payload or {}).get("interrupt_policy") or (payload or {}).get("interruptPolicy") or "turn_end")
+            coalesce_key = str((payload or {}).get("coalesce_key") or (payload or {}).get("coalesceKey") or "")
+            try:
+                coalesce_window_ms = int((payload or {}).get("coalesce_window_ms") or (payload or {}).get("coalesceWindowMs") or 0)
+            except Exception:
+                coalesce_window_ms = 0
             if not isinstance(body, dict):
                 body = {}
             if not name.strip():
                 self._send_json({"error": "missing_name"}, status=400)
                 return
-            self._send_json(BRAIN_RUNTIME.enqueue_event(name=name, payload=body))
+            self._send_json(
+                BRAIN_RUNTIME.enqueue_event(
+                    name=name,
+                    payload=body,
+                    priority=priority,
+                    interrupt_policy=interrupt_policy,
+                    coalesce_key=coalesce_key,
+                    coalesce_window_ms=coalesce_window_ms,
+                )
+            )
             return
         if parsed.path == "/brain/journal/current":
             session_id = str((payload or {}).get("session_id") or "default").strip() or "default"

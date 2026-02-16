@@ -65,6 +65,8 @@ class BrainRuntime:
         self._awaiting_permissions: Dict[str, Dict[str, Any]] = {}
         # Best-effort model hint for per-model runtime tuning.
         self._active_model_name: str = ""
+        # Coalescing window memory for low-signal event storms.
+        self._event_coalesce_last_ts: Dict[str, int] = {}
 
         self._config = self._load_config()
         self._event_bus = None
@@ -695,17 +697,75 @@ class BrainRuntime:
         self._emit_log("brain_inbox_chat", {"id": item["id"]})
         return item
 
-    def enqueue_event(self, name: str, payload: Optional[Dict] = None) -> Dict:
+    def enqueue_event(
+        self,
+        name: str,
+        payload: Optional[Dict] = None,
+        *,
+        priority: str = "normal",
+        interrupt_policy: str = "turn_end",
+        coalesce_key: str = "",
+        coalesce_window_ms: int = 0,
+    ) -> Dict:
+        p = str(priority or "normal").strip().lower() or "normal"
+        if p not in ("low", "normal", "high", "critical"):
+            p = "normal"
+        ip = str(interrupt_policy or "turn_end").strip().lower() or "turn_end"
+        if ip not in ("never", "turn_end", "immediate"):
+            ip = "turn_end"
+        ck = str(coalesce_key or "").strip()
+        window_ms = max(0, min(int(coalesce_window_ms or 0), 86_400_000))
+        now_ms = int(time.time() * 1000)
+        if ck and window_ms > 0:
+            with self._lock:
+                last = int(self._event_coalesce_last_ts.get(ck) or 0)
+                if now_ms - last < window_ms:
+                    return {
+                        "status": "coalesced",
+                        "kind": "event",
+                        "name": name or "unnamed_event",
+                        "priority": p,
+                        "interrupt_policy": ip,
+                        "coalesce_key": ck,
+                        "coalesce_window_ms": window_ms,
+                    }
+                self._event_coalesce_last_ts[ck] = now_ms
         item = {
-            "id": f"event_{int(time.time() * 1000)}",
+            "id": f"event_{now_ms}",
             "kind": "event",
             "name": name or "unnamed_event",
             "payload": payload or {},
-            "created_at": int(time.time() * 1000),
+            "priority": p,
+            "interrupt_policy": ip,
+            "coalesce_key": ck,
+            "coalesce_window_ms": window_ms,
+            "created_at": now_ms,
         }
+        should_interrupt = ip == "immediate"
         with self._lock:
-            self._queue.append(item)
-        self._emit_log("brain_inbox_event", {"id": item["id"], "name": item["name"]})
+            if p in ("high", "critical"):
+                self._queue.appendleft(item)
+            else:
+                self._queue.append(item)
+            if should_interrupt:
+                self._interrupt.set()
+                self._interrupt_info = {
+                    "ts": now_ms,
+                    "item_id": "",
+                    "session_id": self._session_id_for_item(self._current_item or {}),
+                    "clear_queue": False,
+                    "reason": "event_immediate",
+                    "event_name": item["name"],
+                }
+        self._emit_log(
+            "brain_inbox_event",
+            {
+                "id": item["id"],
+                "name": item["name"],
+                "priority": p,
+                "interrupt_policy": ip,
+            },
+        )
         return item
 
     def debug_post_comment(
@@ -1184,6 +1244,47 @@ class BrainRuntime:
                 )
                 self._emit_log("brain_item_done", {"id": item.get("id"), "actions": "permission_denied"})
                 return
+
+            sid = str(payload.get("session_id") or payload.get("identity") or "default").strip() or "default"
+            priority = str(item.get("priority") or payload.get("priority") or "normal").strip().lower()
+            if priority not in ("low", "normal", "high", "critical"):
+                priority = "normal"
+            summary = str(payload.get("summary") or payload.get("message") or "").strip()
+            if not summary:
+                summary = f"Event received: {name}"
+            self._record_message(
+                "assistant",
+                summary,
+                {
+                    "item_id": item.get("id"),
+                    "session_id": sid,
+                    "actor": "system",
+                    "tag": "event_alert",
+                    "event_name": name,
+                    "event_priority": priority,
+                    "event_source": str(payload.get("source") or "").strip(),
+                },
+            )
+            # Optional escalation: enqueue a system chat request so the agent reasons on this event.
+            if bool(payload.get("run_agent")):
+                prompt = str(payload.get("prompt") or "").strip()
+                if not prompt:
+                    prompt = (
+                        f"System event '{name}' was received (priority={priority}). "
+                        "Handle it if action is needed, otherwise acknowledge briefly."
+                    )
+                self.enqueue_chat(
+                    prompt,
+                    meta={
+                        "session_id": sid,
+                        "actor": "system",
+                        "tag": "event_followup",
+                        "event_name": name,
+                        "event_priority": priority,
+                    },
+                )
+            self._emit_log("brain_item_done", {"id": item.get("id"), "actions": "event_processed", "name": name})
+            return
 
         # Record the user message so the agent has per-session context.
         if str(item.get("kind") or "") == "chat":

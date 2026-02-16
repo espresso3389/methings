@@ -144,9 +144,12 @@ class LocalHttpServer(
     private val meMeInboundMessages = ConcurrentHashMap<String, MutableList<JSONObject>>()
     private val meMeRelayEvents = mutableListOf<JSONObject>()
     private val meMeRelayEventsLock = Any()
+    private val meMeDiscoveryAlertLastAt = ConcurrentHashMap<String, Long>()
+    private val meMeReconnectAttemptAt = ConcurrentHashMap<String, Long>()
     @Volatile private var meMeLastScanAtMs: Long = 0L
     @Volatile private var meMeRelayLastRegisterAtMs: Long = 0L
     @Volatile private var meMeRelayLastNotifyAtMs: Long = 0L
+    @Volatile private var meMeRelayLastGatewayPullAtMs: Long = 0L
     private val meMeDiscovery = MeMeDiscoveryManager(
         context = context,
         servicePort = ME_ME_LAN_PORT,
@@ -179,6 +182,10 @@ class LocalHttpServer(
     private val housekeepingScheduler = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var housekeepingFuture: ScheduledFuture<*>? = null
     private val meMeExecutor = Executors.newSingleThreadExecutor()
+    private val meMeDiscoveryScheduler = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var meMeDiscoveryFuture: ScheduledFuture<*>? = null
+    private val meMeConnectionCheckScheduler = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var meMeConnectionCheckFuture: ScheduledFuture<*>? = null
 
     fun startServer(): Boolean {
         return try {
@@ -204,6 +211,8 @@ class LocalHttpServer(
             meMeExecutor.execute {
                 runCatching { meMeDiscovery.applyConfig(currentMeMeDiscoveryConfig()) }
             }
+            scheduleMeMeDiscoveryLoop()
+            scheduleMeMeConnectionCheckLoop()
             true
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to start local HTTP server", ex)
@@ -241,7 +250,25 @@ class LocalHttpServer(
         } catch (_: Exception) {
         }
         try {
+            meMeDiscoveryFuture?.cancel(true)
+            meMeDiscoveryFuture = null
+        } catch (_: Exception) {
+        }
+        try {
+            meMeConnectionCheckFuture?.cancel(true)
+            meMeConnectionCheckFuture = null
+        } catch (_: Exception) {
+        }
+        try {
             meSyncNearbyTransport.shutdown()
+        } catch (_: Exception) {
+        }
+        try {
+            meMeDiscoveryScheduler.shutdownNow()
+        } catch (_: Exception) {
+        }
+        try {
+            meMeConnectionCheckScheduler.shutdownNow()
         } catch (_: Exception) {
         }
         try {
@@ -544,6 +571,18 @@ class LocalHttpServer(
                 )
                 if (!ok.first) return ok.second!!
                 handleMeMeRelayEventsPull(payload)
+            }
+            uri == "/me/me/relay/pull_gateway" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.relay",
+                    detail = "Pull queued me.me relay events from gateway"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeRelayPullFromGateway(payload, force = true)
             }
             uri == "/me/me/data/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -7451,6 +7490,142 @@ class LocalHttpServer(
         )
     }
 
+    private fun scheduleMeMeDiscoveryLoop() {
+        meMeDiscoveryFuture?.cancel(true)
+        val cfg = currentMeMeConfig()
+        val intervalSec = cfg.discoveryIntervalSec.coerceIn(10, 3600).toLong()
+        meMeDiscoveryFuture = meMeDiscoveryScheduler.scheduleWithFixedDelay(
+            { runMeMeDiscoveryTick() },
+            ME_ME_DISCOVERY_INITIAL_DELAY_SEC,
+            intervalSec,
+            TimeUnit.SECONDS
+        )
+    }
+
+    private fun scheduleMeMeConnectionCheckLoop() {
+        meMeConnectionCheckFuture?.cancel(true)
+        val cfg = currentMeMeConfig()
+        val intervalSec = cfg.connectionCheckIntervalSec.coerceIn(5, 3600).toLong()
+        meMeConnectionCheckFuture = meMeConnectionCheckScheduler.scheduleWithFixedDelay(
+            { runMeMeConnectionCheckTick() },
+            ME_ME_CONNECTION_CHECK_INITIAL_DELAY_SEC,
+            intervalSec,
+            TimeUnit.SECONDS
+        )
+    }
+
+    private fun runMeMeDiscoveryTick() {
+        runCatching {
+            val cfg = currentMeMeConfig()
+            if (!cfg.allowDiscovery) return
+            if (!cfg.connectionMethods.contains("wifi") && !cfg.connectionMethods.contains("ble")) return
+            val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(cfg), ME_ME_DISCOVERY_SCAN_TIMEOUT_MS)
+            handleMeMeDiscoveredAlerts(summary.discovered)
+        }.onFailure {
+            Log.w(TAG, "me.me discovery tick failed", it)
+        }
+    }
+
+    private fun runMeMeConnectionCheckTick() {
+        runCatching {
+            if (meMeConnections.isNotEmpty()) {
+                val cfg = currentMeMeConfig()
+                val now = System.currentTimeMillis()
+                val snapshot = meMeConnections.values.toList()
+                snapshot.forEach { conn ->
+                    val route = resolveMeMePeerRoute(conn.peerDeviceId)
+                    var reachable = false
+                    var preferredMethod = conn.method
+                    if (route != null) {
+                        val host = route.host.trim()
+                        if (host.isNotBlank()) {
+                            val lanOk = probeMeMeLanHealth(host, route.port)
+                            if (lanOk) {
+                                reachable = true
+                                preferredMethod = "wifi"
+                            } else if (route.hasBle) {
+                                reachable = true
+                                preferredMethod = "ble"
+                            }
+                        } else if (route.hasBle) {
+                            reachable = true
+                            preferredMethod = "ble"
+                        }
+                    }
+                    if (!reachable) {
+                        if (conn.state == "connected") {
+                            updateMeMeConnectionState(conn.peerDeviceId, "disconnected", preferredMethod)
+                        }
+                        return@forEach
+                    }
+                    if (conn.state == "connected") {
+                        if (preferredMethod != conn.method) {
+                            updateMeMeConnectionState(conn.peerDeviceId, "connected", preferredMethod)
+                        }
+                        return@forEach
+                    }
+                    if (!cfg.autoReconnect) return@forEach
+                    val lastAttempt = meMeReconnectAttemptAt[conn.peerDeviceId] ?: 0L
+                    val minGapMs = cfg.reconnectIntervalSec.coerceIn(3, 3600) * 1000L
+                    if (now - lastAttempt < minGapMs) return@forEach
+                    meMeReconnectAttemptAt[conn.peerDeviceId] = now
+                    updateMeMeConnectionState(conn.peerDeviceId, "connected", preferredMethod)
+                }
+            }
+            maybePullMeMeRelayEventsFromGateway(force = false)
+        }.onFailure {
+            Log.w(TAG, "me.me connection check tick failed", it)
+        }
+    }
+
+    private fun probeMeMeLanHealth(host: String, port: Int): Boolean {
+        return runCatching {
+            val conn = (URI("http://$host:$port/health").toURL().openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 2500
+                readTimeout = 2500
+                setRequestProperty("Connection", "close")
+            }
+            val code = conn.responseCode
+            code in 200..299
+        }.getOrDefault(false)
+    }
+
+    private fun updateMeMeConnectionState(peerDeviceId: String, newState: String, method: String? = null) {
+        val prev = meMeConnections[peerDeviceId] ?: return
+        val normalizedState = newState.trim().ifBlank { prev.state }
+        val normalizedMethod = method?.trim()?.ifBlank { prev.method } ?: prev.method
+        if (prev.state == normalizedState && prev.method == normalizedMethod) return
+        meMeConnections[peerDeviceId] = prev.copy(
+            state = normalizedState,
+            method = normalizedMethod
+        )
+    }
+
+    private fun handleMeMeDiscoveredAlerts(discovered: List<JSONObject>) {
+        val now = System.currentTimeMillis()
+        discovered.forEach { peer ->
+            val did = peer.optString("device_id", "").trim()
+            if (did.isBlank()) return@forEach
+            val last = meMeDiscoveryAlertLastAt[did] ?: 0L
+            if (now - last < 60_000L) return@forEach
+            meMeDiscoveryAlertLastAt[did] = now
+            notifyBrainEvent(
+                name = "me.me.device.discovered",
+                payload = JSONObject()
+                    .put("session_id", "default")
+                    .put("source", "me_me.scan")
+                    .put("device_id", did)
+                    .put("device_name", peer.optString("device_name", "").trim())
+                    .put("summary", "Nearby device discovered: $did"),
+                priority = "low",
+                interruptPolicy = "never",
+                coalesceKey = "me_me_device_discovered_$did",
+                coalesceWindowMs = 60_000L
+            )
+        }
+    }
+
     private fun importAuthorizedKeysFromFile() {
         val userHome = File(context.filesDir, "user")
         val authFile = File(File(userHome, ".ssh"), "authorized_keys")
@@ -7675,6 +7850,8 @@ class LocalHttpServer(
         meMeExecutor.execute {
             runCatching { meMeDiscovery.applyConfig(currentMeMeDiscoveryConfig(next)) }
         }
+        scheduleMeMeDiscoveryLoop()
+        scheduleMeMeConnectionCheckLoop()
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
@@ -7686,6 +7863,7 @@ class LocalHttpServer(
         meMeLastScanAtMs = System.currentTimeMillis()
         val timeoutMs = payload.optLong("timeout_ms", 3000L).coerceIn(500L, 30_000L)
         val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(), timeoutMs)
+        handleMeMeDiscoveredAlerts(summary.discovered)
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
@@ -7799,6 +7977,7 @@ class LocalHttpServer(
             sessionKeyB64 = req.sessionKeyB64
         )
         meMeConnections[conn.peerDeviceId] = conn
+        meMeReconnectAttemptAt.remove(conn.peerDeviceId)
         meMeConnectIntents[req.id] = req.copy(accepted = true)
         val autoConfirm = runAutoConfirmMeMeAccept(
             req = req,
@@ -7835,6 +8014,7 @@ class LocalHttpServer(
             sessionKeyB64 = parsed.sessionKeyB64
         )
         meMeConnections[conn.peerDeviceId] = conn
+        meMeReconnectAttemptAt.remove(conn.peerDeviceId)
         return jsonResponse(JSONObject().put("status", "ok").put("connection", conn.toJson()))
     }
 
@@ -7885,6 +8065,7 @@ class LocalHttpServer(
             else -> null
         } ?: return jsonError(Response.Status.NOT_FOUND, "connection_not_found")
         meMeInboundMessages.remove(removed.peerDeviceId)
+        meMeReconnectAttemptAt.remove(removed.peerDeviceId)
         return jsonResponse(JSONObject().put("status", "ok").put("disconnected", true).put("connection", removed.toJson()))
     }
 
@@ -8044,6 +8225,7 @@ class LocalHttpServer(
                 .put("event_queue_count", relayEvents)
                 .put("last_register_at", if (meMeRelayLastRegisterAtMs > 0L) meMeRelayLastRegisterAtMs else JSONObject.NULL)
                 .put("last_notify_at", if (meMeRelayLastNotifyAtMs > 0L) meMeRelayLastNotifyAtMs else JSONObject.NULL)
+                .put("last_gateway_pull_at", if (meMeRelayLastGatewayPullAtMs > 0L) meMeRelayLastGatewayPullAtMs else JSONObject.NULL)
         )
     }
 
@@ -8158,9 +8340,10 @@ class LocalHttpServer(
     }
 
     private fun handleMeMeRelayIngest(payload: JSONObject): Response {
+        val source = payload.optString("source", "relay").trim().ifBlank { "relay" }
         val event = JSONObject()
             .put("received_at", System.currentTimeMillis())
-            .put("source", payload.optString("source", "relay").trim().ifBlank { "relay" })
+            .put("source", source)
             .put("event_id", payload.optString("event_id", "").trim())
             .put("payload", payload)
         synchronized(meMeRelayEventsLock) {
@@ -8179,6 +8362,19 @@ class LocalHttpServer(
             val resp = handleMeMeDataIngest(directEncrypted, sourceIp = "relay")
             meMeIngested = resp.status == Response.Status.OK
         }
+        notifyBrainEvent(
+            name = "me.me.relay.event.received",
+            payload = JSONObject()
+                .put("session_id", "default")
+                .put("source", "me_me.relay")
+                .put("event_id", payload.optString("event_id", "").trim())
+                .put("relay_source", source)
+                .put("summary", "Relay event received from $source"),
+            priority = "normal",
+            interruptPolicy = "turn_end",
+            coalesceKey = "me_me_relay_received",
+            coalesceWindowMs = 5_000L
+        )
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
@@ -8205,6 +8401,63 @@ class LocalHttpServer(
         )
     }
 
+    private fun handleMeMeRelayPullFromGateway(payload: JSONObject, force: Boolean): Response {
+        val limit = payload.optInt("limit", 50).coerceIn(1, 200)
+        val consume = payload.optBoolean("consume", true)
+        return jsonResponse(maybePullMeMeRelayEventsFromGateway(force = force, limit = limit, consume = consume))
+    }
+
+    private fun maybePullMeMeRelayEventsFromGateway(
+        force: Boolean,
+        limit: Int = 50,
+        consume: Boolean = true
+    ): JSONObject {
+        val cfg = currentMeMeRelayConfig()
+        if (!cfg.enabled) return JSONObject().put("status", "skipped").put("reason", "relay_disabled")
+        val adminSecret = cfg.gatewayAdminSecret.trim()
+        if (adminSecret.isBlank()) return JSONObject().put("status", "skipped").put("reason", "gateway_admin_secret_missing")
+        val now = System.currentTimeMillis()
+        if (!force && (now - meMeRelayLastGatewayPullAtMs) < ME_ME_RELAY_PULL_MIN_INTERVAL_MS) {
+            return JSONObject().put("status", "skipped").put("reason", "throttled")
+        }
+        val body = JSONObject()
+            .put("device_id", currentMeMeConfig().deviceId)
+            .put("limit", limit.coerceIn(1, 200))
+            .put("consume", consume)
+        val result = postMeMeRelayJson(
+            baseUrl = cfg.gatewayBaseUrl,
+            path = "/events/pull",
+            payload = body,
+            headers = mapOf("X-Admin-Secret" to adminSecret)
+        )
+        if (!result.optBoolean("ok", false)) {
+            return JSONObject()
+                .put("status", "error")
+                .put("reason", "gateway_pull_failed")
+                .put("result", result)
+        }
+        val items = result.optJSONObject("body")?.optJSONArray("items") ?: JSONArray()
+        var ingested = 0
+        for (i in 0 until items.length()) {
+            val item = items.optJSONObject(i) ?: continue
+            val ingestPayload = JSONObject()
+                .put("source", item.optString("provider", "gateway_pull").trim().ifBlank { "gateway_pull" })
+                .put("event_id", item.optString("event_id", "").trim())
+            val payloadObj = item.optJSONObject("payload")
+            if (payloadObj != null) {
+                ingestPayload.put("payload", payloadObj)
+            }
+            val resp = handleMeMeRelayIngest(ingestPayload)
+            if (resp.status == Response.Status.OK) ingested += 1
+        }
+        meMeRelayLastGatewayPullAtMs = now
+        return JSONObject()
+            .put("status", "ok")
+            .put("pulled", items.length())
+            .put("ingested", ingested)
+            .put("consume", consume)
+    }
+
     private fun handleMeMeDataIngest(payload: JSONObject, sourceIp: String): Response {
         val sessionId = payload.optString("session_id", "").trim()
         val fromDeviceId = payload.optString("from_device_id", "").trim()
@@ -8226,6 +8479,18 @@ class LocalHttpServer(
             )
             while (bucket.size > 200) bucket.removeAt(0)
         }
+        notifyBrainEvent(
+            name = "me.me.message.received",
+            payload = JSONObject()
+                .put("session_id", "default")
+                .put("source", "me_me.data")
+                .put("from_device_id", fromDeviceId)
+                .put("summary", "Message received from $fromDeviceId"),
+            priority = "high",
+            interruptPolicy = "turn_end",
+            coalesceKey = "me_me_message_from_$fromDeviceId",
+            coalesceWindowMs = 3_000L
+        )
         return jsonResponse(JSONObject().put("status", "ok").put("stored", true))
     }
 
@@ -8458,10 +8723,8 @@ class LocalHttpServer(
     }
 
     private fun currentMeMeConfig(): MeMeConfig {
-        val deviceId = meMePrefs.getString("device_id", "")?.trim().orEmpty().ifBlank {
-            "mm_" + UUID.randomUUID().toString()
-        }
-        if ((meMePrefs.getString("device_id", "") ?: "").trim().isBlank()) {
+        val deviceId = installIdentity.get()
+        if ((meMePrefs.getString("device_id", "") ?: "").trim() != deviceId) {
             meMePrefs.edit().putString("device_id", deviceId).apply()
         }
         val methodsRaw = meMePrefs.getStringSet("connection_methods", setOf("wifi", "ble"))?.toList() ?: listOf("wifi", "ble")
@@ -8486,8 +8749,9 @@ class LocalHttpServer(
     }
 
     private fun saveMeMeConfig(cfg: MeMeConfig) {
+        val unifiedDeviceId = installIdentity.get()
         meMePrefs.edit()
-            .putString("device_id", cfg.deviceId)
+            .putString("device_id", unifiedDeviceId)
             .putString("device_name", cfg.deviceName)
             .putString("device_description", cfg.deviceDescription)
             .putString("device_icon", cfg.deviceIcon)
@@ -10604,6 +10868,28 @@ class LocalHttpServer(
         }
     }
 
+    private fun notifyBrainEvent(
+        name: String,
+        payload: JSONObject,
+        priority: String = "normal",
+        interruptPolicy: String = "turn_end",
+        coalesceKey: String? = null,
+        coalesceWindowMs: Long? = null
+    ) {
+        try {
+            if (runtimeManager.getStatus() != "ok") return
+            val body = JSONObject()
+                .put("name", name.trim().ifBlank { "unnamed_event" })
+                .put("payload", payload)
+                .put("priority", priority.trim().ifBlank { "normal" })
+                .put("interrupt_policy", interruptPolicy.trim().ifBlank { "turn_end" })
+            if (!coalesceKey.isNullOrBlank()) body.put("coalesce_key", coalesceKey.trim())
+            if ((coalesceWindowMs ?: 0L) > 0L) body.put("coalesce_window_ms", coalesceWindowMs!!.coerceIn(0L, 86_400_000L))
+            proxyWorkerRequest("/brain/inbox/event", "POST", body.toString())
+        } catch (_: Exception) {
+        }
+    }
+
     private fun notifyBrainPermissionAutoApproved(req: jp.espresso3389.methings.perm.PermissionStore.PermissionRequest) {
         // Best-effort: add a chat-visible reference entry when dangerous auto-approval is active.
         try {
@@ -10717,8 +11003,12 @@ class LocalHttpServer(
         private const val ME_ME_PREFS = "me_me_prefs"
         private const val DEFAULT_ME_ME_RELAY_BASE_URL = "https://hooks.methings.org"
         private const val ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL = "me_me.relay.gateway_admin_secret"
+        private const val ME_ME_RELAY_PULL_MIN_INTERVAL_MS = 15_000L
         private const val HOUSEKEEPING_INITIAL_DELAY_SEC = 120L
         private const val HOUSEKEEPING_INTERVAL_SEC = 60L * 60L
+        private const val ME_ME_DISCOVERY_INITIAL_DELAY_SEC = 8L
+        private const val ME_ME_DISCOVERY_SCAN_TIMEOUT_MS = 2500L
+        private const val ME_ME_CONNECTION_CHECK_INITIAL_DELAY_SEC = 10L
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
         private const val SOCKET_READ_TIMEOUT = 0
         private const val BRAIN_SYSTEM_PROMPT = """You are the me.things Brain, an AI assistant running on an Android device.

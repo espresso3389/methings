@@ -148,6 +148,7 @@ class MeMeDiscoveryManager(
             latchParts += { scanBle(timeoutMs, warnings, config) }
         }
         latchParts.forEach { it() }
+        purgeStalePeers()
         val discovered = peers.values
             .filter { it.deviceId != config.deviceId }
             .sortedByDescending { it.lastSeenAt }
@@ -161,6 +162,7 @@ class MeMeDiscoveryManager(
     }
 
     fun statusJson(config: Config): JSONObject {
+        purgeStalePeers()
         val discovered = peers.values
             .filter { it.deviceId != config.deviceId }
             .sortedByDescending { it.lastSeenAt }
@@ -173,6 +175,16 @@ class MeMeDiscoveryManager(
                 .put("wifi", registeredService != null)
                 .put("ble", bleAdvertiseCallback != null)
             )
+    }
+
+    private fun purgeStalePeers(nowMs: Long = System.currentTimeMillis()) {
+        val it = peers.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if ((nowMs - e.value.lastSeenAt) > PEER_STALE_MS) {
+                it.remove()
+            }
+        }
     }
 
     private fun scanWifi(timeoutMs: Long, warnings: MutableList<String>, config: Config) {
@@ -285,7 +297,9 @@ class MeMeDiscoveryManager(
         }
         val latch = CountDownLatch(1)
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(BLE_SERVICE_UUID)).build()
-        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        val settings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
+            .build()
         val cb = object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 ingestBleResult(result, config)
@@ -396,8 +410,8 @@ class MeMeDiscoveryManager(
         val advertiser = adapter.bluetoothLeAdvertiser ?: return
         val payload = buildBleServiceData(config)
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_POWER)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_LOW)
             .setConnectable(true)
             .build()
         val data = AdvertiseData.Builder()
@@ -664,9 +678,9 @@ class MeMeDiscoveryManager(
 
     private fun buildBleServiceData(config: Config): ByteArray {
         // Keep BLE payload tiny. Legacy ASCII payload frequently exceeds advertisement limits.
-        // v1 binary format: [1-byte version=1][16-byte UUID(deviceId without "mm_")]
+        // v1 binary format: [1-byte version=1][16-byte UUID(deviceId without "install_")]
         val uuid = runCatching {
-            UUID.fromString(config.deviceId.removePrefix("mm_"))
+            UUID.fromString(config.deviceId.removePrefix("install_"))
         }.getOrNull()
         if (uuid != null) {
             return ByteBuffer.allocate(17)
@@ -685,7 +699,7 @@ class MeMeDiscoveryManager(
                 val buf = ByteBuffer.wrap(data)
                 buf.get() // version
                 val uuid = UUID(buf.long, buf.long)
-                mapOf("id" to "mm_$uuid")
+                mapOf("id" to "install_$uuid")
             }.getOrDefault(emptyMap())
         }
         val raw = data.toString(StandardCharsets.UTF_8)
@@ -720,5 +734,6 @@ class MeMeDiscoveryManager(
         private const val BLE_CHUNK_BODY_MAX = 180
         private const val BLE_MAX_REASSEMBLED_BYTES = 1_200_000
         private const val BLE_MTU = 247
+        private const val PEER_STALE_MS = 10L * 60L * 1000L
     }
 }
