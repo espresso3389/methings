@@ -7738,6 +7738,12 @@ class LocalHttpServer(
         val name = discoveredName.trim()
         if (did.isBlank() || name.isBlank()) return
         val current = meMeConnections[did] ?: return
+        val currentName = current.peerDeviceName.trim()
+        if (name == did && currentName.isNotBlank() && currentName != did) {
+            // Keep richer handshake-provided names instead of replacing them
+            // with discovery fallback identifiers.
+            return
+        }
         if (current.peerDeviceName.trim() == name) return
         meMeConnections[did] = current.copy(peerDeviceName = name)
     }
@@ -7770,6 +7776,7 @@ class LocalHttpServer(
                 .put("auto_delivery_retry_delay_ms", ME_ME_AUTO_CONNECT_RETRY_DELAY_MS)
                 .put("connect_wait_budget_ms", ME_ME_AUTO_CONNECT_WAIT_BUDGET_MS)
                 .put("auto_delivery_settle_wait_ms", ME_ME_AUTO_CONNECT_SETTLE_WAIT_MS)
+                .put("suppress_pending_on_delivery_failure", true)
             runCatching { handleMeMeConnect(payload) }
                 .onFailure { Log.w(TAG, "me.me auto-connect attempt failed for $did", it) }
         }
@@ -8128,6 +8135,9 @@ class LocalHttpServer(
             id = reqId,
             sourceDeviceId = cfg.deviceId,
             sourceDeviceName = cfg.deviceName,
+            sourceDeviceDescription = cfg.deviceDescription,
+            sourceDeviceIcon = cfg.deviceIcon,
+            sourceBleAddress = "",
             targetDeviceId = targetDeviceId,
             targetDeviceName = peer?.optString("device_name", "")?.trim().orEmpty(),
             createdAt = createdAt,
@@ -8188,6 +8198,17 @@ class LocalHttpServer(
                     .put("auto_delivery", JSONObject(lastAutoDelivery.toString()).put("retry_count", retriesUsed))
             )
         }
+        val suppressPendingOnDeliveryFailure = payload.optBoolean("suppress_pending_on_delivery_failure", false)
+        if (!deliveredAtLeastOnce && suppressPendingOnDeliveryFailure) {
+            meMeConnectIntents.remove(req.id)
+            return jsonResponse(
+                JSONObject()
+                    .put("status", "failed")
+                    .put("request_id", req.id)
+                    .put("auto_delivery", JSONObject(lastAutoDelivery.toString()).put("retry_count", retriesUsed))
+                    .put("error", "auto_delivery_failed")
+            )
+        }
         return jsonResponse(
             JSONObject()
                 .put("status", "pending")
@@ -8220,12 +8241,14 @@ class LocalHttpServer(
         val targetHostOverride = payload.optString("target_host", "").trim()
         val targetPortOverride = payload.optInt("target_port", 0).takeIf { it in 1..65535 }
         val transportHint = payload.optString("transport", req.methodHint).trim()
-        val timeoutMs = payload.optLong("auto_delivery_timeout_ms", 4500L).coerceIn(1500L, 12_000L)
+        val timeoutMs = payload.optLong("auto_delivery_timeout_ms", 20_000L).coerceIn(1500L, 30_000L)
         val offerPayload = JSONObject()
             .put("accept_token", req.acceptToken)
             .put("request_id", req.id)
             .put("source_device_id", req.sourceDeviceId)
             .put("source_device_name", req.sourceDeviceName)
+            .put("source_device_description", req.sourceDeviceDescription)
+            .put("source_device_icon", req.sourceDeviceIcon)
             .put("source_owner_identities", org.json.JSONArray(req.sourceOwnerIdentities))
             .put("method", req.methodHint)
         val delivery = deliverMeMeBootstrapPayload(
@@ -8279,10 +8302,17 @@ class LocalHttpServer(
                 if (parsed.expiresAt in 1..System.currentTimeMillis()) return jsonError(Response.Status.GONE, "request_expired")
                 if (parsed.targetDeviceId != cfg.deviceId) return jsonError(Response.Status.FORBIDDEN, "token_target_mismatch")
                 if (!verifyMeMeOfferSignature(parsed)) return jsonError(Response.Status.FORBIDDEN, "token_signature_invalid")
+                val sourceName = payload.optString("source_device_name", "").trim()
+                val sourceDescription = payload.optString("source_device_description", "").trim()
+                val sourceIcon = payload.optString("source_device_icon", "").trim()
+                val sourceBleAddress = payload.optString("source_ble_address", "").trim()
                 meMeConnectIntents[parsed.requestId] ?: MeMeConnectIntent(
                     id = parsed.requestId,
                     sourceDeviceId = parsed.sourceDeviceId,
-                    sourceDeviceName = "",
+                    sourceDeviceName = sourceName.ifBlank { resolveMeMePeerDisplayName(parsed.sourceDeviceId) },
+                    sourceDeviceDescription = sourceDescription,
+                    sourceDeviceIcon = sourceIcon,
+                    sourceBleAddress = sourceBleAddress,
                     targetDeviceId = parsed.targetDeviceId,
                     targetDeviceName = cfg.deviceName,
                     createdAt = System.currentTimeMillis(),
@@ -8304,26 +8334,51 @@ class LocalHttpServer(
             else -> null
         } ?: return jsonError(Response.Status.NOT_FOUND, "request_not_found")
 
-        if (cfg.blockedDevices.contains(req.sourceDeviceId)) return jsonError(Response.Status.FORBIDDEN, "source_blocked")
-        if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(req.sourceDeviceId)) {
+        val sourceNameFromPayload = payload.optString("source_device_name", "").trim()
+        val sourceDescriptionFromPayload = payload.optString("source_device_description", "").trim()
+        val sourceIconFromPayload = payload.optString("source_device_icon", "").trim()
+        val sourceBleAddressFromPayload = payload.optString("source_ble_address", "").trim()
+        val reqWithMeta = req.copy(
+            sourceDeviceName = sourceNameFromPayload.ifBlank {
+                req.sourceDeviceName.ifBlank { resolveMeMePeerDisplayName(req.sourceDeviceId) }
+            },
+            sourceDeviceDescription = sourceDescriptionFromPayload.ifBlank { req.sourceDeviceDescription },
+            sourceDeviceIcon = sourceIconFromPayload.ifBlank { req.sourceDeviceIcon },
+            sourceBleAddress = sourceBleAddressFromPayload.ifBlank { req.sourceBleAddress }
+        )
+        if (reqWithMeta.sourceBleAddress.isNotBlank()) {
+            meMeDiscovery.rememberPeerBleAddress(
+                deviceId = reqWithMeta.sourceDeviceId,
+                address = reqWithMeta.sourceBleAddress,
+                deviceName = reqWithMeta.sourceDeviceName,
+                deviceDescription = reqWithMeta.sourceDeviceDescription,
+                deviceIcon = reqWithMeta.sourceDeviceIcon
+            )
+        }
+        if (reqWithMeta != req) {
+            meMeConnectIntents[reqWithMeta.id] = reqWithMeta
+        }
+
+        if (cfg.blockedDevices.contains(reqWithMeta.sourceDeviceId)) return jsonError(Response.Status.FORBIDDEN, "source_blocked")
+        if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(reqWithMeta.sourceDeviceId)) {
             return jsonError(Response.Status.FORBIDDEN, "source_not_allowed")
         }
-        if (meMeConnections.size >= cfg.maxConnections && !meMeConnections.containsKey(req.sourceDeviceId)) {
+        if (meMeConnections.size >= cfg.maxConnections && !meMeConnections.containsKey(reqWithMeta.sourceDeviceId)) {
             return jsonError(Response.Status.FORBIDDEN, "max_connections_reached")
         }
         val canAutoApprove = cfg.autoApproveOwnDevices &&
-            hasOwnerIdentityMatch(cfg.ownerIdentities, req.sourceOwnerIdentities)
+            hasOwnerIdentityMatch(cfg.ownerIdentities, reqWithMeta.sourceOwnerIdentities)
         val manualAction = forceAccept || (requestId.isNotBlank() && !isAutoPath)
         if (!manualAction && !canAutoApprove) {
-            meMeConnectIntents[req.id] = req.copy(accepted = false)
+            meMeConnectIntents[reqWithMeta.id] = reqWithMeta.copy(accepted = false)
             return jsonResponse(
                 JSONObject()
                     .put("status", "pending")
-                    .put("request", req.toJson(includeToken = false))
+                    .put("request", reqWithMeta.toJson(includeToken = false))
                     .put("reason", "approval_required")
             )
         }
-        val parsedToken = decodeMeMeAcceptToken(req.acceptToken) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_accept_token")
+        val parsedToken = decodeMeMeAcceptToken(reqWithMeta.acceptToken) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_accept_token")
         if (!verifyMeMeOfferSignature(parsedToken)) return jsonError(Response.Status.FORBIDDEN, "token_signature_invalid")
         val responderIdentity = currentMeMeIdentityKeyPair() ?: return jsonError(Response.Status.INTERNAL_ERROR, "identity_key_unavailable")
         val responderEphemeral = generateMeMeEphemeralKeyPairB64(parsedToken.sourceKexAlgorithm)
@@ -8343,24 +8398,24 @@ class LocalHttpServer(
         val connId = "mmc_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}"
         val conn = MeMeConnection(
             id = connId,
-            peerDeviceId = req.sourceDeviceId,
-            peerDeviceName = req.sourceDeviceName,
-            method = req.methodHint,
+            peerDeviceId = reqWithMeta.sourceDeviceId,
+            peerDeviceName = reqWithMeta.sourceDeviceName,
+            method = reqWithMeta.methodHint,
             connectedAt = System.currentTimeMillis(),
             state = "connected",
             role = "acceptor",
-            sessionId = req.sessionId,
+            sessionId = reqWithMeta.sessionId,
             sessionKeyB64 = sessionKeyB64
         )
         meMeConnections[conn.peerDeviceId] = conn
         meMeReconnectAttemptAt.remove(conn.peerDeviceId)
-        meMeConnectIntents[req.id] = req.copy(
+        meMeConnectIntents[reqWithMeta.id] = reqWithMeta.copy(
             accepted = true,
             sessionKeyB64 = sessionKeyB64
         )
-        clearResolvedMeMeConnectIntents(sessionId = req.sessionId, requestId = req.id)
+        clearResolvedMeMeConnectIntents(sessionId = reqWithMeta.sessionId, requestId = reqWithMeta.id)
         val autoConfirm = runAutoConfirmMeMeAccept(
-            req = req,
+            req = reqWithMeta,
             payload = payload,
             acceptedByName = cfg.deviceName,
             parsedToken = parsedToken,
@@ -8370,7 +8425,7 @@ class LocalHttpServer(
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
-                .put("ack_token", req.acceptToken)
+                .put("ack_token", reqWithMeta.acceptToken)
                 .put("auto_confirm", autoConfirm)
                 .put("connection", conn.toJson())
         )
@@ -8451,7 +8506,7 @@ class LocalHttpServer(
     ): JSONObject {
         val sourceHostOverride = payload.optString("source_host", "").trim()
         val sourcePortOverride = payload.optInt("source_port", 0).takeIf { it in 1..65535 }
-        val sourceBleAddress = payload.optString("source_ble_address", "").trim()
+        val sourceBleAddress = payload.optString("source_ble_address", "").trim().ifBlank { req.sourceBleAddress }
         val route = resolveMeMePeerRoute(req.sourceDeviceId)
         val host = sourceHostOverride.ifBlank { route?.host.orEmpty() }
         val port = sourcePortOverride ?: route?.port ?: ME_ME_LAN_PORT
@@ -8475,13 +8530,20 @@ class LocalHttpServer(
             .put("responder_sig_public_key", responderIdentity.publicKeyB64)
             .put("responder_ephemeral_public_key", responderEphemeral.publicKeyB64)
             .put("responder_signature", responderSigB64)
-        val timeoutMs = payload.optLong("auto_confirm_timeout_ms", 4500L).coerceIn(1500L, 12_000L)
+        val timeoutMs = payload.optLong("auto_confirm_timeout_ms", 12_000L).coerceIn(1500L, 20_000L)
         val retries = payload.optInt("auto_confirm_retries", 2).coerceIn(0, 5)
         val retryDelayMs = payload.optLong("auto_confirm_retry_delay_ms", 700L).coerceIn(100L, 5_000L)
         fun deliverOnce(): JSONObject {
             return if (host.isNotBlank()) {
                 postMeMeLanJson(host, port, "/me/me/connect/confirm", confirmPayload).put("transport", "lan")
             } else if (sourceBleAddress.isNotBlank()) {
+                meMeDiscovery.rememberPeerBleAddress(
+                    deviceId = req.sourceDeviceId,
+                    address = sourceBleAddress,
+                    deviceName = req.sourceDeviceName,
+                    deviceDescription = req.sourceDeviceDescription,
+                    deviceIcon = req.sourceDeviceIcon
+                )
                 val wire = JSONObject().put("kind", "connect_confirm").put("payload", confirmPayload)
                 val bytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
                 // Prefer same-session BLE notify first so connect->accept->confirm can finish
@@ -8496,20 +8558,22 @@ class LocalHttpServer(
                 // if discoverable.
                 deliverMeMePayload(
                     peerDeviceId = req.sourceDeviceId,
-                    transportHint = "ble",
+                    transportHint = "",
                     timeoutMs = timeoutMs,
                     lanPath = "/me/me/connect/confirm",
                     lanPayload = confirmPayload,
-                    bleKind = "connect_confirm"
+                    bleKind = "connect_confirm",
+                    allowRelayFallback = true
                 )
             } else {
                 deliverMeMePayload(
                     peerDeviceId = req.sourceDeviceId,
-                    transportHint = "ble",
+                    transportHint = "",
                     timeoutMs = timeoutMs,
                     lanPath = "/me/me/connect/confirm",
                     lanPayload = confirmPayload,
-                    bleKind = "connect_confirm"
+                    bleKind = "connect_confirm",
+                    allowRelayFallback = true
                 )
             }
         }
@@ -12443,6 +12507,9 @@ class LocalHttpServer(
         val id: String,
         val sourceDeviceId: String,
         val sourceDeviceName: String,
+        val sourceDeviceDescription: String = "",
+        val sourceDeviceIcon: String = "",
+        val sourceBleAddress: String = "",
         val targetDeviceId: String,
         val targetDeviceName: String,
         val createdAt: Long,
@@ -12464,6 +12531,9 @@ class LocalHttpServer(
                 .put("id", id)
                 .put("source_device_id", sourceDeviceId)
                 .put("source_device_name", sourceDeviceName)
+                .put("source_device_description", sourceDeviceDescription)
+                .put("source_device_icon", sourceDeviceIcon)
+                .put("source_ble_address", sourceBleAddress)
                 .put("target_device_id", targetDeviceId)
                 .put("target_device_name", targetDeviceName)
                 .put("created_at", createdAt)

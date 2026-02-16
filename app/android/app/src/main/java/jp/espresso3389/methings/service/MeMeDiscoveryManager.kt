@@ -451,10 +451,14 @@ class MeMeDiscoveryManager(
     }
 
     fun sendBlePayload(targetDeviceId: String, payload: ByteArray, timeoutMs: Long = 12_000L): JSONObject {
+        val opTimeoutMs = timeoutMs.coerceIn(2000L, 30_000L)
         val future = bleSendExecutor.submit<JSONObject> {
-            sendBlePayloadInternal(targetDeviceId, payload, timeoutMs.coerceIn(2000L, 30_000L))
+            sendBlePayloadInternal(targetDeviceId, payload, opTimeoutMs)
         }
-        return runCatching { future.get(timeoutMs.coerceIn(2000L, 30_000L) + 1000L, TimeUnit.MILLISECONDS) }
+        // Internal path may include: initial BLE attempt + refresh scan + second BLE attempt.
+        // Give enough headroom so caller doesn't timeout before worker finishes.
+        val waitMs = (opTimeoutMs * 3L + 1500L).coerceIn(4_000L, 90_000L)
+        return runCatching { future.get(waitMs, TimeUnit.MILLISECONDS) }
             .getOrElse { JSONObject().put("ok", false).put("error", "ble_send_timeout") }
     }
 
@@ -519,11 +523,108 @@ class MeMeDiscoveryManager(
             .put("bytes", payload.size)
     }
 
+    fun rememberPeerBleAddress(
+        deviceId: String,
+        address: String,
+        deviceName: String = "",
+        deviceDescription: String = "",
+        deviceIcon: String = ""
+    ) {
+        val normalizedDeviceId = deviceId.trim()
+        val normalizedAddress = address.trim()
+        if (normalizedDeviceId.isBlank() || normalizedAddress.isBlank()) return
+        val now = System.currentTimeMillis()
+        val peer = peers.compute(normalizedDeviceId) { _, existing ->
+            existing ?: Peer(
+                deviceId = normalizedDeviceId,
+                deviceName = normalizedDeviceId,
+                deviceDescription = "",
+                deviceIcon = "",
+                lastSeenAt = now
+            )
+        } ?: return
+        if (deviceName.isNotBlank()) peer.deviceName = deviceName
+        if (deviceDescription.isNotBlank()) peer.deviceDescription = deviceDescription
+        if (deviceIcon.isNotBlank()) peer.deviceIcon = deviceIcon
+        peer.lastSeenAt = now
+        peer.bleAddress = normalizedAddress
+        peer.methods.add("ble")
+    }
+
     private fun sendBlePayloadInternal(targetDeviceId: String, payload: ByteArray, timeoutMs: Long): JSONObject {
         val peer = peers[targetDeviceId]
         val address = peer?.bleAddress?.trim().orEmpty()
-        if (address.isBlank()) return JSONObject().put("ok", false).put("error", "peer_ble_unavailable")
-        return sendBlePayloadInternalByAddress(address, payload, timeoutMs)
+        if (address.isBlank()) {
+            val refreshed = refreshBleAddressForDeviceId(targetDeviceId, timeoutMs = minOf(3500L, timeoutMs.coerceAtLeast(1200L)))
+            if (refreshed.isBlank()) return JSONObject().put("ok", false).put("error", "peer_ble_unavailable")
+            return sendBlePayloadInternalByAddress(refreshed, payload, timeoutMs)
+        }
+        val first = sendBlePayloadInternalByAddress(address, payload, timeoutMs)
+        if (first.optBoolean("ok", false)) return first
+        val err = first.optString("error", "").trim()
+        val shouldRetryWithRefresh = err.startsWith("ble_connect_failed") ||
+            err == "ble_send_timeout" ||
+            err == "ble_disconnected" ||
+            err.startsWith("ble_discover_failed") ||
+            err == "peer_ble_unavailable"
+        if (!shouldRetryWithRefresh) return first
+        val refreshed = refreshBleAddressForDeviceId(targetDeviceId, timeoutMs = minOf(3500L, timeoutMs.coerceAtLeast(1200L)))
+        if (refreshed.isBlank()) return first
+        if (refreshed == address) return first
+        return sendBlePayloadInternalByAddress(refreshed, payload, timeoutMs)
+    }
+
+    private fun refreshBleAddressForDeviceId(targetDeviceId: String, timeoutMs: Long): String {
+        if (targetDeviceId.isBlank()) return ""
+        if (Build.VERSION.SDK_INT >= 31 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return ""
+        }
+        val adapter = bluetoothAdapter() ?: return ""
+        if (!adapter.isEnabled) return ""
+        val scanner = adapter.bluetoothLeScanner ?: return ""
+        val latch = CountDownLatch(1)
+        var foundAddress = ""
+        val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(BLE_SERVICE_UUID)).build()
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        val cb = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val data = result.scanRecord?.getServiceData(ParcelUuid(BLE_SERVICE_UUID)) ?: return
+                val payload = parseBleServiceData(data)
+                val did = payload["id"].orEmpty().trim()
+                if (did != targetDeviceId) return
+                val address = result.device?.address?.trim().orEmpty()
+                if (address.isBlank()) return
+                val now = System.currentTimeMillis()
+                val peer = peers.compute(targetDeviceId) { _, existing ->
+                    existing ?: Peer(
+                        deviceId = did,
+                        deviceName = payload["name"].orEmpty().ifBlank { did },
+                        deviceDescription = payload["desc"].orEmpty(),
+                        deviceIcon = payload["icon"].orEmpty(),
+                        lastSeenAt = now
+                    )
+                } ?: return
+                val scannedName = payload["name"].orEmpty().trim()
+                val scannedDesc = payload["desc"].orEmpty().trim()
+                val scannedIcon = payload["icon"].orEmpty().trim()
+                if (scannedName.isNotBlank()) peer.deviceName = scannedName
+                if (scannedDesc.isNotBlank()) peer.deviceDescription = scannedDesc
+                if (scannedIcon.isNotBlank()) peer.deviceIcon = scannedIcon
+                peer.lastSeenAt = now
+                peer.bleAddress = address
+                peer.bleRssi = result.rssi
+                peer.methods.add("ble")
+                foundAddress = address
+                latch.countDown()
+            }
+        }
+        runCatching { scanner.startScan(listOf(filter), settings, cb) }.onFailure { return "" }
+        val waitMs = timeoutMs.coerceIn(800L, 5000L)
+        val done = latch.await(waitMs, TimeUnit.MILLISECONDS)
+        runCatching { scanner.stopScan(cb) }
+        return if (done) foundAddress else ""
     }
 
     private fun sendBlePayloadInternalByAddress(address: String, payload: ByteArray, timeoutMs: Long): JSONObject {
@@ -548,6 +649,7 @@ class MeMeDiscoveryManager(
         var rxNotifyChar: BluetoothGattCharacteristic? = null
         val rxBuffer = ByteArrayOutputStream()
         var notifyReady = false
+        var waitingNotifyDescriptor = false
         val expectAck = runCatching {
             val wire = JSONObject(payload.toString(StandardCharsets.UTF_8))
             wire.optString("kind", "").trim() == "data_ingest"
@@ -613,7 +715,8 @@ class MeMeDiscoveryManager(
                 }
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     gatt = g
-                    runCatching { g.requestMtu(BLE_MTU) }
+                    // Service discovery first is more stable on some chipsets than
+                    // requesting MTU before discoverServices().
                     if (!g.discoverServices()) fail("ble_discover_start_failed")
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED && err == null && !discovered) {
                     fail("ble_disconnected")
@@ -625,46 +728,62 @@ class MeMeDiscoveryManager(
                     fail("ble_discover_failed:$status")
                     return
                 }
+                runCatching { g.requestMtu(BLE_MTU) }
                 val service = g.getService(BLE_GATT_SERVICE_UUID)
                     ?: run { fail("ble_service_missing"); return }
                 txChar = service.getCharacteristic(BLE_RX_CHAR_UUID)
                 rxNotifyChar = service.getCharacteristic(BLE_TX_CHAR_UUID)
-                val notifyChar = rxNotifyChar
-                if (notifyChar != null && (notifyChar.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) {
+                if (expectAck) {
+                    val notifyChar = rxNotifyChar
+                    if (notifyChar == null || (notifyChar.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0) {
+                        fail("ble_notify_unavailable")
+                        return
+                    }
                     val notifySet = g.setCharacteristicNotification(notifyChar, true)
                     if (!notifySet) {
                         fail("ble_notify_enable_failed")
                         return
                     }
                     val ccc = notifyChar.getDescriptor(BLE_CCC_DESCRIPTOR_UUID)
-                    if (ccc != null) {
-                        val started = if (Build.VERSION.SDK_INT >= 33) {
-                            g.writeDescriptor(ccc, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS
-                        } else {
-                            ccc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                            g.writeDescriptor(ccc)
-                        }
-                        if (!started) {
-                            fail("ble_notify_descriptor_write_failed")
-                            return
-                        }
+                    if (ccc == null) {
+                        fail("ble_notify_descriptor_missing")
                         return
                     }
+                    val started = if (Build.VERSION.SDK_INT >= 33) {
+                        g.writeDescriptor(ccc, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothStatusCodes.SUCCESS
+                    } else {
+                        ccc.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        g.writeDescriptor(ccc)
+                    }
+                    if (!started) {
+                        fail("ble_notify_descriptor_write_failed")
+                        return
+                    }
+                    waitingNotifyDescriptor = true
                 }
-                notifyReady = true
                 discovered = true
-                writeNext()
+                if (!waitingNotifyDescriptor) {
+                    notifyReady = true
+                    writeNext()
+                }
             }
 
             override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
                 if (descriptor.characteristic?.uuid != BLE_TX_CHAR_UUID || descriptor.uuid != BLE_CCC_DESCRIPTOR_UUID) return
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    fail("ble_notify_descriptor_failed:$status")
+                    if (expectAck) {
+                        fail("ble_notify_descriptor_failed:$status")
+                    } else {
+                        logger("me.me BLE notify descriptor callback failed ($status); writes continue", null)
+                    }
                     return
                 }
-                notifyReady = true
-                discovered = true
-                writeNext()
+                waitingNotifyDescriptor = false
+                if (!notifyReady) {
+                    notifyReady = true
+                    discovered = true
+                    writeNext()
+                }
             }
 
             override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {

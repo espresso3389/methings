@@ -2300,7 +2300,7 @@
           <div class="card-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01"/><path d="M7 17h.01"/></svg></div>
           <div>
             <div class="card-title" id="meMePeersModalTitle" style="margin-bottom:0;">Devices</div>
-            <div class="muted" style="font-size:12px;">Connected, pending, and discovered me.me devices</div>
+            <div class="muted" style="font-size:12px;">Authorized, unapproved, blocked, and discovered me.me devices</div>
           </div>
           <button class="icon-btn secondary" id="meMePeersModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
         </div>
@@ -9159,15 +9159,28 @@
           meMePeersRefreshBtn.disabled = true;
           meMePeersSummary.textContent = "Loading...";
           meMePeersList.innerHTML = "";
-          const res = await fetch(API + "/me/me/status", { cache: "no-store" });
+          const [res, cfgRes] = await Promise.all([
+            fetch(API + "/me/me/status", { cache: "no-store" }),
+            fetch(API + "/me/me/config", { cache: "no-store" }),
+          ]);
           const data = await res.json().catch(() => ({}));
+          const cfgData = await cfgRes.json().catch(() => ({}));
           if (!res.ok) throw new Error(String(data.error || "status_failed"));
+          const cfg = (cfgData && cfgData.config && typeof cfgData.config === "object") ? cfgData.config : {};
+          const allowed = new Set(Array.isArray(cfg.allowed_devices) ? cfg.allowed_devices.map((v) => String(v || "").trim()).filter(Boolean) : []);
+          const blocked = new Set(Array.isArray(cfg.blocked_devices) ? cfg.blocked_devices.map((v) => String(v || "").trim()).filter(Boolean) : []);
+          const authStateForPeer = (peerId, fallback) => {
+            const id = String(peerId || "").trim();
+            if (id && blocked.has(id)) return "Blocked";
+            if (id && allowed.has(id)) return "Authorized";
+            return fallback;
+          };
           const connections = Array.isArray(data.connections) ? data.connections : [];
           const pending = Array.isArray(data.pending_requests) ? data.pending_requests : [];
           const discovered = Array.isArray(data.discovered) ? data.discovered : [];
           meMePeersSummary.textContent =
             String(connections.length) + " connected · " +
-            String(pending.length) + " pending · " +
+            String(pending.length) + " unapproved · " +
             String(discovered.length) + " discovered";
           if (connections.length <= 0 && pending.length <= 0 && discovered.length <= 0) {
             const empty = document.createElement("div");
@@ -9184,11 +9197,14 @@
             item.style.background = "rgba(255,255,255,0.02)";
             const sourceId = String(req.source_device_id || "");
             const sourceName = String(req.source_device_name || sourceId || "unknown");
+            const sourceDesc = String(req.source_device_description || "").trim();
             const requestId = String(req.id || "");
             const ownerIds = Array.isArray(req.source_owner_identities) ? req.source_owner_identities : [];
+            const authState = authStateForPeer(sourceId, "Unapproved");
             item.innerHTML =
-              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(sourceName) + " <span class='muted' style='font-weight:400;'>(Pending)</span></div>" +
+              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(sourceName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
               "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(sourceId) + "</div>" +
+              (sourceDesc ? ("<div class='muted' style='margin-top:2px; word-break:break-word;'>" + escapeHtml(sourceDesc) + "</div>") : "") +
               "<div class='muted' style='margin-top:2px; word-break:break-word;'>owner " + escapeHtml(ownerIds.join(", ") || "-") + "</div>" +
               "<div style='display:flex; gap:8px; margin-top:8px;'>" +
                 "<button class='btn primary' data-mm-action='approve' data-mm-request-id='" + escapeHtml(requestId) + "'>Approve</button>" +
@@ -9207,13 +9223,16 @@
             const method = String(conn.method || "auto");
             const state = String(conn.state || "unknown");
             const connectedAt = formatEpochLocal(conn.connected_at);
+            const authState = authStateForPeer(peerId, "Unapproved");
             item.innerHTML =
-              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + "</div>" +
+              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
               "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
               "<div class='muted' style='margin-top:2px;'>method " + escapeHtml(method) + " · state " + escapeHtml(state) + "</div>" +
               "<div class='muted' style='margin-top:2px;'>connected " + escapeHtml(connectedAt) + "</div>" +
               "<div style='display:flex; gap:8px; margin-top:8px;'>" +
+                "<button class='btn primary' data-mm-action='approve-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Approve</button>" +
                 "<button class='btn danger' data-mm-action='block-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Block</button>" +
+                "<button class='btn' data-mm-action='clear-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Clear</button>" +
               "</div>";
             meMePeersList.appendChild(item);
           });
@@ -9226,13 +9245,15 @@
             const peerId = String(dev.device_id || "");
             const peerName = String(dev.device_name || peerId || "unknown");
             const seen = formatEpochLocal(dev.last_seen_at);
+            const authState = authStateForPeer(peerId, "Discovered");
             item.innerHTML =
-              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span class='muted' style='font-weight:400;'>(Discovered)</span></div>" +
+              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
               "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
               "<div class='muted' style='margin-top:2px;'>last seen " + escapeHtml(seen) + "</div>" +
               "<div style='display:flex; gap:8px; margin-top:8px;'>" +
-                "<button class='btn' data-mm-action='allow-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Allow</button>" +
+                "<button class='btn primary' data-mm-action='approve-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Approve</button>" +
                 "<button class='btn danger' data-mm-action='block-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Block</button>" +
+                "<button class='btn' data-mm-action='clear-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Clear</button>" +
               "</div>";
             meMePeersList.appendChild(item);
           });
@@ -9249,12 +9270,15 @@
                 } else if (action === "block" && requestId) {
                   await rejectMeMeRequest(requestId, true);
                   showToast("Request blocked", 1400);
-                } else if (action === "allow-peer" && peerId) {
+                } else if (action === "approve-peer" && peerId) {
                   await setMeMePeerPolicy(peerId, "allow");
-                  showToast("Peer allowed", 1400);
+                  showToast("Peer approved", 1400);
                 } else if (action === "block-peer" && peerId) {
                   await setMeMePeerPolicy(peerId, "block");
                   showToast("Peer blocked", 1400);
+                } else if (action === "clear-peer" && peerId) {
+                  await setMeMePeerPolicy(peerId, "clear");
+                  showToast("Peer policy cleared", 1400);
                 }
                 await refreshMeMePeersModal();
                 await loadMeMeConfig();
@@ -9279,9 +9303,22 @@
           deviceInfoRefreshBtn.disabled = true;
           deviceInfoSelf.innerHTML = "<div class='muted'>Loading...</div>";
           deviceInfoDeviceList.innerHTML = "<div class='muted'>Loading...</div>";
-          const res = await fetch(API + "/me/me/status", { cache: "no-store" });
+          const [res, cfgRes] = await Promise.all([
+            fetch(API + "/me/me/status", { cache: "no-store" }),
+            fetch(API + "/me/me/config", { cache: "no-store" }),
+          ]);
           const data = await res.json().catch(() => ({}));
+          const cfgData = await cfgRes.json().catch(() => ({}));
           if (!res.ok) throw new Error(String(data.error || "status_failed"));
+          const cfg = (cfgData && cfgData.config && typeof cfgData.config === "object") ? cfgData.config : {};
+          const allowed = new Set(Array.isArray(cfg.allowed_devices) ? cfg.allowed_devices.map((v) => String(v || "").trim()).filter(Boolean) : []);
+          const blocked = new Set(Array.isArray(cfg.blocked_devices) ? cfg.blocked_devices.map((v) => String(v || "").trim()).filter(Boolean) : []);
+          const authStateForPeer = (peerId, fallback) => {
+            const id = String(peerId || "").trim();
+            if (id && blocked.has(id)) return "Blocked";
+            if (id && allowed.has(id)) return "Authorized";
+            return fallback;
+          };
           const self = (data && data.self) || {};
           const selfName = String(self.device_name || "device");
           const selfId = String(self.device_id || "");
@@ -9303,6 +9340,7 @@
               name: name,
               id: id,
               state: "connected",
+              authState: authStateForPeer(id, "Unapproved"),
               method: String(conn.method || "auto"),
               time: conn.connected_at,
               timeLabel: "connected",
@@ -9318,6 +9356,7 @@
               name: name,
               id: id,
               state: "discovered",
+              authState: authStateForPeer(id, "Discovered"),
               method: methods.join(", ") || "auto",
               time: dev.last_seen_at,
               timeLabel: "last seen",
@@ -9342,8 +9381,12 @@
               item.style.cssText = "border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,0.02);";
               const display = d.name || d.id || "unknown";
               const icon = methodIcons[d.method] || d.method.split(", ").map((m) => methodIcons[m] || "").filter(Boolean).join("") || "";
-              const stateColor = d.state === "connected" ? "var(--green)" : "var(--ink-secondary)";
-              const stateLabel = d.state === "connected" ? "Connected" : "Discovered";
+              const stateLabel = String(d.authState || "Discovered");
+              const stateColor =
+                stateLabel === "Authorized" ? "var(--green)" :
+                stateLabel === "Blocked" ? "var(--red)" :
+                stateLabel === "Unapproved" ? "#d6a84b" :
+                "var(--ink-secondary)";
               let html = "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(display) + "</div>";
               if (d.name && d.id) {
                 html += "<div class='muted' style='margin-top:2px; word-break:break-all; font-size:12px;'>" + escapeHtml(d.id) + "</div>";
