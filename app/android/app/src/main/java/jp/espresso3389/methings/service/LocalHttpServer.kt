@@ -8664,19 +8664,29 @@ class LocalHttpServer(
         if (peerDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "peer_device_id_required")
         val messageId = payload.optString("message_id", "").trim()
             .ifBlank { "mmm_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}" }
-        val nestedMessage = payload.optJSONObject("message")
+        val nestedMessageAny = if (payload.has("message")) payload.opt("message") else null
+        val nestedMessage = nestedMessageAny as? JSONObject
         val type = payload.optString("type", "").trim()
             .ifBlank { nestedMessage?.optString("type", "")?.trim().orEmpty() }
             .ifBlank { "message" }
         val payloadValue: Any? = when {
             payload.has("payload") -> payload.opt("payload")
             nestedMessage?.has("payload") == true -> nestedMessage.opt("payload")
+            nestedMessageAny is String && nestedMessageAny.trim().isNotBlank() ->
+                JSONObject().put("text", nestedMessageAny.trim())
+            nestedMessage != null -> buildMeMePayloadFromObject(
+                source = nestedMessage,
+                excludedKeys = setOf("type", "payload")
+            )
             else -> buildLegacyMeMePayload(payload)
+        }
+        if (isMeMePayloadEmpty(payloadValue)) {
+            return jsonError(Response.Status.BAD_REQUEST, "payload_required")
         }
         val send = sendMeMeEncryptedMessage(
             peerDeviceId = peerDeviceId,
             type = type,
-            payloadValue = payloadValue ?: JSONObject.NULL,
+            payloadValue = payloadValue,
             transportHint = payload.optString("transport", ""),
             timeoutMs = payload.optLong("timeout_ms", 12_000L),
             messageId = messageId
@@ -8690,6 +8700,7 @@ class LocalHttpServer(
                 .put("peer_device_id", peerDeviceId)
                 .put("requested_transport", payload.optString("transport", "").trim().ifBlank { "auto" })
                 .put("resolved_transport", delivery.optString("transport", "unknown"))
+                .put("payload_shape", describeMeMePayloadShape(payloadValue))
                 .put("ok", delivery.optBoolean("ok", false))
                 .put(
                     "error",
@@ -8710,18 +8721,78 @@ class LocalHttpServer(
         )
     }
 
-    private fun buildLegacyMeMePayload(payload: JSONObject): Any? {
+    private fun isMeMePayloadEmpty(value: Any?): Boolean {
+        return when (value) {
+            null, JSONObject.NULL -> true
+            is String -> value.trim().isBlank()
+            is JSONObject -> value.length() <= 0
+            is JSONArray -> value.length() <= 0
+            else -> false
+        }
+    }
+
+    private fun describeMeMePayloadShape(value: Any?): String {
+        return when (value) {
+            null, JSONObject.NULL -> "null"
+            is String -> "string"
+            is JSONObject -> "object"
+            is JSONArray -> "array"
+            is Number -> "number"
+            is Boolean -> "boolean"
+            else -> value::class.java.simpleName.lowercase(Locale.US)
+        }
+    }
+
+    private fun buildMeMePayloadFromObject(
+        source: JSONObject,
+        excludedKeys: Set<String> = emptySet()
+    ): JSONObject? {
         val out = JSONObject()
-        val directText = payload.optString("text", "").trim()
-        if (directText.isNotBlank()) out.put("text", directText)
-        val relPath = payload.optString("rel_path", "").trim()
+        val text = source.optString("text", "").trim()
+            .ifBlank { source.optString("message", "").trim() }
+        if (text.isNotBlank()) out.put("text", text)
+        val relPath = source.optString("rel_path", "").trim()
         if (relPath.isNotBlank()) out.put("rel_path", relPath)
-        val fileName = payload.optString("file_name", "").trim()
+        val fileName = source.optString("file_name", "").trim()
         if (fileName.isNotBlank()) out.put("file_name", fileName)
-        val mimeType = payload.optString("mime_type", "").trim()
+        val mimeType = source.optString("mime_type", "").trim()
         if (mimeType.isNotBlank()) out.put("mime_type", mimeType)
+        if (source.has("command")) {
+            val command = source.opt("command")
+            if (command != null && command != JSONObject.NULL) out.put("command", command)
+        }
+        if (source.has("data")) {
+            val data = source.opt("data")
+            if (data != null && data != JSONObject.NULL) out.put("data", data)
+        }
+        val skip = hashSetOf(
+            "peer_device_id",
+            "target_device_id",
+            "device_id",
+            "message_id",
+            "transport",
+            "timeout_ms",
+            "permission_id",
+            "type",
+            "payload",
+            "message"
+        )
+        skip.addAll(excludedKeys)
+        val it = source.keys()
+        while (it.hasNext()) {
+            val k = it.next()
+            if (k in skip) continue
+            if (out.has(k)) continue
+            val v = source.opt(k)
+            if (v == null || v == JSONObject.NULL) continue
+            out.put(k, v)
+        }
         if (out.length() <= 0) return null
         return out
+    }
+
+    private fun buildLegacyMeMePayload(payload: JSONObject): Any? {
+        return buildMeMePayloadFromObject(payload)
     }
 
     private fun formatMeMeDelivery(

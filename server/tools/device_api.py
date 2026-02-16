@@ -193,6 +193,7 @@ class DeviceApiTool:
             "me.sync.v3.ticket.create": 30.0,
             "me.sync.v3.import.apply": 300.0,
             "me.me.scan": 45.0,
+            "me.me.connect": 40.0,
             "debug.logs.export": 45.0,
             "debug.logs.stream": 140.0,
         }

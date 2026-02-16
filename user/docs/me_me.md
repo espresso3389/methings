@@ -15,6 +15,12 @@ Notes:
 - Discovery and route selection are automatic (LAN/BLE/gateway fallback). Agents should not orchestrate low-level transport.
 - `GET /me/me/status` is the single snapshot API for peer visibility and runtime state.
 - `POST /me/me/message/send` is the single send API. It accepts message metadata plus payload/file attachment fields.
+- `POST /me/me/message/send` payload contract:
+  - Preferred: `{"peer_device_id":"...","type":"message","payload":{...}}`
+  - Text shortcut: `{"peer_device_id":"...","text":"..."}`
+  - Backward compatible: `{"peer_device_id":"...","message":"..."}` (normalized to `payload.text`)
+  - Object shortcut: `{"peer_device_id":"...","message":{"type":"...","...":...}}` (`message.type` becomes type; remaining fields become payload when `payload` is absent)
+  - Empty content is rejected with `400 payload_required`.
 - Internal connection/scan/relay endpoints exist but are debug-only and intentionally omitted from agent workflow.
 - Connection handshake security:
   - Offer token is signed with source identity key:

@@ -422,16 +422,13 @@ Chat prefix shortcut in the app UI:
 | Method | Endpoint | Body | Effect |
 |--------|----------|------|--------|
 | `GET` | `/me/me/status` | — | Return self profile plus current peer/discovery summary |
-| `POST` | `/me/me/message/send` | `{"peer_device_id":"d_a1b2c3","type":"task","payload":{...}}` | Send encrypted content to a peer using automatic route selection |
+| `POST` | `/me/me/message/send` | `{"peer_device_id":"d_a1b2c3","type":"task","payload":{...}}` (preferred) / `{"peer_device_id":"d_a1b2c3","text":"..."}` / `{"peer_device_id":"d_a1b2c3","message":"..."}` | Send encrypted content to a peer using automatic route selection |
 
 Notes:
 - `/me/me/status` includes peer presence/connection snapshots and discovery runtime state.
-- me.me discovery/route/relay plumbing is internal. Agent-facing behavior is send (`me.me.message.send`) + receive (`me.me.received` event).
+- me.me transport selection is internal. Agent-facing behavior is send (`me.me.message.send`) + receive (`me.me.received` event).
+- `/me/me/message/send` rejects empty content with `400 payload_required`.
 - Internal and troubleshooting-only me.me endpoints are documented in `docs/DEBUGGING.md`.
-- me.me runtime emits agent alert events through internal `POST /brain/inbox/event` with optional controls:
-  - `priority`: `low|normal|high|critical`
-  - `interrupt_policy`: `never|turn_end|immediate`
-  - `coalesce_key` + `coalesce_window_ms` for dedupe/coalescing.
 
 Details: [me_me.md](me_me.md)
 
@@ -444,8 +441,7 @@ One-time export/import endpoints for device-to-device transfer of chat memory/st
 | `GET` | `/me/sync/status` | — | List active export packages and expiry |
 | `GET` | `/me/sync/local_state` | — | Return whether receiver has existing local data to wipe |
 | `POST` | `/me/sync/prepare_export` | `{"include_user":true,"include_protected_db":true,"include_identity":false,"mode":"export"}` | Build one-time export package and return download links + payload |
-| `GET` | `/me/sync/download` | `?id=<transfer_id>&token=<token>` | Download prepared ZIP package |
-| `POST` | `/me/sync/import` | `{"url":"http://.../me/sync/download?...","wipe_existing":true}` or `{"payload":"...","wipe_existing":true}` | Download package from source, wipe local state, then import |
+| `POST` | `/me/sync/import` | `{"url":"http://...","wipe_existing":true}` or `{"payload":"...","wipe_existing":true}` | Download package from source, wipe local state, then import |
 | `POST` | `/me/sync/wipe_all` | `{"restart_app":true}` | **Dangerous:** wipe all local app data and restart app (best effort) |
 | `POST` | `/me/sync/v3/ticket/create` | `{"include_user":true,"include_protected_db":true,"include_identity":false}` | Create v3 QR ticket (`me.things:me.sync.v3:<base64url>`) with LAN fallback metadata |
 | `GET` | `/me/sync/v3/ticket/status` | `?ticket_id=<ticket_id>` | Get v3 ticket status and linked transfer progress |
@@ -461,7 +457,6 @@ Notes:
 - `import` and `v3/import/apply` also accept `me.things:me.sync.v3:<base64url>` payloads.
 - `v3/import/apply` attempts Nearby Connections stream transfer first; on failure it can fall back to LAN URL transfer.
 - `import` defaults to `wipe_existing=true` and wipes receiver local state before applying imported data.
-- Imported package then restores `files/user/`, `files/protected/app.db` (if present), re-applies credential/key state, and restarts Python worker.
 - App GUI "Export" uses export mode only; migration mode is API-only.
 - `wipe_all` is intentionally dangerous and API-only (no GUI button).
 
