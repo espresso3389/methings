@@ -4878,6 +4878,12 @@
 
       // --- SSE connection for real-time brain events ---
       let _brainSSE = null;
+      let _brainSseConnected = false;
+      let _pollServerTimer = null;
+      let _pollServerInFlight = false;
+      const POLL_INTERVAL_ACTIVE_MS = 1000;
+      const POLL_INTERVAL_IDLE_MS = 6000;
+      const POLL_INTERVAL_SSE_CONNECTED_MS = 15000;
       // item_id -> { resolve, lastText, failed, failMsg } for waitForAgentReply SSE path.
       const _sseWaiters = new Map();
       function resolveSseWaiter(itemId, fallbackText) {
@@ -4898,8 +4904,10 @@
           const es = new EventSource(url);
           _brainSSE = es;
           es.onopen = function() {
+            _brainSseConnected = true;
             // Catch up on any messages we missed while disconnected.
             pollServerMessages();
+            scheduleServerPolling(1200);
           };
           es.addEventListener("brain_message", function(e) {
             try {
@@ -5041,7 +5049,9 @@
             } catch (_) {}
           });
           es.onerror = function() {
-            // EventSource auto-reconnects; no extra logic needed.
+            _brainSseConnected = false;
+            // EventSource auto-reconnects; keep polling a bit more frequently until it recovers.
+            scheduleServerPolling(1200);
           };
         } catch (_) {}
       }
@@ -5050,6 +5060,40 @@
         if (_brainSSE) {
           try { _brainSSE.close(); } catch (_) {}
           _brainSSE = null;
+        }
+        _brainSseConnected = false;
+      }
+
+      function desiredServerPollIntervalMs() {
+        if (!chatSessionId) return POLL_INTERVAL_IDLE_MS;
+        const hasThinking = !!(_thinking.el && _thinking.el.isConnected);
+        const hasWorking = !!chatMessages.querySelector(".msg-working");
+        if (streaming || hasThinking || hasWorking) return POLL_INTERVAL_ACTIVE_MS;
+        if (_brainSseConnected) return POLL_INTERVAL_SSE_CONNECTED_MS;
+        return POLL_INTERVAL_IDLE_MS;
+      }
+
+      function scheduleServerPolling(delayMs) {
+        if (_pollServerTimer) {
+          clearTimeout(_pollServerTimer);
+          _pollServerTimer = null;
+        }
+        const delay = Math.max(600, Number(delayMs || desiredServerPollIntervalMs()));
+        _pollServerTimer = setTimeout(runServerPollOnce, delay);
+      }
+
+      async function runServerPollOnce() {
+        if (_pollServerInFlight) {
+          scheduleServerPolling(1000);
+          return;
+        }
+        _pollServerInFlight = true;
+        try {
+          await pollServerMessages();
+        } catch (_) {
+        } finally {
+          _pollServerInFlight = false;
+          scheduleServerPolling();
         }
       }
 
@@ -5574,7 +5618,7 @@
       chatSend.addEventListener("click", sendChat);
       restoreConversation();
       syncConversationFromServer().then(() => { checkAgentBusy(); connectBrainSSE(); });
-      setInterval(pollServerMessages, 20000);
+      scheduleServerPolling(1200);
 
       // Scope "Select All" to the message balloon where the selection started.
       (function initMsgSelectAll() {
@@ -6471,13 +6515,13 @@
           _sseWaiters.set(itemId, { resolve, lastText: "", failed: false, failMsg: "" });
         });
 
-        // Slow polling fallback (15s intervals) as safety net.
+        // Polling fallback as safety net when SSE delivery misses.
         const pollPromise = (async () => {
           const deadline = Date.now() + 15 * 60 * 1000;
           let lastAssistant = "";
           let lastToolError = "";
           while (Date.now() < deadline) {
-            await new Promise(r => setTimeout(r, 15000));
+            await new Promise(r => setTimeout(r, 1000));
             try {
               const res = await fetch(
                 API + "/brain/messages?limit=200&session_id=" + encodeURIComponent(chatSessionId)
