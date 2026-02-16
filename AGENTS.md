@@ -47,6 +47,7 @@ Build an Android 14+ app that provides a Python development environment with:
 
 ## Conventions
 - Favor ASCII only in source unless already using Unicode.
+- Write all program code and documentation in English unless non-English text is strictly required.
 - Add concise comments only when logic is non-obvious.
 - Keep security prompts minimal but explicit.
 - No silent elevation or background actions.

@@ -1,6 +1,8 @@
 import contextlib
+import base64
 import hashlib
 import json
+import mimetypes
 import os
 import re
 import threading
@@ -509,14 +511,81 @@ class BrainRuntime:
             return {"status": "error", "error": "not_found"}
         if not target.is_file():
             return {"status": "error", "error": "not_a_file"}
+        # Keep read_file text-only; use read_binary_file for media/binary content.
+        suffix = target.suffix.lower()
+        is_likely_binary = suffix in {
+            ".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif", ".bmp", ".ico", ".avif",
+            ".mp4", ".mov", ".m4v", ".mkv", ".webm",
+            ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",
+            ".pdf", ".zip", ".tar", ".gz", ".7z",
+        }
+        if is_likely_binary:
+            return {
+                "status": "error",
+                "error": "binary_file_not_text",
+                "path": str(target),
+                "hint": "Use read_binary_file for binary/media files.",
+            }
         max_bytes = max(1024, min(int(max_bytes or 262144), 2 * 1024 * 1024))
         try:
-            data = target.read_bytes()
-            truncated = len(data) > max_bytes
+            raw = target.read_bytes()
+            file_size = len(raw)
+            truncated = file_size > max_bytes
+            data = raw
             if truncated:
                 data = data[:max_bytes]
             text = data.decode("utf-8", errors="replace")
-            return {"status": "ok", "path": str(target), "content": text, "truncated": truncated}
+            return {
+                "status": "ok",
+                "path": str(target),
+                "content": text,
+                "truncated": truncated,
+                "binary": False,
+                "file_size": file_size,
+                "read_offset": 0,
+                "read_size": len(data),
+            }
+        except Exception as ex:
+            return {"status": "error", "error": "read_failed", "detail": str(ex)}
+
+    def _fs_read_binary_file(
+        self,
+        path: str,
+        offset_bytes: int = 0,
+        size_bytes: int = 262144,
+        encoding: str = "base64",
+    ) -> Dict:
+        target = self._resolve_user_path(path)
+        if target is None:
+            return {"status": "error", "error": "path_outside_user_dir"}
+        if not target.exists():
+            return {"status": "error", "error": "not_found"}
+        if not target.is_file():
+            return {"status": "error", "error": "not_a_file"}
+        enc = str(encoding or "base64").strip().lower()
+        if enc != "base64":
+            return {"status": "error", "error": "unsupported_binary_encoding", "encoding": enc}
+        offset = max(0, int(offset_bytes or 0))
+        size = max(1, min(int(size_bytes or 262144), 2 * 1024 * 1024))
+        try:
+            file_size = int(target.stat().st_size)
+            with target.open("rb") as fh:
+                if offset > 0:
+                    fh.seek(offset)
+                data = fh.read(size)
+            media_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+            return {
+                "status": "ok",
+                "path": str(target),
+                "binary": True,
+                "media_type": media_type,
+                "encoding": "base64",
+                "body_base64": base64.b64encode(data).decode("ascii"),
+                "file_size": file_size,
+                "read_offset": offset,
+                "read_size": len(data),
+                "eof": (offset + len(data)) >= file_size,
+            }
         except Exception as ex:
             return {"status": "error", "error": "read_failed", "detail": str(ex)}
 
@@ -1386,6 +1455,9 @@ class BrainRuntime:
         max_rounds = 3
         tool_results: List[Dict] = []
         total_actions = 0
+        loop_guard_triggered = False
+        prev_round_sig: Optional[str] = None
+        ended_without_actions = False
 
         for round_idx in range(max_rounds):
             self._check_interrupt()
@@ -1416,6 +1488,7 @@ class BrainRuntime:
             if not isinstance(actions, list):
                 actions = []
             if not actions:
+                ended_without_actions = True
                 break
 
             round_results: List[Dict] = []
@@ -1437,8 +1510,106 @@ class BrainRuntime:
             tool_results = round_results
             if not round_results:
                 break
+            # Guard against planner loops that repeat identical actions/results without finishing.
+            try:
+                norm_round: List[Dict[str, Any]] = []
+                for rr in round_results:
+                    a = rr.get("action") if isinstance(rr.get("action"), dict) else {}
+                    r = rr.get("result")
+                    norm_round.append(
+                        {
+                            "a": {
+                                "type": str(a.get("type") or ""),
+                                "tool": str(a.get("tool") or ""),
+                                "op": str(a.get("op") or ""),
+                                "path": str(a.get("path") or ""),
+                                "args": a.get("args") if isinstance(a.get("args"), dict) else {},
+                            },
+                            "r": self._truncate_tool_output_for_model("loop_guard", r),
+                        }
+                    )
+                round_sig = json.dumps(norm_round, ensure_ascii=True, sort_keys=True)
+            except Exception:
+                round_sig = ""
+            if round_sig and prev_round_sig and round_sig == prev_round_sig:
+                loop_guard_triggered = True
+                break
+            prev_round_sig = round_sig
+
+        if tool_results and (loop_guard_triggered or not ended_without_actions):
+            summary = self._legacy_tool_results_summary(item, tool_results)
+            if summary:
+                self._record_message(
+                    "assistant",
+                    summary,
+                    {"item_id": item.get("id"), "session_id": self._session_id_for_item(item)},
+                )
+                self._emit_log(
+                    "brain_response",
+                    {"item_id": item.get("id"), "text": summary[:300], "source": "legacy_tool_summary"},
+                )
+                if loop_guard_triggered:
+                    self._emit_log("brain_loop_guard", {"item_id": item.get("id"), "reason": "repeated_round"})
 
         self._emit_log("brain_item_done", {"id": item.get("id"), "actions": total_actions, "session_id": self._session_id_for_item(item)})
+
+    def _legacy_tool_results_summary(self, item: Dict, round_results: List[Dict[str, Any]]) -> str:
+        """
+        Build a deterministic final user-facing message for legacy planner mode.
+        This prevents "no final answer" when a provider keeps returning actions.
+        """
+        if not isinstance(round_results, list) or not round_results:
+            return ""
+        user_text = str(item.get("text") or "")
+        wants_photo_list = ("photo" in user_text.lower()) or ("image" in user_text.lower())
+
+        if len(round_results) == 1:
+            rr = round_results[0] if isinstance(round_results[0], dict) else {}
+            action = rr.get("action") if isinstance(rr.get("action"), dict) else {}
+            result = rr.get("result") if isinstance(rr.get("result"), dict) else {}
+            if str(action.get("type") or "") == "filesystem" and str(action.get("op") or "") == "list_dir":
+                entries = result.get("entries") if isinstance(result.get("entries"), list) else []
+                names: List[str] = []
+                photo_names: List[str] = []
+                for e in entries[:200]:
+                    if not isinstance(e, dict):
+                        continue
+                    n = str(e.get("name") or "")
+                    if not n:
+                        continue
+                    names.append(n)
+                    lower = n.lower()
+                    if lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic", ".gif", ".bmp", ".avif")):
+                        photo_names.append(n)
+                if wants_photo_list and photo_names:
+                    shown = photo_names[:20]
+                    extra = len(photo_names) - len(shown)
+                    tail = f"\n(and {extra} more)" if extra > 0 else ""
+                    return "Photo list:\n" + "\n".join(f"- {n}" for n in shown) + tail
+                shown = names[:20]
+                extra = len(names) - len(shown)
+                if not shown:
+                    return "The list is empty."
+                tail = f"\n(and {extra} more)" if extra > 0 else ""
+                return "List:\n" + "\n".join(f"- {n}" for n in shown) + tail
+
+        # Generic fallback for non-list_dir actions.
+        ok = 0
+        err = 0
+        first_err = ""
+        for rr in round_results:
+            res = rr.get("result") if isinstance(rr, dict) and isinstance(rr.get("result"), dict) else {}
+            st = str(res.get("status") or "")
+            if st == "ok":
+                ok += 1
+            else:
+                err += 1
+                if not first_err:
+                    first_err = str(res.get("error") or "")
+        if err > 0:
+            detail = f" ({first_err})" if first_err else ""
+            return f"Result: {ok} succeeded / {err} failed{detail}"
+        return f"Result: {ok} completed"
 
     def _provider_kind(self, provider_url: str, vendor: str) -> str:
         v = str(vendor or "").strip().lower()
@@ -1594,6 +1765,22 @@ class BrainRuntime:
                         "max_bytes": {"type": "integer"},
                     },
                     "required": ["path", "max_bytes"],
+                },
+            },
+            {
+                "type": "function",
+                "name": "read_binary_file",
+                "description": "Read a binary/media file window under the user root and return base64 bytes.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string"},
+                        "offset_bytes": {"type": "integer"},
+                        "size_bytes": {"type": "integer"},
+                        "encoding": {"type": "string", "enum": ["base64"]},
+                    },
+                    "required": ["path"],
                 },
             },
             {
@@ -2547,13 +2734,14 @@ class BrainRuntime:
             "Return strict JSON object with keys responses (string[]) and actions (object[]). "
             "Action objects: "
             "{type:'shell_exec', cmd:'python|pip|curl', args:'...', cwd:'/subdir'} OR "
-            "{type:'filesystem', op:'list_dir|read_file|mkdir|move_path|delete_path', ...} OR "
+            "{type:'filesystem', op:'list_dir|read_file|read_binary_file|mkdir|move_path|delete_path', ...} OR "
             "{type:'write_file', path:'relative/path.py', content:'...'} OR "
             "{type:'tool_invoke', tool:'device_api|cloud_request', args:{...}, detail:'optional'} OR "
             "{type:'sleep', seconds:1}. "
             "Filesystem action shapes: "
             "- list_dir: {type:'filesystem', op:'list_dir', path:'relative/or/absolute', show_hidden:false, limit:200} "
-            "- read_file: {type:'filesystem', op:'read_file', path:'relative/or/absolute', max_bytes:262144} "
+            "- read_file: {type:'filesystem', op:'read_file', path:'relative/or/absolute', max_bytes:262144} (text only). "
+            "- read_binary_file: {type:'filesystem', op:'read_binary_file', path:'relative/or/absolute', offset_bytes:0, size_bytes:262144, encoding:'base64'}. "
             "- mkdir: {type:'filesystem', op:'mkdir', path:'relative/or/absolute', parents:true} "
             "- move_path: {type:'filesystem', op:'move_path', src:'...', dst:'...', overwrite:false} "
             "- delete_path: {type:'filesystem', op:'delete_path', path:'...', recursive:false}. "
@@ -2767,6 +2955,19 @@ class BrainRuntime:
                 "op": "read_file",
                 "path": path,
                 "max_bytes": int(args.get("max_bytes") or 262144),
+            }
+            return self._execute_action(item, action)
+        if name == "read_binary_file":
+            path = str(args.get("path") or "")
+            if path.startswith("$sys/"):
+                return {"status": "error", "error": "system_binary_read_unsupported"}
+            action = {
+                "type": "filesystem",
+                "op": "read_binary_file",
+                "path": path,
+                "offset_bytes": int(args.get("offset_bytes") or 0),
+                "size_bytes": int(args.get("size_bytes") or 262144),
+                "encoding": str(args.get("encoding") or "base64"),
             }
             return self._execute_action(item, action)
         if name == "device_api":
@@ -3043,6 +3244,8 @@ class BrainRuntime:
             return "Listing files\u2026"
         if n in ("read_file", "filesystem") and str(a.get("op", "")).lower() == "read_file":
             return "Reading file\u2026"
+        if n in ("read_binary_file", "filesystem") and str(a.get("op", "")).lower() == "read_binary_file":
+            return "Reading binary file\u2026"
         if n == "filesystem":
             op = str(a.get("op") or "").lower()
             if op == "mkdir":
@@ -3056,6 +3259,8 @@ class BrainRuntime:
             return "Listing files\u2026"
         if n in ("read_file",):
             return "Reading file\u2026"
+        if n in ("read_binary_file",):
+            return "Reading binary file\u2026"
         if n in ("write_file",):
             return "Writing file\u2026"
         if n in ("run_python", "shell_exec") and str(a.get("cmd", "")).lower() == "python":
@@ -3126,6 +3331,13 @@ class BrainRuntime:
                 result = self._fs_read_file(
                     path=str(action.get("path") or ""),
                     max_bytes=int(action.get("max_bytes") or 262144),
+                )
+            elif op == "read_binary_file":
+                result = self._fs_read_binary_file(
+                    path=str(action.get("path") or ""),
+                    offset_bytes=int(action.get("offset_bytes") or 0),
+                    size_bytes=int(action.get("size_bytes") or 262144),
+                    encoding=str(action.get("encoding") or "base64"),
                 )
             elif op == "mkdir":
                 result = self._fs_mkdir(

@@ -359,6 +359,27 @@ Raw WebSocket connections on the same `127.0.0.1:33389` host.
 
 These endpoints are accessed directly via HTTP, not through `device_api`.
 
+### Agent Filesystem Tool Notes
+
+`list_dir`, `read_file`, and `read_binary_file` are agent filesystem functions implemented in the Python runtime.
+
+`read_file` parameters:
+- `path` (string): user-root relative path (or `$sys/...` for system docs).
+- `max_bytes` (integer): max bytes to read.
+
+`read_file` response behavior:
+- Text-only: `{status, path, content, truncated, binary:false, file_size, read_offset, read_size}`.
+- Binary/media files return `{status:"error", error:"binary_file_not_text", ...}`.
+
+`read_binary_file` parameters:
+- `path` (string): user-root relative path.
+- `offset_bytes` (integer, optional, default `0`): byte offset from file start.
+- `size_bytes` (integer, optional, default `262144`): bytes to read.
+- `encoding` (string, optional): currently only `"base64"` is supported.
+
+`read_binary_file` response behavior:
+- `{status, path, binary:true, media_type, encoding:"base64", body_base64, file_size, read_offset, read_size, eof}`.
+
 ### File Endpoints (User Root)
 
 | Method | Endpoint | Body / Query | Effect |

@@ -7,13 +7,23 @@ For the complete device API action map, see `$sys/docs/api_reference.md` (read v
 ## Filesystem Tools (User Root Only)
 
 - `list_dir(path, show_hidden, limit)`
-- `read_file(path, max_bytes)`
+- `read_file(path, max_bytes)`  # text-only
+- `read_binary_file(path, offset_bytes=0, size_bytes=262144, encoding="base64")`
 - `write_file(path, content, append)`
 - `mkdir(path, parents)`
 - `move_path(src, dst, overwrite)`
 - `delete_path(path, recursive)`
 
 Use these instead of shell commands like `ls`/`cat`.
+
+`read_file` behavior:
+- Default mode is text-first.
+- Binary/media files are blocked with `binary_file_not_text`.
+- For explicit binary analysis, use `read_binary_file`.
+
+`read_binary_file` behavior:
+- Supports partial reads: `offset_bytes` + `size_bytes`.
+- Returns: `binary=true`, `media_type`, `encoding="base64"`, `body_base64`, `file_size`, `read_offset`, `read_size`, `eof`.
 
 Paths starting with `$sys/` read from **system-protected reference docs** (read-only, always current with app version). Use `list_dir("$sys/docs")` to discover available reference documentation. Writing, deleting, or moving `$sys/` paths returns `system_files_read_only`.
 
