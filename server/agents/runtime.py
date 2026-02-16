@@ -2350,6 +2350,61 @@ class BrainRuntime:
             }
         return {"truncated_for_model": True, "detail": "tool_output_too_large"}
 
+    def _tool_results_for_planner(self, tool_results: Optional[List[Dict]]) -> List[Dict[str, Any]]:
+        """
+        Shrink tool_results before embedding them into planner prompts.
+
+        Legacy chat/completions planning serializes `tool_results` into a single JSON prompt.
+        Large or binary-like outputs (e.g., file dumps) can explode token usage and trigger
+        provider token-limit 400s. Reuse model truncation logic and keep action metadata compact.
+        """
+        if not isinstance(tool_results, list):
+            return []
+        out: List[Dict[str, Any]] = []
+        for tr in tool_results[:16]:
+            if not isinstance(tr, dict):
+                continue
+            action = tr.get("action") if isinstance(tr.get("action"), dict) else {}
+            result = tr.get("result")
+            a_type = str(action.get("type") or "").strip()
+            # Build a stable pseudo-tool name for truncation heuristics.
+            if a_type == "tool_invoke":
+                tname = str(action.get("tool") or "tool_invoke")
+                args = action.get("args") if isinstance(action.get("args"), dict) else {}
+                aname = str(args.get("action") or "").strip()
+                if aname:
+                    tname = f"{tname}:{aname}"
+            elif a_type == "filesystem":
+                tname = f"filesystem:{str(action.get('op') or '').strip()}"
+            elif a_type:
+                tname = a_type
+            else:
+                tname = "tool"
+
+            compact_action = {"type": a_type}
+            if a_type == "tool_invoke":
+                compact_action["tool"] = str(action.get("tool") or "")
+                args = action.get("args") if isinstance(action.get("args"), dict) else {}
+                compact_args: Dict[str, Any] = {}
+                for k in ("action", "detail"):
+                    v = args.get(k)
+                    if isinstance(v, str) and v.strip():
+                        compact_args[k] = v.strip()[:160]
+                if compact_args:
+                    compact_action["args"] = compact_args
+            elif a_type == "filesystem":
+                compact_action["op"] = str(action.get("op") or "")
+                p = str(action.get("path") or "").strip()
+                if p:
+                    compact_action["path"] = p[:200]
+            out.append(
+                {
+                    "action": compact_action,
+                    "result": self._truncate_tool_output_for_model(tname, result),
+                }
+            )
+        return out
+
     def _heuristic_plan(self, item: Dict) -> Dict:
         text = str(item.get("text") or "").lower()
         responses: List[str] = []
@@ -2486,7 +2541,7 @@ class BrainRuntime:
                 "device_api_actions": device_api_actions,
                 "root": str(self._user_dir),
             },
-            "tool_results": tool_results or [],
+            "tool_results": self._tool_results_for_planner(tool_results),
         }
         planner_prompt = (
             "Return strict JSON object with keys responses (string[]) and actions (object[]). "
