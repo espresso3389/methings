@@ -75,6 +75,39 @@
         font-weight: 700;
         font-size: 17px;
         letter-spacing: -0.2px;
+        max-width: 180px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .topbar .title-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: none;
+        border: 1px solid transparent;
+        border-radius: var(--radius-sm);
+        padding: 4px 8px;
+        cursor: pointer;
+        color: inherit;
+        font: inherit;
+        transition: background var(--transition), border-color var(--transition), transform 80ms ease;
+      }
+      .topbar .title-btn:hover { background: var(--accent-soft); border-color: var(--border); }
+      .topbar .title-btn:active { transform: scale(0.96); }
+      .topbar .conn-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 18px;
+        height: 18px;
+        padding: 0 5px;
+        border-radius: var(--radius-full);
+        background: var(--accent);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1;
       }
       .icon-btn {
         width: 38px;
@@ -1659,7 +1692,7 @@
     <!-- ===== Chat Page ===== -->
     <div id="chatPage" class="page active">
       <div class="topbar">
-        <div class="title">me.things</div>
+        <button class="title-btn" id="topbarDeviceName" title="Device info"><span class="title" id="topbarDeviceLabel">me.things</span><span class="conn-badge" id="topbarConnCount" style="display:none;">0</span></button>
         <div style="margin-left:auto; display:flex; align-items:center; gap:8px;">
           <button class="session-chip" id="sessionChip" title="Session menu" aria-label="Session menu">default</button>
           <button class="icon-btn" id="chatSearchBtn" title="Search messages" aria-label="Search messages"></button>
@@ -2286,6 +2319,34 @@
         </div>
         <div class="muted" id="meMePeersSummary" style="margin-top:8px;">Loading...</div>
         <div id="meMePeersList" style="margin-top:10px; display:grid; gap:8px; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:120px; flex:1 1 auto;"></div>
+      </div>
+    </div>
+
+    <!-- Device Info Modal (topbar) -->
+    <div class="modal" id="deviceInfoModal" role="dialog" aria-modal="true" aria-labelledby="deviceInfoModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="me_me" style="max-height:calc(100vh - 40px); display:flex; flex-direction:column; overflow:hidden;">
+        <div class="card-header">
+          <div class="card-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
+          <div>
+            <div class="card-title" id="deviceInfoModalTitle" style="margin-bottom:0;">Device Info</div>
+            <div class="muted" style="font-size:12px;" id="deviceInfoSubtitle">Loading...</div>
+          </div>
+          <button class="icon-btn secondary" id="deviceInfoModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div id="deviceInfoSelf" style="margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:10px; background:rgba(255,255,255,0.02);">
+          <div class="muted">Loading device info...</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
+          <div style="font-weight:600; font-size:14px;">Connected Devices</div>
+          <button class="btn" id="deviceInfoRefreshBtn" style="margin-left:auto;">Refresh</button>
+        </div>
+        <div id="deviceInfoConnList" style="margin-top:8px; display:grid; gap:8px; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:60px; flex:1 1 auto;">
+          <div class="muted">Loading...</div>
+        </div>
+        <div style="font-weight:600; font-size:14px; margin-top:12px;">Discovered Nearby</div>
+        <div id="deviceInfoDiscList" style="margin-top:8px; display:grid; gap:8px; overflow-y:auto; -webkit-overflow-scrolling:touch; max-height:200px;">
+          <div class="muted">Loading...</div>
+        </div>
       </div>
     </div>
 
@@ -7148,6 +7209,16 @@
       const meMePeersModal = $("meMePeersModal");
       const meMePeersModalClose = $("meMePeersModalClose");
       const meMePeersRefreshBtn = $("meMePeersRefreshBtn");
+      const topbarDeviceName = $("topbarDeviceName");
+      const topbarDeviceLabel = $("topbarDeviceLabel");
+      const topbarConnCount = $("topbarConnCount");
+      const deviceInfoModal = $("deviceInfoModal");
+      const deviceInfoModalClose = $("deviceInfoModalClose");
+      const deviceInfoRefreshBtn = $("deviceInfoRefreshBtn");
+      const deviceInfoSubtitle = $("deviceInfoSubtitle");
+      const deviceInfoSelf = $("deviceInfoSelf");
+      const deviceInfoConnList = $("deviceInfoConnList");
+      const deviceInfoDiscList = $("deviceInfoDiscList");
       const meMePeersSummary = $("meMePeersSummary");
       const meMePeersList = $("meMePeersList");
       const meMeDeviceName = $("meMeDeviceName");
@@ -8863,6 +8934,13 @@
       wireSimpleModal(permApprovalsModal, openPermApprovalsModalBtn, permApprovalsModalClose);
       wireSimpleModal(meMeSettingsModal, openMeMeSettingsModalBtn, meMeSettingsModalClose);
       wireSimpleModal(meMePeersModal, openMeMePeersModalBtn, meMePeersModalClose);
+      wireSimpleModal(deviceInfoModal, topbarDeviceName, deviceInfoModalClose);
+      topbarDeviceName.addEventListener("click", async () => {
+        await refreshDeviceInfoModal();
+      });
+      deviceInfoRefreshBtn.addEventListener("click", async () => {
+        await refreshDeviceInfoModal();
+      });
       openPermApprovalsModalBtn.addEventListener("click", async () => {
         await refreshPermApprovals();
       });
@@ -9020,6 +9098,13 @@
             "discovered " + discovered,
           ];
           meMeStatus.textContent = parts.join(" \u00b7 ");
+          topbarDeviceLabel.textContent = name;
+          if (connected > 0) {
+            topbarConnCount.textContent = String(connected);
+            topbarConnCount.style.display = "";
+          } else {
+            topbarConnCount.style.display = "none";
+          }
         } catch (_) {
           meMeStatus.textContent = "me.me status unavailable";
         }
@@ -9081,6 +9166,74 @@
           showToast("Failed to load connected devices", 1800);
         } finally {
           meMePeersRefreshBtn.disabled = false;
+        }
+      }
+
+      async function refreshDeviceInfoModal() {
+        try {
+          deviceInfoRefreshBtn.disabled = true;
+          deviceInfoSelf.innerHTML = "<div class='muted'>Loading...</div>";
+          deviceInfoConnList.innerHTML = "<div class='muted'>Loading...</div>";
+          deviceInfoDiscList.innerHTML = "<div class='muted'>Loading...</div>";
+          const res = await fetch(API + "/me/me/status", { cache: "no-store" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(String(data.error || "status_failed"));
+          const self = (data && data.self) || {};
+          const selfName = String(self.device_name || "device");
+          const selfId = String(self.device_id || "");
+          const allowDisc = !!self.allow_discovery;
+          deviceInfoSubtitle.textContent = selfName;
+          deviceInfoSelf.innerHTML =
+            "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(selfName) + "</div>" +
+            "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(selfId) + "</div>" +
+            "<div class='muted' style='margin-top:2px;'>discovery " + (allowDisc ? "on" : "off") + "</div>";
+          const connections = Array.isArray(data.connections) ? data.connections : [];
+          if (connections.length <= 0) {
+            deviceInfoConnList.innerHTML = "<div class='muted'>No active connections</div>";
+          } else {
+            deviceInfoConnList.innerHTML = "";
+            connections.forEach((conn) => {
+              const methodIcons = { wifi: "\uD83D\uDCF6", ble: "\u26A1", relay: "\u2601\uFE0F" };
+              const item = document.createElement("div");
+              item.style.cssText = "border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,0.02);";
+              const peerName = String(conn.peer_device_name || conn.peer_device_id || "unknown");
+              const method = String(conn.method || "auto");
+              const state = String(conn.state || "unknown");
+              const connectedAt = formatEpochLocal(conn.connected_at);
+              const icon = methodIcons[method] || "";
+              item.innerHTML =
+                "<div style='font-weight:600; word-break:break-word;'>" + (icon ? icon + " " : "") + escapeHtml(peerName) + "</div>" +
+                "<div class='muted' style='margin-top:2px;'>method " + escapeHtml(method) + " \u00b7 state <span style='color:" + (state === "connected" ? "var(--green)" : "var(--ink-secondary)") + ";'>" + escapeHtml(state) + "</span></div>" +
+                "<div class='muted' style='margin-top:2px;'>connected " + escapeHtml(connectedAt) + "</div>";
+              deviceInfoConnList.appendChild(item);
+            });
+          }
+          const discovered = Array.isArray(data.discovered) ? data.discovered : [];
+          if (discovered.length <= 0) {
+            deviceInfoDiscList.innerHTML = "<div class='muted'>No nearby devices discovered</div>";
+          } else {
+            deviceInfoDiscList.innerHTML = "";
+            discovered.forEach((dev) => {
+              const methodIcons = { wifi: "\uD83D\uDCF6", ble: "\u26A1", relay: "\u2601\uFE0F" };
+              const item = document.createElement("div");
+              item.style.cssText = "border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,0.02);";
+              const devName = String(dev.device_name || dev.device_id || "unknown");
+              const methods = Array.isArray(dev.methods) ? dev.methods : [];
+              const methodStr = methods.length > 0 ? methods.join(", ") : "auto";
+              const icons = methods.map((m) => methodIcons[m] || "").filter(Boolean).join("");
+              const lastSeen = formatEpochLocal(dev.last_seen_at);
+              item.innerHTML =
+                "<div style='font-weight:600; word-break:break-word;'>" + (icons ? icons + " " : "") + escapeHtml(devName) + "</div>" +
+                "<div class='muted' style='margin-top:2px;'>methods " + escapeHtml(methodStr) + "</div>" +
+                "<div class='muted' style='margin-top:2px;'>last seen " + escapeHtml(lastSeen) + "</div>";
+              deviceInfoDiscList.appendChild(item);
+            });
+          }
+        } catch (_) {
+          deviceInfoSelf.innerHTML = "<div class='muted'>Failed to load device info</div>";
+          showToast("Failed to load device info", 1800);
+        } finally {
+          deviceInfoRefreshBtn.disabled = false;
         }
       }
 
