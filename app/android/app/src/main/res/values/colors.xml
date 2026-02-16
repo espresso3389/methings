@@ -5,5 +5,12 @@
     <color name="methings_navigation_bar">#000000</color>
     <!-- Main background color matching the CSS bg variable. -->
     <color name="methings_bg">#0E0E10</color>
+    <!-- Dialog / surface colors matching the Web UI design system. -->
+    <color name="methings_surface">#24242A</color>
+    <color name="methings_border">#2E2E36</color>
+    <color name="methings_accent">#6366F1</color>
+    <color name="methings_accent_hover">#818CF8</color>
+    <color name="methings_text">#E4E4E7</color>
+    <color name="methings_text_muted">#A1A1AA</color>
 </resources>
 

@@ -8,5 +8,21 @@
         <item name="android:windowBackground">@color/methings_bg</item>
         <!-- White status bar icons/text on a dark background. -->
         <item name="android:windowLightStatusBar">false</item>
+        <!-- AlertDialog style matching the Web UI dark palette. -->
+        <item name="alertDialogTheme">@style/Theme.Methings.AlertDialog</item>
+    </style>
+
+    <style name="Theme.Methings.AlertDialog" parent="Theme.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@color/methings_surface</item>
+        <item name="android:colorBackground">@color/methings_surface</item>
+        <item name="android:textColorPrimary">@color/methings_text</item>
+        <item name="android:textColorSecondary">@color/methings_text_muted</item>
+        <item name="colorAccent">@color/methings_accent</item>
+        <item name="buttonBarPositiveButtonStyle">@style/Theme.Methings.AlertDialog.Button</item>
+        <item name="buttonBarNegativeButtonStyle">@style/Theme.Methings.AlertDialog.Button</item>
+    </style>
+
+    <style name="Theme.Methings.AlertDialog.Button" parent="Widget.AppCompat.Button.ButtonBar.AlertDialog">
+        <item name="android:textColor">@color/methings_accent</item>
     </style>
 </resources>

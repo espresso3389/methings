@@ -8,5 +8,7 @@
         <!-- Android 12+ splash screen: dark background, no visible icon. -->
         <item name="android:windowSplashScreenBackground">@color/methings_bg</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon</item>
+        <!-- AlertDialog style matching the Web UI dark palette. -->
+        <item name="alertDialogTheme">@style/Theme.Methings.AlertDialog</item>
     </style>
 </resources>
