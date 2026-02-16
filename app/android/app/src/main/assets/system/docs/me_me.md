@@ -83,3 +83,6 @@ Agent alert integration:
   - `me.me.relay.slack.event` (normal, `turn_end`) when relay payload has `normalized.kind=slack.event`
   - `me.me.message.received` (high, `turn_end`)
 - Event payload includes short `summary` text for timeline visibility (provider-specific summary for Slack/Discord relay events).
+
+Integration onboarding:
+- For agent-assisted provider onboarding (Slack/Discord), see `relay_integrations.md`.
