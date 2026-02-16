@@ -8341,10 +8341,14 @@ class LocalHttpServer(
 
     private fun handleMeMeRelayIngest(payload: JSONObject): Response {
         val source = payload.optString("source", "relay").trim().ifBlank { "relay" }
+        val alert = buildRelayAlert(payload, source = source)
         val event = JSONObject()
             .put("received_at", System.currentTimeMillis())
             .put("source", source)
             .put("event_id", payload.optString("event_id", "").trim())
+            .put("provider", alert.optString("provider", source))
+            .put("kind", alert.optString("kind", "generic.event"))
+            .put("summary", alert.optString("summary", "Relay event received from $source"))
             .put("payload", payload)
         synchronized(meMeRelayEventsLock) {
             meMeRelayEvents.add(event)
@@ -8363,16 +8367,18 @@ class LocalHttpServer(
             meMeIngested = resp.status == Response.Status.OK
         }
         notifyBrainEvent(
-            name = "me.me.relay.event.received",
+            name = alert.optString("name", "me.me.relay.event.received"),
             payload = JSONObject()
                 .put("session_id", "default")
                 .put("source", "me_me.relay")
                 .put("event_id", payload.optString("event_id", "").trim())
                 .put("relay_source", source)
-                .put("summary", "Relay event received from $source"),
-            priority = "normal",
+                .put("relay_provider", alert.optString("provider", source))
+                .put("relay_kind", alert.optString("kind", "generic.event"))
+                .put("summary", alert.optString("summary", "Relay event received from $source")),
+            priority = alert.optString("priority", "normal"),
             interruptPolicy = "turn_end",
-            coalesceKey = "me_me_relay_received",
+            coalesceKey = alert.optString("coalesce_key", "me_me_relay_received"),
             coalesceWindowMs = 5_000L
         )
         return jsonResponse(
@@ -8381,6 +8387,81 @@ class LocalHttpServer(
                 .put("stored", true)
                 .put("me_me_data_ingested", meMeIngested)
         )
+    }
+
+    private fun buildRelayAlert(ingestPayload: JSONObject, source: String): JSONObject {
+        val topSource = source.trim().ifBlank { "relay" }
+        val eventPayload = ingestPayload.optJSONObject("payload")
+        val provider = eventPayload?.optString("provider", topSource)?.trim().orEmpty().ifBlank { topSource }
+        val normalized = eventPayload?.optJSONObject("normalized")
+        val kind = normalized?.optString("kind", "")?.trim().orEmpty().ifBlank { "generic.event" }
+        val eventId = ingestPayload.optString("event_id", "").trim()
+        if (kind == "discord.message") {
+            val author = normalized?.optJSONObject("author")
+            val authorName = author?.optString("global_name", "")?.trim().orEmpty()
+                .ifBlank { author?.optString("username", "")?.trim().orEmpty() }
+                .ifBlank { author?.optString("id", "")?.trim().orEmpty() }
+                .ifBlank { "unknown" }
+            val authorId = author?.optString("id", "")?.trim().orEmpty()
+            val channelId = normalized?.optString("channel_id", "")?.trim().orEmpty()
+            val content = normalized?.optString("content", "")?.trim().orEmpty()
+            val summary = if (content.isBlank()) {
+                "Discord message from $authorName"
+            } else {
+                "Discord: $authorName - ${truncateRelaySummary(content, 100)}"
+            }
+            val coalesce = "me_me_relay_discord_${channelId.ifBlank { "na" }}_${authorId.ifBlank { "na" }}"
+            return JSONObject()
+                .put("name", "me.me.relay.discord.message")
+                .put("provider", provider)
+                .put("kind", kind)
+                .put("summary", summary)
+                .put("priority", "normal")
+                .put("coalesce_key", coalesce)
+                .put("event_id", eventId)
+        }
+        if (kind == "slack.event") {
+            val userId = normalized?.optString("user_id", "")?.trim().orEmpty().ifBlank { "unknown" }
+            val channelId = normalized?.optString("channel_id", "")?.trim().orEmpty()
+            val eventType = normalized?.optString("event_type", "")?.trim().orEmpty().ifBlank { "event" }
+            val text = normalized?.optString("text", "")?.trim().orEmpty()
+            val summary = if (text.isBlank()) {
+                "Slack $eventType from $userId"
+            } else {
+                "Slack $eventType: ${truncateRelaySummary(text, 100)}"
+            }
+            val coalesce = "me_me_relay_slack_${channelId.ifBlank { "na" }}_${eventType}"
+            return JSONObject()
+                .put("name", "me.me.relay.slack.event")
+                .put("provider", provider)
+                .put("kind", kind)
+                .put("summary", summary)
+                .put("priority", "normal")
+                .put("coalesce_key", coalesce)
+                .put("event_id", eventId)
+        }
+        val raw = normalized?.optJSONObject("raw")
+        val rawEvent = raw?.optString("event", "")?.trim().orEmpty()
+        val rawFromDevice = raw?.optString("from_device_id", "")?.trim().orEmpty()
+        val summary = when {
+            rawEvent.isNotBlank() && rawFromDevice.isNotBlank() -> "Relay $rawEvent from $rawFromDevice"
+            rawEvent.isNotBlank() -> "Relay $rawEvent received"
+            else -> "Relay event received from $topSource"
+        }
+        return JSONObject()
+            .put("name", "me.me.relay.event.received")
+            .put("provider", provider)
+            .put("kind", kind)
+            .put("summary", summary)
+            .put("priority", "normal")
+            .put("coalesce_key", "me_me_relay_received")
+            .put("event_id", eventId)
+    }
+
+    private fun truncateRelaySummary(text: String, maxChars: Int): String {
+        val compact = text.replace("\\s+".toRegex(), " ").trim()
+        if (compact.length <= maxChars) return compact
+        return compact.substring(0, maxChars.coerceAtLeast(1)) + "..."
     }
 
     private fun handleMeMeRelayEventsPull(payload: JSONObject): Response {

@@ -443,6 +443,7 @@ Notes:
 - Relay mode foundation is available via `/me/me/relay/*`:
   - Caller side: `register` + `notify`.
   - Receiver side: push adapter should post to `/me/me/relay/ingest`, then consumer reads via `events/pull`.
+  - `events/pull` items include top-level `provider`, `kind`, and `summary` fields for quick routing/display.
   - Admin secret is stored in encrypted credential store, not returned from config/status APIs.
 - `/me/me/accept` attempts auto-confirm to initiator over LAN; include `source_host`/`source_port` when discovery info is unavailable.
 - me.me runtime emits agent alert events through internal `POST /brain/inbox/event` with optional controls:

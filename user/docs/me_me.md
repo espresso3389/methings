@@ -79,5 +79,7 @@ Agent alert integration:
 - Current forwarded events:
   - `me.me.device.discovered` (low, `never`, coalesced per device)
   - `me.me.relay.event.received` (normal, `turn_end`)
+  - `me.me.relay.discord.message` (normal, `turn_end`) when relay payload has `normalized.kind=discord.message`
+  - `me.me.relay.slack.event` (normal, `turn_end`) when relay payload has `normalized.kind=slack.event`
   - `me.me.message.received` (high, `turn_end`)
-- Event payload includes short `summary` text for timeline visibility.
+- Event payload includes short `summary` text for timeline visibility (provider-specific summary for Slack/Discord relay events).
