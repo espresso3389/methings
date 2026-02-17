@@ -7948,6 +7948,7 @@ class LocalHttpServer(
             }
             val row = JSONObject(src.toString())
             val did = row.optString("device_id", "").trim()
+            if (did == cfg.deviceId) continue
             val dname = row.optString("device_name", "").trim()
             if (did.isNotBlank() && dname.isBlank()) {
                 val merged = connNameByDeviceId[did].orEmpty().trim()
@@ -7967,7 +7968,7 @@ class LocalHttpServer(
                 .put("status", "ok")
                 .put("self", self)
                 .put("connected_count", connections.length())
-                .put("discovered_count", runtime.optInt("discovered_count", 0))
+                .put("discovered_count", discovered.length())
                 .put("pending_request_count", pending.length())
                 .put("pending_requests", pending)
                 .put("connections", connections)
@@ -7984,12 +7985,13 @@ class LocalHttpServer(
         val cfg = currentMeMeConfig()
         val runtime = meMeDiscovery.statusJson(currentMeMeDiscoveryConfig(cfg))
         val discovered = runtime.optJSONArray("discovered")
+        val selfId = cfg.deviceId
         val peerIds = LinkedHashSet<String>()
         meMeConnections.keys.forEach { peerIds += it }
         for (i in 0 until (discovered?.length() ?: 0)) {
             val obj = discovered?.optJSONObject(i) ?: continue
             val did = obj.optString("device_id", "").trim()
-            if (did.isNotBlank()) peerIds += did
+            if (did.isNotBlank() && did != selfId) peerIds += did
         }
         val routes = JSONArray()
         peerIds.forEach { did ->
@@ -8051,14 +8053,18 @@ class LocalHttpServer(
     private fun handleMeMeScan(payload: JSONObject): Response {
         meMeLastScanAtMs = System.currentTimeMillis()
         val timeoutMs = payload.optLong("timeout_ms", 3000L).coerceIn(500L, 30_000L)
-        val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(), timeoutMs)
+        val cfg = currentMeMeConfig()
+        val summary = meMeDiscovery.scan(currentMeMeDiscoveryConfig(cfg), timeoutMs)
         handleMeMePresenceUpdates(summary.discovered, source = "me_me.scan")
+        // Defense-in-depth: filter self even though the discovery layer should already exclude it.
+        val selfId = cfg.deviceId
+        val discovered = summary.discovered.filter { it.optString("device_id", "") != selfId }
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
                 .put("started_at", summary.startedAt)
                 .put("timeout_ms", summary.timeoutMs)
-                .put("discovered", org.json.JSONArray(summary.discovered))
+                .put("discovered", org.json.JSONArray(discovered))
                 .put("warnings", org.json.JSONArray(summary.warnings))
         )
     }
