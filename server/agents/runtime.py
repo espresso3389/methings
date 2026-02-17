@@ -63,6 +63,8 @@ class BrainRuntime:
         self._active_identity: str = ""
         # Cache user-root policy docs; re-read when file changes on disk (mtime/size).
         self._user_root_doc_cache: Dict[str, Dict[str, Any]] = {}
+        # Cache system-area docs (read-only, don't change during a session).
+        self._sys_doc_cache: Dict[str, Dict[str, Any]] = {}
         # permission_id -> state for resuming a paused chat item once the user approves/denies.
         self._awaiting_permissions: Dict[str, Dict[str, Any]] = {}
         # Best-effort model hint for per-model runtime tuning.
@@ -201,28 +203,51 @@ class BrainRuntime:
         self._user_root_doc_cache[filename] = entry
         return entry
 
+    def _read_sys_doc(self, rel_path: str, *, max_chars: int = 30000) -> Dict[str, Any]:
+        """Read a system-area doc with session-level caching (system files don't change during a session)."""
+        cached = self._sys_doc_cache.get(rel_path)
+        if cached is not None:
+            return cached
+        result = self._sys_read_file(rel_path, max_chars)
+        if result.get("status") == "ok":
+            entry: Dict[str, Any] = {"exists": True, "content": result.get("content", "")}
+        else:
+            entry = {"exists": False, "content": ""}
+        self._sys_doc_cache[rel_path] = entry
+        return entry
+
     def _user_root_policy_blob(self) -> str:
         """
-        System-prompt appendix containing user-root policy docs.
-        These are injected automatically and reloaded if updated on disk.
+        System-prompt appendix containing policy docs.
+        Reads system docs (read-only, always current with app version) first,
+        then user-editable docs for custom rules/preferences.
         """
-        agents = self._read_user_root_doc("AGENTS.md")
-        tools = self._read_user_root_doc("TOOLS.md")
-
         parts: List[str] = []
-        parts.append(
-            "User-root docs (auto-injected; reloaded if changed on disk).\n"
-            "Do NOT call filesystem tools to read `AGENTS.md`/`TOOLS.md` unless the user explicitly asks.\n"
-        )
-        for name, doc in (("AGENTS.md", agents), ("TOOLS.md", tools)):
-            if not doc.get("exists"):
-                parts.append(f"## {name}\n(not found)\n")
-                continue
-            parts.append(
-                f"## {name} (mtime_ns={doc.get('mtime_ns')}, size={doc.get('size')}, sha256={doc.get('sha256')})\n"
-                + str(doc.get("content") or "").rstrip()
-                + "\n"
-            )
+
+        # System rules (read-only, always current with app version)
+        for name in ("AGENTS.md", "TOOLS.md"):
+            sys_doc = self._read_sys_doc(f"docs/{name}")
+            if sys_doc.get("exists") and sys_doc.get("content"):
+                parts.append(f"## System {name}\n{sys_doc['content'].rstrip()}\n")
+
+        # User rules (editable, persist across upgrades)
+        has_user = False
+        for name in ("AGENTS.md", "TOOLS.md"):
+            doc = self._read_user_root_doc(name)
+            if doc.get("exists"):
+                content = str(doc.get("content") or "").strip()
+                if content:
+                    if not has_user:
+                        parts.append(
+                            "\nUser-root docs (auto-injected; reloaded if changed on disk).\n"
+                            "The user can edit these to add custom rules/preferences.\n"
+                        )
+                        has_user = True
+                    parts.append(
+                        f"## User {name} (sha256={doc.get('sha256')})\n"
+                        + content + "\n"
+                    )
+
         return "\n".join(parts).strip()
 
     def _default_config(self) -> Dict:

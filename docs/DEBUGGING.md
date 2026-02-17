@@ -281,7 +281,8 @@ adb -s <serial> shell run-as jp.espresso3389.methings ls -la files/user
 
 Important files:
 - `files/protected/app.db`: audit + chat history + settings (local debug database)
-- `files/user/AGENTS.md`, `files/user/TOOLS.md`: user-root agent docs shipped/reset by the app
+- `files/system/docs/AGENTS.md`, `files/system/docs/TOOLS.md`: system agent docs (read-only, always current with app version)
+- `files/user/AGENTS.md`, `files/user/TOOLS.md`: user-editable agent rules/preferences (seeded on first install, never force-overwritten after v3 migration)
 
 ## Common Failure Patterns
 

@@ -247,43 +247,51 @@ class AssetExtractor(private val context: Context) {
     private fun cleanupLegacyUserBundledFiles(userDir: File) {
         // Known filenames that were previously bundled under user/docs, user/examples, user/lib.
         // Remove them so the agent isn't confused by stale copies alongside the new $sys/ prefix.
-        // Bump marker version when TOOLS.md/AGENTS.md content changes require re-migration.
         val markerFile = File(userDir, ".system_docs_migrated")
-        val currentVersion = "2"
-        if (markerFile.exists() && markerFile.readText().trim() == currentVersion) return
+        val currentVersion = "3"
+        val existingVersion = if (markerFile.exists()) markerFile.readText().trim() else ""
+        if (existingVersion == currentVersion) return
 
         try {
-            val legacyDocs = File(userDir, "docs")
-            if (legacyDocs.isDirectory) {
-                val bundledDocNames = setOf(
-                    "api_reference.md", "camera.md", "uvc.md", "usb.md", "ble.md",
-                    "tts.md", "stt.md", "sensors.md", "viewer.md",
-                    "vision.md", "permissions.md", "file_endpoints.md", "brain_journal.md",
-                    "vault.md", "cloud_broker.md", "health.md", "ssh.md", "sshd.md",
-                    "me_me.md", "me_sync.md", "me_sync_v3.md",
-                    "recording.md", "media_stream.md", "relay_integrations.md"
-                )
-                for (name in bundledDocNames) {
-                    File(legacyDocs, name).takeIf { it.exists() }?.delete()
+            // v1/v2 legacy cleanup: remove old bundled doc/example/lib files from user dir.
+            if (existingVersion < "2") {
+                val legacyDocs = File(userDir, "docs")
+                if (legacyDocs.isDirectory) {
+                    val bundledDocNames = setOf(
+                        "api_reference.md", "camera.md", "uvc.md", "usb.md", "ble.md",
+                        "tts.md", "stt.md", "sensors.md", "viewer.md",
+                        "vision.md", "permissions.md", "file_endpoints.md", "brain_journal.md",
+                        "vault.md", "cloud_broker.md", "health.md", "ssh.md", "sshd.md",
+                        "me_me.md", "me_sync.md", "me_sync_v3.md",
+                        "recording.md", "media_stream.md", "relay_integrations.md"
+                    )
+                    for (name in bundledDocNames) {
+                        File(legacyDocs, name).takeIf { it.exists() }?.delete()
+                    }
+                    // Remove docs dir if now empty (agent workspace will be recreated above).
+                    if (legacyDocs.list()?.isEmpty() == true) {
+                        legacyDocs.delete()
+                    }
                 }
-                // Remove docs dir if now empty (agent workspace will be recreated above).
-                if (legacyDocs.list()?.isEmpty() == true) {
-                    legacyDocs.delete()
+
+                val legacyExamples = File(userDir, "examples")
+                if (legacyExamples.isDirectory) {
+                    deleteRecursive(legacyExamples)
+                }
+
+                val legacyLib = File(userDir, "lib")
+                if (legacyLib.isDirectory) {
+                    deleteRecursive(legacyLib)
                 }
             }
 
-            val legacyExamples = File(userDir, "examples")
-            if (legacyExamples.isDirectory) {
-                deleteRecursive(legacyExamples)
+            // v3 migration: AGENTS.md/TOOLS.md are now split into system (read-only) + user
+            // (editable). Reset user copies one final time to deliver the lightweight templates.
+            // After v3, user AGENTS.md/TOOLS.md are never force-overwritten again — system
+            // content lives in $sys/docs/ and is always current via extractSystemAssets().
+            if (existingVersion < "3") {
+                resetUserDefaults()
             }
-
-            val legacyLib = File(userDir, "lib")
-            if (legacyLib.isDirectory) {
-                deleteRecursive(legacyLib)
-            }
-
-            // Force-refresh AGENTS.md/TOOLS.md so old docs/ references become $sys/ paths.
-            resetUserDefaults()
 
             markerFile.writeText(currentVersion)
         } catch (ex: Exception) {
