@@ -227,21 +227,15 @@ class AssetExtractor(private val context: Context) {
             targetDir.mkdirs()
 
             // Always overwrite system docs/examples/lib from APK assets on every app start,
-            // so they always match the current app version.
-            if (assetDirExists("system/docs")) {
-                val docsDir = File(targetDir, "docs")
-                docsDir.mkdirs()
-                copyAssetDirOverwrite("system/docs", docsDir)
-            }
-            if (assetDirExists("system/examples")) {
-                val examplesDir = File(targetDir, "examples")
-                examplesDir.mkdirs()
-                copyAssetDirOverwrite("system/examples", examplesDir)
-            }
-            if (assetDirExists("system/lib")) {
-                val libDir = File(targetDir, "lib")
-                libDir.mkdirs()
-                copyAssetDirOverwrite("system/lib", libDir)
+            // so they always match the current app version.  Delete-then-copy ensures stale
+            // files from older versions are purged.
+            for (sub in listOf("docs", "examples", "lib")) {
+                if (assetDirExists("system/$sub")) {
+                    val subDir = File(targetDir, sub)
+                    subDir.deleteRecursively()
+                    subDir.mkdirs()
+                    copyAssetDirOverwrite("system/$sub", subDir)
+                }
             }
             targetDir
         } catch (ex: Exception) {
@@ -253,8 +247,10 @@ class AssetExtractor(private val context: Context) {
     private fun cleanupLegacyUserBundledFiles(userDir: File) {
         // Known filenames that were previously bundled under user/docs, user/examples, user/lib.
         // Remove them so the agent isn't confused by stale copies alongside the new $sys/ prefix.
+        // Bump marker version when TOOLS.md/AGENTS.md content changes require re-migration.
         val markerFile = File(userDir, ".system_docs_migrated")
-        if (markerFile.exists()) return
+        val currentVersion = "2"
+        if (markerFile.exists() && markerFile.readText().trim() == currentVersion) return
 
         try {
             val legacyDocs = File(userDir, "docs")
@@ -264,7 +260,8 @@ class AssetExtractor(private val context: Context) {
                     "tts.md", "stt.md", "sensors.md", "viewer.md",
                     "vision.md", "permissions.md", "file_endpoints.md", "brain_journal.md",
                     "vault.md", "cloud_broker.md", "health.md", "ssh.md", "sshd.md",
-                    "me_me.md", "me_sync.md", "me_sync_v3.md"
+                    "me_me.md", "me_sync.md", "me_sync_v3.md",
+                    "recording.md", "media_stream.md", "relay_integrations.md"
                 )
                 for (name in bundledDocNames) {
                     File(legacyDocs, name).takeIf { it.exists() }?.delete()
@@ -288,7 +285,7 @@ class AssetExtractor(private val context: Context) {
             // Force-refresh AGENTS.md/TOOLS.md so old docs/ references become $sys/ paths.
             resetUserDefaults()
 
-            markerFile.writeText("1")
+            markerFile.writeText(currentVersion)
         } catch (ex: Exception) {
             Log.w(TAG, "Legacy cleanup incomplete", ex)
         }
