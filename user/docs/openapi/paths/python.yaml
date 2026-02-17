@@ -1,0 +1,90 @@
+pythonStatus:
+  get:
+    operationId: getPythonStatus
+    summary: Get Python runtime status
+    tags: [Python]
+    responses:
+      '200':
+        description: Current Python runtime status.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, python]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                python:
+                  type: string
+                  enum: [ok, offline, starting, stopping]
+                  description: Status of the Python runtime.
+            example:
+              status: ok
+              python: ok
+
+pythonRestart:
+  post:
+    operationId: postPythonRestart
+    summary: Restart the Python runtime
+    tags: [Python]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Restart initiated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+            example:
+              status: ok
+
+pythonEval:
+  post:
+    operationId: postPythonEval
+    summary: Evaluate Python code
+    tags: [Python]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [code]
+            properties:
+              code:
+                type: string
+                description: Python code to evaluate.
+          example:
+            code: "print('hello')"
+    responses:
+      '200':
+        description: Evaluation result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                stdout:
+                  type: string
+                stderr:
+                  type: string
+      '500':
+        description: Evaluation error.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'

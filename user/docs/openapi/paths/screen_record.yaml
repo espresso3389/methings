@@ -1,0 +1,285 @@
+screenRecordStatus:
+  get:
+    operationId: getScreenRecordStatus
+    summary: Get screen recording status
+    tags: [ScreenRecord]
+    x-permission:
+      tool: device.screen
+      capability: screen_recording
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current screen recording state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                recording:
+                  type: boolean
+                recording_state:
+                  type: string
+                  enum: [idle, recording]
+                recording_duration_ms:
+                  type: integer
+                  nullable: true
+                recording_codec:
+                  type: string
+                  nullable: true
+                last_error:
+                  type: string
+                  nullable: true
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+screenRecordStart:
+  post:
+    operationId: postScreenRecordStart
+    summary: Start screen recording
+    description: >
+      Records H.265 (HEVC) or H.264 in .mp4 container. Requires system
+      MediaProjection consent dialog each time (scope: once).
+    tags: [ScreenRecord]
+    x-permission:
+      tool: device.screen
+      capability: screen_recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  path:
+                    type: string
+                    description: User-root relative output path.
+                  max_duration_s:
+                    type: integer
+                    description: Maximum recording duration in seconds.
+                  resolution:
+                    type: string
+                    enum: ["720p", "1080p"]
+                    default: "720p"
+                    description: Target resolution.
+                  bitrate:
+                    type: integer
+                    minimum: 1000000
+                    maximum: 20000000
+                    default: 6000000
+                    description: Video bitrate in bps.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Recording started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, state, rel_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                state:
+                  type: string
+                  const: recording
+                rel_path:
+                  type: string
+                resolution:
+                  type: string
+                codec:
+                  type: string
+                  enum: [h265, h264]
+                bitrate:
+                  type: integer
+                max_duration_s:
+                  type: integer
+                container:
+                  type: string
+                  const: mp4
+            example:
+              status: ok
+              state: recording
+              rel_path: "recordings/screen/screen_1700000000000.mp4"
+              resolution: "1280x720"
+              codec: h265
+              bitrate: 6000000
+              max_duration_s: 300
+              container: mp4
+      '500':
+        description: User denied MediaProjection consent.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            example:
+              status: error
+              error: projection_denied
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+screenRecordStop:
+  post:
+    operationId: postScreenRecordStop
+    summary: Stop screen recording
+    tags: [ScreenRecord]
+    x-permission:
+      tool: device.screen
+      capability: screen_recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Recording stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, stopped, state]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                stopped:
+                  type: boolean
+                  const: true
+                state:
+                  type: string
+                  const: idle
+                rel_path:
+                  type: string
+                duration_ms:
+                  type: integer
+                size_bytes:
+                  type: integer
+                codec:
+                  type: string
+            example:
+              status: ok
+              stopped: true
+              state: idle
+              rel_path: "recordings/screen/screen_1700000000000.mp4"
+              duration_ms: 15200
+              size_bytes: 5120000
+              codec: h265
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+screenRecordConfigGet:
+  get:
+    operationId: getScreenRecordConfig
+    summary: Get screen recording configuration
+    tags: [ScreenRecord]
+    x-permission:
+      tool: device.screen
+      capability: screen_recording
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current screen recording config.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                resolution:
+                  type: string
+                codec:
+                  type: string
+                bitrate:
+                  type: integer
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+screenRecordConfigSet:
+  post:
+    operationId: postScreenRecordConfig
+    summary: Set screen recording configuration
+    tags: [ScreenRecord]
+    x-permission:
+      tool: device.screen
+      capability: screen_recording
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  resolution:
+                    type: string
+                  codec:
+                    type: string
+                  bitrate:
+                    type: integer
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Config updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

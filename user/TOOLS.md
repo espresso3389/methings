@@ -2,7 +2,7 @@
 
 This file is a quick reference for the agent's tools, invocation patterns, and chat rendering rules.
 
-For the complete device API action map, see `$sys/docs/api_reference.md` (read via `read_file("$sys/docs/api_reference.md")`).
+For the complete device API reference, see the OpenAPI spec at `$sys/docs/openapi/openapi.yaml`. For agent tool conventions, see `$sys/docs/agent_tools.md`.
 
 ## Filesystem Tools (User Root Only)
 
@@ -51,7 +51,7 @@ Notes:
 
 Used for allowlisted device control-plane actions. Some actions require user approval and will return `permission_required`.
 
-The full action map (88 actions across 16 domains) is in `$sys/docs/api_reference.md`.
+The full action map is in the OpenAPI spec at `$sys/docs/openapi/openapi.yaml`.
 
 ## Remote Access via SSH Tunnel
 
@@ -68,7 +68,7 @@ SSH actions through `device_api`:
 - `ssh.scp`: upload/download files via SCP. Payload: `direction`, `host`, `user`, `local_path`, `remote_path`.
 - `ssh.ws.contract`: websocket contract for interactive SSH (`/ws/ssh/interactive`).
 
-Details and examples: `$sys/docs/ssh.md`
+Details and examples: `$sys/docs/openapi/paths/ssh.yaml` and `$sys/docs/openapi/paths/sshd.yaml`
 
 ## App SSH Shell Commands (Outbound)
 
@@ -103,42 +103,42 @@ Delete key tips:
 
 ## Domain Quickref
 
-For full payload docs, examples, and all actions, see `$sys/docs/api_reference.md` and the domain docs below. Read the relevant `$sys/docs/*.md` before using a domain for the first time.
+For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openapi/paths/*.yaml`. Read the relevant path file before using a domain for the first time.
 
-### Camera — `$sys/docs/camera.md`
+### Camera — `$sys/docs/openapi/paths/camera.yaml`
 - `camera.capture`: take a still photo. Key payload: `lens` (back/front), `path`. Returns `rel_path`.
 - `camera.preview.start/stop`: JPEG preview stream via `/ws/camera/preview`.
 - Do not `pip install` camera bindings; use `device_api`.
 
-### UVC (USB Webcam) — `$sys/docs/uvc.md`
+### UVC (USB Webcam) — `$sys/docs/openapi/paths/uvc.yaml`
 - `uvc.mjpeg.capture`: capture one frame. Key payload: `handle`, `width`, `height`, `fps`, `path`.
 - Requires both in-app `device.usb` permission and Android OS USB permission.
 
 ### Location
 - `location.get`: GPS fix. Key payload: `high_accuracy`, `timeout_ms`.
 
-### Sensors — `$sys/docs/sensors.md`
+### Sensors — `$sys/docs/openapi/paths/sensors.yaml`
 - `sensor.list`: enumerate available sensors.
 - Realtime data via WebSocket `/ws/sensors?sensors=a,g,m&rate_hz=200`.
 
 ### Media Playback
 - `media.audio.play`: play audio file (`path`) or base64 (`audio_b64` + `ext`).
 
-### Audio Recording & Streaming — `$sys/docs/recording.md`
+### Audio Recording & Streaming — `$sys/docs/openapi/paths/audio_record.yaml`
 - `audio.record.start/stop`: record to AAC (.m4a). Returns `rel_path`, `duration_ms`, `size_bytes`.
 - `audio.stream.start/stop`: live PCM (s16le) via `/ws/audio/pcm`.
 - Optional start payload: `path`, `sample_rate`, `channels`, `bitrate`, `max_duration_s`.
 
-### Video Recording & Streaming — `$sys/docs/recording.md`
+### Video Recording & Streaming — `$sys/docs/openapi/paths/video_record.yaml`
 - `video.record.start/stop`: record to H.265/H.264 (.mp4). Key payload: `lens`, `resolution` (720p/1080p/4k).
 - `video.stream.start/stop`: live JPEG or RGBA frames via `/ws/video/frames`.
 - Returns `rel_path`, `duration_ms`, `size_bytes`, `codec`.
 
-### Screen Recording — `$sys/docs/recording.md`
+### Screen Recording — `$sys/docs/openapi/paths/screen_record.yaml`
 - `screenrec.start/stop`: record device screen to .mp4. Requires user consent dialog each time.
 - Optional start payload: `resolution` (720p/1080p), `bitrate`, `max_duration_s`.
 
-### Media Decode Streaming — `$sys/docs/media_stream.md`
+### Media Decode Streaming — `$sys/docs/openapi/paths/media_stream.yaml`
 - `media.stream.audio.start`, `media.stream.video.start`: decode files to PCM/JPEG/RGBA over WebSocket.
 - Returns `stream_id` + `ws_path` (`/ws/media/stream/<stream_id>`).
 
@@ -230,7 +230,7 @@ Large uploads:
 - If total upload bytes exceed ~5MB, `/cloud/request` returns `error=confirm_large_required`.
   Ask the user to confirm, then retry with `confirm_large:true`.
 
-Cloud prefs: see `$sys/docs/api_reference.md` -> Cloud Broker.
+Cloud prefs: see `$sys/docs/openapi/paths/cloud.yaml`.
 
 ### Python Helper
 
@@ -256,22 +256,34 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 
 ## Docs Index
 
-Read the relevant doc when working in that domain (use `read_file("$sys/docs/<name>")`):
-- `$sys/docs/api_reference.md` — agent-facing action map, key endpoints, WebSocket protocols
-- `$sys/docs/camera.md` — CameraX still capture + preview stream
-- `$sys/docs/uvc.md` — UVC MJPEG capture + PTZ
-- `$sys/docs/usb.md` — USB device enumeration + transfers + streaming
-- `$sys/docs/ble.md` — BLE scanning + GATT + events
-- `$sys/docs/tts.md` — Android TextToSpeech
-- `$sys/docs/stt.md` — Android SpeechRecognizer
-- `$sys/docs/sensors.md` — realtime sensor streams via WebSocket
-- `$sys/docs/recording.md` — audio/video/screen recording + live streaming
-- `$sys/docs/media_stream.md` — file-based media decode streaming
-- `$sys/docs/viewer.md` — viewer control API, file info, Marp presentation
-- `$sys/docs/vision.md` — RGBA8888 + TFLite inference
-- `$sys/docs/me_me.md` — device discovery/connection foundation (`me.me`)
-- `$sys/docs/me_sync.md` — export/import transfer flow (`me.sync`)
-- `$sys/docs/permissions.md` — permission scopes and identity
+API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the relevant path file when working in that domain:
+- `$sys/docs/openapi/openapi.yaml` — root spec with all endpoints and tags
+- `$sys/docs/openapi/paths/camera.yaml` — CameraX still capture + preview stream
+- `$sys/docs/openapi/paths/uvc.yaml` — UVC MJPEG capture + PTZ
+- `$sys/docs/openapi/paths/usb.yaml` — USB device enumeration + transfers + streaming
+- `$sys/docs/openapi/paths/ble.yaml` — BLE scanning + GATT + events
+- `$sys/docs/openapi/paths/tts.yaml` — Android TextToSpeech
+- `$sys/docs/openapi/paths/stt.yaml` — Android SpeechRecognizer
+- `$sys/docs/openapi/paths/sensors.yaml` — realtime sensor streams via WebSocket
+- `$sys/docs/openapi/paths/audio_record.yaml` — audio recording + live PCM streaming
+- `$sys/docs/openapi/paths/video_record.yaml` — video recording + live frame streaming
+- `$sys/docs/openapi/paths/screen_record.yaml` — screen recording
+- `$sys/docs/openapi/paths/media_stream.yaml` — file-based media decode streaming
+- `$sys/docs/openapi/paths/vision.yaml` — RGBA8888 + TFLite inference
+- `$sys/docs/openapi/paths/me_me.yaml` — device discovery/connection (`me.me`)
+- `$sys/docs/openapi/paths/me_sync.yaml` — export/import transfer flow (`me.sync`)
+- `$sys/docs/openapi/paths/cloud.yaml` — cloud broker + adapter mode
+- `$sys/docs/openapi/paths/files.yaml` — file upload/download/info
+- `$sys/docs/openapi/paths/ui.yaml` — viewer control, settings navigation
+
+Conceptual guides (under `$sys/docs/`):
+- `$sys/docs/agent_tools.md` — agent tool conventions, Python runtime helpers, chat shortcuts
+- `$sys/docs/permissions.md` — permission scopes, identity model, USB special cases
+- `$sys/docs/viewer.md` — viewer usage guide, Marp presentations, autonomous presentation examples
+- `$sys/docs/me_me.md` — me.me architecture, security model, event forwarding
+- `$sys/docs/me_sync.md` — me.sync concepts, modes, transport strategy
+- `$sys/docs/me_sync_v3.md` — v3 QR-paired ad-hoc transfer architecture
+- `$sys/docs/relay_integrations.md` — Slack/Discord onboarding guide
 - `$sys/examples/README.md` — copy/paste golden paths
 
 ## Source Code Fallback

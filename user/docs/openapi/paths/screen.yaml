@@ -1,0 +1,58 @@
+screenStatus:
+  get:
+    operationId: getScreenStatus
+    summary: Get screen keep-on state
+    tags: [Screen]
+    responses:
+      '200':
+        description: Current screen keep-on state.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ScreenStatusResponse'
+
+screenKeepOn:
+  post:
+    operationId: postScreenKeepOn
+    summary: Enable or disable keep-screen-on
+    tags: [Screen]
+    x-permission:
+      tool: device.screen
+      capability: screen
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    default: true
+                    description: Whether to keep the screen on.
+                  timeout_s:
+                    type: integer
+                    minimum: 0
+                    maximum: 86400
+                    default: 0
+                    description: >
+                      Auto-off timeout in seconds. 0 means no timeout
+                      (stays on until explicitly disabled).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            enabled: true
+            timeout_s: 300
+    responses:
+      '200':
+        description: Updated screen keep-on state (same schema as GET /screen/status).
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ScreenStatusResponse'
+      '403':
+        description: Permission required — user has not yet approved.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

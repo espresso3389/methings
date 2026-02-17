@@ -1,0 +1,63 @@
+shellExec:
+  post:
+    operationId: postShellExec
+    summary: Execute a shell command on the device
+    tags: [Shell]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [command]
+                properties:
+                  command:
+                    type: string
+                    description: Shell command to execute.
+                  timeout_ms:
+                    type: integer
+                    description: Command timeout in milliseconds.
+                    default: 30000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            command: "ls -la"
+            timeout_ms: 10000
+    responses:
+      '200':
+        description: Command execution result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                stdout:
+                  type: string
+                  description: Standard output.
+                stderr:
+                  type: string
+                  description: Standard error.
+                exit_code:
+                  type: integer
+                  description: Process exit code.
+            example:
+              status: ok
+              stdout: "total 8\ndrwxr-xr-x 2 root root 4096 ...\n"
+              stderr: ""
+              exit_code: 0
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Execution error.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'

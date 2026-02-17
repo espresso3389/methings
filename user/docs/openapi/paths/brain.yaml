@@ -1,0 +1,90 @@
+brainConfigGet:
+  get:
+    operationId: getBrainConfig
+    summary: Get brain / LLM configuration
+    tags: [Brain]
+    responses:
+      '200':
+        description: Current brain configuration (API key is never returned).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, vendor, base_url, model, has_api_key]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                vendor:
+                  type: string
+                  description: LLM vendor name.
+                  examples: [anthropic, openai]
+                base_url:
+                  type: string
+                  description: API base URL.
+                model:
+                  type: string
+                  description: Model identifier.
+                has_api_key:
+                  type: boolean
+                  description: Whether an API key is configured.
+            example:
+              status: ok
+              vendor: anthropic
+              base_url: "https://api.anthropic.com"
+              model: claude-sonnet-4-20250514
+              has_api_key: true
+
+brainMemoryGet:
+  get:
+    operationId: getBrainMemory
+    summary: Get persistent brain memory
+    tags: [Brain]
+    responses:
+      '200':
+        description: Current brain memory content.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                memory:
+                  type: string
+                  description: Persistent memory text.
+
+brainMemorySet:
+  post:
+    operationId: postBrainMemory
+    summary: Update persistent brain memory
+    tags: [Brain]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [memory]
+            properties:
+              memory:
+                type: string
+                description: New memory content to store.
+          example:
+            memory: "User prefers concise responses."
+    responses:
+      '200':
+        description: Memory updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+            example:
+              status: ok

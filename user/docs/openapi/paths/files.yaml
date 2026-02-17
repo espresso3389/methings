@@ -1,0 +1,265 @@
+userUpload:
+  post:
+    operationId: postUserUpload
+    summary: Upload a file to user root
+    description: >
+      Uploaded files are treated as an explicit read grant. Use `rel_path: <path>`
+      in chat responses to trigger inline preview cards in the app UI.
+    tags: [Files]
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            required: [file]
+            properties:
+              file:
+                type: string
+                format: binary
+                description: File to upload.
+              dir:
+                type: string
+                description: >
+                  Subdirectory under files/user/ to store the file.
+                  Defaults to uploads/.
+    responses:
+      '200':
+        description: File uploaded successfully.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                path:
+                  type: string
+                  description: User-root relative path of the uploaded file.
+            example:
+              status: ok
+              path: "uploads/photo.jpg"
+
+userFile:
+  get:
+    operationId: getUserFile
+    summary: Serve a file from user root
+    tags: [Files]
+    parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+        description: User-root relative path.
+    responses:
+      '200':
+        description: File bytes (content type matches the file).
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+      '404':
+        description: File not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+userFileInfo:
+  get:
+    operationId: getUserFileInfo
+    summary: Get file metadata
+    description: >
+      Returns file metadata without serving bytes. Strips #page=N fragment
+      from path before lookup. For images (except SVG), includes width/height
+      via BitmapFactory (omitted if corrupt). For .md files, includes is_marp
+      (detected via YAML front matter `marp: true` in first 1KB).
+      When is_marp=true, slide_count is counted by splitting on `\n---\n`
+      after stripping front matter.
+    tags: [Files]
+    parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+        description: User-root relative path (supports #page=N fragment).
+    responses:
+      '200':
+        description: File metadata and derived info.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, size, mtime_ms, mime, kind, ext]
+              properties:
+                name:
+                  type: string
+                  description: File name.
+                size:
+                  type: integer
+                  format: int64
+                  description: File size in bytes.
+                mtime_ms:
+                  type: integer
+                  format: int64
+                  description: Last modified time (Unix epoch millis).
+                mime:
+                  type: string
+                  description: MIME type.
+                kind:
+                  type: string
+                  enum: [image, video, audio, text, bin]
+                  description: File kind category.
+                ext:
+                  type: string
+                  description: File extension.
+                width:
+                  type: integer
+                  description: Image width in pixels (images only).
+                height:
+                  type: integer
+                  description: Image height in pixels (images only).
+                is_marp:
+                  type: boolean
+                  description: Whether this is a Marp presentation (.md only).
+                slide_count:
+                  type: integer
+                  description: Number of slides (Marp only, when is_marp=true).
+            example:
+              name: demo.md
+              size: 4096
+              mtime_ms: 1700000000000
+              mime: text/markdown
+              kind: text
+              ext: md
+              is_marp: true
+              slide_count: 15
+      '404':
+        description: File not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+userList:
+  get:
+    operationId: getUserList
+    summary: List files in a user-root directory
+    tags: [Files]
+    parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+        description: User-root relative directory path.
+    responses:
+      '200':
+        description: Directory listing.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, files]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                files:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      is_dir:
+                        type: boolean
+                      size:
+                        type: integer
+                        format: int64
+      '404':
+        description: Directory not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+sysFile:
+  get:
+    operationId: getSysFile
+    summary: Serve a system reference file
+    description: >
+      System reference docs (docs/, examples/, lib/) are extracted to
+      files/system/ and always overwritten on app start to match the
+      current app version. The agent accesses them via the $sys/ prefix
+      in filesystem tools.
+    tags: [Files]
+    parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+        description: System-root relative path.
+    responses:
+      '200':
+        description: File bytes (read-only system reference docs).
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+      '404':
+        description: File not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+sysList:
+  get:
+    operationId: getSysList
+    summary: List system reference directory
+    tags: [Files]
+    parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+        description: System-root relative directory path.
+    responses:
+      '200':
+        description: Directory listing (same format as /user/list).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, files]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                files:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      is_dir:
+                        type: boolean
+                      size:
+                        type: integer
+                        format: int64
+      '404':
+        description: Directory not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'

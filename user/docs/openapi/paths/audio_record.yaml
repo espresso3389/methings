@@ -1,0 +1,419 @@
+audioRecordStatus:
+  get:
+    operationId: getAudioRecordStatus
+    summary: Get audio recording status
+    tags: [AudioRecord]
+    x-permission:
+      tool: device.mic
+      capability: recording
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current audio recording state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                recording:
+                  type: boolean
+                recording_state:
+                  type: string
+                  enum: [idle, recording]
+                recording_duration_ms:
+                  type: integer
+                  nullable: true
+                streaming:
+                  type: boolean
+                stream_sample_rate:
+                  type: integer
+                  nullable: true
+                stream_channels:
+                  type: integer
+                  nullable: true
+                ws_clients:
+                  type: integer
+                  description: Number of connected WebSocket clients.
+                last_error:
+                  type: string
+                  nullable: true
+            example:
+              status: ok
+              recording: false
+              recording_state: idle
+              recording_duration_ms: null
+              streaming: false
+              stream_sample_rate: null
+              stream_channels: null
+              ws_clients: 0
+              last_error: null
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+audioRecordStart:
+  post:
+    operationId: postAudioRecordStart
+    summary: Start audio recording
+    description: >
+      Records AAC audio in .m4a container to user root.
+    tags: [AudioRecord]
+    x-permission:
+      tool: device.mic
+      capability: recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  path:
+                    type: string
+                    description: User-root relative output path.
+                  max_duration_s:
+                    type: integer
+                    minimum: 5
+                    maximum: 3600
+                    default: 300
+                    description: Auto-stop after N seconds.
+                  sample_rate:
+                    type: integer
+                    minimum: 8000
+                    maximum: 48000
+                    default: 44100
+                    description: Audio sample rate in Hz.
+                  channels:
+                    type: integer
+                    enum: [1, 2]
+                    default: 1
+                    description: 1 = mono, 2 = stereo.
+                  bitrate:
+                    type: integer
+                    minimum: 32000
+                    maximum: 320000
+                    default: 128000
+                    description: AAC bitrate in bps.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            max_duration_s: 60
+            sample_rate: 44100
+    responses:
+      '200':
+        description: Recording started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, state, rel_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                state:
+                  type: string
+                  const: recording
+                rel_path:
+                  type: string
+                  description: Output file path (relative to recordings/audio/).
+                sample_rate:
+                  type: integer
+                channels:
+                  type: integer
+                bitrate:
+                  type: integer
+                max_duration_s:
+                  type: integer
+                format:
+                  type: string
+                  const: aac
+                container:
+                  type: string
+                  const: m4a
+            example:
+              status: ok
+              state: recording
+              rel_path: "recordings/audio/rec_1700000000000.m4a"
+              sample_rate: 44100
+              channels: 1
+              bitrate: 128000
+              max_duration_s: 300
+              format: aac
+              container: m4a
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+audioRecordStop:
+  post:
+    operationId: postAudioRecordStop
+    summary: Stop audio recording
+    tags: [AudioRecord]
+    x-permission:
+      tool: device.mic
+      capability: recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Recording stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, stopped, state]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                stopped:
+                  type: boolean
+                  const: true
+                state:
+                  type: string
+                  const: idle
+                rel_path:
+                  type: string
+                  description: Saved recording path.
+                duration_ms:
+                  type: integer
+                  description: Recording duration in milliseconds.
+                size_bytes:
+                  type: integer
+                  description: File size in bytes.
+            example:
+              status: ok
+              stopped: true
+              state: idle
+              rel_path: "recordings/audio/rec_1700000000000.m4a"
+              duration_ms: 5230
+              size_bytes: 42800
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+audioRecordConfigGet:
+  get:
+    operationId: getAudioRecordConfig
+    summary: Get audio recording configuration
+    tags: [AudioRecord]
+    x-permission:
+      tool: device.mic
+      capability: recording
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current recording config.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                sample_rate:
+                  type: integer
+                channels:
+                  type: integer
+                bitrate:
+                  type: integer
+                max_duration_s:
+                  type: integer
+            example:
+              status: ok
+              sample_rate: 44100
+              channels: 1
+              bitrate: 128000
+              max_duration_s: 300
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+audioRecordConfigSet:
+  post:
+    operationId: postAudioRecordConfig
+    summary: Set audio recording configuration
+    tags: [AudioRecord]
+    x-permission:
+      tool: device.mic
+      capability: recording
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  sample_rate:
+                    type: integer
+                  channels:
+                    type: integer
+                  bitrate:
+                    type: integer
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Config updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+audioStreamStart:
+  post:
+    operationId: postAudioStreamStart
+    summary: Start live PCM audio stream
+    description: >
+      Starts live PCM audio streaming. Connect to /ws/audio/pcm for
+      signed 16-bit little-endian samples as binary WebSocket frames.
+    tags: [AudioRecord]
+    x-permission:
+      tool: device.mic
+      capability: recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  sample_rate:
+                    type: integer
+                    description: PCM sample rate in Hz.
+                  channels:
+                    type: integer
+                    description: Number of channels.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: >
+          PCM stream started. WebSocket sends a text "hello" message
+          followed by binary frames of signed 16-bit LE PCM samples.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, streaming, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                streaming:
+                  type: boolean
+                  const: true
+                ws_path:
+                  type: string
+                  examples: [/ws/audio/pcm]
+                sample_rate:
+                  type: integer
+                channels:
+                  type: integer
+                encoding:
+                  type: string
+                  const: pcm_s16le
+            example:
+              status: ok
+              streaming: true
+              ws_path: /ws/audio/pcm
+              sample_rate: 44100
+              channels: 1
+              encoding: pcm_s16le
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+audioStreamStop:
+  post:
+    operationId: postAudioStreamStop
+    summary: Stop live PCM audio stream
+    tags: [AudioRecord]
+    x-permission:
+      tool: device.mic
+      capability: recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: PCM stream stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

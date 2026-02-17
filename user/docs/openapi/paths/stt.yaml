@@ -1,0 +1,118 @@
+sttStatus:
+  get:
+    operationId: getSttStatus
+    summary: Get speech recognition status
+    tags: [STT]
+    x-permission:
+      tool: device.mic
+      capability: stt
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current STT status.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                listening:
+                  type: boolean
+                  description: Whether speech recognition is currently active.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sttRecord:
+  post:
+    operationId: postSttRecord
+    summary: Start speech recognition
+    description: >
+      Starts Android SpeechRecognizer. Recognition events are delivered over
+      WebSocket at the returned ws_path as JSON messages:
+
+      - `{"type":"stt","event":"ready"}` — recognizer ready
+
+      - `{"type":"stt","event":"partial","results":[...]}` — partial results
+
+      - `{"type":"stt","event":"final","results":[...]}` — final results
+
+      - `{"type":"stt","event":"error","code":...}` — error
+
+
+      Requires Android runtime permission RECORD_AUDIO (the app will prompt).
+
+
+      Note: file-based transcription (`stt.transcribe`) is not yet available;
+      Android SpeechRecognizer supports live mic only. Use `/cloud/request`
+      with `${file:<rel_path>:base64}` for cloud STT fallback.
+    tags: [STT]
+    x-permission:
+      tool: device.mic
+      capability: stt
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  locale:
+                    type: string
+                    description: BCP-47 locale tag for recognition language.
+                  partial:
+                    type: boolean
+                    default: true
+                    description: Whether to deliver partial results.
+                  max_results:
+                    type: integer
+                    description: Maximum number of result alternatives.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            locale: en-US
+            partial: true
+            max_results: 5
+    responses:
+      '200':
+        description: >
+          Recognition started. Connect to ws_path for events.
+          Events: {"type":"stt","event":"ready|partial|final|error",...}
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                ws_path:
+                  type: string
+                  description: WebSocket path for STT events.
+                  examples: [/ws/stt/events]
+            example:
+              status: ok
+              ws_path: /ws/stt/events
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

@@ -1,0 +1,414 @@
+videoRecordStatus:
+  get:
+    operationId: getVideoRecordStatus
+    summary: Get video recording status
+    tags: [VideoRecord]
+    x-permission:
+      tool: device.camera
+      capability: recording
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current video recording state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                recording:
+                  type: boolean
+                recording_state:
+                  type: string
+                  enum: [idle, recording]
+                recording_duration_ms:
+                  type: integer
+                  nullable: true
+                recording_codec:
+                  type: string
+                  nullable: true
+                streaming:
+                  type: boolean
+                stream_format:
+                  type: string
+                  nullable: true
+                stream_fps:
+                  type: integer
+                  nullable: true
+                ws_clients:
+                  type: integer
+                last_error:
+                  type: string
+                  nullable: true
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+videoRecordStart:
+  post:
+    operationId: postVideoRecordStart
+    summary: Start video recording
+    description: >
+      Records H.265 (HEVC) or H.264 (fallback) in .mp4 container.
+    tags: [VideoRecord]
+    x-permission:
+      tool: device.camera
+      capability: recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  path:
+                    type: string
+                    description: User-root relative output path.
+                  lens:
+                    type: string
+                    enum: [back, front]
+                    description: Camera lens to use.
+                  max_duration_s:
+                    type: integer
+                    description: Maximum recording duration in seconds.
+                  resolution:
+                    type: string
+                    enum: ["720p", "1080p", "4k"]
+                    default: "720p"
+                    description: Target resolution.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            lens: back
+            max_duration_s: 60
+            resolution: "1080p"
+    responses:
+      '200':
+        description: Recording started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, state, rel_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                state:
+                  type: string
+                  const: recording
+                rel_path:
+                  type: string
+                resolution:
+                  type: string
+                codec:
+                  type: string
+                  enum: [h265, h264]
+                max_duration_s:
+                  type: integer
+                lens:
+                  type: string
+                container:
+                  type: string
+                  const: mp4
+            example:
+              status: ok
+              state: recording
+              rel_path: "recordings/video/vid_1700000000000.mp4"
+              resolution: "720p"
+              codec: h265
+              max_duration_s: 300
+              lens: back
+              container: mp4
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+videoRecordStop:
+  post:
+    operationId: postVideoRecordStop
+    summary: Stop video recording
+    tags: [VideoRecord]
+    x-permission:
+      tool: device.camera
+      capability: recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Recording stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, stopped, state]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                stopped:
+                  type: boolean
+                  const: true
+                state:
+                  type: string
+                  const: idle
+                rel_path:
+                  type: string
+                duration_ms:
+                  type: integer
+                size_bytes:
+                  type: integer
+                codec:
+                  type: string
+            example:
+              status: ok
+              stopped: true
+              state: idle
+              rel_path: "recordings/video/vid_1700000000000.mp4"
+              duration_ms: 12340
+              size_bytes: 2048000
+              codec: h265
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+videoRecordConfigGet:
+  get:
+    operationId: getVideoRecordConfig
+    summary: Get video recording configuration
+    tags: [VideoRecord]
+    x-permission:
+      tool: device.camera
+      capability: recording
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current video recording config.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                resolution:
+                  type: string
+                codec:
+                  type: string
+                bitrate:
+                  type: integer
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+videoRecordConfigSet:
+  post:
+    operationId: postVideoRecordConfig
+    summary: Set video recording configuration
+    tags: [VideoRecord]
+    x-permission:
+      tool: device.camera
+      capability: recording
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  resolution:
+                    type: string
+                  codec:
+                    type: string
+                  bitrate:
+                    type: integer
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Config updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+videoStreamStart:
+  post:
+    operationId: postVideoStreamStart
+    summary: Start live video frame stream
+    description: >
+      Starts live video frame streaming. Connect to /ws/video/frames for
+      JPEG or RGBA binary frames over WebSocket.
+    tags: [VideoRecord]
+    x-permission:
+      tool: device.camera
+      capability: recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  lens:
+                    type: string
+                    enum: [back, front]
+                  width:
+                    type: integer
+                  height:
+                    type: integer
+                  fps:
+                    type: integer
+                  format:
+                    type: string
+                    enum: [jpeg, rgba]
+                    description: Frame output format.
+                  jpeg_quality:
+                    type: integer
+                    minimum: 1
+                    maximum: 100
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            lens: back
+            width: 640
+            height: 480
+            fps: 10
+            format: jpeg
+            jpeg_quality: 70
+    responses:
+      '200':
+        description: >
+          Frame stream started. WebSocket sends a text "hello" message
+          followed by binary frames. JPEG format: raw JPEG bytes.
+          RGBA format: 12-byte header [width:u32le][height:u32le][ts_ms:u32le] + raw RGBA bytes.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, streaming, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                streaming:
+                  type: boolean
+                  const: true
+                ws_path:
+                  type: string
+                  examples: [/ws/video/frames]
+                format:
+                  type: string
+                  enum: [jpeg, rgba]
+                width:
+                  type: integer
+                height:
+                  type: integer
+                fps:
+                  type: integer
+                lens:
+                  type: string
+            example:
+              status: ok
+              streaming: true
+              ws_path: /ws/video/frames
+              format: jpeg
+              width: 640
+              height: 480
+              fps: 5
+              lens: back
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+videoStreamStop:
+  post:
+    operationId: postVideoStreamStop
+    summary: Stop live video frame stream
+    tags: [VideoRecord]
+    x-permission:
+      tool: device.camera
+      capability: recording
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Frame stream stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

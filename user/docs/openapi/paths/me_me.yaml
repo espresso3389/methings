@@ -1,0 +1,133 @@
+meMeStatus:
+  get:
+    operationId: getMeMeStatus
+    summary: Get me.me status and peer presence
+    description: >
+      Returns self profile plus current peer/discovery summary.
+      Includes peer presence/connection snapshots and discovery runtime state.
+      Discovery and route selection are automatic (LAN/BLE/gateway fallback);
+      agents should not orchestrate low-level transport.
+    tags: [MeMe]
+    responses:
+      '200':
+        description: Self profile and peer discovery state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                self:
+                  type: object
+                  description: This device's me.me identity profile.
+                peers:
+                  type: array
+                  items:
+                    type: object
+                  description: Known peer devices with presence/connection snapshots.
+                discovery:
+                  type: object
+                  description: Discovery runtime state.
+
+meMeMessageSend:
+  post:
+    operationId: postMeMeMessageSend
+    summary: Send encrypted content to a peer
+    description: >
+      Send structured content to a peer device using automatic route
+      selection (LAN/BLE/gateway fallback). Supports multiple payload formats:
+
+      - Preferred: `{"peer_device_id":"...","type":"message","payload":{...}}`
+
+      - Text shortcut: `{"peer_device_id":"...","text":"..."}`
+
+      - Backward compat: `{"peer_device_id":"...","message":"..."}` (string normalized to payload.text)
+
+      - Object shortcut: `{"peer_device_id":"...","message":{"type":"...","...":...}}` (type becomes message type)
+
+
+      Connection security: offer token signed with Ed25519 (fallback ECDSA P-256),
+      session key from X25519 (fallback ECDH P-256) + HKDF-SHA256,
+      payload encrypted with AES-GCM.
+
+
+      Inbound content arrives as `me.me.received` events forwarded to
+      `/brain/inbox/event` with fields: received_origin (peer|external),
+      received_transport (lan|ble|gateway), received_provider (direct|generic|<name>),
+      received_kind (message|audio|discord.message|slack.event|...).
+    tags: [MeMe]
+    x-permission:
+      tool: device.me_me
+      capability: me_me
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [peer_device_id]
+                properties:
+                  peer_device_id:
+                    type: string
+                    description: Target peer device ID.
+                  type:
+                    type: string
+                    description: Message type (e.g. message, task, audio).
+                  payload:
+                    type: object
+                    description: Structured message payload (preferred format).
+                  text:
+                    type: string
+                    description: Text shortcut (alternative to payload).
+                  message:
+                    description: >
+                      Backward-compatible field. String is normalized to
+                      payload.text; object's type becomes message type.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          examples:
+            structured:
+              summary: Preferred structured payload
+              value:
+                peer_device_id: "d_a1b2c3"
+                type: task
+                payload:
+                  action: "check_status"
+            text_shortcut:
+              summary: Text shortcut
+              value:
+                peer_device_id: "d_a1b2c3"
+                text: "Hello from my device"
+    responses:
+      '200':
+        description: Message sent via automatic route selection.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                route:
+                  type: string
+                  description: Transport used (lan, ble, gateway).
+      '400':
+        description: Empty content or missing peer_device_id.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            example:
+              status: error
+              error: payload_required
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

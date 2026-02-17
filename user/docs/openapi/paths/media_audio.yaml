@@ -1,0 +1,145 @@
+mediaAudioStatus:
+  get:
+    operationId: getMediaAudioStatus
+    summary: Get audio playback status
+    tags: [MediaAudio]
+    x-permission:
+      tool: device.media
+      capability: media
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current audio playback state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                playing:
+                  type: boolean
+                  description: Whether audio is currently playing.
+                path:
+                  type: string
+                  nullable: true
+                  description: Currently playing file path (null if not playing).
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+mediaAudioPlay:
+  post:
+    operationId: postMediaAudioPlay
+    summary: Play audio on the device speaker
+    description: >
+      Accepts either a user-root relative file path or base64-encoded
+      audio bytes. Supported formats include wav, mp3, m4a, and other
+      Android-supported audio formats.
+    tags: [MediaAudio]
+    x-permission:
+      tool: device.media
+      capability: media
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  path:
+                    type: string
+                    description: User-root relative audio file path.
+                  audio_b64:
+                    type: string
+                    description: Base64-encoded audio bytes.
+                  ext:
+                    type: string
+                    description: >
+                      File extension hint when using audio_b64 (e.g. wav, mp3, m4a).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          examples:
+            from_file:
+              summary: Play from file path
+              value:
+                path: "audio/sample.mp3"
+            from_base64:
+              summary: Play from base64 data
+              value:
+                audio_b64: "UklGRi..."
+                ext: wav
+    responses:
+      '200':
+        description: Playback started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Playback error.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+mediaAudioStop:
+  post:
+    operationId: postMediaAudioStop
+    summary: Stop audio playback
+    tags: [MediaAudio]
+    x-permission:
+      tool: device.media
+      capability: media
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Playback stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

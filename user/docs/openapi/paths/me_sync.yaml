@@ -1,0 +1,403 @@
+meSyncStatus:
+  get:
+    operationId: getMeSyncStatus
+    summary: Get me.sync export/transfer status
+    tags: [MeSync]
+    responses:
+      '200':
+        description: Active export packages and expiry info.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                transfers:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      transfer_id:
+                        type: string
+                      expires_at:
+                        type: integer
+                        format: int64
+
+meSyncLocalState:
+  get:
+    operationId: getMeSyncLocalState
+    summary: Check if receiver has existing local data
+    tags: [MeSync]
+    responses:
+      '200':
+        description: Whether receiver has local data that would be wiped on import.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                has_local_data:
+                  type: boolean
+
+meSyncPrepareExport:
+  post:
+    operationId: postMeSyncPrepareExport
+    summary: Build a one-time export package
+    description: >
+      Builds a time-limited export package for device-to-device transfer.
+      Returns me_sync_uri, QR data URL, and download links.
+    tags: [MeSync]
+    x-permission:
+      tool: device.me_sync
+      capability: me_sync
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  include_user:
+                    type: boolean
+                    default: true
+                    description: Include user files.
+                  include_protected_db:
+                    type: boolean
+                    default: true
+                    description: Include protected database.
+                  include_identity:
+                    type: boolean
+                    default: false
+                    description: >
+                      Include install identity (id_dropbear*).
+                      true = migration mode, false = export mode.
+                  mode:
+                    type: string
+                    enum: [export, migration]
+                    description: Alternative to include_identity.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            include_user: true
+            include_protected_db: true
+            include_identity: false
+    responses:
+      '200':
+        description: Export package prepared.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, transfer_id, me_sync_uri]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                transfer_id:
+                  type: string
+                  description: Stable ID for this export.
+                me_sync_uri:
+                  type: string
+                  description: >
+                    Compact payload URI (me.things:me.sync:<base64url>).
+                qr_data_url:
+                  type: string
+                  description: Data URL of QR code image.
+                download_url:
+                  type: string
+                  description: LAN HTTP download URL.
+                expires_at:
+                  type: integer
+                  format: int64
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+meSyncImport:
+  post:
+    operationId: postMeSyncImport
+    summary: Import data from an export package
+    description: >
+      Imports state from a source device. Accepts HTTP URL, JSON payload,
+      me_sync_uri, or me.sync.v3 URI. Defaults to wiping receiver local
+      state before applying imported data.
+    tags: [MeSync]
+    x-permission:
+      tool: device.me_sync
+      capability: me_sync
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  url:
+                    type: string
+                    description: HTTP download URL from source.
+                  payload:
+                    type: string
+                    description: JSON payload or me_sync_uri string.
+                  wipe_existing:
+                    type: boolean
+                    default: true
+                    description: Wipe receiver local state before import.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            url: "http://192.168.1.100:33389/me/sync/download/abc123"
+            wipe_existing: true
+    responses:
+      '200':
+        description: Import completed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Import failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+meSyncWipeAll:
+  post:
+    operationId: postMeSyncWipeAll
+    summary: Wipe all local app data
+    description: >
+      **Dangerous:** Wipes all local app data and restarts the app.
+      This is intentionally API-only (no GUI button).
+    tags: [MeSync]
+    x-permission:
+      tool: device.me_sync
+      capability: me_sync
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  restart_app:
+                    type: boolean
+                    default: true
+                    description: Restart app after wiping.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            restart_app: true
+    responses:
+      '200':
+        description: Wipe initiated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+meSyncV3TicketCreate:
+  post:
+    operationId: postMeSyncV3TicketCreate
+    summary: Create a v3 sync ticket
+    description: >
+      Creates a v3 QR ticket (me.things:me.sync.v3:<base64url>) with
+      LAN fallback metadata for Nearby Connections transfer.
+    tags: [MeSync]
+    x-permission:
+      tool: device.me_sync
+      capability: me_sync
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  include_user:
+                    type: boolean
+                    default: true
+                  include_protected_db:
+                    type: boolean
+                    default: true
+                  include_identity:
+                    type: boolean
+                    default: false
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: v3 ticket created.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, ticket_id, ticket_uri]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                ticket_id:
+                  type: string
+                ticket_uri:
+                  type: string
+                  description: Ticket URI (me.things:me.sync.v3:<base64url>).
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+meSyncV3TicketStatus:
+  get:
+    operationId: getMeSyncV3TicketStatus
+    summary: Get v3 ticket status
+    tags: [MeSync]
+    parameters:
+      - name: ticket_id
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Ticket ID to check.
+    responses:
+      '200':
+        description: Ticket status and transfer progress.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                ticket_status:
+                  type: string
+                  description: Ticket lifecycle state.
+                progress:
+                  type: object
+                  description: Transfer progress details.
+
+meSyncV3TicketCancel:
+  post:
+    operationId: postMeSyncV3TicketCancel
+    summary: Cancel a v3 ticket
+    tags: [MeSync]
+    x-permission:
+      tool: device.me_sync
+      capability: me_sync
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [ticket_id]
+                properties:
+                  ticket_id:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Ticket cancelled.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+meSyncV3ImportApply:
+  post:
+    operationId: postMeSyncV3ImportApply
+    summary: Import using a v3 ticket URI
+    description: >
+      Attempts Nearby Connections stream transfer first, then falls back
+      to LAN URL transfer if available.
+    tags: [MeSync]
+    x-permission:
+      tool: device.me_sync
+      capability: me_sync
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [ticket_uri]
+                properties:
+                  ticket_uri:
+                    type: string
+                    description: v3 ticket URI (me.things:me.sync.v3:...).
+                  wipe_existing:
+                    type: boolean
+                    default: true
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Import completed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Import failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'

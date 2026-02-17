@@ -1,0 +1,272 @@
+viewerOpen:
+  post:
+    operationId: postViewerOpen
+    summary: Open file in fullscreen viewer
+    description: >
+      Opens a user-root file in the WebView fullscreen viewer. Auto-detects
+      file type (image, video, audio, text/code, HTML iframe, Marp).
+      Supports `#page=N` fragment for Marp slide navigation (0-indexed);
+      the fragment is stripped for file validation but passed to the JS viewer.
+
+
+      The `#page=N` fragment also works in chat `rel_path:` lines — the inline
+      Marp preview thumbnail will show the specified slide, and tapping the
+      card opens the viewer at that page.
+
+
+      All viewer endpoints are fire-and-forget (broadcast to WebView) and
+      require no permissions. For autonomous presentations, combine with
+      TTS: open deck → slideshow + immersive → goto slides with narration.
+    tags: [UI]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [path]
+            properties:
+              path:
+                type: string
+                description: >
+                  User-root relative file path. Append #page=N for Marp
+                  slide navigation (0-indexed).
+          example:
+            path: "presentations/demo.md#page=3"
+    responses:
+      '200':
+        description: Viewer opened (fire-and-forget to WebView).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '404':
+        description: File not found at the given path.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+viewerClose:
+  post:
+    operationId: postViewerClose
+    summary: Close fullscreen viewer
+    tags: [UI]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Viewer closed and immersive mode exited.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+viewerImmersive:
+  post:
+    operationId: postViewerImmersive
+    summary: Toggle immersive (fullscreen) mode
+    tags: [UI]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [enabled]
+            properties:
+              enabled:
+                type: boolean
+                description: >
+                  true = hide system bars and viewer chrome;
+                  false = restore them.
+          example:
+            enabled: true
+    responses:
+      '200':
+        description: Immersive mode toggled (no-op if no viewer is open).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+viewerSlideshow:
+  post:
+    operationId: postViewerSlideshow
+    summary: Toggle Marp slideshow mode
+    tags: [UI]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [enabled]
+            properties:
+              enabled:
+                type: boolean
+                description: >
+                  true = single-slide presentation mode;
+                  false = scroll mode.
+          example:
+            enabled: true
+    responses:
+      '200':
+        description: Slideshow mode toggled (no-op if not a Marp deck).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+viewerGoto:
+  post:
+    operationId: postViewerGoto
+    summary: Navigate to a specific slide
+    tags: [UI]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [page]
+            properties:
+              page:
+                type: integer
+                minimum: 0
+                description: >
+                  0-indexed slide number. Clamped to [0, slide_count - 1].
+          example:
+            page: 3
+    responses:
+      '200':
+        description: Navigated to slide (no-op if not a Marp deck).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+settingsSections:
+  get:
+    operationId: getSettingsSections
+    summary: List Settings sections and setting keys
+    tags: [UI]
+    responses:
+      '200':
+        description: Available section IDs, labels, and discovered setting-key mappings.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, sections]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                sections:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      label:
+                        type: string
+                settings:
+                  type: object
+                  additionalProperties:
+                    type: string
+                  description: Map of setting key to section ID.
+
+settingsNavigate:
+  post:
+    operationId: postSettingsNavigate
+    summary: Navigate to a Settings section
+    tags: [UI]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              section_id:
+                type: string
+                description: Target section ID.
+              setting_key:
+                type: string
+                description: Target setting key (alternative to section_id).
+          examples:
+            by_section:
+              summary: Navigate by section ID
+              value:
+                section_id: permissions
+            by_key:
+              summary: Navigate by setting key
+              value:
+                setting_key: remember_approvals
+    responses:
+      '200':
+        description: Navigated to the target section in Settings.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+uiMeSyncExportShow:
+  post:
+    operationId: postUiMeSyncExportShow
+    summary: Show me.sync export UI
+    tags: [UI]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Export UI shown.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok

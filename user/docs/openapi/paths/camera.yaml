@@ -1,0 +1,281 @@
+cameraList:
+  get:
+    operationId: getCameraList
+    summary: List available cameras
+    tags: [Camera]
+    x-permission:
+      tool: device.camera
+      capability: camera
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Available camera list.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, cameras]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                cameras:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      lens:
+                        type: string
+                        enum: [back, front, external]
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+cameraStatus:
+  get:
+    operationId: getCameraStatus
+    summary: Get camera preview state
+    tags: [Camera]
+    x-permission:
+      tool: device.camera
+      capability: camera
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current camera preview state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                preview_active:
+                  type: boolean
+                  description: Whether preview stream is active.
+                lens:
+                  type: string
+                  description: Currently active lens.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+cameraCapture:
+  post:
+    operationId: postCameraCapture
+    summary: Capture a still image
+    description: >
+      Captures a still image to user root. The HTTP call blocks until the file
+      is saved (or a timeout/error), so rel_path is guaranteed to exist when
+      status=ok. To show the image inline in the chat UI, include `rel_path: <path>`
+      in your message. To download to a dev machine, use
+      `GET /user/file?path=<rel_path>`.
+    tags: [Camera]
+    x-permission:
+      tool: device.camera
+      capability: camera
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  path:
+                    type: string
+                    description: >
+                      User-root relative output path.
+                      Default: captures/capture_<timestamp>.jpg
+                  lens:
+                    type: string
+                    enum: [back, front]
+                    default: back
+                    description: Camera lens to use.
+                  jpeg_quality:
+                    type: integer
+                    minimum: 40
+                    maximum: 100
+                    default: 95
+                    description: JPEG compression quality.
+                  exposure_compensation:
+                    type: integer
+                    description: AE exposure compensation steps (clamped to camera range).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            lens: back
+            jpeg_quality: 90
+    responses:
+      '200':
+        description: Image captured. Use rel_path with filesystem tools.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, rel_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                path:
+                  type: string
+                  description: Absolute path (for debugging).
+                rel_path:
+                  type: string
+                  description: User-root relative path (use with filesystem tools).
+            example:
+              status: ok
+              path: "/data/data/.../files/user/captures/capture_1700000000000.jpg"
+              rel_path: "captures/capture_1700000000000.jpg"
+      '400':
+        description: Invalid path.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+cameraPreviewStart:
+  post:
+    operationId: postCameraPreviewStart
+    summary: Start camera JPEG preview stream
+    description: >
+      Starts a low-FPS JPEG preview stream. Connect to the returned ws_path
+      to receive binary JPEG frames over WebSocket.
+    tags: [Camera]
+    x-permission:
+      tool: device.camera
+      capability: camera
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  lens:
+                    type: string
+                    enum: [back, front]
+                    default: back
+                  width:
+                    type: integer
+                    default: 640
+                    description: Target analysis width (best-effort).
+                  height:
+                    type: integer
+                    default: 480
+                    description: Target analysis height (best-effort).
+                  fps:
+                    type: integer
+                    default: 5
+                    description: Throttled JPEG send rate.
+                  jpeg_quality:
+                    type: integer
+                    minimum: 10
+                    maximum: 95
+                    default: 70
+                    description: JPEG quality for preview frames.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            lens: back
+            width: 640
+            height: 480
+            fps: 5
+            jpeg_quality: 70
+    responses:
+      '200':
+        description: >
+          Preview started. WebSocket binary messages are raw JPEG bytes.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                ws_path:
+                  type: string
+                  description: WebSocket path for preview frames.
+                  examples: [/ws/camera/preview]
+            example:
+              status: ok
+              ws_path: /ws/camera/preview
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+cameraPreviewStop:
+  post:
+    operationId: postCameraPreviewStop
+    summary: Stop camera preview stream
+    tags: [Camera]
+    x-permission:
+      tool: device.camera
+      capability: camera
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Preview stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

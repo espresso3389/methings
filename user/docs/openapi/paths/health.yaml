@@ -1,0 +1,28 @@
+health:
+  get:
+    operationId: getHealth
+    summary: Server health check
+    tags: [Health]
+    responses:
+      '200':
+        description: Server is running.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, service, python]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                service:
+                  type: string
+                  const: local
+                python:
+                  type: string
+                  enum: [ok, offline, starting, stopping]
+                  description: Status of the Python runtime.
+            example:
+              status: ok
+              service: local
+              python: ok

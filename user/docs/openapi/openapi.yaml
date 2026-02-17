@@ -1,0 +1,428 @@
+openapi: 3.1.0
+info:
+  title: me.things Local Control Plane
+  version: 0.2.0
+  description: >
+    Local HTTP API exposed by the me.things Android app on
+    `http://127.0.0.1:33389`.
+
+servers:
+  - url: http://127.0.0.1:33389
+    description: On-device local server
+
+tags:
+  - name: Health
+    description: Server health check.
+  - name: Screen
+    description: Screen keep-on control.
+  - name: Location
+    description: Device GPS / location provider access.
+  - name: Python
+    description: Python runtime management.
+  - name: Shell
+    description: On-device shell command execution.
+  - name: SSHD
+    description: On-device SSH server management.
+  - name: SSH
+    description: Remote SSH client (exec, scp, interactive).
+  - name: Camera
+    description: Camera capture and preview (CameraX).
+  - name: MediaAudio
+    description: Audio file playback.
+  - name: AudioRecord
+    description: Audio recording and live PCM streaming.
+  - name: VideoRecord
+    description: Video recording and live frame streaming.
+  - name: ScreenRecord
+    description: Screen recording (MediaProjection).
+  - name: MediaStream
+    description: Media file decode to raw PCM / frame streams.
+  - name: TTS
+    description: Android Text-to-Speech.
+  - name: STT
+    description: Android Speech Recognition.
+  - name: Sensors
+    description: Device sensor access and realtime streaming.
+  - name: Network
+    description: Network, WiFi, and mobile status.
+  - name: BLE
+    description: Bluetooth Low Energy scanning and GATT.
+  - name: USB
+    description: Generic USB device access and streaming.
+  - name: UVC
+    description: USB Video Class (webcam) helpers.
+  - name: Vision
+    description: On-device TFLite inference (RGBA frames).
+  - name: Brain
+    description: Brain / LLM configuration and persistent memory.
+  - name: BrainJournal
+    description: Per-session journal notes and entries.
+  - name: Work
+    description: Background jobs (app update check).
+  - name: UI
+    description: Viewer control and Settings navigation.
+  - name: MeMe
+    description: Device-to-device communication (me.me).
+  - name: MeSync
+    description: Device-to-device state transfer (me.sync).
+  - name: Cloud
+    description: Cloud API request broker.
+  - name: Notifications
+    description: Task-completion notification preferences.
+  - name: Permissions
+    description: Permission request and grant management.
+  - name: Vault
+    description: Credential vault.
+  - name: Files
+    description: User and system file endpoints.
+
+paths:
+  # ── Health ──
+  /health:
+    $ref: './paths/health.yaml#/health'
+
+  # ── Screen ──
+  /screen/status:
+    $ref: './paths/screen.yaml#/screenStatus'
+  /screen/keep_on:
+    $ref: './paths/screen.yaml#/screenKeepOn'
+
+  # ── Location ──
+  /location/status:
+    $ref: './paths/location.yaml#/locationStatus'
+  /location/get:
+    $ref: './paths/location.yaml#/locationGet'
+
+  # ── Python ──
+  /python/status:
+    $ref: './paths/python.yaml#/pythonStatus'
+  /python/restart:
+    $ref: './paths/python.yaml#/pythonRestart'
+  /python/eval:
+    $ref: './paths/python.yaml#/pythonEval'
+
+  # ── Shell ──
+  /shell/exec:
+    $ref: './paths/shell.yaml#/shellExec'
+
+  # ── SSHD ──
+  /sshd/status:
+    $ref: './paths/sshd.yaml#/sshdStatus'
+  /sshd/config:
+    $ref: './paths/sshd.yaml#/sshdConfig'
+  /sshd/keys:
+    $ref: './paths/sshd.yaml#/sshdKeysList'
+  /sshd/keys/add:
+    $ref: './paths/sshd.yaml#/sshdKeysAdd'
+  /sshd/keys/delete:
+    $ref: './paths/sshd.yaml#/sshdKeysDelete'
+  /sshd/keys/policy:
+    $ref: './paths/sshd.yaml#/sshdKeysPolicyGet'
+  /sshd/pin/status:
+    $ref: './paths/sshd.yaml#/sshdPinStatus'
+  /sshd/pin/start:
+    $ref: './paths/sshd.yaml#/sshdPinStart'
+  /sshd/pin/stop:
+    $ref: './paths/sshd.yaml#/sshdPinStop'
+  /sshd/noauth/status:
+    $ref: './paths/sshd.yaml#/sshdNoauthStatus'
+  /sshd/noauth/start:
+    $ref: './paths/sshd.yaml#/sshdNoauthStart'
+  /sshd/noauth/stop:
+    $ref: './paths/sshd.yaml#/sshdNoauthStop'
+
+  # ── SSH ──
+  /ssh/exec:
+    $ref: './paths/ssh.yaml#/sshExec'
+  /ssh/scp:
+    $ref: './paths/ssh.yaml#/sshScp'
+  /ssh/ws/contract:
+    $ref: './paths/ssh.yaml#/sshWsContract'
+
+  # ── Camera ──
+  /camera/list:
+    $ref: './paths/camera.yaml#/cameraList'
+  /camera/status:
+    $ref: './paths/camera.yaml#/cameraStatus'
+  /camera/capture:
+    $ref: './paths/camera.yaml#/cameraCapture'
+  /camera/preview/start:
+    $ref: './paths/camera.yaml#/cameraPreviewStart'
+  /camera/preview/stop:
+    $ref: './paths/camera.yaml#/cameraPreviewStop'
+
+  # ── Media Audio ──
+  /media/audio/status:
+    $ref: './paths/media_audio.yaml#/mediaAudioStatus'
+  /media/audio/play:
+    $ref: './paths/media_audio.yaml#/mediaAudioPlay'
+  /media/audio/stop:
+    $ref: './paths/media_audio.yaml#/mediaAudioStop'
+
+  # ── Audio Recording ──
+  /audio/record/status:
+    $ref: './paths/audio_record.yaml#/audioRecordStatus'
+  /audio/record/start:
+    $ref: './paths/audio_record.yaml#/audioRecordStart'
+  /audio/record/stop:
+    $ref: './paths/audio_record.yaml#/audioRecordStop'
+  /audio/record/config:
+    $ref: './paths/audio_record.yaml#/audioRecordConfigGet'
+  /audio/stream/start:
+    $ref: './paths/audio_record.yaml#/audioStreamStart'
+  /audio/stream/stop:
+    $ref: './paths/audio_record.yaml#/audioStreamStop'
+
+  # ── Video Recording ──
+  /video/record/status:
+    $ref: './paths/video_record.yaml#/videoRecordStatus'
+  /video/record/start:
+    $ref: './paths/video_record.yaml#/videoRecordStart'
+  /video/record/stop:
+    $ref: './paths/video_record.yaml#/videoRecordStop'
+  /video/record/config:
+    $ref: './paths/video_record.yaml#/videoRecordConfigGet'
+  /video/stream/start:
+    $ref: './paths/video_record.yaml#/videoStreamStart'
+  /video/stream/stop:
+    $ref: './paths/video_record.yaml#/videoStreamStop'
+
+  # ── Screen Recording ──
+  /screen/record/status:
+    $ref: './paths/screen_record.yaml#/screenRecordStatus'
+  /screen/record/start:
+    $ref: './paths/screen_record.yaml#/screenRecordStart'
+  /screen/record/stop:
+    $ref: './paths/screen_record.yaml#/screenRecordStop'
+  /screen/record/config:
+    $ref: './paths/screen_record.yaml#/screenRecordConfigGet'
+
+  # ── Media Stream ──
+  /media/stream/status:
+    $ref: './paths/media_stream.yaml#/mediaStreamStatus'
+  /media/stream/audio/start:
+    $ref: './paths/media_stream.yaml#/mediaStreamAudioStart'
+  /media/stream/video/start:
+    $ref: './paths/media_stream.yaml#/mediaStreamVideoStart'
+  /media/stream/stop:
+    $ref: './paths/media_stream.yaml#/mediaStreamStop'
+
+  # ── TTS ──
+  /tts/init:
+    $ref: './paths/tts.yaml#/ttsInit'
+  /tts/voices:
+    $ref: './paths/tts.yaml#/ttsVoices'
+  /tts/speak:
+    $ref: './paths/tts.yaml#/ttsSpeak'
+  /tts/stop:
+    $ref: './paths/tts.yaml#/ttsStop'
+
+  # ── STT ──
+  /stt/status:
+    $ref: './paths/stt.yaml#/sttStatus'
+  /stt/record:
+    $ref: './paths/stt.yaml#/sttRecord'
+
+  # ── Sensors ──
+  /sensor/list:
+    $ref: './paths/sensors.yaml#/sensorList'
+  /sensors/ws/contract:
+    $ref: './paths/sensors.yaml#/sensorsWsContract'
+
+  # ── Network ──
+  /network/status:
+    $ref: './paths/network.yaml#/networkStatus'
+  /wifi/status:
+    $ref: './paths/network.yaml#/wifiStatus'
+  /mobile/status:
+    $ref: './paths/network.yaml#/mobileStatus'
+
+  # ── BLE ──
+  /ble/status:
+    $ref: './paths/ble.yaml#/bleStatus'
+  /ble/scan/start:
+    $ref: './paths/ble.yaml#/bleScanStart'
+  /ble/scan/stop:
+    $ref: './paths/ble.yaml#/bleScanStop'
+  /ble/connect:
+    $ref: './paths/ble.yaml#/bleConnect'
+  /ble/disconnect:
+    $ref: './paths/ble.yaml#/bleDisconnect'
+  /ble/gatt/services:
+    $ref: './paths/ble.yaml#/bleGattServices'
+  /ble/gatt/read:
+    $ref: './paths/ble.yaml#/bleGattRead'
+  /ble/gatt/write:
+    $ref: './paths/ble.yaml#/bleGattWrite'
+  /ble/gatt/notify/start:
+    $ref: './paths/ble.yaml#/bleGattNotifyStart'
+  /ble/gatt/notify/stop:
+    $ref: './paths/ble.yaml#/bleGattNotifyStop'
+
+  # ── USB ──
+  /usb/list:
+    $ref: './paths/usb.yaml#/usbList'
+  /usb/status:
+    $ref: './paths/usb.yaml#/usbStatus'
+  /usb/open:
+    $ref: './paths/usb.yaml#/usbOpen'
+  /usb/close:
+    $ref: './paths/usb.yaml#/usbClose'
+  /usb/raw_descriptors:
+    $ref: './paths/usb.yaml#/usbRawDescriptors'
+  /usb/claim_interface:
+    $ref: './paths/usb.yaml#/usbClaimInterface'
+  /usb/release_interface:
+    $ref: './paths/usb.yaml#/usbReleaseInterface'
+  /usb/control_transfer:
+    $ref: './paths/usb.yaml#/usbControlTransfer'
+  /usb/bulk_transfer:
+    $ref: './paths/usb.yaml#/usbBulkTransfer'
+  /usb/iso_transfer:
+    $ref: './paths/usb.yaml#/usbIsoTransfer'
+  /usb/stream/start:
+    $ref: './paths/usb.yaml#/usbStreamStart'
+  /usb/stream/stop:
+    $ref: './paths/usb.yaml#/usbStreamStop'
+  /usb/stream/status:
+    $ref: './paths/usb.yaml#/usbStreamStatus'
+
+  # ── UVC ──
+  /uvc/mjpeg/capture:
+    $ref: './paths/uvc.yaml#/uvcMjpegCapture'
+  /uvc/diagnose:
+    $ref: './paths/uvc.yaml#/uvcDiagnose'
+
+  # ── Vision ──
+  /vision/model/load:
+    $ref: './paths/vision.yaml#/visionModelLoad'
+  /vision/model/unload:
+    $ref: './paths/vision.yaml#/visionModelUnload'
+  /vision/image/load:
+    $ref: './paths/vision.yaml#/visionImageLoad'
+  /vision/frame/put:
+    $ref: './paths/vision.yaml#/visionFramePut'
+  /vision/frame/get:
+    $ref: './paths/vision.yaml#/visionFrameGet'
+  /vision/frame/delete:
+    $ref: './paths/vision.yaml#/visionFrameDelete'
+  /vision/frame/save:
+    $ref: './paths/vision.yaml#/visionFrameSave'
+  /vision/run:
+    $ref: './paths/vision.yaml#/visionRun'
+
+  # ── Brain ──
+  /brain/config:
+    $ref: './paths/brain.yaml#/brainConfigGet'
+  /brain/memory:
+    $ref: './paths/brain.yaml#/brainMemoryGet'
+
+  # ── Brain Journal ──
+  /brain/journal/config:
+    $ref: './paths/brain_journal.yaml#/brainJournalConfig'
+  /brain/journal/current:
+    $ref: './paths/brain_journal.yaml#/brainJournalCurrentGet'
+  /brain/journal/append:
+    $ref: './paths/brain_journal.yaml#/brainJournalAppend'
+  /brain/journal/list:
+    $ref: './paths/brain_journal.yaml#/brainJournalList'
+
+  # ── Work ──
+  /work/jobs/app_update_check:
+    $ref: './paths/work.yaml#/workAppUpdateCheckStatus'
+  /work/jobs/app_update_check/schedule:
+    $ref: './paths/work.yaml#/workAppUpdateCheckSchedule'
+  /work/jobs/app_update_check/run_once:
+    $ref: './paths/work.yaml#/workAppUpdateCheckRunOnce'
+  /work/jobs/app_update_check/cancel:
+    $ref: './paths/work.yaml#/workAppUpdateCheckCancel'
+
+  # ── UI ──
+  /ui/viewer/open:
+    $ref: './paths/ui.yaml#/viewerOpen'
+  /ui/viewer/close:
+    $ref: './paths/ui.yaml#/viewerClose'
+  /ui/viewer/immersive:
+    $ref: './paths/ui.yaml#/viewerImmersive'
+  /ui/viewer/slideshow:
+    $ref: './paths/ui.yaml#/viewerSlideshow'
+  /ui/viewer/goto:
+    $ref: './paths/ui.yaml#/viewerGoto'
+  /ui/settings/sections:
+    $ref: './paths/ui.yaml#/settingsSections'
+  /ui/settings/navigate:
+    $ref: './paths/ui.yaml#/settingsNavigate'
+  /ui/me/sync/export/show:
+    $ref: './paths/ui.yaml#/uiMeSyncExportShow'
+
+  # ── me.me ──
+  /me/me/status:
+    $ref: './paths/me_me.yaml#/meMeStatus'
+  /me/me/message/send:
+    $ref: './paths/me_me.yaml#/meMeMessageSend'
+
+  # ── me.sync ──
+  /me/sync/status:
+    $ref: './paths/me_sync.yaml#/meSyncStatus'
+  /me/sync/local_state:
+    $ref: './paths/me_sync.yaml#/meSyncLocalState'
+  /me/sync/prepare_export:
+    $ref: './paths/me_sync.yaml#/meSyncPrepareExport'
+  /me/sync/import:
+    $ref: './paths/me_sync.yaml#/meSyncImport'
+  /me/sync/wipe_all:
+    $ref: './paths/me_sync.yaml#/meSyncWipeAll'
+  /me/sync/v3/ticket/create:
+    $ref: './paths/me_sync.yaml#/meSyncV3TicketCreate'
+  /me/sync/v3/ticket/status:
+    $ref: './paths/me_sync.yaml#/meSyncV3TicketStatus'
+  /me/sync/v3/ticket/cancel:
+    $ref: './paths/me_sync.yaml#/meSyncV3TicketCancel'
+  /me/sync/v3/import/apply:
+    $ref: './paths/me_sync.yaml#/meSyncV3ImportApply'
+
+  # ── Cloud ──
+  /cloud/request:
+    $ref: './paths/cloud.yaml#/cloudRequest'
+  /cloud/prefs:
+    $ref: './paths/cloud.yaml#/cloudPrefsGet'
+
+  # ── Notifications ──
+  /notifications/prefs:
+    $ref: './paths/notifications.yaml#/notificationsPrefsGet'
+
+  # ── Permissions ──
+  /permissions/request:
+    $ref: './paths/permissions.yaml#/permissionsRequest'
+  /permissions/pending:
+    $ref: './paths/permissions.yaml#/permissionsPending'
+  /permissions/grants:
+    $ref: './paths/permissions.yaml#/permissionsGrants'
+  /permissions/{id}:
+    $ref: './paths/permissions.yaml#/permissionsGetById'
+  /permissions/clear:
+    $ref: './paths/permissions.yaml#/permissionsClear'
+  /permissions/prefs:
+    $ref: './paths/permissions.yaml#/permissionsPrefsGet'
+
+  # ── Vault ──
+  /vault/credentials:
+    $ref: './paths/vault.yaml#/vaultCredentialsList'
+  /vault/credentials/get:
+    $ref: './paths/vault.yaml#/vaultCredentialsGet'
+  /vault/credentials/has:
+    $ref: './paths/vault.yaml#/vaultCredentialsHas'
+
+  # ── Files ──
+  /user/upload:
+    $ref: './paths/files.yaml#/userUpload'
+  /user/file:
+    $ref: './paths/files.yaml#/userFile'
+  /user/file/info:
+    $ref: './paths/files.yaml#/userFileInfo'
+  /user/list:
+    $ref: './paths/files.yaml#/userList'
+  /sys/file:
+    $ref: './paths/files.yaml#/sysFile'
+  /sys/list:
+    $ref: './paths/files.yaml#/sysList'

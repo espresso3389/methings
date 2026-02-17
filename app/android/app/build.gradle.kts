@@ -110,12 +110,28 @@ val syncServerAssets by tasks.registering(Copy::class) {
     }
 }
 
+val syncSystemAssets by tasks.registering(Copy::class) {
+    val repoRoot = rootProject.projectDir.parentFile.parentFile
+    val srcDir = repoRoot.resolve("user")
+    val dstDir = projectDir.resolve("src/main/assets/system")
+    from(srcDir) {
+        include("docs/**", "examples/**", "lib/**")
+    }
+    exclude("**/__pycache__/**", "**/*.pyc")
+    into(dstDir)
+    doFirst {
+        dstDir.deleteRecursively()
+    }
+}
+
 val syncUserDefaults by tasks.registering(Copy::class) {
     val repoRoot = rootProject.projectDir.parentFile.parentFile
     val srcDir = repoRoot.resolve("user")
     val dstDir = projectDir.resolve("src/main/assets/user_defaults")
     from(srcDir)
     exclude("**/__pycache__/**", "**/*.pyc")
+    // docs/, examples/, lib/ are read-only system assets (synced by syncSystemAssets)
+    exclude("docs/**", "examples/**", "lib/**")
     into(dstDir)
     doFirst {
         dstDir.deleteRecursively()
@@ -272,7 +288,7 @@ val syncDependencyInventoryAsset by tasks.registering {
 }
 
 tasks.named("preBuild") {
-    dependsOn(syncServerAssets, verifyPythonRuntime, buildUsbLibs, buildFacadeWheels, fetchOpenCvAndroidSdk, fetchNodeRuntime, syncDependencyInventoryAsset)
+    dependsOn(syncServerAssets, syncSystemAssets, verifyPythonRuntime, buildUsbLibs, buildFacadeWheels, fetchOpenCvAndroidSdk, fetchNodeRuntime, syncDependencyInventoryAsset)
     if (syncUserDefaultsOnBuild) {
         dependsOn(syncUserDefaults)
     }

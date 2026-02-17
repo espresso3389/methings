@@ -1,0 +1,428 @@
+visionModelLoad:
+  post:
+    operationId: postVisionModelLoad
+    summary: Load a TFLite model
+    description: >
+      Loads a TFLite model for on-device inference. Pixels are RGBA8888 bytes.
+      Recommended golden path: (1) place .tflite under user root,
+      (2) vision.model.load, (3) vision.image.load to get frame_id,
+      (4) vision.run, (5) optionally vision.frame.save.
+
+      Prefer frame_id reuse to avoid sending large RGBA buffers repeatedly.
+      If a model expects UINT8 input, set normalize=false in vision.run.
+    tags: [Vision]
+    x-permission:
+      tool: device.vision
+      capability: vision
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [name, path]
+                properties:
+                  name:
+                    type: string
+                    description: Model name (used as reference in vision.run).
+                  path:
+                    type: string
+                    description: User-root relative path to .tflite file.
+                  delegate:
+                    type: string
+                    enum: [none, nnapi, gpu]
+                    default: none
+                    description: >
+                      Hardware acceleration delegate. "nnapi" uses Android NNAPI,
+                      "gpu" uses GPU delegate for supported models.
+                  num_threads:
+                    type: integer
+                    default: 1
+                    description: Number of CPU threads for inference.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            name: my_model
+            path: "models/my_model.tflite"
+            delegate: none
+            num_threads: 4
+    responses:
+      '200':
+        description: Model loaded.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Model load failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+visionModelUnload:
+  post:
+    operationId: postVisionModelUnload
+    summary: Unload a TFLite model
+    tags: [Vision]
+    x-permission:
+      tool: device.vision
+      capability: vision
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [name]
+                properties:
+                  name:
+                    type: string
+                    description: Model name to unload.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Model unloaded.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+visionImageLoad:
+  post:
+    operationId: postVisionImageLoad
+    summary: Decode an image file to an in-memory RGBA frame
+    tags: [Vision]
+    x-permission:
+      tool: device.vision
+      capability: vision
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [path]
+                properties:
+                  path:
+                    type: string
+                    description: User-root relative path to image (PNG/JPEG).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            path: "images/input.jpg"
+    responses:
+      '200':
+        description: Image decoded into memory frame.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, frame_id]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                frame_id:
+                  type: string
+                  description: Frame ID for subsequent vision operations.
+                width:
+                  type: integer
+                height:
+                  type: integer
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+visionFramePut:
+  post:
+    operationId: postVisionFramePut
+    summary: Store RGBA frame data in memory
+    tags: [Vision]
+    x-permission:
+      tool: device.vision
+      capability: vision
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [width, height, data_b64]
+                properties:
+                  frame_id:
+                    type: string
+                    description: Optional frame ID (auto-generated if omitted).
+                  width:
+                    type: integer
+                  height:
+                    type: integer
+                  data_b64:
+                    type: string
+                    description: Base64-encoded RGBA8888 pixel data.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Frame stored.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, frame_id]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                frame_id:
+                  type: string
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+visionFrameGet:
+  post:
+    operationId: postVisionFrameGet
+    summary: Retrieve RGBA frame metadata
+    tags: [Vision]
+    x-permission:
+      tool: device.vision
+      capability: vision
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [frame_id]
+                properties:
+                  frame_id:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Frame info.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, frame_id, width, height]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                frame_id:
+                  type: string
+                width:
+                  type: integer
+                height:
+                  type: integer
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+visionFrameDelete:
+  post:
+    operationId: postVisionFrameDelete
+    summary: Delete an in-memory RGBA frame
+    tags: [Vision]
+    x-permission:
+      tool: device.vision
+      capability: vision
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [frame_id]
+                properties:
+                  frame_id:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Frame deleted.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+visionFrameSave:
+  post:
+    operationId: postVisionFrameSave
+    summary: Save an RGBA frame as image file
+    tags: [Vision]
+    x-permission:
+      tool: device.vision
+      capability: vision
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [frame_id, path]
+                properties:
+                  frame_id:
+                    type: string
+                  path:
+                    type: string
+                    description: User-root relative output path.
+                  format:
+                    type: string
+                    enum: [jpg, png]
+                    default: jpg
+                    description: Output image format.
+                  jpeg_quality:
+                    type: integer
+                    minimum: 1
+                    maximum: 100
+                    default: 90
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            frame_id: "frame_001"
+            path: "out/frame.jpg"
+            format: jpg
+            jpeg_quality: 90
+    responses:
+      '200':
+        description: Frame saved.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, rel_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                rel_path:
+                  type: string
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+visionRun:
+  post:
+    operationId: postVisionRun
+    summary: Run TFLite inference on a frame
+    tags: [Vision]
+    x-permission:
+      tool: device.vision
+      capability: vision
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [model, frame_id]
+                properties:
+                  model:
+                    type: string
+                    description: Model name (from vision.model.load).
+                  frame_id:
+                    type: string
+                    description: Frame to run inference on.
+                  normalize:
+                    type: boolean
+                    default: true
+                    description: Whether to normalize input to [0,1].
+                  mean:
+                    type: array
+                    items:
+                      type: number
+                    description: Per-channel mean for normalization [R,G,B].
+                  std:
+                    type: array
+                    items:
+                      type: number
+                    description: Per-channel std for normalization [R,G,B].
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            model: my_model
+            frame_id: "frame_001"
+            normalize: true
+    responses:
+      '200':
+        description: Inference results.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                outputs:
+                  type: array
+                  items:
+                    type: object
+                  description: Model output tensors.
+                inference_ms:
+                  type: number
+                  description: Inference time in milliseconds.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Inference failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'

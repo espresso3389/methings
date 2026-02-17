@@ -1,0 +1,76 @@
+notificationsPrefsGet:
+  get:
+    operationId: getNotificationsPrefs
+    summary: Get notification preferences
+    tags: [Notifications]
+    responses:
+      '200':
+        description: Current notification preferences.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, notify_android, notify_sound, notify_webhook_url]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                notify_android:
+                  type: boolean
+                  description: Whether Android notifications are enabled.
+                  default: true
+                notify_sound:
+                  type: boolean
+                  description: Whether notification sound is enabled.
+                  default: false
+                notify_webhook_url:
+                  type: string
+                  description: Webhook URL for notifications (empty string if not set).
+                  default: ""
+            example:
+              status: ok
+              notify_android: true
+              notify_sound: false
+              notify_webhook_url: ""
+
+notificationsPrefsSet:
+  post:
+    operationId: postNotificationsPrefs
+    summary: Update notification preferences
+    tags: [Notifications]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              notify_android:
+                type: boolean
+                description: Whether Android notifications are enabled.
+              notify_sound:
+                type: boolean
+                description: Whether notification sound is enabled.
+              notify_webhook_url:
+                type: string
+                description: Webhook URL for notifications.
+          example:
+            notify_sound: true
+    responses:
+      '200':
+        description: Updated notification preferences (partial merge).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, notify_android, notify_sound, notify_webhook_url]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                notify_android:
+                  type: boolean
+                notify_sound:
+                  type: boolean
+                notify_webhook_url:
+                  type: string

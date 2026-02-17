@@ -1,33 +1,17 @@
 # Documentation Index
 
-This folder documents the local control plane, hardware access, and on-device ML/runtime helpers.
+## API Reference
 
-## Start Here
+- **OpenAPI Spec**: `openapi/openapi.yaml` — complete HTTP API reference (OpenAPI 3.1.0).
+  - Paths: `openapi/paths/*.yaml`
+  - Schemas: `openapi/components/schemas.yaml`
+- **Agent Tools**: `agent_tools.md` — device_api mapping, Python runtime filesystem helpers, chat UI shortcuts.
+- **Permissions**: `permissions.md` — permission scopes, request flow, USB special cases.
 
-- **API Reference**: `docs/api_reference.md` - canonical action map for `device_api`.
-- **Permissions**: `docs/permissions.md` - permission scopes and request flow.
-- **File Endpoints**: `docs/file_endpoints.md` - upload/list/file/info APIs.
-- **Viewer Control**: `docs/viewer.md` - fullscreen viewer/open/close/slide APIs.
-- **me.me**: `docs/me_me.md` - device discovery/connection foundation and config.
-- **Relay Integrations**: `docs/relay_integrations.md` - agent-assisted Slack/Discord onboarding and verification flow.
-- **me.sync**: `docs/me_sync.md` - export/import concepts, modes, and transfer flow.
-- **me.sync v3 Concept**: `docs/me_sync_v3.md` - QR-paired ad-hoc transfer architecture (Nearby-first, LAN fallback).
-- **Brain Journal**: `docs/brain_journal.md` - per-session journal APIs.
-- **Cloud Broker**: `docs/cloud_broker.md` - placeholder expansion + cloud prefs.
+## Architecture & Design
 
-## Media + ML
-
-- **Camera**: `docs/camera.md` - CameraX capture/preview.
-- **UVC / USB webcams**: `docs/uvc.md` - MJPEG capture + PTZ.
-- **Vision (TFLite)**: `docs/vision.md` - RGBA8888 frames + inference.
-- **STT**: `docs/stt.md` - Android SpeechRecognizer.
-- **TTS (Android)**: `docs/tts.md` - TextToSpeech API.
-
-## Connectivity
-
-- **USB (generic)**: `docs/usb.md` - device enumeration + transfers.
-- **BLE**: `docs/ble.md` - scanning + GATT.
-
-## Notes
-
-- `docs/api_reference.md` remains the single source of truth for action names.
+- **me.me**: `me_me.md` — device discovery/connection foundation, security model, event forwarding.
+- **me.sync**: `me_sync.md` — export/import concepts, modes, and transfer flow.
+- **me.sync v3**: `me_sync_v3.md` — QR-paired ad-hoc transfer architecture (Nearby-first, LAN fallback).
+- **Relay Integrations**: `relay_integrations.md` — agent-assisted Slack/Discord onboarding and verification.
+- **Viewer Guide**: `viewer.md` — fullscreen viewer usage, Marp presentations, autonomous presentation examples.

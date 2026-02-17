@@ -1,0 +1,194 @@
+brainJournalConfig:
+  get:
+    operationId: getBrainJournalConfig
+    summary: Get journal configuration
+    description: >
+      Storage is file-backed under files/user/journal/<session_id>/ and
+      rotates when entries exceed limits. Use "append" for timeline-like
+      entries and "current" for a mutable per-session summary note.
+    tags: [BrainJournal]
+    responses:
+      '200':
+        description: Journal limits and root path.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                root_path:
+                  type: string
+                  description: Base path for journal storage.
+                max_entry_size:
+                  type: integer
+                  description: Maximum size of a single journal entry.
+                max_entries:
+                  type: integer
+                  description: Maximum number of entries per session.
+
+brainJournalCurrentGet:
+  get:
+    operationId: getBrainJournalCurrent
+    summary: Read current per-session note
+    tags: [BrainJournal]
+    parameters:
+      - name: session_id
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Chat session ID.
+    responses:
+      '200':
+        description: Current session note content.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                text:
+                  type: string
+                  description: Current note content (empty string if none).
+
+brainJournalCurrentSet:
+  post:
+    operationId: postBrainJournalCurrent
+    summary: Replace current per-session note
+    tags: [BrainJournal]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [session_id, text]
+            properties:
+              session_id:
+                type: string
+                description: Chat session ID.
+              text:
+                type: string
+                description: New note content (replaces existing).
+          example:
+            session_id: "sess_abc123"
+            text: "Working on camera integration."
+    responses:
+      '200':
+        description: Note replaced.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+brainJournalAppend:
+  post:
+    operationId: postBrainJournalAppend
+    summary: Append a journal entry
+    tags: [BrainJournal]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [session_id, kind, title]
+            properties:
+              session_id:
+                type: string
+                description: Chat session ID.
+              kind:
+                type: string
+                description: Entry kind (e.g. milestone, note, error).
+              title:
+                type: string
+                description: Entry title.
+              text:
+                type: string
+                description: Entry body text.
+              meta:
+                type: object
+                additionalProperties: true
+                description: Arbitrary metadata.
+          example:
+            session_id: "sess_abc123"
+            kind: milestone
+            title: "Camera capture working"
+            text: "Successfully captured first image via CameraX."
+            meta:
+              rel_path: "captures/capture_001.jpg"
+    responses:
+      '200':
+        description: Entry appended.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                entry_id:
+                  type: string
+                  description: ID of the appended entry.
+
+brainJournalList:
+  get:
+    operationId: getBrainJournalList
+    summary: List recent journal entries
+    tags: [BrainJournal]
+    parameters:
+      - name: session_id
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Chat session ID.
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 30
+        description: Maximum number of entries to return.
+    responses:
+      '200':
+        description: Recent journal entries (newest first).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, entries]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                entries:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      kind:
+                        type: string
+                      title:
+                        type: string
+                      text:
+                        type: string
+                      meta:
+                        type: object
+                      created_at:
+                        type: integer
+                        format: int64

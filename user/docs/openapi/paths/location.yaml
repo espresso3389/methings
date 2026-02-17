@@ -1,0 +1,211 @@
+locationStatus:
+  get:
+    operationId: getLocationStatus
+    summary: List location providers and their enabled state
+    tags: [Location]
+    x-permission:
+      tool: device.gps
+      capability: location
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Provider list and enabled flags.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, providers, enabled]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                providers:
+                  type: array
+                  items:
+                    type: string
+                  description: All known location providers.
+                  examples:
+                    - [fused, gps, network, passive]
+                enabled:
+                  type: object
+                  additionalProperties:
+                    type: boolean
+                  description: Map of provider name to enabled state.
+                  examples:
+                    - fused: true
+                      gps: true
+                      network: true
+                      passive: true
+            example:
+              status: ok
+              providers: [fused, gps, network, passive]
+              enabled:
+                fused: true
+                gps: true
+                network: true
+                passive: true
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: LocationManager unavailable.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            example:
+              status: error
+              error: location_manager_unavailable
+
+locationGet:
+  post:
+    operationId: postLocationGet
+    summary: Get current device location
+    tags: [Location]
+    x-permission:
+      tool: device.gps
+      capability: location
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  high_accuracy:
+                    type: boolean
+                    default: true
+                    description: >
+                      Prefer GPS/fused provider (true) or network/passive (false).
+                  timeout_ms:
+                    type: integer
+                    minimum: 250
+                    maximum: 120000
+                    default: 12000
+                    description: Max wait time in milliseconds for a location fix.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            high_accuracy: true
+            timeout_ms: 12000
+    responses:
+      '200':
+        description: Location fix obtained.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, provider, latitude, longitude, time_ms, elapsed_realtime_nanos]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                provider:
+                  type: string
+                  description: Provider that supplied the fix.
+                  examples: [fused, gps, network]
+                latitude:
+                  type: number
+                  format: double
+                longitude:
+                  type: number
+                  format: double
+                accuracy_m:
+                  type: number
+                  format: float
+                  nullable: true
+                  description: Estimated horizontal accuracy in metres.
+                altitude_m:
+                  type: number
+                  format: double
+                  nullable: true
+                  description: Altitude in metres above WGS 84 ellipsoid.
+                bearing_deg:
+                  type: number
+                  format: float
+                  nullable: true
+                  description: Bearing in degrees (0–360).
+                speed_mps:
+                  type: number
+                  format: float
+                  nullable: true
+                  description: Speed in metres per second.
+                time_ms:
+                  type: integer
+                  format: int64
+                  description: UTC time of fix (Unix epoch millis).
+                elapsed_realtime_nanos:
+                  type: integer
+                  format: int64
+                  description: Elapsed realtime nanos since boot.
+            example:
+              status: ok
+              provider: fused
+              latitude: 35.6812
+              longitude: 139.7671
+              accuracy_m: 12.5
+              altitude_m: 40.0
+              bearing_deg: null
+              speed_mps: null
+              time_ms: 1700000000000
+              elapsed_realtime_nanos: 987654321000000
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Location error.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            examples:
+              no_provider_enabled:
+                summary: No provider is enabled on the device.
+                value:
+                  status: error
+                  error: no_provider_enabled
+                  detail:
+                    status: ok
+                    providers: [gps, network, passive]
+                    enabled:
+                      gps: false
+                      network: false
+                      passive: false
+              timeout:
+                summary: Location fix timed out.
+                value:
+                  status: error
+                  error: timeout
+                  timeout_ms: 12000
+              get_current_failed:
+                summary: Internal failure from LocationManager.
+                value:
+                  status: error
+                  error: get_current_failed
+                  detail: "SecurityException: ..."
+              no_location:
+                summary: Provider returned null.
+                value:
+                  status: error
+                  error: no_location
+              location_manager_unavailable:
+                summary: LocationManager service not available.
+                value:
+                  status: error
+                  error: location_manager_unavailable

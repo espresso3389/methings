@@ -1,0 +1,219 @@
+mediaStreamStatus:
+  get:
+    operationId: getMediaStreamStatus
+    summary: Get media decode stream status
+    tags: [MediaStream]
+    x-permission:
+      tool: device.media
+      capability: media_stream
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Active media decode streams.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                streams:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      stream_id:
+                        type: string
+                      type:
+                        type: string
+                        enum: [audio, video]
+                      source_file:
+                        type: string
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+mediaStreamAudioStart:
+  post:
+    operationId: postMediaStreamAudioStart
+    summary: Start decoding an audio file to PCM stream
+    description: >
+      Decodes an existing audio file to raw PCM samples delivered over a
+      dynamic WebSocket at /ws/media/stream/<stream_id>.
+    tags: [MediaStream]
+    x-permission:
+      tool: device.media
+      capability: media_stream
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [source_file]
+                properties:
+                  source_file:
+                    type: string
+                    description: User-root relative audio file path.
+                  sample_rate:
+                    type: integer
+                    description: Target sample rate (resampled if different from source).
+                  channels:
+                    type: integer
+                    description: Target channel count.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            source_file: "audio/song.mp3"
+            sample_rate: 16000
+            channels: 1
+    responses:
+      '200':
+        description: Decode started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, stream_id, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                stream_id:
+                  type: string
+                  description: Stream ID for management and WebSocket path.
+                ws_path:
+                  type: string
+                  description: WebSocket path for PCM data.
+            example:
+              status: ok
+              stream_id: "ms_abc123"
+              ws_path: "/ws/media/stream/ms_abc123"
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+mediaStreamVideoStart:
+  post:
+    operationId: postMediaStreamVideoStart
+    summary: Start decoding a video file to frame stream
+    description: >
+      Decodes an existing video file to JPEG or RGBA frames delivered over
+      a dynamic WebSocket at /ws/media/stream/<stream_id>.
+    tags: [MediaStream]
+    x-permission:
+      tool: device.media
+      capability: media_stream
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [source_file]
+                properties:
+                  source_file:
+                    type: string
+                    description: User-root relative video file path.
+                  format:
+                    type: string
+                    enum: [jpeg, rgba]
+                    description: Frame output format.
+                  fps:
+                    type: integer
+                    description: Target frame rate.
+                  jpeg_quality:
+                    type: integer
+                    minimum: 1
+                    maximum: 100
+                    description: JPEG quality (when format=jpeg).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            source_file: "videos/clip.mp4"
+            format: jpeg
+            fps: 10
+            jpeg_quality: 80
+    responses:
+      '200':
+        description: Decode started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, stream_id, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                stream_id:
+                  type: string
+                ws_path:
+                  type: string
+            example:
+              status: ok
+              stream_id: "ms_def456"
+              ws_path: "/ws/media/stream/ms_def456"
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+mediaStreamStop:
+  post:
+    operationId: postMediaStreamStop
+    summary: Stop a media decode stream
+    tags: [MediaStream]
+    x-permission:
+      tool: device.media
+      capability: media_stream
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  stream_id:
+                    type: string
+                    description: Stream ID to stop (stops all if omitted).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Stream stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

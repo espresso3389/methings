@@ -1,0 +1,167 @@
+workAppUpdateCheckStatus:
+  get:
+    operationId: getWorkAppUpdateCheckStatus
+    summary: Get app update check job status
+    tags: [Work]
+    responses:
+      '200':
+        description: >
+          Current schedule/tracker snapshot plus WorkManager state
+          for periodic and one-time jobs.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                schedule:
+                  type: object
+                  description: Current schedule configuration and state.
+                tracker:
+                  type: object
+                  description: Tracker snapshot with last check info.
+                work_states:
+                  type: object
+                  description: WorkManager state for periodic and one-time jobs.
+
+workAppUpdateCheckSchedule:
+  post:
+    operationId: postWorkAppUpdateCheckSchedule
+    summary: Schedule periodic app update check
+    tags: [Work]
+    x-permission:
+      tool: device.work
+      capability: workmanager
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  interval_minutes:
+                    type: integer
+                    minimum: 15
+                    default: 360
+                    description: >
+                      Check interval in minutes. Clamped to minimum 15 minutes.
+                  require_charging:
+                    type: boolean
+                    default: false
+                    description: Only run while charging.
+                  require_unmetered:
+                    type: boolean
+                    default: false
+                    description: Only run on unmetered (WiFi) network.
+                  replace:
+                    type: boolean
+                    default: true
+                    description: Replace existing schedule.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            interval_minutes: 360
+            require_charging: false
+            require_unmetered: false
+            replace: true
+    responses:
+      '200':
+        description: Schedule created or replaced.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+workAppUpdateCheckRunOnce:
+  post:
+    operationId: postWorkAppUpdateCheckRunOnce
+    summary: Run a one-time app update check
+    tags: [Work]
+    x-permission:
+      tool: device.work
+      capability: workmanager
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  require_charging:
+                    type: boolean
+                    default: false
+                  require_unmetered:
+                    type: boolean
+                    default: false
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            require_charging: false
+            require_unmetered: false
+    responses:
+      '200':
+        description: One-time check enqueued.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+workAppUpdateCheckCancel:
+  post:
+    operationId: postWorkAppUpdateCheckCancel
+    summary: Cancel app update check jobs
+    tags: [Work]
+    x-permission:
+      tool: device.work
+      capability: workmanager
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Both periodic and one-time jobs cancelled.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

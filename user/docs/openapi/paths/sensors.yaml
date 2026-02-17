@@ -1,0 +1,96 @@
+sensorList:
+  get:
+    operationId: getSensorList
+    summary: List available sensors
+    tags: [Sensors]
+    x-permission:
+      tool: device.sensors
+      capability: sensors
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: List of available sensors on the device.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, sensors]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                sensors:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      type:
+                        type: integer
+                        description: Android sensor type constant.
+                      vendor:
+                        type: string
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sensorsWsContract:
+  get:
+    operationId: getSensorsWsContract
+    summary: Get sensor WebSocket contract
+    tags: [Sensors]
+    x-permission:
+      tool: device.sensors
+      capability: sensors
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: >
+          WebSocket connection details for realtime sensor data.
+          Connect to the returned ws_path to receive sensor events.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                ws_path:
+                  type: string
+                  description: WebSocket path for sensor data stream.
+                  examples: [/ws/sensors]
+            example:
+              status: ok
+              ws_path: /ws/sensors
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

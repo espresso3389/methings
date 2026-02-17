@@ -11,6 +11,8 @@ pyenv/
 app/android/app/build/
 app/android/app/src/main/assets/bin/
 app/android/app/src/main/assets/server/
+app/android/app/src/main/assets/system/
+app/android/app/src/main/assets/user_defaults/
 app/android/app/src/main/assets/node/
 .dropbear-build/
 .native-build/

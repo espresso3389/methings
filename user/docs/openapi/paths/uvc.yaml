@@ -1,0 +1,177 @@
+uvcMjpegCapture:
+  post:
+    operationId: postUvcMjpegCapture
+    summary: Capture one MJPEG frame from a USB webcam
+    description: >
+      Negotiates UVC stream format via VS PROBE/COMMIT, reads payloads until
+      a full JPEG frame is assembled, and saves to user root. Supports both
+      endpoint types:
+
+      - `transfer_mode=iso`: isochronous IN (parsed via the KISO bridge)
+
+      - `transfer_mode=bulk`: bulk IN (split using negotiated dwMaxPayloadTransferSize)
+
+
+      The response includes `jpeg_has_eoi` and `jpeg_eoi_appended` for
+      compatibility diagnostics (some cameras omit the JPEG EOI marker).
+      To show the captured image inline in the chat UI, include
+      `rel_path: <rel_path>` in your message.
+    tags: [UVC]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [handle]
+            properties:
+              handle:
+                type: string
+                description: USB handle from usb.open.
+              width:
+                type: integer
+                description: Desired width (best-effort; closest supported frame selected).
+              height:
+                type: integer
+                description: Desired height.
+              fps:
+                type: integer
+                description: Desired FPS (best-effort).
+              path:
+                type: string
+                description: >
+                  Output path under user root.
+                  Default: captures/uvc_<timestamp>.jpg
+              timeout_ms:
+                type: integer
+                default: 12000
+                description: Overall capture timeout in milliseconds.
+          example:
+            handle: "usb_0001"
+            width: 1920
+            height: 1080
+    responses:
+      '200':
+        description: Frame captured.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, rel_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                rel_path:
+                  type: string
+                  description: Saved JPEG path under user root.
+                vs_interface:
+                  type: integer
+                  description: VideoStreaming interface index.
+                format_index:
+                  type: integer
+                frame_index:
+                  type: integer
+                width:
+                  type: integer
+                height:
+                  type: integer
+                interval_100ns:
+                  type: integer
+                  description: Frame interval in 100ns units.
+                transfer_mode:
+                  type: string
+                  enum: [iso, bulk]
+                jpeg_has_eoi:
+                  type: boolean
+                  description: Whether the JPEG EOI marker was present.
+                jpeg_eoi_appended:
+                  type: boolean
+                  description: Whether an EOI marker was appended as fallback.
+      '500':
+        description: Capture failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+uvcDiagnose:
+  post:
+    operationId: postUvcDiagnose
+    summary: Run step-by-step UVC diagnostics
+    description: >
+      Performs a diagnostic probe of a USB webcam device, checking
+      descriptors, VideoControl interface, CameraTerminal IDs,
+      and optional PTZ GET_CUR probes. Use the steps[] array to find where
+      it failed. PTZ uses UVC CameraTerminal controls via usb.control_transfer
+      with CT_PANTILT_ABSOLUTE_CONTROL (selector 0x0D). Includes a known-good
+      wIndex=0x0100 probe for Insta360 Link.
+    tags: [UVC]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              vendor_id:
+                type: integer
+                description: Match by USB vendor ID.
+              product_id:
+                type: integer
+                description: Match by USB product ID.
+              device_name:
+                type: string
+                description: Match by device name (/dev/bus/usb/...).
+              timeout_ms:
+                type: integer
+                default: 60000
+                description: OS permission wait timeout.
+              ptz_get_cur:
+                type: boolean
+                default: true
+                description: Run PTZ GET_CUR probes.
+              ptz_selector:
+                type: integer
+                default: 13
+                description: PTZ selector (default 0x0D).
+          example:
+            vendor_id: 0x2e1a
+            product_id: 0x1000
+    responses:
+      '200':
+        description: Diagnostic results.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, steps]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                steps:
+                  type: array
+                  items:
+                    type: object
+                  description: Ordered step results.
+                vc_interface:
+                  type: integer
+                  nullable: true
+                  description: Detected VideoControl interface ID.
+                camera_terminal_ids:
+                  type: array
+                  items:
+                    type: integer
+                  description: Detected CameraTerminal IDs.
+                ptz_get_cur:
+                  type: array
+                  items:
+                    type: object
+                  description: PTZ GET_CUR probe results.
+      '500':
+        description: Diagnostic failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'

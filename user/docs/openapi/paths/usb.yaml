@@ -1,0 +1,643 @@
+usbList:
+  get:
+    operationId: getUsbList
+    summary: List connected USB devices
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Connected USB devices.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, devices]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                devices:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                        description: Android USB device name (/dev/bus/usb/...).
+                      vendor_id:
+                        type: integer
+                      product_id:
+                        type: integer
+                      product_name:
+                        type: string
+                      manufacturer_name:
+                        type: string
+                      has_permission:
+                        type: boolean
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbStatus:
+  get:
+    operationId: getUsbStatus
+    summary: Get USB subsystem status
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: USB subsystem state including open handles and pending permissions.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                has_permission:
+                  type: boolean
+                open_handles:
+                  type: array
+                  items:
+                    type: string
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbOpen:
+  post:
+    operationId: postUsbOpen
+    summary: Open a USB device and get a handle
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  name:
+                    type: string
+                    description: Device name from usb.list.
+                  vendor_id:
+                    type: integer
+                    description: Match by vendor ID.
+                  product_id:
+                    type: integer
+                    description: Match by product ID.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            vendor_id: 0x2e1a
+            product_id: 0x1000
+    responses:
+      '200':
+        description: Device opened.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, handle]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                handle:
+                  type: string
+                  description: Opaque handle for subsequent USB operations.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: USB open failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+usbClose:
+  post:
+    operationId: postUsbClose
+    summary: Close a USB device handle
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle]
+                properties:
+                  handle:
+                    type: string
+                    description: Handle from usb.open.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Device closed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbRawDescriptors:
+  post:
+    operationId: postUsbRawDescriptors
+    summary: Get raw USB descriptors
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle]
+                properties:
+                  handle:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Raw descriptor bytes.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, descriptors_b64]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                descriptors_b64:
+                  type: string
+                  description: Base64-encoded raw USB descriptors.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbClaimInterface:
+  post:
+    operationId: postUsbClaimInterface
+    summary: Claim a USB interface
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle, interface_id]
+                properties:
+                  handle:
+                    type: string
+                  interface_id:
+                    type: integer
+                    description: Interface number to claim.
+                  force:
+                    type: boolean
+                    default: false
+                    description: Force claim (detach kernel driver).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Interface claimed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbReleaseInterface:
+  post:
+    operationId: postUsbReleaseInterface
+    summary: Release a USB interface
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle, interface_id]
+                properties:
+                  handle:
+                    type: string
+                  interface_id:
+                    type: integer
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Interface released.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbControlTransfer:
+  post:
+    operationId: postUsbControlTransfer
+    summary: Perform a USB control transfer
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle, request_type, request, value, index]
+                properties:
+                  handle:
+                    type: string
+                  request_type:
+                    type: integer
+                    description: bmRequestType byte.
+                  request:
+                    type: integer
+                    description: bRequest byte.
+                  value:
+                    type: integer
+                    description: wValue.
+                  index:
+                    type: integer
+                    description: wIndex.
+                  data_b64:
+                    type: string
+                    description: Base64-encoded data for OUT transfers.
+                  length:
+                    type: integer
+                    description: Expected response length for IN transfers.
+                  timeout_ms:
+                    type: integer
+                    default: 5000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Transfer result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                transferred:
+                  type: integer
+                  description: Number of bytes transferred.
+                data_b64:
+                  type: string
+                  description: Base64-encoded response data (IN transfers).
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbBulkTransfer:
+  post:
+    operationId: postUsbBulkTransfer
+    summary: Perform a USB bulk transfer
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle, endpoint]
+                properties:
+                  handle:
+                    type: string
+                  endpoint:
+                    type: integer
+                    description: Endpoint address.
+                  data_b64:
+                    type: string
+                    description: Base64-encoded data for OUT transfers.
+                  length:
+                    type: integer
+                    description: Expected read length for IN transfers.
+                  timeout_ms:
+                    type: integer
+                    default: 5000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Transfer result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                transferred:
+                  type: integer
+                data_b64:
+                  type: string
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbIsoTransfer:
+  post:
+    operationId: postUsbIsoTransfer
+    summary: Perform a USB isochronous transfer
+    description: >
+      Low-level isochronous IN transfer via native usbfs workaround.
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle, endpoint]
+                properties:
+                  handle:
+                    type: string
+                  endpoint:
+                    type: integer
+                  packet_count:
+                    type: integer
+                    description: Number of packets per URB.
+                  packet_size:
+                    type: integer
+                    description: Max packet size.
+                  timeout_ms:
+                    type: integer
+                    default: 5000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Transfer result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                data_b64:
+                  type: string
+                  description: Base64-encoded KISO blob.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbStreamStart:
+  post:
+    operationId: postUsbStreamStart
+    summary: Start USB data streaming
+    description: >
+      Start high-rate USB streaming for bulk or isochronous endpoints.
+      Returns tcp_port and ws_path for data consumption.
+      Prefer streaming over JSON base64 for high-rate payloads.
+
+
+      TCP framing: `[u8 type][u32le length][payload]`
+        - type=1: bulk IN payload bytes
+        - type=2: iso IN "KISO" blob (native URB result)
+
+
+      WebSocket framing: binary message `[u8 type] + payload`
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle, endpoint]
+                properties:
+                  handle:
+                    type: string
+                  endpoint:
+                    type: integer
+                  transfer_type:
+                    type: string
+                    enum: [bulk, iso]
+                    description: Endpoint transfer type.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Streaming started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, tcp_port, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                tcp_port:
+                  type: integer
+                  description: TCP port for raw streaming data.
+                ws_path:
+                  type: string
+                  description: WebSocket path for streaming data.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbStreamStop:
+  post:
+    operationId: postUsbStreamStop
+    summary: Stop USB data streaming
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle]
+                properties:
+                  handle:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Streaming stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+usbStreamStatus:
+  get:
+    operationId: getUsbStreamStatus
+    summary: Get USB stream status
+    tags: [USB]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current USB streaming state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                streaming:
+                  type: boolean
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

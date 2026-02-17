@@ -1,0 +1,490 @@
+bleStatus:
+  get:
+    operationId: getBleStatus
+    summary: Get Bluetooth LE status
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity.
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: BLE adapter and connection state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                bluetooth_enabled:
+                  type: boolean
+                scanning:
+                  type: boolean
+                connected_devices:
+                  type: array
+                  items:
+                    type: string
+                  description: List of connected device addresses.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleScanStart:
+  post:
+    operationId: postBleScanStart
+    summary: Start BLE scan
+    description: >
+      Starts BLE scanning. Results and lifecycle events are delivered over
+      WebSocket at /ws/ble/events as JSON messages:
+
+      - `{"type":"ble","event":"scan_result", ...}` — discovered device
+
+      - `{"type":"ble","event":"connected","address":"...", ...}` — GATT connected
+
+      - `{"type":"ble","event":"services","services":[...], ...}` — service discovery
+
+      - `{"type":"ble","event":"char_notify","value_b64":"..."}` — characteristic notification
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  low_latency:
+                    type: boolean
+                    default: true
+                    description: Use low-latency scan mode.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Scan started. Connect to ws_path for results.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                ws_path:
+                  type: string
+                  examples: [/ws/ble/events]
+            example:
+              status: ok
+              ws_path: /ws/ble/events
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleScanStop:
+  post:
+    operationId: postBleScanStop
+    summary: Stop BLE scan
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Scan stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleConnect:
+  post:
+    operationId: postBleConnect
+    summary: Connect to a BLE device
+    description: >
+      Initiates a GATT connection. Connection events are delivered over
+      WebSocket at /ws/ble/events.
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [address]
+                properties:
+                  address:
+                    type: string
+                    description: BLE MAC address.
+                  auto_connect:
+                    type: boolean
+                    default: false
+                    description: Use autoConnect mode.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            address: "AA:BB:CC:DD:EE:FF"
+            auto_connect: false
+    responses:
+      '200':
+        description: Connection initiated. Listen on ws_path for events.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, ws_path]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                ws_path:
+                  type: string
+                  examples: [/ws/ble/events]
+            example:
+              status: ok
+              ws_path: /ws/ble/events
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleDisconnect:
+  post:
+    operationId: postBleDisconnect
+    summary: Disconnect a BLE device
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [address]
+                properties:
+                  address:
+                    type: string
+                    description: BLE MAC address.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            address: "AA:BB:CC:DD:EE:FF"
+    responses:
+      '200':
+        description: Device disconnected.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleGattServices:
+  post:
+    operationId: postBleGattServices
+    summary: List GATT services of a connected device
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [address]
+                properties:
+                  address:
+                    type: string
+                    description: BLE MAC address.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: GATT service tree.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, services]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                services:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      uuid:
+                        type: string
+                      characteristics:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            uuid:
+                              type: string
+                            properties:
+                              type: array
+                              items:
+                                type: string
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleGattRead:
+  post:
+    operationId: postBleGattRead
+    summary: Read a BLE GATT characteristic
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [address, service_uuid, char_uuid]
+                properties:
+                  address:
+                    type: string
+                  service_uuid:
+                    type: string
+                    description: GATT service UUID.
+                  char_uuid:
+                    type: string
+                    description: Characteristic UUID.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Characteristic value.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                value_b64:
+                  type: string
+                  description: Base64-encoded characteristic value.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleGattWrite:
+  post:
+    operationId: postBleGattWrite
+    summary: Write a BLE GATT characteristic
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [address, service_uuid, char_uuid, value_b64]
+                properties:
+                  address:
+                    type: string
+                  service_uuid:
+                    type: string
+                  char_uuid:
+                    type: string
+                  value_b64:
+                    type: string
+                    description: Base64-encoded value to write.
+                  with_response:
+                    type: boolean
+                    default: true
+                    description: Use write-with-response (vs write-without-response).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Write completed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '400':
+        description: Invalid base64 value.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            example:
+              status: error
+              error: invalid_value_b64
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleGattNotifyStart:
+  post:
+    operationId: postBleGattNotifyStart
+    summary: Subscribe to BLE GATT notifications
+    description: >
+      Enables notifications for a characteristic. Notification values are
+      delivered over /ws/ble/events as char_notify events with value_b64.
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [address, service_uuid, char_uuid]
+                properties:
+                  address:
+                    type: string
+                  service_uuid:
+                    type: string
+                  char_uuid:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Notifications enabled.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+bleGattNotifyStop:
+  post:
+    operationId: postBleGattNotifyStop
+    summary: Unsubscribe from BLE GATT notifications
+    tags: [BLE]
+    x-permission:
+      tool: device.ble
+      capability: ble
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [address, service_uuid, char_uuid]
+                properties:
+                  address:
+                    type: string
+                  service_uuid:
+                    type: string
+                  char_uuid:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Notifications disabled.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

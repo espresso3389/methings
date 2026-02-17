@@ -1,0 +1,249 @@
+permissionsRequest:
+  post:
+    operationId: postPermissionsRequest
+    summary: Create a permission request
+    tags: [Permissions]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [tool, detail, scope, identity, capability]
+            properties:
+              tool:
+                type: string
+                description: Tool category (e.g. device.usb, device.vision).
+              detail:
+                type: string
+                description: Human-readable description for the approval prompt.
+              scope:
+                type: string
+                enum: [once, program, session, persistent]
+                description: How long the grant should remain valid.
+              identity:
+                type: string
+                description: Caller identity (e.g. session ID).
+              capability:
+                type: string
+                description: Capability tag for the grant.
+          example:
+            tool: device.camera
+            detail: "Capture a photo"
+            scope: session
+            identity: sess_abc123
+            capability: camera
+    responses:
+      '200':
+        description: Permission request created.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+permissionsPending:
+  get:
+    operationId: getPermissionsPending
+    summary: List pending permission requests
+    tags: [Permissions]
+    responses:
+      '200':
+        description: All pending (unapproved) permission requests.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, requests]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                requests:
+                  type: array
+                  items:
+                    $ref: '../components/schemas.yaml#/PermissionRequest'
+
+permissionsGrants:
+  get:
+    operationId: getPermissionsGrants
+    summary: List active permission grants
+    tags: [Permissions]
+    responses:
+      '200':
+        description: Currently active (non-expired) approved grants.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, grants]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                grants:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      tool:
+                        type: string
+                      capability:
+                        type: string
+                      identity:
+                        type: string
+                      scope:
+                        type: string
+                      approved_at:
+                        type: integer
+                        format: int64
+
+permissionsGetById:
+  get:
+    operationId: getPermissionById
+    summary: Get permission request status by ID
+    tags: [Permissions]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Permission request ID.
+    responses:
+      '200':
+        description: Permission request details and status.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, request]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                request:
+                  $ref: '../components/schemas.yaml#/PermissionRequest'
+      '404':
+        description: Permission request not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+permissionsApproveOrDeny:
+  post:
+    operationId: postPermissionApproveOrDeny
+    summary: Approve or deny a permission request
+    tags: [Permissions]
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Permission request ID.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [approved]
+            properties:
+              approved:
+                type: boolean
+                description: true to approve, false to deny.
+          example:
+            approved: true
+    responses:
+      '200':
+        description: Permission request updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '404':
+        description: Permission request not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+permissionsClear:
+  post:
+    operationId: postPermissionsClear
+    summary: Clear all permission grants
+    tags: [Permissions]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: All grants cleared.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+permissionsPrefsGet:
+  get:
+    operationId: getPermissionsPrefs
+    summary: Get permission preferences
+    tags: [Permissions]
+    responses:
+      '200':
+        description: Current permission preference settings.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                remember_approvals:
+                  type: boolean
+                  description: Whether to remember approvals across sessions.
+
+permissionsPrefsSet:
+  post:
+    operationId: postPermissionsPrefs
+    summary: Update permission preferences
+    tags: [Permissions]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              remember_approvals:
+                type: boolean
+    responses:
+      '200':
+        description: Preferences updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok

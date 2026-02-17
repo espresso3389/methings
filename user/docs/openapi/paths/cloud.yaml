@@ -1,0 +1,179 @@
+cloudRequest:
+  post:
+    operationId: postCloudRequest
+    summary: Send a cloud API request via the broker
+    description: >
+      Expands placeholders and injects secrets from vault. Supports two modes:
+
+
+      **Raw mode**: Supply a full provider request JSON. Placeholders are expanded:
+        - `${config:<key>}`: expands config/credential values via broker
+        - `${file:<rel_path>:base64}`: reads file bytes and injects base64 payload
+
+
+      **Adapter mode**: Use the `adapter` field for simplified multi-provider
+      requests with a shared schema. Keep API keys out of prompts/messages;
+      let the broker inject from vault.
+    tags: [Cloud]
+    x-permission:
+      tool: cloud.http
+      capability: cloud
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                description: >
+                  Either a raw provider request JSON with placeholder expansion,
+                  or an adapter-mode request with a structured adapter field.
+                properties:
+                  adapter:
+                    type: object
+                    description: >
+                      Adapter mode for simplified multi-provider requests.
+                    properties:
+                      provider:
+                        type: string
+                        enum: [openai, deepseek, kimi, gemini, anthropic]
+                      task:
+                        type: string
+                        enum: [chat, vision, stt]
+                      model:
+                        type: string
+                        description: Model identifier.
+                      text:
+                        type: string
+                        description: Input text for chat task.
+                      api_key_credential:
+                        type: string
+                        description: Vault key name (default is provider-specific).
+                      base_url:
+                        type: string
+                        description: Override API endpoint.
+                      messages:
+                        type: array
+                        items:
+                          type: object
+                        description: Chat history override.
+                      temperature:
+                        type: number
+                      max_tokens:
+                        type: integer
+                      timeout_s:
+                        type: integer
+                      image_path:
+                        type: string
+                        description: Single image path (vision task).
+                      image_paths:
+                        type: array
+                        items:
+                          type: string
+                        description: Multiple image paths (vision task).
+                      audio_path:
+                        type: string
+                        description: Audio file path (stt task).
+                      audio_format:
+                        type: string
+                        description: Audio format hint (inferred from extension if omitted).
+                      prompt:
+                        type: string
+                        description: Transcription instruction (stt task).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          examples:
+            adapter_chat:
+              summary: Adapter mode chat request
+              value:
+                adapter:
+                  provider: openai
+                  task: chat
+                  model: gpt-5-mini
+                  text: "Hello"
+            raw_request:
+              summary: Raw provider request with placeholders
+              value:
+                url: "https://api.openai.com/v1/chat/completions"
+                method: POST
+                headers:
+                  Authorization: "Bearer ${config:openai_api_key}"
+                body:
+                  model: gpt-5-mini
+                  messages:
+                    - role: user
+                      content: "Hello"
+    responses:
+      '200':
+        description: Cloud API response (proxied from provider).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                response:
+                  type: object
+                  description: Provider response body.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Cloud request failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+cloudPrefsGet:
+  get:
+    operationId: getCloudPrefs
+    summary: Get cloud broker preferences
+    tags: [Cloud]
+    responses:
+      '200':
+        description: Current cloud broker preferences.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                image_resize:
+                  type: object
+                  description: Image resize settings for uploads.
+                upload_threshold:
+                  type: object
+                  description: Upload size threshold settings.
+
+cloudPrefsSet:
+  post:
+    operationId: postCloudPrefs
+    summary: Update cloud broker preferences
+    tags: [Cloud]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            description: Partial preferences to merge.
+    responses:
+      '200':
+        description: Preferences updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok

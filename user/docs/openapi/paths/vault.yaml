@@ -1,0 +1,151 @@
+vaultCredentialsList:
+  get:
+    operationId: getVaultCredentials
+    summary: List stored credential names
+    tags: [Vault]
+    x-permission:
+      tool: vault
+      capability: vault
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: List of credential names (values are not returned).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, credentials]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                credentials:
+                  type: array
+                  items:
+                    type: string
+                  description: List of stored credential names.
+            example:
+              status: ok
+              credentials: [openai_api_key, anthropic_api_key]
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+vaultCredentialsGet:
+  post:
+    operationId: postVaultCredentialsGet
+    summary: Retrieve a credential value
+    tags: [Vault]
+    x-permission:
+      tool: vault
+      capability: vault
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [name]
+                properties:
+                  name:
+                    type: string
+                    description: Credential name to retrieve.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            name: openai_api_key
+    responses:
+      '200':
+        description: Credential value.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, name, value]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                name:
+                  type: string
+                value:
+                  type: string
+                  description: The credential value.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '404':
+        description: Credential not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            example:
+              status: error
+              error: not_found
+
+vaultCredentialsHas:
+  post:
+    operationId: postVaultCredentialsHas
+    summary: Check if a credential exists
+    tags: [Vault]
+    x-permission:
+      tool: vault
+      capability: vault
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [name]
+                properties:
+                  name:
+                    type: string
+                    description: Credential name to check.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            name: openai_api_key
+    responses:
+      '200':
+        description: Whether the credential exists.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, name, exists]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                name:
+                  type: string
+                exists:
+                  type: boolean
+            example:
+              status: ok
+              name: openai_api_key
+              exists: true
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

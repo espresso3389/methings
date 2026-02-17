@@ -1,0 +1,147 @@
+networkStatus:
+  get:
+    operationId: getNetworkStatus
+    summary: Get network connectivity status
+    tags: [Network]
+    x-permission:
+      tool: device.network
+      capability: network
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Current network connectivity info.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                connected:
+                  type: boolean
+                  description: Whether the device has network connectivity.
+                type:
+                  type: string
+                  description: Network type (wifi, cellular, etc.).
+                wifi:
+                  type: object
+                  description: WiFi details when connected.
+                cellular:
+                  type: object
+                  description: Cellular details when connected.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+wifiStatus:
+  get:
+    operationId: getWifiStatus
+    summary: Get WiFi status
+    tags: [Network]
+    x-permission:
+      tool: device.network
+      capability: network
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: WiFi status and connection info.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                wifi_enabled:
+                  type: boolean
+                  description: Whether WiFi is enabled.
+                ssid:
+                  type: string
+                  nullable: true
+                  description: Connected SSID (null if not connected).
+                ip_address:
+                  type: string
+                  nullable: true
+                  description: IP address on the WiFi network.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+mobileStatus:
+  get:
+    operationId: getMobileStatus
+    summary: Get mobile / cellular status
+    tags: [Network]
+    x-permission:
+      tool: device.network
+      capability: network
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+        description: Caller identity (e.g. chat session ID).
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+        description: Previously approved permission request ID.
+    responses:
+      '200':
+        description: Mobile network status.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                mobile_data_enabled:
+                  type: boolean
+                  description: Whether mobile data is enabled.
+                network_type:
+                  type: string
+                  nullable: true
+                  description: Mobile network type (LTE, 5G, etc.).
+                carrier:
+                  type: string
+                  nullable: true
+                  description: Carrier name.
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
