@@ -302,3 +302,7 @@ Conceptual guides (under `$sys/docs/`):
 
 me.things is open source. If the docs are insufficient, inspect the repo as the ultimate API reference:
 `https://github.com/espresso3389/methings`
+
+## Project Website
+
+https://methings.org/
