@@ -362,6 +362,12 @@ paths:
     $ref: './paths/webview.yaml#/webviewSplit'
 
   # ── UI ──
+  /ui/reload:
+    $ref: './paths/ui.yaml#/uiReload'
+  /ui/reset:
+    $ref: './paths/ui.yaml#/uiReset'
+  /ui/version:
+    $ref: './paths/ui.yaml#/uiVersion'
   /ui/viewer/open:
     $ref: './paths/ui.yaml#/viewerOpen'
   /ui/viewer/close:

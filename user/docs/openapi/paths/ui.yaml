@@ -1,3 +1,80 @@
+uiReload:
+  post:
+    operationId: postUiReload
+    summary: Reload the WebView UI
+    description: >
+      Forces the main WebView to reload index.html from disk. Use this after
+      modifying `www/index.html` via filesystem tools so the user sees the
+      updated UI immediately.
+    tags: [UI]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Reload broadcast sent.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+uiReset:
+  post:
+    operationId: postUiReset
+    summary: Reset UI to factory default
+    description: >
+      Re-extracts the original index.html from APK assets, replacing any
+      agent or user edits. The WebView is automatically reloaded afterward.
+    tags: [UI]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: UI reset and reloaded.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '500':
+        description: Reset failed (asset extraction error).
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+uiVersion:
+  get:
+    operationId: getUiVersion
+    summary: Get current UI asset version
+    description: >
+      Returns the version string from `www/.version`. Useful for checking
+      whether the on-disk UI matches the APK-bundled version.
+    tags: [UI]
+    responses:
+      '200':
+        description: Version string (may be empty if file is missing).
+        content:
+          text/plain:
+            schema:
+              type: string
+
 viewerOpen:
   post:
     operationId: postViewerOpen

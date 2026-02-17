@@ -105,7 +105,7 @@ class LocalHttpServer(
     private val sshPinManager: SshPinManager,
     private val sshNoAuthModeManager: SshNoAuthModeManager
 ) : NanoWSD(HOST, PORT) {
-    private val uiRoot = File(context.filesDir, "www")
+    private val uiRoot = File(context.filesDir, "user/www")
     private val permissionStore = PermissionStoreFacade(context)
     private val permissionPrefs = PermissionPrefs(context)
     private val installIdentity = InstallIdentity(context)
@@ -663,14 +663,28 @@ class LocalHttpServer(
                 textResponse(version)
             }
             uri == "/ui/reload" && session.method == Method.POST -> {
-                // Dev helper: hot-reload WebView UI after adb pushing files into files/www.
-                // This avoids a full APK rebuild during UI iteration.
+                // Hot-reload WebView UI after updating files/user/www on disk.
                 context.sendBroadcast(
                     android.content.Intent(ACTION_UI_RELOAD).apply {
                         putExtra(EXTRA_UI_RELOAD_TOAST, "UI reloaded")
                     }
                 )
                 jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/ui/reset" && session.method == Method.POST -> {
+                // Re-extract the factory UI from APK assets, replacing any agent edits.
+                val extractor = jp.espresso3389.methings.service.AssetExtractor(context)
+                val result = extractor.resetUiAssets()
+                if (result != null) {
+                    context.sendBroadcast(
+                        android.content.Intent(ACTION_UI_RELOAD).apply {
+                            putExtra(EXTRA_UI_RELOAD_TOAST, "UI reset to factory default")
+                        }
+                    )
+                    jsonResponse(JSONObject().put("status", "ok"))
+                } else {
+                    jsonError(Response.Status.INTERNAL_ERROR, "reset_failed")
+                }
             }
             uri == "/ui/settings/sections" && session.method == Method.GET -> {
                 handleUiSettingsSections()

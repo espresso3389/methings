@@ -165,24 +165,41 @@ class AssetExtractor(private val context: Context) {
 
     fun extractUiAssetsIfMissing(): File? {
         return try {
-            val targetDir = File(context.filesDir, "www")
+            val targetDir = File(context.filesDir, "user/www")
             if (targetDir.exists()) {
                 val entries = targetDir.list()
                 if (entries != null && entries.isNotEmpty()) {
                     val localVersion = File(targetDir, ".version").takeIf { it.exists() }?.readText()?.trim()
                     val assetVersion = readAssetText("www/.version")
                     if (assetVersion != null && assetVersion.isNotBlank() && assetVersion != localVersion) {
-                        return resetUiAssets()
+                        val result = resetUiAssets()
+                        cleanupLegacyUiDir()
+                        return result
                     }
+                    cleanupLegacyUiDir()
                     return targetDir
                 }
             }
             targetDir.mkdirs()
             copyAssetDir("www", targetDir)
+            cleanupLegacyUiDir()
             targetDir
         } catch (ex: Exception) {
             Log.e(TAG, "Failed to extract UI assets", ex)
             null
+        }
+    }
+
+    /** Remove the old filesDir/www/ directory left over from before the user/www migration. */
+    private fun cleanupLegacyUiDir() {
+        try {
+            val legacyDir = File(context.filesDir, "www")
+            if (legacyDir.exists()) {
+                deleteRecursive(legacyDir)
+                Log.i(TAG, "Cleaned up legacy UI directory: ${legacyDir.absolutePath}")
+            }
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to clean up legacy UI directory", ex)
         }
     }
 
@@ -311,9 +328,9 @@ class AssetExtractor(private val context: Context) {
     fun resetUiAssets(): File? {
         return try {
             val root = context.filesDir
-            val targetDir = File(root, "www")
-            val tmpDir = File(root, "www.tmp")
-            val backupDir = File(root, "www.bak")
+            val targetDir = File(root, "user/www")
+            val tmpDir = File(root, "user/www.tmp")
+            val backupDir = File(root, "user/www.bak")
 
             if (tmpDir.exists()) {
                 deleteRecursive(tmpDir)

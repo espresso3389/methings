@@ -153,6 +153,26 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - `webview.back` / `webview.forward`: navigate history.
 - `webview.split`: toggle browser split panel visibility. Key payload: `visible` (bool), `fullscreen` (bool, hides chat), `position` (`"start"` = top/left, `"end"` = bottom/right).
 
+### Web UI Customization — `www/index.html`
+
+The app's chat UI lives at `www/index.html` inside your home directory. You can read, modify, and replace it using filesystem tools (`read_file`, `write_file`).
+
+After editing `www/index.html`, reload the WebView so the user sees the change:
+
+```
+run_curl(["-X", "POST", "http://127.0.0.1:33389/ui/reload"])
+```
+
+To check the current UI version: `read_file("www/.version")`
+
+To revert to the factory UI bundled with the APK:
+
+```
+run_curl(["-X", "POST", "http://127.0.0.1:33389/ui/reset"])
+```
+
+This re-extracts the original `index.html` from the APK and reloads the WebView automatically.
+
 ---
 
 ## Chat Rendering Rules
