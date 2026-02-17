@@ -131,6 +131,7 @@ class DeviceApiTool:
         "me.me.accept": {"method": "POST", "path": "/me/me/accept", "permission": True},
         "me.me.disconnect": {"method": "POST", "path": "/me/me/disconnect", "permission": True},
         "me.me.message.send": {"method": "POST", "path": "/me/me/message/send", "permission": True},
+        "me.me.message.send_file": {"method": "POST", "path": "/me/me/message/send", "permission": True},
         "me.me.messages.pull": {"method": "POST", "path": "/me/me/messages/pull", "permission": True},
         "me.me.relay.status": {"method": "GET", "path": "/me/me/relay/status", "permission": False},
         "me.me.relay.config.get": {"method": "GET", "path": "/me/me/relay/config", "permission": False},
@@ -204,6 +205,7 @@ class DeviceApiTool:
             "me.sync.v3.import.apply": 300.0,
             "me.me.scan": 45.0,
             "me.me.connect": 40.0,
+            "me.me.message.send_file": 30.0,
             "debug.logs.export": 45.0,
             "debug.logs.stream": 140.0,
             "webview.open": 35.0,
@@ -286,6 +288,30 @@ class DeviceApiTool:
             ).strip()
             if target and not str(payload.get("target_device_id") or "").strip():
                 payload["target_device_id"] = target
+
+        if action == "me.me.message.send_file":
+            # Normalize send_file into a regular message.send with rel_path.
+            # The Kotlin server auto-embeds file content when rel_path is present.
+            file_path = str(
+                payload.get("rel_path")
+                or payload.get("file_path")
+                or payload.get("path")
+                or ""
+            ).strip()
+            if file_path:
+                payload["rel_path"] = file_path
+            peer = str(
+                payload.get("peer_device_id")
+                or payload.get("target_device_id")
+                or payload.get("device_id")
+                or ""
+            ).strip()
+            if peer:
+                payload["peer_device_id"] = peer
+            if not payload.get("type"):
+                payload["type"] = "file"
+            # Treat as message.send from here on
+            action = "me.me.message.send"
 
         if action == "me.me.message.send":
             peer = str(

@@ -8739,8 +8739,9 @@ class LocalHttpServer(
         if (meMeConnections.size >= cfg.maxConnections && !meMeConnections.containsKey(reqWithMeta.sourceDeviceId)) {
             return jsonError(Response.Status.FORBIDDEN, "max_connections_reached")
         }
-        val canAutoApprove = cfg.autoApproveOwnDevices &&
-            hasOwnerIdentityMatch(cfg.ownerIdentities, reqWithMeta.sourceOwnerIdentities)
+        val canAutoApprove = (cfg.autoApproveOwnDevices &&
+            hasOwnerIdentityMatch(cfg.ownerIdentities, reqWithMeta.sourceOwnerIdentities)) ||
+            cfg.allowedDevices.contains(reqWithMeta.sourceDeviceId)
         val manualAction = forceAccept || (requestId.isNotBlank() && !isAutoPath)
         if (!manualAction && !canAutoApprove) {
             meMeConnectIntents[reqWithMeta.id] = reqWithMeta.copy(accepted = false)
@@ -9056,10 +9057,12 @@ class LocalHttpServer(
         if (isMeMePayloadEmpty(payloadValue)) {
             return jsonError(Response.Status.BAD_REQUEST, "payload_required")
         }
+        // Auto-embed file content when rel_path is present but data_b64 is not
+        val resolvedPayload = embedMeMeFileContent(payloadValue)
         val send = sendMeMeEncryptedMessage(
             peerDeviceId = peerDeviceId,
             type = type,
-            payloadValue = payloadValue,
+            payloadValue = resolvedPayload,
             transportHint = payload.optString("transport", ""),
             timeoutMs = payload.optLong("timeout_ms", 12_000L),
             messageId = messageId
@@ -9073,7 +9076,7 @@ class LocalHttpServer(
                 .put("peer_device_id", peerDeviceId)
                 .put("requested_transport", payload.optString("transport", "").trim().ifBlank { "auto" })
                 .put("resolved_transport", delivery.optString("transport", "unknown"))
-                .put("payload_shape", describeMeMePayloadShape(payloadValue))
+                .put("payload_shape", describeMeMePayloadShape(resolvedPayload))
                 .put("ok", delivery.optBoolean("ok", false))
                 .put(
                     "error",
@@ -9166,6 +9169,47 @@ class LocalHttpServer(
 
     private fun buildLegacyMeMePayload(payload: JSONObject): Any? {
         return buildMeMePayloadFromObject(payload)
+    }
+
+    /**
+     * If the payload contains `rel_path` but no `data_b64`, resolve the file
+     * under the user directory, read its bytes, and embed as `data_b64` + `mime_type`.
+     * This ensures the receiver gets actual file content instead of a sender-local path.
+     */
+    private fun embedMeMeFileContent(payloadValue: Any?): Any? {
+        if (payloadValue !is JSONObject) return payloadValue
+        val relPath = payloadValue.optString("rel_path", "").trim()
+        if (relPath.isBlank()) return payloadValue
+        // Already has embedded data — nothing to do
+        val dataKeys = listOf("data_b64", "file_b64", "attachment_b64", "content_b64", "bytes_b64")
+        if (dataKeys.any { payloadValue.optString(it, "").trim().isNotBlank() }) return payloadValue
+        val userRoot = File(context.filesDir, "user").canonicalFile
+        val file = File(userRoot, relPath).let { f ->
+            if (f.canonicalFile.startsWith(userRoot)) f.canonicalFile else null
+        }
+        if (file == null || !file.isFile || !file.canRead()) {
+            Log.w(TAG, "embedMeMeFileContent: cannot read rel_path=$relPath")
+            return payloadValue
+        }
+        val bytes = file.readBytes()
+        if (bytes.isEmpty()) {
+            Log.w(TAG, "embedMeMeFileContent: file is empty rel_path=$relPath")
+            return payloadValue
+        }
+        val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        val out = JSONObject(payloadValue.toString())
+        out.put("data_b64", b64)
+        if (out.optString("mime_type", "").trim().isBlank()) {
+            val mime = URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
+            out.put("mime_type", mime)
+        }
+        if (out.optString("file_name", "").trim().isBlank()) {
+            out.put("file_name", file.name)
+        }
+        // Remove rel_path since it's sender-local and meaningless to the receiver
+        out.remove("rel_path")
+        Log.i(TAG, "embedMeMeFileContent: embedded ${bytes.size} bytes from $relPath as data_b64")
+        return out
     }
 
     private fun formatMeMeDelivery(
@@ -10234,7 +10278,11 @@ class LocalHttpServer(
             "A me.me message requiring action was received from '$safeName' ($fromDeviceId). " +
                 "Type=$messageType, priority=$messagePriority, preview='$safePreview'. " +
                 "Use device_api action me.me.messages.pull with peer_device_id='$fromDeviceId' to fetch the latest inbound message, " +
-                "perform the requested action if possible, and reply via me.me.message.send when needed."
+                "perform the requested action if possible, then ALWAYS send the result back via " +
+                "device_api action me.me.message.send with peer_device_id='$fromDeviceId'. " +
+                "You MUST send a reply even if just to confirm completion. " +
+                "To send a file back, use device_api action me.me.message.send_file with " +
+                "peer_device_id='$fromDeviceId' and rel_path pointing to the file under user home."
             )
     }
 
