@@ -8004,6 +8004,7 @@ class LocalHttpServer(
             cfg.discoveryIntervalSec.coerceIn(10, 3600).toLong() * 3_000L
         )
         val seenIds = HashSet<String>()
+        val newlyDiscovered = ArrayList<JSONObject>()
         discovered.forEach { peer ->
             val did = peer.optString("device_id", "").trim()
             if (did.isBlank()) return@forEach
@@ -8020,43 +8021,22 @@ class LocalHttpServer(
                     lastSeenAt = peerLastSeenAt,
                     online = true
                 )
-                notifyBrainEvent(
-                    name = "me.me.device.discovered",
-                    payload = JSONObject()
-                        .put("session_id", "default")
-                        .put("source", source)
-                        .put("ui_visible", false)
-                        .put("device_id", did)
-                        .put("device_name", peerName)
-                        .put("summary", "Nearby device discovered: $did"),
-                    priority = "low",
-                    interruptPolicy = "never",
-                    coalesceKey = "me_me_device_discovered_$did",
-                    coalesceWindowMs = 60_000L
-                )
+                newlyDiscovered += JSONObject()
+                    .put("device_id", did)
+                    .put("device_name", peerName)
                 return@forEach
             }
             prev.deviceName = peerName.ifBlank { prev.deviceName }
             prev.lastSeenAt = maxOf(prev.lastSeenAt, peerLastSeenAt)
             if (!prev.online) {
                 prev.online = true
-                notifyBrainEvent(
-                    name = "me.me.device.discovered",
-                    payload = JSONObject()
-                        .put("session_id", "default")
-                        .put("source", source)
-                        .put("ui_visible", false)
-                        .put("device_id", did)
-                        .put("device_name", prev.deviceName)
-                        .put("summary", "Nearby device discovered: $did"),
-                    priority = "low",
-                    interruptPolicy = "never",
-                    coalesceKey = "me_me_device_discovered_$did",
-                    coalesceWindowMs = 60_000L
-                )
+                newlyDiscovered += JSONObject()
+                    .put("device_id", did)
+                    .put("device_name", prev.deviceName)
             }
         }
 
+        val newlyLost = ArrayList<JSONObject>()
         val staleOffline = ArrayList<String>()
         for ((did, state) in meMePeerPresence.entries) {
             // Keep recent positives online. Emit "lost" only when absent for a while.
@@ -8064,20 +8044,9 @@ class LocalHttpServer(
             val silentForMs = now - state.lastSeenAt
             if (state.online && silentForMs >= lostGraceMs) {
                 state.online = false
-                notifyBrainEvent(
-                    name = "me.me.device.lost",
-                    payload = JSONObject()
-                        .put("session_id", "default")
-                        .put("source", source)
-                        .put("ui_visible", false)
-                        .put("device_id", did)
-                        .put("device_name", state.deviceName)
-                        .put("summary", "Nearby device unavailable: $did"),
-                    priority = "low",
-                    interruptPolicy = "never",
-                    coalesceKey = "me_me_device_lost_$did",
-                    coalesceWindowMs = 60_000L
-                )
+                newlyLost += JSONObject()
+                    .put("device_id", did)
+                    .put("device_name", state.deviceName)
             }
             // Prune long-idle offline peers to avoid unbounded map growth.
             if (!state.online && silentForMs >= ME_ME_DEVICE_PRESENCE_TTL_MS) {
@@ -8085,6 +8054,33 @@ class LocalHttpServer(
             }
         }
         staleOffline.forEach { did -> meMePeerPresence.remove(did) }
+
+        // Send a single batched brain event instead of one per device.
+        if (newlyDiscovered.isNotEmpty() || newlyLost.isNotEmpty()) {
+            val devices = org.json.JSONArray()
+            newlyDiscovered.forEach { devices.put(JSONObject(it.toString()).put("event", "discovered")) }
+            newlyLost.forEach { devices.put(JSONObject(it.toString()).put("event", "lost")) }
+            val names = newlyDiscovered.map { it.optString("device_name", it.optString("device_id", "?")) }
+            val lostNames = newlyLost.map { it.optString("device_name", it.optString("device_id", "?")) }
+            val parts = ArrayList<String>()
+            if (names.isNotEmpty()) parts += "discovered: ${names.joinToString(", ")}"
+            if (lostNames.isNotEmpty()) parts += "lost: ${lostNames.joinToString(", ")}"
+            notifyBrainEvent(
+                name = "me.me.device.presence",
+                payload = JSONObject()
+                    .put("session_id", "default")
+                    .put("source", source)
+                    .put("ui_visible", false)
+                    .put("devices", devices)
+                    .put("discovered_count", newlyDiscovered.size)
+                    .put("lost_count", newlyLost.size)
+                    .put("summary", "Nearby devices: ${parts.joinToString("; ")}"),
+                priority = "low",
+                interruptPolicy = "never",
+                coalesceKey = "me_me_device_presence",
+                coalesceWindowMs = 60_000L
+            )
+        }
     }
 
     private fun importAuthorizedKeysFromFile() {
