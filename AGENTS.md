@@ -45,6 +45,13 @@ Build an Android 14+ app that provides a Python development environment with:
 - scripts/            # Build and bootstrap utilities
 - AGENTS.md           # This file
 
+## Agent & System Docs (Source of Truth)
+- The on-device agent reads docs from `app/android/app/src/main/assets/system/` and `assets/user_defaults/`, but those are **generated copies** (gitignored).
+- **Always edit under `user/`** at the repo root:
+  - `user/AGENTS.md`, `user/TOOLS.md` → copied to `assets/user_defaults/`
+  - `user/docs/`, `user/examples/`, `user/lib/` → copied to `assets/system/`
+- The Gradle build (`syncSystemAssets` / `syncUserDefaults` in `app/android/app/build.gradle.kts`) handles the copy automatically as a preBuild dependency.
+
 ## Conventions
 - Favor ASCII only in source unless already using Unicode.
 - Write all program code and documentation in English unless non-English text is strictly required.
@@ -74,7 +81,7 @@ Build an Android 14+ app that provides a Python development environment with:
 
 ## Current UI (2026-02)
 - Minimal control panel in WebView (Python worker, SSHD, PIN auth, Wi-Fi IP, Reset UI).
-- UI assets are served from `files/www` and can be reset from the UI.
+- UI assets are served from `files/user/www` and can be reset from the UI or via `POST /ui/reset`.
 - No chat/terminal/shell UI at the moment (to be reconsidered later).
 
 ## Debugging

@@ -1,0 +1,3 @@
+# HAPPY INTRODUCTION OF THE REPO FOR CLAUDE!
+
+Hey, Claude, Please read AGENTS.md.
