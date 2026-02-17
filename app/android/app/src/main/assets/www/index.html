@@ -3884,6 +3884,105 @@
         if (wrap.childNodes.length) msgDiv.appendChild(wrap);
       }
 
+      function extractUrlsFromText(text) {
+        const t = String(text || "");
+        const out = [];
+        const seen = new Set();
+        // browser_url: marker (from agent webview.open)
+        const re1 = /\bbrowser_url\s*:\s*(https?:\/\/[^\s<>"]+)/gi;
+        let m;
+        while ((m = re1.exec(t)) !== null) {
+          const u = m[1].replace(/[.,;:!?)]+$/, "");
+          if (!seen.has(u)) { out.push(u); seen.add(u); }
+        }
+        // Bare URLs in user/assistant text
+        const re2 = /(?:^|[\s(])(https?:\/\/[^\s<>"]+)/gi;
+        while ((m = re2.exec(t)) !== null) {
+          const u = m[1].replace(/[.,;:!?)]+$/, "");
+          if (!seen.has(u)) { out.push(u); seen.add(u); }
+        }
+        return out.slice(0, 5);
+      }
+
+      function buildUrlCard(url) {
+        const card = document.createElement("div");
+        card.className = "attach-card";
+        card.style.cursor = "pointer";
+        card.style.display = "flex";
+        card.style.alignItems = "center";
+        card.style.gap = "10px";
+
+        const icon = document.createElement("span");
+        icon.innerHTML = ICON.externalLink;
+        icon.style.flex = "0 0 20px";
+        icon.style.width = "20px";
+        icon.style.height = "20px";
+        icon.style.opacity = "0.6";
+        card.appendChild(icon);
+
+        const info = document.createElement("div");
+        info.style.flex = "1";
+        info.style.minWidth = "0";
+        try {
+          const parsed = new URL(url);
+          const host = document.createElement("div");
+          host.textContent = parsed.hostname;
+          host.style.fontSize = "13px";
+          host.style.fontWeight = "500";
+          host.style.overflow = "hidden";
+          host.style.textOverflow = "ellipsis";
+          host.style.whiteSpace = "nowrap";
+          info.appendChild(host);
+        } catch (_) {}
+        const u = document.createElement("div");
+        u.textContent = url;
+        u.style.fontSize = "11px";
+        u.style.opacity = "0.55";
+        u.style.overflow = "hidden";
+        u.style.textOverflow = "ellipsis";
+        u.style.whiteSpace = "nowrap";
+        info.appendChild(u);
+        card.appendChild(info);
+
+        // Tap card → open in split browser panel (no duplicate card)
+        card.addEventListener("click", () => {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
+            AndroidBridge.openInWebview(url);
+          } else {
+            fetch("/webview/open", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: url, timeout_s: 30 })
+            }).catch(() => {});
+          }
+        });
+
+        return card;
+      }
+
+      function renderInlineUrlCards(msgDiv, rawText) {
+        const urls = extractUrlsFromText(rawText);
+        if (!urls.length) return;
+
+        try {
+          const old = msgDiv.querySelector(".url-wrap");
+          if (old) old.remove();
+        } catch (_) {}
+
+        const wrap = document.createElement("div");
+        wrap.className = "url-wrap";
+        wrap.style.marginTop = "10px";
+        wrap.style.display = "flex";
+        wrap.style.flexDirection = "column";
+        wrap.style.gap = "8px";
+
+        for (const url of urls) {
+          wrap.appendChild(buildUrlCard(url));
+        }
+
+        if (wrap.childNodes.length) msgDiv.appendChild(wrap);
+      }
+
       function renderInlineAttachments(msgDiv, rawText) {
         const paths = extractRelPathsFromText(rawText);
         if (!paths.length) return;
@@ -4734,6 +4833,17 @@
         _currentMarpDeck._show(page, true);
       };
 
+      // ==============================
+      // Browser navigation cards in chat
+      // ==============================
+      window.uiBrowserNavigated = function(url, title) {
+        if (!url) return;
+        const content = "browser_url: " + url;
+        conversation.push({ role: "assistant", content: content, meta: {}, ts: Date.now() });
+        saveConversation();
+        addMsg("assistant", content, { _ts: Date.now() });
+      };
+
       // Deterministic back policy for Android back gesture/button:
       // viewer -> licenses -> settings -> chat -> host handles (exit app).
       window.uiHandleBackGesture = function() {
@@ -5343,6 +5453,7 @@
           // Attachments should render for both user and assistant messages.
           try { renderInlineAttachments(div, content); } catch (_) {}
           try { renderInlineHtmlLinks(div, content); } catch (_) {}
+          try { renderInlineUrlCards(div, content); } catch (_) {}
           // Retry affordance for agent failures.
           try {
             const err = m && m.error ? String(m.error) : "";

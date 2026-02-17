@@ -2231,6 +2231,91 @@ class LocalHttpServer(
                 context.sendBroadcast(intent)
                 jsonResponse(JSONObject().put("status", "ok"))
             }
+
+            // ── WebView Browser ──
+            (uri == "/webview/open" || uri == "/webview/open/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val url = payload.optString("url", "").trim()
+                if (url.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "url_required")
+                val timeoutS = payload.optLong("timeout_s", 30).coerceIn(1, 120)
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.open(context, url, timeoutS)
+                jsonResponse(result)
+            }
+            (uri == "/webview/close" || uri == "/webview/close/") && session.method == Method.POST -> {
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.close(context)
+                jsonResponse(result)
+            }
+            (uri == "/webview/status" || uri == "/webview/status/") && session.method == Method.GET -> {
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.status()
+                jsonResponse(result)
+            }
+            (uri == "/webview/screenshot" || uri == "/webview/screenshot/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val outPath = payload.optString("path", "browser/screenshot_${System.currentTimeMillis()}.jpg")
+                val file = userPath(outPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                val quality = payload.optInt("quality", 80).coerceIn(10, 100)
+                val timeoutS = payload.optLong("timeout_s", 10).coerceIn(1, 60)
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.screenshot(file, quality, timeoutS)
+                if (result.optString("status") == "ok") {
+                    result.put("rel_path", outPath)
+                }
+                jsonResponse(result)
+            }
+            (uri == "/webview/js" || uri == "/webview/js/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val script = payload.optString("script", "").trim()
+                if (script.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "script_required")
+                val timeoutS = payload.optLong("timeout_s", 10).coerceIn(1, 60)
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.evaluateJs(script, timeoutS)
+                jsonResponse(result)
+            }
+            (uri == "/webview/tap" || uri == "/webview/tap/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                if (!payload.has("x") || !payload.has("y")) return jsonError(Response.Status.BAD_REQUEST, "x_and_y_required")
+                val x = payload.optDouble("x", 0.0).toFloat()
+                val y = payload.optDouble("y", 0.0).toFloat()
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.tap(x, y)
+                jsonResponse(result)
+            }
+            (uri == "/webview/scroll" || uri == "/webview/scroll/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val dx = payload.optInt("dx", 0)
+                val dy = payload.optInt("dy", 0)
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.scroll(dx, dy)
+                jsonResponse(result)
+            }
+            (uri == "/webview/back" || uri == "/webview/back/") && session.method == Method.POST -> {
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.goBack()
+                jsonResponse(result)
+            }
+            (uri == "/webview/forward" || uri == "/webview/forward/") && session.method == Method.POST -> {
+                val result = jp.espresso3389.methings.device.WebViewBrowserManager.goForward()
+                jsonResponse(result)
+            }
+            (uri == "/webview/split" || uri == "/webview/split/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val visible = payload.optBoolean("visible", true)
+                val fullscreen = payload.optBoolean("fullscreen", false)
+                val position = payload.optString("position", "").ifBlank { null }
+                val mgr = jp.espresso3389.methings.device.WebViewBrowserManager
+                if (visible) {
+                    val intent = Intent(mgr.ACTION_BROWSER_SHOW).apply {
+                        setPackage(context.packageName)
+                        putExtra(mgr.EXTRA_FULLSCREEN, fullscreen)
+                        if (position != null) putExtra(mgr.EXTRA_POSITION, position)
+                    }
+                    context.sendBroadcast(intent)
+                } else {
+                    val intent = Intent(mgr.ACTION_BROWSER_CLOSE).apply {
+                        setPackage(context.packageName)
+                    }
+                    context.sendBroadcast(intent)
+                }
+                val result = JSONObject().put("status", "ok").put("visible", visible).put("fullscreen", fullscreen)
+                if (position != null) result.put("position", position)
+                jsonResponse(result)
+            }
+
             uri == "/" || uri == "/ui" || uri == "/ui/" -> serveUiFile("index.html")
             uri.startsWith("/ui/") -> {
                 val raw = uri.removePrefix("/ui/")

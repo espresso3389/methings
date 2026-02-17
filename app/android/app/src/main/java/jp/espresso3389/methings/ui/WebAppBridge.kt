@@ -381,6 +381,20 @@ class WebAppBridge(private val activity: MainActivity) {
         browserPrefs.edit().putBoolean("open_links_external", enabled).apply()
     }
 
+    /** Open a URL in the embedded browser panel (no timeline card). */
+    @JavascriptInterface
+    fun openInWebview(url: String) {
+        handler.post { activity.showBrowserPanel(url) }
+    }
+
+    /** Open current webview URL in external/in-app browser per user preference. */
+    @JavascriptInterface
+    fun openWebviewUrlInBrowser() {
+        val url = jp.espresso3389.methings.device.WebViewBrowserManager.currentUrl
+        if (url.isBlank()) return
+        handler.post { activity.openUrlInBrowser(url) }
+    }
+
     // ── Audio Recording Config ───────────────────────────────────────────────
 
     @JavascriptInterface

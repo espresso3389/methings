@@ -1,0 +1,364 @@
+webviewOpen:
+  post:
+    operationId: postWebviewOpen
+    summary: Open URL in agent-controlled browser
+    description: >
+      Launches a WebView browser Activity (or reuses the existing one) and
+      navigates to the given URL.  Blocks until the page finishes loading or
+      the timeout expires.
+    tags: [WebView]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [url]
+            properties:
+              url:
+                type: string
+                description: The URL to navigate to.
+              timeout_s:
+                type: integer
+                default: 30
+                description: Max seconds to wait for page load.
+          example:
+            url: "https://example.com"
+    responses:
+      '200':
+        description: Page loaded (or error/timeout details).
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                url:
+                  type: string
+                title:
+                  type: string
+
+webviewClose:
+  post:
+    operationId: postWebviewClose
+    summary: Close the browser Activity
+    tags: [WebView]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Browser closed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+webviewStatus:
+  get:
+    operationId: getWebviewStatus
+    summary: Get browser status
+    description: >
+      Returns current URL, title, loading state, viewport dimensions,
+      and navigation history availability.
+    tags: [WebView]
+    responses:
+      '200':
+        description: Current browser state.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                open:
+                  type: boolean
+                url:
+                  type: string
+                title:
+                  type: string
+                loading:
+                  type: boolean
+                width:
+                  type: integer
+                height:
+                  type: integer
+                content_height:
+                  type: integer
+                can_go_back:
+                  type: boolean
+                can_go_forward:
+                  type: boolean
+
+webviewScreenshot:
+  post:
+    operationId: postWebviewScreenshot
+    summary: Capture browser screenshot
+    description: >
+      Renders the current WebView to a JPEG image and saves it under the
+      user directory.  Returns the relative path.
+    tags: [WebView]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              path:
+                type: string
+                default: "browser/screenshot_<timestamp>.jpg"
+                description: User-root relative output path.
+              quality:
+                type: integer
+                default: 80
+                minimum: 10
+                maximum: 100
+                description: JPEG quality.
+              timeout_s:
+                type: integer
+                default: 10
+          example:
+            path: "browser/page.jpg"
+            quality: 85
+    responses:
+      '200':
+        description: Screenshot captured.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                rel_path:
+                  type: string
+
+webviewJs:
+  post:
+    operationId: postWebviewJs
+    summary: Execute JavaScript in the browser
+    description: >
+      Evaluates a JavaScript expression/snippet in the current page context
+      and returns the result as a string.
+    tags: [WebView]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [script]
+            properties:
+              script:
+                type: string
+                description: JavaScript code to evaluate.
+              timeout_s:
+                type: integer
+                default: 10
+          example:
+            script: "document.title"
+    responses:
+      '200':
+        description: JS evaluation result.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                result:
+                  type: string
+
+webviewTap:
+  post:
+    operationId: postWebviewTap
+    summary: Simulate tap at coordinates
+    description: >
+      Dispatches a touch DOWN + UP event pair at the given (x, y)
+      coordinates within the WebView.
+    tags: [WebView]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [x, y]
+            properties:
+              x:
+                type: number
+                description: X coordinate in pixels.
+              y:
+                type: number
+                description: Y coordinate in pixels.
+          example:
+            x: 100
+            y: 200
+    responses:
+      '200':
+        description: Tap dispatched.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+webviewScroll:
+  post:
+    operationId: postWebviewScroll
+    summary: Scroll the browser page
+    description: >
+      Scrolls the WebView by the given pixel deltas.
+    tags: [WebView]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              dx:
+                type: integer
+                default: 0
+                description: Horizontal scroll delta in pixels.
+              dy:
+                type: integer
+                default: 0
+                description: Vertical scroll delta in pixels.
+          example:
+            dx: 0
+            dy: 500
+    responses:
+      '200':
+        description: Scroll applied.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+webviewBack:
+  post:
+    operationId: postWebviewBack
+    summary: Navigate back in history
+    tags: [WebView]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Navigated back (no-op if can't go back).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+webviewForward:
+  post:
+    operationId: postWebviewForward
+    summary: Navigate forward in history
+    tags: [WebView]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Navigated forward (no-op if can't go forward).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+
+webviewSplit:
+  post:
+    operationId: postWebviewSplit
+    summary: Toggle browser split panel visibility
+    description: >
+      Shows or hides the browser split panel without loading a URL.
+      Use `webview.open` to open a URL (which also shows the panel).
+      Use this endpoint to toggle the panel visibility independently.
+      Set `fullscreen: true` to hide the chat and give the browser the
+      full screen.
+    tags: [WebView]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              visible:
+                type: boolean
+                default: true
+                description: Whether the browser panel should be visible.
+              fullscreen:
+                type: boolean
+                default: false
+                description: >
+                  When true, the browser takes the full screen (chat hidden).
+                  When false, 50/50 split with chat.
+              position:
+                type: string
+                enum: [start, end]
+                description: >
+                  Browser position: "end" (default) = bottom in portrait /
+                  right in landscape. "start" = top in portrait / left in
+                  landscape.
+          example:
+            visible: true
+            fullscreen: false
+            position: end
+    responses:
+      '200':
+        description: Panel visibility updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, visible, fullscreen]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                visible:
+                  type: boolean
+                fullscreen:
+                  type: boolean
+                position:
+                  type: string

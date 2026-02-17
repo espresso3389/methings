@@ -142,6 +142,17 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - `media.stream.audio.start`, `media.stream.video.start`: decode files to PCM/JPEG/RGBA over WebSocket.
 - Returns `stream_id` + `ws_path` (`/ws/media/stream/<stream_id>`).
 
+### WebView Browser — `$sys/docs/openapi/paths/webview.yaml`
+- `webview.open`: open URL in agent-controlled browser. Key payload: `url`, `timeout_s`.
+- `webview.close`: close the browser.
+- `webview.status`: current URL, title, dimensions, loading state.
+- `webview.screenshot`: capture page as JPEG. Key payload: `path`, `quality`. Returns `rel_path`.
+- `webview.js`: execute JavaScript. Key payload: `script`. Returns `result`.
+- `webview.tap`: simulate tap. Key payload: `x`, `y`.
+- `webview.scroll`: scroll page. Key payload: `dx`, `dy`.
+- `webview.back` / `webview.forward`: navigate history.
+- `webview.split`: toggle browser split panel visibility. Key payload: `visible` (bool), `fullscreen` (bool, hides chat), `position` (`"start"` = top/left, `"end"` = bottom/right).
+
 ---
 
 ## Chat Rendering Rules
@@ -269,6 +280,7 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 - `$sys/docs/openapi/paths/video_record.yaml` — video recording + live frame streaming
 - `$sys/docs/openapi/paths/screen_record.yaml` — screen recording
 - `$sys/docs/openapi/paths/media_stream.yaml` — file-based media decode streaming
+- `$sys/docs/openapi/paths/webview.yaml` — agent-controllable WebView browser
 - `$sys/docs/openapi/paths/vision.yaml` — RGBA8888 + TFLite inference
 - `$sys/docs/openapi/paths/me_me.yaml` — device discovery/connection (`me.me`)
 - `$sys/docs/openapi/paths/me_sync.yaml` — export/import transfer flow (`me.sync`)

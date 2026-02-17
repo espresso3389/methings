@@ -4,19 +4,27 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.res.Configuration
 import android.os.Bundle
 import android.Manifest
 import android.content.pm.PackageManager
 import android.app.PendingIntent
+import android.graphics.*
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.text.TextUtils
+import android.util.TypedValue
+import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.ImageButton
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import android.webkit.PermissionRequest
@@ -38,6 +46,7 @@ import jp.espresso3389.methings.AppForegroundState
 import jp.espresso3389.methings.R
 import jp.espresso3389.methings.device.UsbPermissionResultReceiver
 import jp.espresso3389.methings.device.UsbPermissionWaiter
+import jp.espresso3389.methings.device.WebViewBrowserManager
 import jp.espresso3389.methings.service.AgentService
 import jp.espresso3389.methings.service.PythonRuntimeManager
 import jp.espresso3389.methings.service.LocalHttpServer
@@ -53,9 +62,29 @@ import com.journeyapps.barcodescanner.ScanOptions
 class MainActivity : AppCompatActivity() {
     private companion object {
         const val STATE_WEBVIEW = "main_webview_state"
+        const val STATE_BROWSER_WEBVIEW = "browser_webview_state"
+        const val STATE_BROWSER_VISIBLE = "browser_visible"
+        const val STATE_BROWSER_FULLSCREEN = "browser_fullscreen"
+        const val STATE_BROWSER_POSITION = "browser_position"
     }
 
     private lateinit var webView: WebView
+    private lateinit var rootLayout: LinearLayout
+    private lateinit var browserPanel: LinearLayout
+    private lateinit var browserWebView: WebView
+    private lateinit var browserTitleView: TextView
+    private lateinit var browserUrlView: TextView
+    private lateinit var browserDivider: View
+    private lateinit var chatContainer: FrameLayout
+    private lateinit var browserPosBtn: ImageButton
+    private lateinit var browserFsBtn: ImageButton
+    private var browserInitialized = false
+    private var browserFullscreen = false
+    /** Set to true when the agent explicitly loads a URL; cleared after the card is shown. */
+    private var browserAgentNavigation = false
+    /** "end" = browser at bottom/right (default), "start" = browser at top/left */
+    private var browserPosition = "end"
+
     private var backCallback: OnBackPressedCallback? = null
     private var startupBanner: View? = null
     private var meSyncQrDisplayBoosted: Boolean = false
@@ -182,6 +211,23 @@ class MainActivity : AppCompatActivity() {
             evalJs("window.uiShowMeSyncExport && window.uiShowMeSyncExport()")
         }
     }
+    private val browserShowReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != WebViewBrowserManager.ACTION_BROWSER_SHOW) return
+            val url = intent.getStringExtra(WebViewBrowserManager.EXTRA_URL)
+            val fullscreen = intent.getBooleanExtra(WebViewBrowserManager.EXTRA_FULLSCREEN, false)
+            val position = intent.getStringExtra(WebViewBrowserManager.EXTRA_POSITION)
+            // Agent-initiated navigation → show a URL card on the chat timeline
+            if (!url.isNullOrBlank()) browserAgentNavigation = true
+            showBrowserPanel(url, fullscreen, position)
+        }
+    }
+    private val browserCloseReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != WebViewBrowserManager.ACTION_BROWSER_CLOSE) return
+            hideBrowserPanel()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -194,13 +240,22 @@ class MainActivity : AppCompatActivity() {
         ensureNotificationPermission()
         ensureNearbyPermissions()
 
-        val root = FrameLayout(this)
+        val dp = resources.displayMetrics.density
+        val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
+        // Root: LinearLayout that can split chat + browser
+        rootLayout = LinearLayout(this).apply {
+            orientation = if (isPortrait) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+            setBackgroundColor(0xFF0E0E10.toInt())
+        }
+
+        // Chat container (FrameLayout wrapping the chat WebView + startup banner)
+        chatContainer = FrameLayout(this)
         webView = WebView(this)
         webView.setBackgroundColor(0xFF0E0E10.toInt())
+        chatContainer.addView(webView)
 
-        root.addView(webView)
-
-        // Startup banner: dark overlay with centered app name, shown until the UI loads.
+        // Startup banner
         val banner = FrameLayout(this).apply {
             setBackgroundColor(0xFF0E0E10.toInt())
             val label = TextView(this@MainActivity).apply {
@@ -217,9 +272,32 @@ class MainActivity : AppCompatActivity() {
             addView(label, lp)
         }
         startupBanner = banner
-        root.addView(banner)
+        chatContainer.addView(banner)
 
-        setContentView(root)
+        rootLayout.addView(chatContainer, LinearLayout.LayoutParams(0, 0, 1f).apply {
+            width = if (isPortrait) ViewGroup.LayoutParams.MATCH_PARENT else 0
+            height = if (isPortrait) 0 else ViewGroup.LayoutParams.MATCH_PARENT
+        })
+
+        // Divider between chat and browser
+        browserDivider = View(this).apply {
+            setBackgroundColor(0xFF2E2E36.toInt())
+            visibility = View.GONE
+        }
+        rootLayout.addView(browserDivider, LinearLayout.LayoutParams(
+            if (isPortrait) ViewGroup.LayoutParams.MATCH_PARENT else (1 * dp).toInt(),
+            if (isPortrait) (1 * dp).toInt() else ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        // Browser panel (starts GONE)
+        browserPanel = buildBrowserPanel(dp)
+        browserPanel.visibility = View.GONE
+        rootLayout.addView(browserPanel, LinearLayout.LayoutParams(0, 0, 1f).apply {
+            width = if (isPortrait) ViewGroup.LayoutParams.MATCH_PARENT else 0
+            height = if (isPortrait) 0 else ViewGroup.LayoutParams.MATCH_PARENT
+        })
+
+        setContentView(rootLayout)
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -387,6 +465,310 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, backCallback!!)
 
         maybeHandleDeepLinkIntent(intent)
+
+        // Restore browser panel visibility if recreated (e.g. after process death)
+        if (savedInstanceState?.getBoolean(STATE_BROWSER_VISIBLE, false) == true) {
+            val wasFullscreen = savedInstanceState.getBoolean(STATE_BROWSER_FULLSCREEN, false)
+            val savedPosition = savedInstanceState.getString(STATE_BROWSER_POSITION)
+            showBrowserPanel(null, fullscreen = wasFullscreen, position = savedPosition)
+            savedInstanceState.getBundle(STATE_BROWSER_WEBVIEW)?.let { browserWebView.restoreState(it) }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val portrait = newConfig.orientation == Configuration.ORIENTATION_PORTRAIT
+        rootLayout.orientation = if (portrait) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+        relayoutSplit(portrait)
+        updateToolbarIcons()
+    }
+
+    /** Recompute layout params for chat / divider / browser based on orientation. */
+    private fun relayoutSplit(portrait: Boolean = isPortrait()) {
+        val dp = resources.displayMetrics.density
+        chatContainer.layoutParams = LinearLayout.LayoutParams(
+            if (portrait) ViewGroup.LayoutParams.MATCH_PARENT else 0,
+            if (portrait) 0 else ViewGroup.LayoutParams.MATCH_PARENT,
+            1f
+        )
+        browserDivider.layoutParams = LinearLayout.LayoutParams(
+            if (portrait) ViewGroup.LayoutParams.MATCH_PARENT else (1 * dp).toInt(),
+            if (portrait) (1 * dp).toInt() else ViewGroup.LayoutParams.MATCH_PARENT
+        )
+        browserPanel.layoutParams = LinearLayout.LayoutParams(
+            if (portrait) ViewGroup.LayoutParams.MATCH_PARENT else 0,
+            if (portrait) 0 else ViewGroup.LayoutParams.MATCH_PARENT,
+            1f
+        )
+    }
+
+    private fun buildBrowserPanel(dp: Float): LinearLayout {
+        // Title
+        browserTitleView = TextView(this).apply {
+            text = ""
+            setTextColor(0xFFECECF1.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((12 * dp).toInt(), 0, (8 * dp).toInt(), 0)
+        }
+        // URL
+        browserUrlView = TextView(this).apply {
+            text = ""
+            setTextColor(0xFF71717A.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.MIDDLE
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding((12 * dp).toInt(), 0, (8 * dp).toInt(), 0)
+        }
+        // Title column
+        val titleColumn = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        titleColumn.addView(browserTitleView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+        titleColumn.addView(browserUrlView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
+
+        val iconSize = (14 * dp).toInt()
+        val btnSize = (34 * dp).toInt()
+        val btnMargin = (4 * dp).toInt()
+        fun toolbarButton(desc: String, drawable: Drawable, onClick: () -> Unit) = ImageButton(this).apply {
+            contentDescription = desc
+            setImageDrawable(drawable)
+            scaleType = android.widget.ImageView.ScaleType.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF24242A.toInt())
+                cornerRadius = 8 * dp
+            }
+            setOnClickListener { onClick() }
+        }
+
+        // Position toggle button (swap arrows — vertical in portrait, horizontal in landscape)
+        browserPosBtn = toolbarButton("Swap position", SwapDrawable(iconSize, 0xFFA1A1AA.toInt(), vertical = isPortrait())) {
+            val newPos = if (browserPosition == "end") "start" else "end"
+            setBrowserPosition(newPos)
+        }
+
+        // Fullscreen toggle button (expand ↔ split)
+        browserFsBtn = toolbarButton("Fullscreen", ExpandDrawable(iconSize, 0xFFA1A1AA.toInt())) {
+            setBrowserFullscreen(!browserFullscreen)
+        }
+
+        // Open in browser button
+        val openInBrowserBtn = toolbarButton("Open in browser", ExternalLinkDrawable(iconSize, 0xFFA1A1AA.toInt())) {
+            val url = WebViewBrowserManager.currentUrl
+            if (url.isNotBlank()) openUrlInBrowser(url)
+        }
+
+        // Close button
+        val closeBtn = toolbarButton("Close", XDrawable(iconSize, 0xFFA1A1AA.toInt())) {
+            hideBrowserPanel()
+        }
+
+        // Toolbar
+        val toolbar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(0xFF18181B.toInt())
+            gravity = Gravity.CENTER_VERTICAL
+            val hPad = (8 * dp).toInt()
+            setPadding(hPad, 0, hPad, 0)
+        }
+        val groupGap = (12 * dp).toInt()
+        toolbar.addView(titleColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        // Group 1: open in browser
+        toolbar.addView(openInBrowserBtn, LinearLayout.LayoutParams(btnSize, btnSize).apply { marginStart = btnMargin })
+        // Group 2: layout controls
+        toolbar.addView(browserPosBtn, LinearLayout.LayoutParams(btnSize, btnSize).apply { marginStart = groupGap })
+        toolbar.addView(browserFsBtn, LinearLayout.LayoutParams(btnSize, btnSize).apply { marginStart = btnMargin })
+        // Group 3: close
+        toolbar.addView(closeBtn, LinearLayout.LayoutParams(btnSize, btnSize).apply { marginStart = groupGap })
+
+        // Toolbar divider
+        val toolbarDivider = View(this).apply {
+            setBackgroundColor(0xFF2E2E36.toInt())
+        }
+
+        // Browser WebView
+        WebView.enableSlowWholeDocumentDraw()
+        browserWebView = WebView(this).apply {
+            setBackgroundColor(0xFF0E0E10.toInt())
+        }
+
+        // Assemble panel
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFF0E0E10.toInt())
+        }
+        val toolbarHeight = (44 * dp).toInt()
+        panel.addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, toolbarHeight))
+        panel.addView(toolbarDivider, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (1 * dp).toInt()))
+        panel.addView(browserWebView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        return panel
+    }
+
+    private fun initBrowserWebView() {
+        if (browserInitialized) return
+        browserInitialized = true
+
+        browserWebView.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = true
+            setSupportZoom(true)
+            builtInZoomControls = true
+            displayZoomControls = false
+            loadWithOverviewMode = true
+            useWideViewPort = true
+            mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        }
+
+        browserWebView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                WebViewBrowserManager.isLoading = true
+                WebViewBrowserManager.currentUrl = url ?: ""
+                browserUrlView.text = url ?: ""
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                val pageUrl = url ?: ""
+                val pageTitle = view?.title ?: ""
+                WebViewBrowserManager.notifyPageLoaded(pageUrl, pageTitle)
+                // Show a clickable card in the chat timeline only for agent-initiated opens
+                if (browserAgentNavigation && pageUrl.isNotBlank()) {
+                    browserAgentNavigation = false
+                    val safeUrl = pageUrl.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "")
+                    val safeTitle = pageTitle.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "")
+                    evalJs("window.uiBrowserNavigated && window.uiBrowserNavigated('$safeUrl','$safeTitle')")
+                }
+            }
+
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: android.webkit.WebResourceError?) {
+                if (request?.isForMainFrame == true) {
+                    val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        error?.description?.toString() ?: "unknown_error"
+                    } else {
+                        "unknown_error"
+                    }
+                    WebViewBrowserManager.notifyPageError(desc)
+                }
+            }
+        }
+
+        browserWebView.webChromeClient = object : WebChromeClient() {
+            override fun onReceivedTitle(view: WebView?, title: String?) {
+                browserTitleView.text = title ?: ""
+                WebViewBrowserManager.currentTitle = title ?: ""
+            }
+        }
+    }
+
+    fun showBrowserPanel(url: String?, fullscreen: Boolean = false, position: String? = null) {
+        initBrowserWebView()
+        WebViewBrowserManager.webView = browserWebView
+        val wasVisible = browserPanel.visibility == View.VISIBLE
+        browserPanel.visibility = View.VISIBLE
+        // On first show with no explicit position, default to "start" (top) in portrait
+        if (position != null) {
+            setBrowserPosition(position)
+        } else if (!wasVisible && isPortrait() && browserPosition == "end") {
+            setBrowserPosition("start")
+        }
+        setBrowserFullscreen(fullscreen)
+        if (!url.isNullOrBlank()) {
+            browserUrlView.text = url
+            browserWebView.loadUrl(url)
+        }
+    }
+
+    fun hideBrowserPanel() {
+        browserFullscreen = false
+        chatContainer.visibility = View.VISIBLE
+        browserPanel.visibility = View.GONE
+        browserDivider.visibility = View.GONE
+        WebViewBrowserManager.webView = null
+        WebViewBrowserManager.currentUrl = ""
+        WebViewBrowserManager.currentTitle = ""
+        WebViewBrowserManager.isLoading = false
+        browserTitleView.text = ""
+        browserUrlView.text = ""
+    }
+
+    /** Open a URL in external or in-app browser per user preference. */
+    fun openUrlInBrowser(url: String) {
+        val uri = Uri.parse(url)
+        try {
+            val useExternal = getSharedPreferences("browser_prefs", Context.MODE_PRIVATE)
+                .getBoolean("open_links_external", false)
+            if (useExternal) {
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
+            } else {
+                val params = CustomTabColorSchemeParams.Builder()
+                    .setToolbarColor(0xFF0e0e10.toInt())
+                    .build()
+                CustomTabsIntent.Builder()
+                    .setDefaultColorSchemeParams(params)
+                    .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+                    .build()
+                    .launchUrl(this, uri)
+            }
+        } catch (_: Exception) {}
+    }
+
+    fun setBrowserFullscreen(fullscreen: Boolean) {
+        browserFullscreen = fullscreen
+        if (fullscreen) {
+            chatContainer.visibility = View.GONE
+            browserDivider.visibility = View.GONE
+        } else {
+            chatContainer.visibility = View.VISIBLE
+            browserDivider.visibility = if (browserPanel.visibility == View.VISIBLE) View.VISIBLE else View.GONE
+        }
+        updateToolbarIcons()
+    }
+
+    fun setBrowserPosition(position: String) {
+        val pos = if (position == "start") "start" else "end"
+        if (pos == browserPosition) return
+        browserPosition = pos
+        // Reorder children: remove all, re-add in the right order
+        rootLayout.removeAllViews()
+        if (pos == "start") {
+            rootLayout.addView(browserPanel)
+            rootLayout.addView(browserDivider)
+            rootLayout.addView(chatContainer)
+        } else {
+            rootLayout.addView(chatContainer)
+            rootLayout.addView(browserDivider)
+            rootLayout.addView(browserPanel)
+        }
+        relayoutSplit()
+        updateToolbarIcons()
+    }
+
+    fun isBrowserVisible(): Boolean = browserPanel.visibility == View.VISIBLE
+    fun isBrowserFullscreen(): Boolean = browserFullscreen
+
+    private fun isPortrait(): Boolean =
+        resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+
+    private fun updateToolbarIcons() {
+        val dp = resources.displayMetrics.density
+        val iconSize = (14 * dp).toInt()
+        val iconColor = 0xFFA1A1AA.toInt()
+        // Swap: vertical arrows in portrait, horizontal in landscape
+        browserPosBtn.setImageDrawable(SwapDrawable(iconSize, iconColor, vertical = isPortrait()))
+        // Fullscreen: expand icon when split, split-view icon when fullscreen
+        if (browserFullscreen) {
+            browserFsBtn.setImageDrawable(SplitDrawable(iconSize, iconColor, vertical = !isPortrait()))
+        } else {
+            browserFsBtn.setImageDrawable(ExpandDrawable(iconSize, iconColor))
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -448,6 +830,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun handlePredictableBack() {
+        // If browser panel is visible, hide it on back press.
+        if (isBrowserVisible()) {
+            hideBrowserPanel()
+            return
+        }
         if (!::webView.isInitialized) {
             finishFromBack()
             return
@@ -530,6 +917,16 @@ class MainActivity : AppCompatActivity() {
                 IntentFilter(LocalHttpServer.ACTION_UI_ME_SYNC_EXPORT_SHOW),
                 Context.RECEIVER_NOT_EXPORTED
             )
+            registerReceiver(
+                browserShowReceiver,
+                IntentFilter(WebViewBrowserManager.ACTION_BROWSER_SHOW),
+                Context.RECEIVER_NOT_EXPORTED
+            )
+            registerReceiver(
+                browserCloseReceiver,
+                IntentFilter(WebViewBrowserManager.ACTION_BROWSER_CLOSE),
+                Context.RECEIVER_NOT_EXPORTED
+            )
         } else {
             registerReceiver(pythonHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
@@ -538,6 +935,8 @@ class MainActivity : AppCompatActivity() {
             registerReceiver(viewerCommandReceiver, IntentFilter(LocalHttpServer.ACTION_UI_VIEWER_COMMAND))
             registerReceiver(settingsNavigateReceiver, IntentFilter(LocalHttpServer.ACTION_UI_SETTINGS_NAVIGATE))
             registerReceiver(meSyncExportShowReceiver, IntentFilter(LocalHttpServer.ACTION_UI_ME_SYNC_EXPORT_SHOW))
+            registerReceiver(browserShowReceiver, IntentFilter(WebViewBrowserManager.ACTION_BROWSER_SHOW))
+            registerReceiver(browserCloseReceiver, IntentFilter(WebViewBrowserManager.ACTION_BROWSER_CLOSE))
         }
     }
 
@@ -550,11 +949,16 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(viewerCommandReceiver)
         unregisterReceiver(settingsNavigateReceiver)
         unregisterReceiver(meSyncExportShowReceiver)
+        unregisterReceiver(browserShowReceiver)
+        unregisterReceiver(browserCloseReceiver)
         AppForegroundState.isForeground = false
         super.onStop()
     }
 
     override fun onDestroy() {
+        if (WebViewBrowserManager.webView === browserWebView) {
+            WebViewBrowserManager.webView = null
+        }
         setMeSyncQrDisplayMode(false)
         pendingFilePathCallback?.onReceiveValue(null)
         pendingFilePathCallback = null
@@ -566,6 +970,14 @@ class MainActivity : AppCompatActivity() {
         val webViewState = Bundle()
         webView.saveState(webViewState)
         outState.putBundle(STATE_WEBVIEW, webViewState)
+        outState.putBoolean(STATE_BROWSER_VISIBLE, isBrowserVisible())
+        outState.putBoolean(STATE_BROWSER_FULLSCREEN, browserFullscreen)
+        outState.putString(STATE_BROWSER_POSITION, browserPosition)
+        if (browserInitialized) {
+            val browserState = Bundle()
+            browserWebView.saveState(browserState)
+            outState.putBundle(STATE_BROWSER_WEBVIEW, browserState)
+        }
     }
 
     private fun publishStatusToWeb(status: String) {
@@ -944,6 +1356,228 @@ class MainActivity : AppCompatActivity() {
         } else {
             window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         }
+    }
+
+    /** Draws an X (close icon). */
+    private class XDrawable(private val size: Int, private val color: Int) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = this@XDrawable.color
+            style = Paint.Style.STROKE
+            strokeWidth = size / 7f
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        override fun getIntrinsicWidth() = size
+        override fun getIntrinsicHeight() = size
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val inset = size * 0.18f
+            val l = b.left + inset
+            val t = b.top + inset
+            val r = b.right - inset
+            val bo = b.bottom - inset
+            canvas.drawLine(l, t, r, bo, paint)
+            canvas.drawLine(r, t, l, bo, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(cf: ColorFilter?) { paint.colorFilter = cf }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = PixelFormat.TRANSLUCENT
+    }
+
+    /** Draws two opposing arrows. vertical=true → ↕, vertical=false → ⇄. */
+    private class SwapDrawable(
+        private val size: Int, private val color: Int, private val vertical: Boolean
+    ) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = this@SwapDrawable.color
+            style = Paint.Style.STROKE
+            strokeWidth = size / 7f
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        override fun getIntrinsicWidth() = size
+        override fun getIntrinsicHeight() = size
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val inset = size * 0.20f
+            val arrow = size * 0.18f
+            val gap = size * 0.18f
+            if (vertical) {
+                val cx = (b.left + b.right) / 2f
+                val t = b.top + inset
+                val bo = b.bottom - inset
+                // Left arrow pointing up
+                val x1 = cx - gap
+                canvas.drawLine(x1, bo, x1, t, paint)
+                canvas.drawLine(x1 - arrow, t + arrow, x1, t, paint)
+                canvas.drawLine(x1 + arrow, t + arrow, x1, t, paint)
+                // Right arrow pointing down
+                val x2 = cx + gap
+                canvas.drawLine(x2, t, x2, bo, paint)
+                canvas.drawLine(x2 - arrow, bo - arrow, x2, bo, paint)
+                canvas.drawLine(x2 + arrow, bo - arrow, x2, bo, paint)
+            } else {
+                val l = b.left + inset
+                val r = b.right - inset
+                val cy = (b.top + b.bottom) / 2f
+                // Top arrow pointing right
+                val y1 = cy - gap
+                canvas.drawLine(l, y1, r, y1, paint)
+                canvas.drawLine(r - arrow, y1 - arrow, r, y1, paint)
+                canvas.drawLine(r - arrow, y1 + arrow, r, y1, paint)
+                // Bottom arrow pointing left
+                val y2 = cy + gap
+                canvas.drawLine(r, y2, l, y2, paint)
+                canvas.drawLine(l + arrow, y2 - arrow, l, y2, paint)
+                canvas.drawLine(l + arrow, y2 + arrow, l, y2, paint)
+            }
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(cf: ColorFilter?) { paint.colorFilter = cf }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = PixelFormat.TRANSLUCENT
+    }
+
+    /** Draws four outward-pointing corner arrows (expand/fullscreen icon). */
+    private class ExpandDrawable(private val size: Int, private val color: Int) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = this@ExpandDrawable.color
+            style = Paint.Style.STROKE
+            strokeWidth = size / 7f
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        override fun getIntrinsicWidth() = size
+        override fun getIntrinsicHeight() = size
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val inset = size * 0.15f
+            val l = b.left + inset
+            val t = b.top + inset
+            val r = b.right - inset
+            val bo = b.bottom - inset
+            val arm = size * 0.28f
+            // Top-left corner
+            canvas.drawLine(l, t + arm, l, t, paint)
+            canvas.drawLine(l, t, l + arm, t, paint)
+            // Top-right corner
+            canvas.drawLine(r - arm, t, r, t, paint)
+            canvas.drawLine(r, t, r, t + arm, paint)
+            // Bottom-right corner
+            canvas.drawLine(r, bo - arm, r, bo, paint)
+            canvas.drawLine(r, bo, r - arm, bo, paint)
+            // Bottom-left corner
+            canvas.drawLine(l + arm, bo, l, bo, paint)
+            canvas.drawLine(l, bo, l, bo - arm, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(cf: ColorFilter?) { paint.colorFilter = cf }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = PixelFormat.TRANSLUCENT
+    }
+
+    /**
+     * Draws a split-view icon: two rectangles with a divider.
+     * vertical=true → vertical divider (left|right), vertical=false → horizontal divider (top/bottom).
+     */
+    private class SplitDrawable(
+        private val size: Int, private val color: Int, private val vertical: Boolean
+    ) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = this@SplitDrawable.color
+            style = Paint.Style.STROKE
+            strokeWidth = size / 8f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+
+        override fun getIntrinsicWidth() = size
+        override fun getIntrinsicHeight() = size
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val inset = size * 0.12f
+            val l = b.left + inset
+            val t = b.top + inset
+            val r = b.right - inset
+            val bo = b.bottom - inset
+            val radius = size * 0.10f
+            // Outer rounded rect
+            canvas.drawRoundRect(l, t, r, bo, radius, radius, paint)
+            // Divider line
+            if (vertical) {
+                val cx = (l + r) / 2f
+                canvas.drawLine(cx, t, cx, bo, paint)
+            } else {
+                val cy = (t + bo) / 2f
+                canvas.drawLine(l, cy, r, cy, paint)
+            }
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(cf: ColorFilter?) { paint.colorFilter = cf }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = PixelFormat.TRANSLUCENT
+    }
+
+    /** Draws an external-link icon: box with arrow pointing top-right. */
+    private class ExternalLinkDrawable(private val size: Int, private val color: Int) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = this@ExternalLinkDrawable.color
+            style = Paint.Style.STROKE
+            strokeWidth = size / 7f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+
+        override fun getIntrinsicWidth() = size
+        override fun getIntrinsicHeight() = size
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val inset = size * 0.12f
+            val l = b.left + inset
+            val t = b.top + inset
+            val r = b.right - inset
+            val bo = b.bottom - inset
+            val radius = size * 0.10f
+            val mid = (l + r) / 2f
+            // Open box (bottom-left portion): left side, bottom, right side up to mid, top to mid
+            val path = android.graphics.Path().apply {
+                moveTo(mid, t)
+                lineTo(l + radius, t)
+                // Top-left corner
+                quadTo(l, t, l, t + radius)
+                lineTo(l, bo - radius)
+                // Bottom-left corner
+                quadTo(l, bo, l + radius, bo)
+                lineTo(r - radius, bo)
+                // Bottom-right corner
+                quadTo(r, bo, r, bo - radius)
+                lineTo(r, mid)
+            }
+            canvas.drawPath(path, paint)
+            // Arrow: diagonal line from center to top-right
+            val ax = r
+            val ay = t
+            canvas.drawLine(mid, mid, ax, ay, paint)
+            // Arrow head
+            val arm = size * 0.22f
+            canvas.drawLine(ax - arm, ay, ax, ay, paint)
+            canvas.drawLine(ax, ay + arm, ax, ay, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(cf: ColorFilter?) { paint.colorFilter = cf }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = PixelFormat.TRANSLUCENT
     }
 
 }

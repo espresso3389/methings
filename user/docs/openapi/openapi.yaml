@@ -73,6 +73,8 @@ tags:
     description: Permission request and grant management.
   - name: Vault
     description: Credential vault.
+  - name: WebView
+    description: Agent-controllable WebView browser.
   - name: Files
     description: User and system file endpoints.
 
@@ -336,6 +338,28 @@ paths:
     $ref: './paths/work.yaml#/workAppUpdateCheckRunOnce'
   /work/jobs/app_update_check/cancel:
     $ref: './paths/work.yaml#/workAppUpdateCheckCancel'
+
+  # ── WebView Browser ──
+  /webview/open:
+    $ref: './paths/webview.yaml#/webviewOpen'
+  /webview/close:
+    $ref: './paths/webview.yaml#/webviewClose'
+  /webview/status:
+    $ref: './paths/webview.yaml#/webviewStatus'
+  /webview/screenshot:
+    $ref: './paths/webview.yaml#/webviewScreenshot'
+  /webview/js:
+    $ref: './paths/webview.yaml#/webviewJs'
+  /webview/tap:
+    $ref: './paths/webview.yaml#/webviewTap'
+  /webview/scroll:
+    $ref: './paths/webview.yaml#/webviewScroll'
+  /webview/back:
+    $ref: './paths/webview.yaml#/webviewBack'
+  /webview/forward:
+    $ref: './paths/webview.yaml#/webviewForward'
+  /webview/split:
+    $ref: './paths/webview.yaml#/webviewSplit'
 
   # ── UI ──
   /ui/viewer/open:

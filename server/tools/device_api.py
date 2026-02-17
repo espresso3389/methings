@@ -157,6 +157,16 @@ class DeviceApiTool:
         "work.app_update_check.schedule": {"method": "POST", "path": "/work/jobs/app_update_check/schedule", "permission": True},
         "work.app_update_check.run_once": {"method": "POST", "path": "/work/jobs/app_update_check/run_once", "permission": True},
         "work.app_update_check.cancel": {"method": "POST", "path": "/work/jobs/app_update_check/cancel", "permission": True},
+        "webview.open": {"method": "POST", "path": "/webview/open", "permission": False},
+        "webview.close": {"method": "POST", "path": "/webview/close", "permission": False},
+        "webview.status": {"method": "GET", "path": "/webview/status", "permission": False},
+        "webview.screenshot": {"method": "POST", "path": "/webview/screenshot", "permission": False},
+        "webview.js": {"method": "POST", "path": "/webview/js", "permission": False},
+        "webview.tap": {"method": "POST", "path": "/webview/tap", "permission": False},
+        "webview.scroll": {"method": "POST", "path": "/webview/scroll", "permission": False},
+        "webview.back": {"method": "POST", "path": "/webview/back", "permission": False},
+        "webview.forward": {"method": "POST", "path": "/webview/forward", "permission": False},
+        "webview.split": {"method": "POST", "path": "/webview/split", "permission": False},
     }
 
     def __init__(self, base_url: str = "http://127.0.0.1:33389"):
@@ -196,6 +206,9 @@ class DeviceApiTool:
             "me.me.connect": 40.0,
             "debug.logs.export": 45.0,
             "debug.logs.stream": 140.0,
+            "webview.open": 35.0,
+            "webview.screenshot": 15.0,
+            "webview.js": 15.0,
         }
 
     def set_identity(self, identity: str) -> None:
