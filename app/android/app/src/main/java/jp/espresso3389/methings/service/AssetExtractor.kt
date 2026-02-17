@@ -290,6 +290,15 @@ class AssetExtractor(private val context: Context) {
             // After v3, user AGENTS.md/TOOLS.md are never force-overwritten again — system
             // content lives in $sys/docs/ and is always current via extractSystemAssets().
             if (existingVersion < "3") {
+                // Back up existing files so user customizations aren't lost.
+                // The agent can detect *.bak.md and offer to merge custom content.
+                for (name in listOf("AGENTS.md", "TOOLS.md")) {
+                    val src = File(userDir, name)
+                    if (src.exists() && src.length() > 0) {
+                        val bak = File(userDir, name.replace(".md", ".bak.md"))
+                        src.copyTo(bak, overwrite = true)
+                    }
+                }
                 resetUserDefaults()
             }
 
