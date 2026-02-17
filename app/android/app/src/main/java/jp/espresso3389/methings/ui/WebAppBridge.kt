@@ -90,19 +90,6 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
-    fun resetUserDefaultsToDefaults() {
-        handler.post {
-            val extractor = jp.espresso3389.methings.service.AssetExtractor(activity)
-            val ok = extractor.resetUserDefaults() != null
-            Toast.makeText(
-                activity,
-                if (ok) "Agent docs reset applied" else "Agent docs reset failed",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
-    }
-
-    @JavascriptInterface
     fun shareUserFile(relPath: String, mime: String?) {
         handler.post {
             val p = relPath.trim().trimStart('/')

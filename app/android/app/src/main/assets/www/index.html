@@ -1931,10 +1931,9 @@
             <div class="card-icon red">&#9888;</div>
             <div class="card-title">Reset &amp; Restore</div>
           </div>
-          <div class="muted">Reset UI files or agent docs to defaults.</div>
+          <div class="muted">Reset UI files to defaults.</div>
           <div class="btn-group">
             <button class="btn" id="resetUi">Reset UI</button>
-            <button class="btn" id="resetAgentDocs">Reset Agent Docs</button>
           </div>
         </section>
 
@@ -8900,15 +8899,6 @@
         if (!await appConfirm("Reset UI", "Reset UI to defaults? This will overwrite any local changes.")) return;
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.resetUiToDefaults) {
           AndroidBridge.resetUiToDefaults();
-        }
-      });
-
-      $("resetAgentDocs").addEventListener("click", async () => {
-        if (!await appConfirm("Reset agent docs", "Reset AGENTS.md / TOOLS.md / docs/ to defaults? This will overwrite those files.")) return;
-        if (typeof AndroidBridge !== "undefined" && AndroidBridge.resetUserDefaultsToDefaults) {
-          AndroidBridge.resetUserDefaultsToDefaults();
-        } else {
-          showToast("Reset not available", 1600);
         }
       });
 
