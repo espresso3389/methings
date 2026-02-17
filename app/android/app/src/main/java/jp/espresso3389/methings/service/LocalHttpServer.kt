@@ -304,6 +304,54 @@ class LocalHttpServer(
         val contentType = (session.headers["content-type"] ?: "").lowercase()
         val isMultipart = contentType.contains("multipart/form-data")
         val postBody: String? = if (session.method == Method.POST && !isMultipart) readBody(session) else null
+        val seg = uri.indexOf('/', 1).let { if (it < 0) uri else uri.substring(0, it) }
+        return when (seg) {
+            "/health" -> routeHealth(session, uri, postBody)
+            "/debug" -> routeDebug(session, uri, postBody)
+            "/python" -> routePython(session, uri, postBody)
+            "/service" -> routeService(session, uri, postBody)
+            "/app" -> routeApp(session, uri, postBody)
+            "/work" -> routeWork(session, uri, postBody)
+            "/me" -> routeMe(session, uri, postBody)
+            "/agent" -> routeAgent(session, uri, postBody)
+            "/ui" -> routeUi(session, uri, postBody)
+            "/permissions" -> routePermissions(session, uri, postBody)
+            "/vault" -> routeVault(session, uri, postBody)
+            "/builtins" -> routeBuiltins(session, uri, postBody)
+            "/brain" -> routeBrain(session, uri, postBody)
+            "/shell" -> routeShell(session, uri, postBody)
+            "/web" -> routeWeb(session, uri, postBody)
+            "/pip" -> routePip(session, uri, postBody)
+            "/cloud" -> routeCloud(session, uri, postBody)
+            "/notifications" -> routeNotifications(session, uri, postBody)
+            "/screen" -> routeScreen(session, uri, postBody)
+            "/usb" -> routeUsb(session, uri, postBody)
+            "/uvc" -> routeUvc(session, uri, postBody)
+            "/vision" -> routeVision(session, uri, postBody)
+            "/camera" -> routeCamera(session, uri, postBody)
+            "/ble" -> routeBle(session, uri, postBody)
+            "/tts" -> routeTts(session, uri, postBody)
+            "/media" -> routeMedia(session, uri, postBody)
+            "/audio" -> routeAudio(session, uri, postBody)
+            "/video" -> routeVideo(session, uri, postBody)
+            "/sshd" -> routeSshd(session, uri, postBody)
+            "/ssh" -> routeSsh(session, uri, postBody)
+            "/stt" -> routeStt(session, uri, postBody)
+            "/location" -> routeLocation(session, uri, postBody)
+            "/network" -> routeNetwork(session, uri, postBody)
+            "/wifi" -> routeWifi(session, uri, postBody)
+            "/mobile" -> routeMobile(session, uri, postBody)
+            "/sensors", "/sensor" -> routeSensors(session, uri, postBody)
+            "/user" -> routeUser(session, uri, postBody)
+            "/webview" -> routeWebview(session, uri, postBody)
+            "/intent" -> routeIntent(session, uri, postBody)
+            "/sys" -> routeSys(session, uri, postBody)
+            "" -> routeUi(session, uri, postBody)
+            else -> notFound()
+        }
+    }
+
+    private fun routeHealth(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
             uri == "/health" -> jsonResponse(
                 JSONObject()
@@ -311,6 +359,12 @@ class LocalHttpServer(
                     .put("service", "local")
                     .put("python", runtimeManager.getStatus())
             )
+            else -> notFound()
+        }
+    }
+
+    private fun routeDebug(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/debug/logs/export" && session.method == Method.GET -> {
                 handleDebugLogsExport(session, null)
             }
@@ -331,6 +385,12 @@ class LocalHttpServer(
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 handleDebugLogsStream(session, payload)
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routePython(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/python/status" -> jsonResponse(
                 JSONObject().put("status", runtimeManager.getStatus())
             )
@@ -346,6 +406,12 @@ class LocalHttpServer(
                 runtimeManager.restartSoft()
                 jsonResponse(JSONObject().put("status", "starting"))
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeService(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/service/stop" && session.method == Method.POST -> {
                 val intent = Intent(context, AgentService::class.java).apply {
                     action = AgentService.ACTION_STOP_SERVICE
@@ -367,6 +433,12 @@ class LocalHttpServer(
                 editor.apply()
                 jsonResponse(JSONObject().put("ok", true))
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeApp(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/app/update/check" -> {
                 handleAppUpdateCheck()
             }
@@ -379,6 +451,15 @@ class LocalHttpServer(
             uri == "/app/update/install_permission/open_settings" && session.method == Method.POST -> {
                 handleAppUpdateInstallPermissionOpenSettings()
             }
+            uri == "/app/info" -> {
+                handleAppInfo()
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeWork(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/work/jobs/app_update_check" && session.method == Method.GET -> {
                 handleWorkAppUpdateCheckStatus()
             }
@@ -418,9 +499,12 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 handleWorkAppUpdateCheckCancel()
             }
-            uri == "/app/info" -> {
-                handleAppInfo()
-            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeMe(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/me/sync/status" && session.method == Method.GET -> {
                 handleMeSyncStatus()
             }
@@ -634,6 +718,12 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 handleMeSyncWipeAll(payload)
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeAgent(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/agent/run" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val name = payload.optString("name", "task")
@@ -657,6 +747,12 @@ class LocalHttpServer(
                 val task = agentTasks[id] ?: return notFound()
                 jsonResponse(task.toJson())
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeUi(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/ui/version" -> {
                 val versionFile = File(uiRoot, ".version")
                 val version = if (versionFile.exists()) versionFile.readText().trim() else ""
@@ -721,6 +817,81 @@ class LocalHttpServer(
                 })
                 jsonResponse(JSONObject().put("status", "ok"))
             }
+            (uri == "/ui/viewer/open" || uri == "/ui/viewer/open/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val path = payload.optString("path", "").trim()
+                if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                // Strip #page=N fragment for file validation; preserve full path for JS.
+                val filePath = path.replace(Regex("#.*$"), "")
+                val file = if (filePath.startsWith("\$sys/")) {
+                    systemPath(filePath.removePrefix("\$sys/"))
+                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_system_dir")
+                } else {
+                    userPath(filePath)
+                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                }
+                if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "open")
+                    putExtra(EXTRA_VIEWER_PATH, path)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            (uri == "/ui/viewer/close" || uri == "/ui/viewer/close/") && session.method == Method.POST -> {
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "close")
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            (uri == "/ui/viewer/immersive" || uri == "/ui/viewer/immersive/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val enabled = payload.optBoolean("enabled", true)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "immersive")
+                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            (uri == "/ui/viewer/slideshow" || uri == "/ui/viewer/slideshow/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val enabled = payload.optBoolean("enabled", true)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "slideshow")
+                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            (uri == "/ui/viewer/goto" || uri == "/ui/viewer/goto/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val page = payload.optInt("page", 0)
+                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
+                    setPackage(context.packageName)
+                    putExtra(EXTRA_VIEWER_COMMAND, "goto")
+                    putExtra(EXTRA_VIEWER_PAGE, page)
+                }
+                context.sendBroadcast(intent)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/" || uri == "/ui" || uri == "/ui/" -> serveUiFile("index.html")
+            uri.startsWith("/ui/") -> {
+                val raw = uri.removePrefix("/ui/")
+                val decoded = URLDecoder.decode(raw, StandardCharsets.UTF_8.name())
+                serveUiFile(decoded)
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routePermissions(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/permissions/request" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val tool = payload.optString("tool", "unknown")
@@ -969,6 +1140,12 @@ class LocalHttpServer(
                     notFound()
                 }
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeVault(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/vault/credentials" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val name = payload.optString("name", "")
@@ -1047,12 +1224,24 @@ class LocalHttpServer(
                         .put("updated_at", row?.updatedAt ?: 0)
                 )
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeBuiltins(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/builtins/tts" && session.method == Method.POST -> {
                 return jsonError(Response.Status.NOT_IMPLEMENTED, "not_implemented", JSONObject().put("feature", "tts"))
             }
             uri == "/builtins/stt" && session.method == Method.POST -> {
                 return jsonError(Response.Status.NOT_IMPLEMENTED, "not_implemented", JSONObject().put("feature", "stt"))
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeBrain(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/brain/events" && session.method == Method.GET -> {
                 if (runtimeManager.getStatus() != "ok") {
                     runtimeManager.startWorker()
@@ -1119,6 +1308,34 @@ class LocalHttpServer(
                 }
                 proxied
             }
+            uri == "/brain/config" && session.method == Method.GET -> handleBrainConfigGet()
+            uri == "/brain/config" && session.method == Method.POST -> {
+                val body = postBody ?: ""
+                handleBrainConfigSet(body)
+            }
+            uri == "/brain/agent/bootstrap" && session.method == Method.POST -> {
+                handleBrainAgentBootstrap()
+            }
+            // Chat-mode streaming (direct cloud) has been removed. Use agent mode instead.
+            uri == "/brain/chat" && session.method == Method.POST -> {
+                jsonError(Response.Status.GONE, "chat_mode_removed")
+            }
+            uri == "/brain/memory" && session.method == Method.GET -> {
+                jsonResponse(JSONObject().put("content", readMemory()))
+            }
+            uri == "/brain/memory" && session.method == Method.POST -> {
+                val body = postBody ?: ""
+                val payload = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                writeMemory(payload.optString("content", ""))
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeShell(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/shell/exec" || uri == "/shell/exec/") -> {
                 if (session.method != Method.POST) {
                     return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
@@ -1128,6 +1345,12 @@ class LocalHttpServer(
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 return handleShellExec(payload)
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeWeb(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/web/search" || uri == "/web/search/") -> {
                 if (session.method != Method.POST) {
                     return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
@@ -1137,6 +1360,12 @@ class LocalHttpServer(
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 return handleWebSearch(session, payload)
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routePip(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/pip/download" || uri == "/pip/download/") -> {
                 if (session.method != Method.POST) {
                     return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
@@ -1155,6 +1384,25 @@ class LocalHttpServer(
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 return handlePipInstall(session, payload)
             }
+            (uri == "/pip/status" || uri == "/pip/status/") -> {
+                val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
+                return jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("abi", android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+                        .put("python_home", File(context.filesDir, "pyenv").absolutePath)
+                        .put("wheelhouse_root", wheelhouse?.root?.absolutePath ?: "")
+                        .put("wheelhouse_bundled", wheelhouse?.bundled?.absolutePath ?: "")
+                        .put("wheelhouse_user", wheelhouse?.user?.absolutePath ?: "")
+                        .put("pip_find_links", wheelhouse?.findLinksEnvValue() ?: "")
+                )
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeCloud(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/cloud/request" || uri == "/cloud/request/") -> {
                 if (session.method != Method.POST) {
                     return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
@@ -1220,6 +1468,12 @@ class LocalHttpServer(
                         .put("image_resize_jpeg_quality", imgJpegQ)
                 )
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeNotifications(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/notifications/prefs" && session.method == Method.GET -> {
                 val android = taskCompletionPrefs.getBoolean("notify_android", true)
                 val sound = taskCompletionPrefs.getBoolean("notify_sound", false)
@@ -1252,6 +1506,12 @@ class LocalHttpServer(
                         .put("notify_webhook_url", webhook)
                 )
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeScreen(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/screen/status" || uri == "/screen/status/") && session.method == Method.GET -> {
                 return handleScreenStatus()
             }
@@ -1261,19 +1521,44 @@ class LocalHttpServer(
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 return handleScreenKeepOn(session, payload)
             }
-            (uri == "/pip/status" || uri == "/pip/status/") -> {
-                val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
-                return jsonResponse(
-                    JSONObject()
-                        .put("status", "ok")
-                        .put("abi", android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "")
-                        .put("python_home", File(context.filesDir, "pyenv").absolutePath)
-                        .put("wheelhouse_root", wheelhouse?.root?.absolutePath ?: "")
-                        .put("wheelhouse_bundled", wheelhouse?.bundled?.absolutePath ?: "")
-                        .put("wheelhouse_user", wheelhouse?.user?.absolutePath ?: "")
-                        .put("pip_find_links", wheelhouse?.findLinksEnvValue() ?: "")
-                )
+            (uri == "/screen/record/status" || uri == "/screen/record/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.screen", capability = "screen_recording", detail = "Screen recording status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(screenRecord.status()))
             }
+            (uri == "/screen/record/start" || uri == "/screen/record/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Start screen recording")
+                if (!ok.first) return ok.second!!
+                val path = payload.optString("path", "").trim().ifBlank { null }
+                val maxDur = if (payload.has("max_duration_s")) payload.optInt("max_duration_s") else null
+                val resolution = payload.optString("resolution", "").trim().ifBlank { null }
+                val bitrate = if (payload.has("bitrate")) payload.optInt("bitrate") else null
+                return jsonResponse(JSONObject(screenRecord.startRecording(path, maxDur, resolution, bitrate)))
+            }
+            (uri == "/screen/record/stop" || uri == "/screen/record/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Stop screen recording")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(screenRecord.stopRecording()))
+            }
+            (uri == "/screen/record/config" || uri == "/screen/record/config/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.screen", capability = "screen_recording", detail = "Get screen recording config")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(screenRecord.getConfig()))
+            }
+            (uri == "/screen/record/config" || uri == "/screen/record/config/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Set screen recording config")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(screenRecord.setConfig(payload)))
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeUsb(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/usb/list" || uri == "/usb/list/") && session.method == Method.GET -> {
                 return handleUsbList(session)
             }
@@ -1373,6 +1658,12 @@ class LocalHttpServer(
             (uri == "/usb/stream/status" || uri == "/usb/stream/status/") && session.method == Method.GET -> {
                 return handleUsbStreamStatus()
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeUvc(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/uvc/mjpeg/capture" || uri == "/uvc/mjpeg/capture/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -1391,6 +1682,12 @@ class LocalHttpServer(
                     jsonError(Response.Status.INTERNAL_ERROR, "uvc_diagnose_handler_failed")
                 }
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeVision(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/vision/model/load" || uri == "/vision/model/load/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -1463,6 +1760,12 @@ class LocalHttpServer(
                     jsonError(Response.Status.INTERNAL_ERROR, "vision_run_failed")
                 }
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeCamera(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/camera/list" || uri == "/camera/list/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.camera", capability = "camera", detail = "List cameras")
                 if (!ok.first) return ok.second!!
@@ -1508,6 +1811,12 @@ class LocalHttpServer(
                 out.put("rel_path", outPath)
                 return jsonResponse(out)
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeBle(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/ble/status" || uri == "/ble/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.ble", capability = "ble", detail = "Bluetooth status")
                 if (!ok.first) return ok.second!!
@@ -1618,6 +1927,12 @@ class LocalHttpServer(
                     )
                 )
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeTts(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/tts/init" || uri == "/tts/init/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val ok = ensureDevicePermission(session, payload, tool = "device.tts", capability = "tts", detail = "Initialize TTS")
@@ -1647,6 +1962,12 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(tts.stop()))
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeMedia(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/media/audio/status" || uri == "/media/audio/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.media", capability = "media", detail = "Audio playback status")
                 if (!ok.first) return ok.second!!
@@ -1667,8 +1988,44 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(mediaAudio.stop()))
             }
+            // ── Media Stream (file decode) ───────────────────────────────
+            (uri == "/media/stream/status" || uri == "/media/stream/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.media", capability = "media_stream", detail = "Media stream status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(mediaStream.status()))
+            }
+            (uri == "/media/stream/audio/start" || uri == "/media/stream/audio/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Decode audio file to PCM stream")
+                if (!ok.first) return ok.second!!
+                val src = payload.optString("source_file", "").trim().ifBlank { null }
+                val sr = if (payload.has("sample_rate")) payload.optInt("sample_rate") else null
+                val ch = if (payload.has("channels")) payload.optInt("channels") else null
+                return jsonResponse(JSONObject(mediaStream.startAudioDecode(src, sr, ch)))
+            }
+            (uri == "/media/stream/video/start" || uri == "/media/stream/video/start/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Decode video file to frame stream")
+                if (!ok.first) return ok.second!!
+                val src = payload.optString("source_file", "").trim().ifBlank { null }
+                val format = payload.optString("format", "").trim().ifBlank { null }
+                val fps = if (payload.has("fps")) payload.optInt("fps") else null
+                val jq = if (payload.has("jpeg_quality")) payload.optInt("jpeg_quality") else null
+                return jsonResponse(JSONObject(mediaStream.startVideoDecode(src, format, fps, jq)))
+            }
+            (uri == "/media/stream/stop" || uri == "/media/stream/stop/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Stop media decode stream")
+                if (!ok.first) return ok.second!!
+                val streamId = payload.optString("stream_id", "").trim().ifBlank { null }
+                return jsonResponse(JSONObject(mediaStream.stopDecode(streamId)))
+            }
+            else -> notFound()
+        }
+    }
 
-            // ── Audio Recording ──────────────────────────────────────────
+    private fun routeAudio(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/audio/record/status" || uri == "/audio/record/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.mic", capability = "recording", detail = "Audio recording status")
                 if (!ok.first) return ok.second!!
@@ -1718,8 +2075,12 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(audioRecord.stopStream()))
             }
+            else -> notFound()
+        }
+    }
 
-            // ── Video Recording ──────────────────────────────────────────
+    private fun routeVideo(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/video/record/status" || uri == "/video/record/status/") && session.method == Method.GET -> {
                 val ok = ensureDevicePermission(session, JSONObject(), tool = "device.camera", capability = "recording", detail = "Video recording status")
                 if (!ok.first) return ok.second!!
@@ -1772,167 +2133,12 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 return jsonResponse(JSONObject(videoRecord.stopStream()))
             }
+            else -> notFound()
+        }
+    }
 
-            // ── Screen Recording ─────────────────────────────────────────
-            (uri == "/screen/record/status" || uri == "/screen/record/status/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.screen", capability = "screen_recording", detail = "Screen recording status")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(screenRecord.status()))
-            }
-            (uri == "/screen/record/start" || uri == "/screen/record/start/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Start screen recording")
-                if (!ok.first) return ok.second!!
-                val path = payload.optString("path", "").trim().ifBlank { null }
-                val maxDur = if (payload.has("max_duration_s")) payload.optInt("max_duration_s") else null
-                val resolution = payload.optString("resolution", "").trim().ifBlank { null }
-                val bitrate = if (payload.has("bitrate")) payload.optInt("bitrate") else null
-                return jsonResponse(JSONObject(screenRecord.startRecording(path, maxDur, resolution, bitrate)))
-            }
-            (uri == "/screen/record/stop" || uri == "/screen/record/stop/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Stop screen recording")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(screenRecord.stopRecording()))
-            }
-            (uri == "/screen/record/config" || uri == "/screen/record/config/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.screen", capability = "screen_recording", detail = "Get screen recording config")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(screenRecord.getConfig()))
-            }
-            (uri == "/screen/record/config" || uri == "/screen/record/config/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.screen", capability = "screen_recording", detail = "Set screen recording config")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(screenRecord.setConfig(payload)))
-            }
-
-            // ── Media Stream (file decode) ───────────────────────────────
-            (uri == "/media/stream/status" || uri == "/media/stream/status/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.media", capability = "media_stream", detail = "Media stream status")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(mediaStream.status()))
-            }
-            (uri == "/media/stream/audio/start" || uri == "/media/stream/audio/start/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Decode audio file to PCM stream")
-                if (!ok.first) return ok.second!!
-                val src = payload.optString("source_file", "").trim().ifBlank { null }
-                val sr = if (payload.has("sample_rate")) payload.optInt("sample_rate") else null
-                val ch = if (payload.has("channels")) payload.optInt("channels") else null
-                return jsonResponse(JSONObject(mediaStream.startAudioDecode(src, sr, ch)))
-            }
-            (uri == "/media/stream/video/start" || uri == "/media/stream/video/start/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Decode video file to frame stream")
-                if (!ok.first) return ok.second!!
-                val src = payload.optString("source_file", "").trim().ifBlank { null }
-                val format = payload.optString("format", "").trim().ifBlank { null }
-                val fps = if (payload.has("fps")) payload.optInt("fps") else null
-                val jq = if (payload.has("jpeg_quality")) payload.optInt("jpeg_quality") else null
-                return jsonResponse(JSONObject(mediaStream.startVideoDecode(src, format, fps, jq)))
-            }
-            (uri == "/media/stream/stop" || uri == "/media/stream/stop/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.media", capability = "media_stream", detail = "Stop media decode stream")
-                if (!ok.first) return ok.second!!
-                val streamId = payload.optString("stream_id", "").trim().ifBlank { null }
-                return jsonResponse(JSONObject(mediaStream.stopDecode(streamId)))
-            }
-
-            (uri == "/stt/status" || uri == "/stt/status/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.mic", capability = "stt", detail = "Speech recognizer status")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(stt.status()))
-            }
-            (uri == "/stt/record" || uri == "/stt/record/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Start one-shot speech recognition")
-                if (!ok.first) return ok.second!!
-                val locale = payload.optString("locale", "").trim().ifBlank { null }
-                val partial = payload.optBoolean("partial", true)
-                val maxResults = payload.optInt("max_results", 5)
-                val resp = JSONObject(stt.start(locale, partial, maxResults)).put("ws_path", "/ws/stt/events")
-                return jsonResponse(resp)
-            }
-            (uri == "/location/status" || uri == "/location/status/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.gps", capability = "location", detail = "Location status")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(location.status()))
-            }
-            (uri == "/location/get" || uri == "/location/get/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.gps", capability = "location", detail = "Get current location")
-                if (!ok.first) return ok.second!!
-                val high = payload.optBoolean("high_accuracy", true)
-                val timeoutMs = payload.optLong("timeout_ms", 12_000L).coerceIn(250L, 120_000L)
-                return jsonResponse(JSONObject(location.getCurrent(highAccuracy = high, timeoutMs = timeoutMs)))
-            }
-            (uri == "/network/status" || uri == "/network/status/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Network connectivity status")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(network.status()))
-            }
-            (uri == "/wifi/status" || uri == "/wifi/status/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Wi-Fi status")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(network.wifiStatus()))
-            }
-            (uri == "/mobile/status" || uri == "/mobile/status/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Mobile signal status")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(JSONObject(network.mobileStatus()))
-            }
-            (uri == "/sensors/list" || uri == "/sensors/list/" || uri == "/sensor/list" || uri == "/sensor/list/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.sensors", capability = "sensors", detail = "List available sensors")
-                if (!ok.first) return ok.second!!
-                val out = JSONObject(sensors.listSensors())
-                if (out.has("items")) {
-                    out.put("items", org.json.JSONArray(out.getString("items")))
-                }
-                return jsonResponse(out)
-            }
-            (uri == "/sensors/ws/contract" || uri == "/sensors/ws/contract/") && session.method == Method.GET -> {
-                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.sensors", capability = "sensors", detail = "Sensors websocket contract")
-                if (!ok.first) return ok.second!!
-                return jsonResponse(
-                    JSONObject()
-                        .put("status", "ok")
-                        .put("ws_path", "/ws/sensors")
-                        .put("query", JSONObject()
-                            .put("sensors", "comma-separated sensor keys, e.g. a,g,m")
-                            .put("rate_hz", "1..1000 (default 200)")
-                            .put("latency", "realtime|normal|ui (default realtime)")
-                            .put("timestamp", "mono|unix (default mono)")
-                            .put("backpressure", "drop_old|drop_new (default drop_old)")
-                            .put("max_queue", "64..50000 (default 4096)"))
-                        .put("sample_event", JSONObject()
-                            .put("type", "sample")
-                            .put("stream_id", "s1234abcd")
-                            .put("sensor", "a")
-                            .put("t", 12345.678)
-                            .put("seq", 1001)
-                            .put("v", org.json.JSONArray().put(0.01).put(9.8).put(0.12)))
-                )
-            }
-            (uri == "/sensors/stream/status" || uri == "/sensors/stream/status/") && session.method == Method.GET -> {
-                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
-            }
-            (uri == "/sensors/stream/start" || uri == "/sensors/stream/start/" || uri == "/sensor/stream/start" || uri == "/sensor/stream/start/") && session.method == Method.POST -> {
-                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
-            }
-            (uri == "/sensors/stream/stop" || uri == "/sensors/stream/stop/" || uri == "/sensor/stream/stop" || uri == "/sensor/stream/stop/") && session.method == Method.POST -> {
-                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
-            }
-            (uri == "/sensors/stream/latest" || uri == "/sensors/stream/latest/" || uri == "/sensor/stream/latest" || uri == "/sensor/stream/latest/") && session.method == Method.POST -> {
-                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
-            }
-            (uri == "/sensors/stream/batch" || uri == "/sensors/stream/batch/" || uri == "/sensor/stream/batch" || uri == "/sensor/stream/batch/") && session.method == Method.POST -> {
-                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
-            }
-            (uri == "/sensor/stream/status" || uri == "/sensor/stream/status/") && session.method == Method.POST -> {
-                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
-            }
+    private fun routeSshd(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/sshd/status" -> {
                 val status = sshdManager.status()
                 jsonResponse(
@@ -2125,6 +2331,12 @@ class LocalHttpServer(
                         .put("noauth_enabled", status.noauthEnabled)
                 )
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeSsh(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/ssh/exec" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val ok = ensureDevicePermission(session, payload, tool = "device.ssh", capability = "ssh.exec", detail = "Run one-shot SSH command")
@@ -2160,93 +2372,162 @@ class LocalHttpServer(
                             .put(JSONObject().put("type", "error").put("code", "reason")))
                 )
             }
-            uri == "/brain/config" && session.method == Method.GET -> handleBrainConfigGet()
-            uri == "/brain/config" && session.method == Method.POST -> {
-                val body = postBody ?: ""
-                handleBrainConfigSet(body)
-            }
-            uri == "/brain/agent/bootstrap" && session.method == Method.POST -> {
-                handleBrainAgentBootstrap()
-            }
-            // Chat-mode streaming (direct cloud) has been removed. Use agent mode instead.
-            uri == "/brain/chat" && session.method == Method.POST -> {
-                jsonError(Response.Status.GONE, "chat_mode_removed")
-            }
-            uri == "/brain/memory" && session.method == Method.GET -> {
-                jsonResponse(JSONObject().put("content", readMemory()))
-            }
-            uri == "/brain/memory" && session.method == Method.POST -> {
-                val body = postBody ?: ""
-                val payload = runCatching { JSONObject(body) }.getOrNull()
-                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
-                writeMemory(payload.optString("content", ""))
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            (uri == "/ui/viewer/open" || uri == "/ui/viewer/open/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val path = payload.optString("path", "").trim()
-                if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                // Strip #page=N fragment for file validation; preserve full path for JS.
-                val filePath = path.replace(Regex("#.*$"), "")
-                val file = if (filePath.startsWith("\$sys/")) {
-                    systemPath(filePath.removePrefix("\$sys/"))
-                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_system_dir")
-                } else {
-                    userPath(filePath)
-                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-                }
-                if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "open")
-                    putExtra(EXTRA_VIEWER_PATH, path)
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            (uri == "/ui/viewer/close" || uri == "/ui/viewer/close/") && session.method == Method.POST -> {
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "close")
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            (uri == "/ui/viewer/immersive" || uri == "/ui/viewer/immersive/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val enabled = payload.optBoolean("enabled", true)
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "immersive")
-                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            (uri == "/ui/viewer/slideshow" || uri == "/ui/viewer/slideshow/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val enabled = payload.optBoolean("enabled", true)
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "slideshow")
-                    putExtra(EXTRA_VIEWER_ENABLED, enabled)
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            (uri == "/ui/viewer/goto" || uri == "/ui/viewer/goto/") && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val page = payload.optInt("page", 0)
-                val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
-                    setPackage(context.packageName)
-                    putExtra(EXTRA_VIEWER_COMMAND, "goto")
-                    putExtra(EXTRA_VIEWER_PAGE, page)
-                }
-                context.sendBroadcast(intent)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
+            else -> notFound()
+        }
+    }
 
-            // ── WebView Browser ──
+    private fun routeStt(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/stt/status" || uri == "/stt/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.mic", capability = "stt", detail = "Speech recognizer status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(stt.status()))
+            }
+            (uri == "/stt/record" || uri == "/stt/record/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.mic", capability = "stt", detail = "Start one-shot speech recognition")
+                if (!ok.first) return ok.second!!
+                val locale = payload.optString("locale", "").trim().ifBlank { null }
+                val partial = payload.optBoolean("partial", true)
+                val maxResults = payload.optInt("max_results", 5)
+                val resp = JSONObject(stt.start(locale, partial, maxResults)).put("ws_path", "/ws/stt/events")
+                return jsonResponse(resp)
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeLocation(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/location/status" || uri == "/location/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.gps", capability = "location", detail = "Location status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(location.status()))
+            }
+            (uri == "/location/get" || uri == "/location/get/") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(session, payload, tool = "device.gps", capability = "location", detail = "Get current location")
+                if (!ok.first) return ok.second!!
+                val high = payload.optBoolean("high_accuracy", true)
+                val timeoutMs = payload.optLong("timeout_ms", 12_000L).coerceIn(250L, 120_000L)
+                return jsonResponse(JSONObject(location.getCurrent(highAccuracy = high, timeoutMs = timeoutMs)))
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeNetwork(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/network/status" || uri == "/network/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Network connectivity status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(network.status()))
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeWifi(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/wifi/status" || uri == "/wifi/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Wi-Fi status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(network.wifiStatus()))
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeMobile(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/mobile/status" || uri == "/mobile/status/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.network", capability = "network", detail = "Mobile signal status")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(JSONObject(network.mobileStatus()))
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeSensors(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/sensors/list" || uri == "/sensors/list/" || uri == "/sensor/list" || uri == "/sensor/list/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.sensors", capability = "sensors", detail = "List available sensors")
+                if (!ok.first) return ok.second!!
+                val out = JSONObject(sensors.listSensors())
+                if (out.has("items")) {
+                    out.put("items", org.json.JSONArray(out.getString("items")))
+                }
+                return jsonResponse(out)
+            }
+            (uri == "/sensors/ws/contract" || uri == "/sensors/ws/contract/") && session.method == Method.GET -> {
+                val ok = ensureDevicePermission(session, JSONObject(), tool = "device.sensors", capability = "sensors", detail = "Sensors websocket contract")
+                if (!ok.first) return ok.second!!
+                return jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("ws_path", "/ws/sensors")
+                        .put("query", JSONObject()
+                            .put("sensors", "comma-separated sensor keys, e.g. a,g,m")
+                            .put("rate_hz", "1..1000 (default 200)")
+                            .put("latency", "realtime|normal|ui (default realtime)")
+                            .put("timestamp", "mono|unix (default mono)")
+                            .put("backpressure", "drop_old|drop_new (default drop_old)")
+                            .put("max_queue", "64..50000 (default 4096)"))
+                        .put("sample_event", JSONObject()
+                            .put("type", "sample")
+                            .put("stream_id", "s1234abcd")
+                            .put("sensor", "a")
+                            .put("t", 12345.678)
+                            .put("seq", 1001)
+                            .put("v", org.json.JSONArray().put(0.01).put(9.8).put(0.12)))
+                )
+            }
+            (uri == "/sensors/stream/status" || uri == "/sensors/stream/status/") && session.method == Method.GET -> {
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
+            }
+            (uri == "/sensors/stream/start" || uri == "/sensors/stream/start/" || uri == "/sensor/stream/start" || uri == "/sensor/stream/start/") && session.method == Method.POST -> {
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
+            }
+            (uri == "/sensors/stream/stop" || uri == "/sensors/stream/stop/" || uri == "/sensor/stream/stop" || uri == "/sensor/stream/stop/") && session.method == Method.POST -> {
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
+            }
+            (uri == "/sensors/stream/latest" || uri == "/sensors/stream/latest/" || uri == "/sensor/stream/latest" || uri == "/sensor/stream/latest/") && session.method == Method.POST -> {
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
+            }
+            (uri == "/sensors/stream/batch" || uri == "/sensors/stream/batch/" || uri == "/sensor/stream/batch" || uri == "/sensor/stream/batch/") && session.method == Method.POST -> {
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
+            }
+            (uri == "/sensor/stream/status" || uri == "/sensor/stream/status/") && session.method == Method.POST -> {
+                return jsonError(Response.Status.GONE, "deprecated_use_ws_sensors")
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeUser(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            uri == "/user/list" && session.method == Method.GET -> {
+                handleUserList(session)
+            }
+            uri == "/user/file" && session.method == Method.GET -> {
+                serveUserFile(session)
+            }
+            uri.startsWith("/user/www/") && session.method == Method.GET -> {
+                serveUserWww(session)
+            }
+            uri == "/user/upload" && session.method == Method.POST -> {
+                handleUserUpload(session)
+            }
+            uri == "/user/file/info" && session.method == Method.GET -> {
+                handleUserFileInfo(session)
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeWebview(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             (uri == "/webview/open" || uri == "/webview/open/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val url = payload.optString("url", "").trim()
@@ -2329,28 +2610,12 @@ class LocalHttpServer(
                 if (position != null) result.put("position", position)
                 jsonResponse(result)
             }
+            else -> notFound()
+        }
+    }
 
-            uri == "/" || uri == "/ui" || uri == "/ui/" -> serveUiFile("index.html")
-            uri.startsWith("/ui/") -> {
-                val raw = uri.removePrefix("/ui/")
-                val decoded = URLDecoder.decode(raw, StandardCharsets.UTF_8.name())
-                serveUiFile(decoded)
-            }
-            uri == "/user/list" && session.method == Method.GET -> {
-                handleUserList(session)
-            }
-            uri == "/user/file" && session.method == Method.GET -> {
-                serveUserFile(session)
-            }
-            uri.startsWith("/user/www/") && session.method == Method.GET -> {
-                serveUserWww(session)
-            }
-            uri == "/user/upload" && session.method == Method.POST -> {
-                handleUserUpload(session)
-            }
-            uri == "/user/file/info" && session.method == Method.GET -> {
-                handleUserFileInfo(session)
-            }
+    private fun routeIntent(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/intent/send" && session.method == Method.POST -> {
                 val payload = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
@@ -2366,6 +2631,12 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 handleIntentShareApp()
             }
+            else -> notFound()
+        }
+    }
+
+    private fun routeSys(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
             uri == "/sys/list" && session.method == Method.GET -> {
                 handleSysList(session)
             }
@@ -2375,6 +2646,7 @@ class LocalHttpServer(
             else -> notFound()
         }
     }
+
 
     private fun firstParam(session: IHTTPSession, name: String): String {
         return session.parameters[name]?.firstOrNull()?.trim() ?: ""
