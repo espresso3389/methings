@@ -32,6 +32,7 @@ class AgentService : LifecycleService() {
     private var noAuthPromptManager: SshNoAuthPromptManager? = null
     private val sshAuthExecutor = Executors.newSingleThreadScheduledExecutor()
     private var lastActiveAuthMode: String = ""
+    private var lastForegroundText: String = ""
     private var permissionReceiverRegistered = false
     private var brainWorkNotificationShown = false
     private var lastBrainWorkCheckAtMs: Long = 0L
@@ -154,7 +155,7 @@ class AgentService : LifecycleService() {
     }
 
     private fun startSshAuthMonitor() {
-        sshAuthExecutor.scheduleAtFixedRate({ tickSshAuth() }, 0, 1, TimeUnit.SECONDS)
+        sshAuthExecutor.scheduleAtFixedRate({ tickSshAuth() }, 0, 3, TimeUnit.SECONDS)
     }
 
     private fun tickSshAuth() {
@@ -199,16 +200,21 @@ class AgentService : LifecycleService() {
                 lastActiveAuthMode = activeMode
             }
 
-            // Keep the (always visible) foreground service notification as the primary status indicator.
-            val fg = buildForegroundNotification(
-                activeMode,
-                when (activeMode) {
+            // Only re-post the foreground notification when visible content changes.
+            val fgText = foregroundText(activeMode, when (activeMode) {
+                SshdManager.AUTH_MODE_PIN -> pin.expiresAt
+                SshdManager.AUTH_MODE_NOTIFICATION -> noauth.expiresAt
+                else -> null
+            })
+            if (fgText != lastForegroundText) {
+                lastForegroundText = fgText
+                val fg = buildForegroundNotification(activeMode, when (activeMode) {
                     SshdManager.AUTH_MODE_PIN -> pin.expiresAt
                     SshdManager.AUTH_MODE_NOTIFICATION -> noauth.expiresAt
                     else -> null
-                }
-            )
-            startForegroundCompat(fg)
+                })
+                startForegroundCompat(fg)
+            }
 
             tickBrainWorkNotification()
         } catch (_: Exception) {
@@ -217,7 +223,7 @@ class AgentService : LifecycleService() {
 
     private fun tickBrainWorkNotification() {
         val now = System.currentTimeMillis()
-        if (now - lastBrainWorkCheckAtMs < 2500) return
+        if (now - lastBrainWorkCheckAtMs < 6000) return
         lastBrainWorkCheckAtMs = now
 
         val nm = getSystemService(NotificationManager::class.java)
@@ -231,21 +237,26 @@ class AgentService : LifecycleService() {
         }
 
         // Query the python worker brain status (best-effort).
+        // Use a short timeout: if the worker is too busy to respond quickly, treat it as busy.
         val raw = try {
             val url = java.net.URL("http://127.0.0.1:8776/brain/status")
             val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 1200
-                readTimeout = 1800
+                connectTimeout = 300
+                readTimeout = 400
             }
             val txt = runCatching { conn.inputStream.bufferedReader().use { it.readText() } }.getOrDefault("")
             conn.disconnect()
             txt
+        } catch (_: java.net.SocketTimeoutException) {
+            // Timeout means the worker is busy — treat as busy without parsing.
+            "timeout"
         } catch (_: Exception) {
             ""
         }
-        val st = runCatching { org.json.JSONObject(raw) }.getOrNull()
-        val busy = st?.optBoolean("busy", false) ?: false
+        val timedOut = raw == "timeout"
+        val st = if (timedOut) null else runCatching { org.json.JSONObject(raw) }.getOrNull()
+        val busy = timedOut || (st?.optBoolean("busy", false) ?: false)
         val q = st?.optInt("queue_size", 0) ?: 0
         val shouldShow = busy || q > 0
         if (shouldShow) {
