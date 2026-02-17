@@ -50,7 +50,8 @@ Build an Android 14+ app that provides a Python development environment with:
 - **Always edit under `user/`** at the repo root:
   - `user/AGENTS.md`, `user/TOOLS.md` → copied to `assets/user_defaults/`
   - `user/docs/`, `user/examples/`, `user/lib/` → copied to `assets/system/`
-- The Gradle build (`syncSystemAssets` / `syncUserDefaults` in `app/android/app/build.gradle.kts`) handles the copy automatically as a preBuild dependency.
+- Similarly, `app/android/app/src/main/assets/server/` is an **auto-synced copy** of `server/` at the repo root. **Always edit under `server/`** (e.g., `server/tools/device_api.py`, `server/agents/runtime.py`).
+- The Gradle build (`syncSystemAssets` / `syncUserDefaults` / asset sync tasks in `app/android/app/build.gradle.kts`) handles all copies automatically as a preBuild dependency.
 
 ## Conventions
 - Favor ASCII only in source unless already using Unicode.
