@@ -322,7 +322,9 @@ class LocalHttpServer(
             "/shell" -> routeShell(session, uri, postBody)
             "/web" -> routeWeb(session, uri, postBody)
             "/pip" -> routePip(session, uri, postBody)
+            "/auth" -> routeAuth(session, uri, postBody)
             "/cloud" -> routeCloud(session, uri, postBody)
+            "/file_transfer" -> routeFileTransfer(session, uri, postBody)
             "/notifications" -> routeNotifications(session, uri, postBody)
             "/screen" -> routeScreen(session, uri, postBody)
             "/usb" -> routeUsb(session, uri, postBody)
@@ -347,6 +349,25 @@ class LocalHttpServer(
             "/intent" -> routeIntent(session, uri, postBody)
             "/sys" -> routeSys(session, uri, postBody)
             "" -> routeUi(session, uri, postBody)
+            else -> notFound()
+        }
+    }
+
+    private fun routeAuth(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            uri == "/auth/identity" && session.method == Method.GET -> {
+                val identities = loadVerifiedOwnerIdentities()
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("identities", org.json.JSONArray(identities))
+                )
+            }
+            uri == "/auth/signout" && session.method == Method.POST -> {
+                credentialStore.delete("me_me_owner:google")
+                credentialStore.delete("me_me_owner:google:id_token")
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
             else -> notFound()
         }
     }
@@ -1412,12 +1433,18 @@ class LocalHttpServer(
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 return handleCloudRequest(session, payload)
             }
-            uri == "/cloud/prefs" && session.method == Method.GET -> {
-                val autoMb = cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble()
-                val minKbps = cloudPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble()
-                val imgResizeEnabled = cloudPrefs.getBoolean("image_resize_enabled", true)
-                val imgMaxDim = cloudPrefs.getInt("image_resize_max_dim_px", 512)
-                val imgJpegQ = cloudPrefs.getInt("image_resize_jpeg_quality", 70)
+            else -> notFound()
+        }
+    }
+
+    private fun routeFileTransfer(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            uri == "/file_transfer/prefs" && session.method == Method.GET -> {
+                val autoMb = fileTransferPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble()
+                val minKbps = fileTransferPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble()
+                val imgResizeEnabled = fileTransferPrefs.getBoolean("image_resize_enabled", true)
+                val imgMaxDim = fileTransferPrefs.getInt("image_resize_max_dim_px", 512)
+                val imgJpegQ = fileTransferPrefs.getInt("image_resize_jpeg_quality", 70)
                 return jsonResponse(
                     JSONObject()
                         .put("status", "ok")
@@ -1430,27 +1457,27 @@ class LocalHttpServer(
                         .put("image_resize_jpeg_quality", imgJpegQ)
                 )
             }
-            uri == "/cloud/prefs" && session.method == Method.POST -> {
+            uri == "/file_transfer/prefs" && session.method == Method.POST -> {
                 val body = (postBody ?: "").ifBlank { "{}" }
                 val payload = runCatching { JSONObject(body) }.getOrNull()
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 val v = when {
                     payload.has("auto_upload_no_confirm_mb") ->
-                        payload.optDouble("auto_upload_no_confirm_mb", cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble())
+                        payload.optDouble("auto_upload_no_confirm_mb", fileTransferPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble())
                     payload.has("allow_auto_upload_payload_size_less_than_mb") ->
-                        payload.optDouble("allow_auto_upload_payload_size_less_than_mb", cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble())
+                        payload.optDouble("allow_auto_upload_payload_size_less_than_mb", fileTransferPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble())
                     else ->
-                        cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble()
+                        fileTransferPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble()
                 }
                 val clamped = v.coerceIn(0.0, 25.0)
-                val mk = payload.optDouble("min_transfer_kbps", cloudPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble())
+                val mk = payload.optDouble("min_transfer_kbps", fileTransferPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble())
                 val mkClamped = mk.coerceIn(0.0, 50_000.0)
-                val imgEnabled = if (payload.has("image_resize_enabled")) payload.optBoolean("image_resize_enabled", true) else cloudPrefs.getBoolean("image_resize_enabled", true)
-                val imgMaxDimRaw = if (payload.has("image_resize_max_dim_px")) payload.optInt("image_resize_max_dim_px", 512) else cloudPrefs.getInt("image_resize_max_dim_px", 512)
-                val imgJpegQRaw = if (payload.has("image_resize_jpeg_quality")) payload.optInt("image_resize_jpeg_quality", 70) else cloudPrefs.getInt("image_resize_jpeg_quality", 70)
+                val imgEnabled = if (payload.has("image_resize_enabled")) payload.optBoolean("image_resize_enabled", true) else fileTransferPrefs.getBoolean("image_resize_enabled", true)
+                val imgMaxDimRaw = if (payload.has("image_resize_max_dim_px")) payload.optInt("image_resize_max_dim_px", 512) else fileTransferPrefs.getInt("image_resize_max_dim_px", 512)
+                val imgJpegQRaw = if (payload.has("image_resize_jpeg_quality")) payload.optInt("image_resize_jpeg_quality", 70) else fileTransferPrefs.getInt("image_resize_jpeg_quality", 70)
                 val imgMaxDim = imgMaxDimRaw.coerceIn(64, 4096)
                 val imgJpegQ = imgJpegQRaw.coerceIn(30, 95)
-                cloudPrefs.edit()
+                fileTransferPrefs.edit()
                     .putFloat("auto_upload_no_confirm_mb", clamped.toFloat())
                     .putFloat("min_transfer_kbps", mkClamped.toFloat())
                     .putBoolean("image_resize_enabled", imgEnabled)
@@ -6377,12 +6404,12 @@ class LocalHttpServer(
                             // Default: base64. For common image types, downscale/compress to reduce upload size.
                             val ext = f.name.substringAfterLast('.', "").lowercase()
                             val isImg = ext in setOf("jpg", "jpeg", "png", "webp")
-                            val enabled = cloudPrefs.getBoolean("image_resize_enabled", true)
+                            val enabled = fileTransferPrefs.getBoolean("image_resize_enabled", true)
                             if (mode == "base64" && enabled && isImg) {
                                 downscaleImageToJpeg(
                                     f,
-                                    maxDimPx = cloudPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096),
-                                    jpegQuality = cloudPrefs.getInt("image_resize_jpeg_quality", 70).coerceIn(30, 95)
+                                    maxDimPx = fileTransferPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096),
+                                    jpegQuality = fileTransferPrefs.getInt("image_resize_jpeg_quality", 70).coerceIn(30, 95)
                                 ) ?: f.readBytes()
                             } else {
                                 f.readBytes()
@@ -6641,7 +6668,7 @@ class LocalHttpServer(
             return jsonError(Response.Status.BAD_REQUEST, "missing_brain_api_key")
         }
 
-        val autoMb = cloudPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble().coerceIn(0.0, 25.0)
+        val autoMb = fileTransferPrefs.getFloat("auto_upload_no_confirm_mb", 1.0f).toDouble().coerceIn(0.0, 25.0)
         val threshold = (autoMb * 1024.0 * 1024.0).toLong().coerceIn(0L, 50L * 1024L * 1024L)
         if (exp.uploadBytes > threshold && !payload.optBoolean("confirm_large", false)) {
             return jsonError(
@@ -6665,7 +6692,7 @@ class LocalHttpServer(
         // - We intentionally avoid a hard "overall request deadline" so large transfers can complete
         //   as long as they keep making steady progress.
         val timeoutS = payload.optDouble("timeout_s", 45.0).coerceIn(3.0, 120.0)
-        val minBytesPerSFromPrefs = cloudPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble() * 1024.0
+        val minBytesPerSFromPrefs = fileTransferPrefs.getFloat("min_transfer_kbps", 0.0f).toDouble() * 1024.0
         val minBytesPerSFromReq = if (payload.has("min_bytes_per_s")) payload.optDouble("min_bytes_per_s", 0.0) else null
         val minBytesPerS = (minBytesPerSFromReq ?: minBytesPerSFromPrefs).coerceIn(0.0, 50.0 * 1024.0 * 1024.0)
         val minRateGraceS = payload.optDouble("min_rate_grace_s", 3.0).coerceIn(0.0, 30.0)
@@ -6850,9 +6877,9 @@ class LocalHttpServer(
         context.getSharedPreferences("brain_config", Context.MODE_PRIVATE)
     }
 
-    // --- Cloud request prefs ---
-    private val cloudPrefs by lazy {
-        context.getSharedPreferences("cloud_prefs", Context.MODE_PRIVATE)
+    // --- File transfer prefs (cloud uploads + me.me transfers) ---
+    private val fileTransferPrefs by lazy {
+        context.getSharedPreferences("file_transfer_prefs", Context.MODE_PRIVATE)
     }
 
     // --- Task completion notification prefs ---
@@ -8398,7 +8425,7 @@ class LocalHttpServer(
             connectionCheckIntervalSec = payload.optInt("connection_check_interval", prev.connectionCheckIntervalSec).coerceIn(5, 3600),
             blePreferredMaxBytes = payload.optInt("ble_preferred_max_bytes", prev.blePreferredMaxBytes).coerceIn(ME_ME_BLE_PREFERRED_MAX_BYTES_MIN, ME_ME_BLE_MAX_MESSAGE_BYTES),
             autoApproveOwnDevices = if (payload.has("auto_approve_own_devices")) payload.optBoolean("auto_approve_own_devices", prev.autoApproveOwnDevices) else prev.autoApproveOwnDevices,
-            ownerIdentities = readIdentityList(payload, "owner_identities", prev.ownerIdentities),
+            ownerIdentities = loadVerifiedOwnerIdentities(),
             allowedDevices = readStringList(payload, "allowed_devices", prev.allowedDevices),
             blockedDevices = readStringList(payload, "blocked_devices", prev.blockedDevices),
             notifyOnConnection = if (payload.has("notify_on_connection")) payload.optBoolean("notify_on_connection", prev.notifyOnConnection) else prev.notifyOnConnection,
@@ -9174,6 +9201,7 @@ class LocalHttpServer(
     /**
      * If the payload contains `rel_path` but no `data_b64`, resolve the file
      * under the user directory, read its bytes, and embed as `data_b64` + `mime_type`.
+     * Images are compressed to fit within BLE transport limits.
      * This ensures the receiver gets actual file content instead of a sender-local path.
      */
     private fun embedMeMeFileContent(payloadValue: Any?): Any? {
@@ -9191,16 +9219,28 @@ class LocalHttpServer(
             Log.w(TAG, "embedMeMeFileContent: cannot read rel_path=$relPath")
             return payloadValue
         }
-        val bytes = file.readBytes()
-        if (bytes.isEmpty()) {
+        val rawBytes = file.readBytes()
+        if (rawBytes.isEmpty()) {
             Log.w(TAG, "embedMeMeFileContent: file is empty rel_path=$relPath")
             return payloadValue
+        }
+        val mime = payloadValue.optString("mime_type", "").trim()
+            .ifBlank { URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name) }
+        // For images, apply file transfer resize settings (same as cloud uploads)
+        val ext = file.name.substringAfterLast('.', "").lowercase()
+        val isImg = mime.startsWith("image/") && ext in setOf("jpg", "jpeg", "png", "webp")
+        val imgResizeEnabled = fileTransferPrefs.getBoolean("image_resize_enabled", true)
+        val bytes = if (isImg && imgResizeEnabled) {
+            val maxDimPx = fileTransferPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096)
+            val jpegQuality = fileTransferPrefs.getInt("image_resize_jpeg_quality", 70).coerceIn(30, 95)
+            downscaleImageToJpeg(file, maxDimPx, jpegQuality) ?: rawBytes
+        } else {
+            rawBytes
         }
         val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
         val out = JSONObject(payloadValue.toString())
         out.put("data_b64", b64)
         if (out.optString("mime_type", "").trim().isBlank()) {
-            val mime = URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
             out.put("mime_type", mime)
         }
         if (out.optString("file_name", "").trim().isBlank()) {
@@ -9208,7 +9248,7 @@ class LocalHttpServer(
         }
         // Remove rel_path since it's sender-local and meaningless to the receiver
         out.remove("rel_path")
-        Log.i(TAG, "embedMeMeFileContent: embedded ${bytes.size} bytes from $relPath as data_b64")
+        Log.i(TAG, "embedMeMeFileContent: embedded ${bytes.size} bytes (raw ${rawBytes.size}) from $relPath as data_b64")
         return out
     }
 
@@ -11016,7 +11056,7 @@ class LocalHttpServer(
             blePreferredMaxBytes = meMePrefs.getInt("ble_preferred_max_bytes", ME_ME_BLE_PREFERRED_MAX_BYTES_DEFAULT)
                 .coerceIn(ME_ME_BLE_PREFERRED_MAX_BYTES_MIN, ME_ME_BLE_MAX_MESSAGE_BYTES),
             autoApproveOwnDevices = meMePrefs.getBoolean("auto_approve_own_devices", false),
-            ownerIdentities = meMePrefs.getStringSet("owner_identities", emptySet())?.toList()?.map { normalizeOwnerIdentity(it) }?.filter { it.isNotBlank() }?.distinct() ?: emptyList(),
+            ownerIdentities = loadVerifiedOwnerIdentities(),
             allowedDevices = meMePrefs.getStringSet("allowed_devices", emptySet())?.toList()?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList(),
             blockedDevices = meMePrefs.getStringSet("blocked_devices", emptySet())?.toList()?.map { it.trim() }?.filter { it.isNotBlank() } ?: emptyList(),
             notifyOnConnection = meMePrefs.getBoolean("notify_on_connection", true),
@@ -11041,7 +11081,6 @@ class LocalHttpServer(
             .putInt("connection_check_interval", cfg.connectionCheckIntervalSec)
             .putInt("ble_preferred_max_bytes", cfg.blePreferredMaxBytes)
             .putBoolean("auto_approve_own_devices", cfg.autoApproveOwnDevices)
-            .putStringSet("owner_identities", cfg.ownerIdentities.toSet())
             .putStringSet("allowed_devices", cfg.allowedDevices.toSet())
             .putStringSet("blocked_devices", cfg.blockedDevices.toSet())
             .putBoolean("notify_on_connection", cfg.notifyOnConnection)
@@ -11058,6 +11097,13 @@ class LocalHttpServer(
         if (issuer !in setOf("google", "github")) return ""
         if (sub.isBlank()) return ""
         return "$issuer:$sub"
+    }
+
+    private fun loadVerifiedOwnerIdentities(): List<String> {
+        val google = credentialStore.get("me_me_owner:google")?.value?.trim()?.lowercase(Locale.US).orEmpty()
+        if (google.isBlank()) return emptyList()
+        val normalized = normalizeOwnerIdentity("google:$google")
+        return if (normalized.isNotBlank()) listOf(normalized) else emptyList()
     }
 
     private fun readIdentityList(payload: JSONObject, key: String, fallback: List<String>): List<String> {
@@ -13419,7 +13465,7 @@ Policies:
             "reset_restore" to "Reset & Restore",
             "android" to "Android",
             "permissions" to "Permissions",
-            "cloud" to "Cloud",
+            "file_transfer" to "File Transfer",
             "tts" to "Text-to-Speech",
             "me_me" to "me.me",
             "me_sync" to "me.sync",

@@ -261,7 +261,7 @@ Large uploads:
 - If total upload bytes exceed ~5MB, `/cloud/request` returns `error=confirm_large_required`.
   Ask the user to confirm, then retry with `confirm_large:true`.
 
-Cloud prefs: see `$sys/docs/openapi/paths/cloud.yaml`.
+File transfer prefs: see `$sys/docs/openapi/paths/cloud.yaml` (`/file_transfer/prefs`).
 
 ### Python Helper
 

@@ -129,14 +129,14 @@ cloudRequest:
             schema:
               $ref: '../components/schemas.yaml#/ErrorResponse'
 
-cloudPrefsGet:
+fileTransferPrefsGet:
   get:
-    operationId: getCloudPrefs
-    summary: Get cloud broker preferences
+    operationId: getFileTransferPrefs
+    summary: Get file transfer preferences (cloud uploads + me.me)
     tags: [Cloud]
     responses:
       '200':
-        description: Current cloud broker preferences.
+        description: Current file transfer preferences.
         content:
           application/json:
             schema:
@@ -148,15 +148,15 @@ cloudPrefsGet:
                   const: ok
                 image_resize:
                   type: object
-                  description: Image resize settings for uploads.
+                  description: Image resize settings for transfers.
                 upload_threshold:
                   type: object
                   description: Upload size threshold settings.
 
-cloudPrefsSet:
+fileTransferPrefsSet:
   post:
-    operationId: postCloudPrefs
-    summary: Update cloud broker preferences
+    operationId: postFileTransferPrefs
+    summary: Update file transfer preferences (cloud uploads + me.me)
     tags: [Cloud]
     requestBody:
       required: true

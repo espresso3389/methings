@@ -1,0 +1,56 @@
+authIdentity:
+  get:
+    operationId: getAuthIdentity
+    summary: Get verified owner identity
+    description: >
+      Returns the list of verified owner identities stored in the encrypted
+      vault. Currently only Google Sign-In is supported. Identities are in
+      `issuer:sub` format (e.g. `google:user@gmail.com`).
+    tags: [Auth]
+    responses:
+      '200':
+        description: Current verified identities.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, identities]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                identities:
+                  type: array
+                  items:
+                    type: string
+                  description: >
+                    Verified owner identities in `issuer:sub` format.
+                    Empty array if no identity is configured.
+            example:
+              status: ok
+              identities:
+                - "google:user@gmail.com"
+
+authSignout:
+  post:
+    operationId: postAuthSignout
+    summary: Remove verified owner identity
+    description: >
+      Deletes the verified Google owner identity from the encrypted vault.
+      After sign-out, `auto_approve_own_devices` will no longer match any
+      peer identity.
+    tags: [Auth]
+    responses:
+      '200':
+        description: Identity removed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+            example:
+              status: ok

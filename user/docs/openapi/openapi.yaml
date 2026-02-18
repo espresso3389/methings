@@ -71,6 +71,8 @@ tags:
     description: Task-completion notification preferences.
   - name: Permissions
     description: Permission request and grant management.
+  - name: Auth
+    description: Verified owner identity (Google Sign-In).
   - name: Vault
     description: Credential vault.
   - name: WebView
@@ -411,11 +413,17 @@ paths:
   /me/sync/v3/import/apply:
     $ref: './paths/me_sync.yaml#/meSyncV3ImportApply'
 
+  # ── Auth ──
+  /auth/identity:
+    $ref: './paths/auth.yaml#/authIdentity'
+  /auth/signout:
+    $ref: './paths/auth.yaml#/authSignout'
+
   # ── Cloud ──
   /cloud/request:
     $ref: './paths/cloud.yaml#/cloudRequest'
-  /cloud/prefs:
-    $ref: './paths/cloud.yaml#/cloudPrefsGet'
+  /file_transfer/prefs:
+    $ref: './paths/cloud.yaml#/fileTransferPrefsGet'
 
   # ── Notifications ──
   /notifications/prefs:

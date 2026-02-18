@@ -59,6 +59,20 @@
     },
     {
       "ecosystem": "android-gradle",
+      "name": "androidx.credentials:credentials",
+      "version": "1.3.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "androidx.credentials:credentials-play-services-auth",
+      "version": "1.3.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
       "name": "androidx.lifecycle:lifecycle-service",
       "version": "2.7.0",
       "source_path": "app/android/app/build.gradle.kts",
@@ -103,6 +117,13 @@
       "ecosystem": "android-gradle",
       "name": "com.google.android.gms:play-services-nearby",
       "version": "19.3.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
+      "name": "com.google.android.libraries.identity.googleid:googleid",
+      "version": "1.1.1",
       "source_path": "app/android/app/build.gradle.kts",
       "note": "implementation"
     },

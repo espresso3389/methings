@@ -32,6 +32,7 @@ android {
         versionName = appVersionName
         buildConfigField("String", "GIT_SHA", "\"$appGitSha\"")
         buildConfigField("String", "REPO_URL", "\"$appRepoUrl\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"\"")
 
         // Target only arm64 for now (Android 14+ devices). This also keeps the
         // bundled native deps (libusb/libuvc/opencv) consistent and smaller.
@@ -344,6 +345,9 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     implementation("androidx.browser:browser:1.7.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("com.google.zxing:core:3.5.3")

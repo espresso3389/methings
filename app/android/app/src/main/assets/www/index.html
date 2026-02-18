@@ -1984,17 +1984,17 @@
           </div>
         </section>
 
-        <!-- Cloud -->
-        <section class="card" id="settings-section-cloud">
+        <!-- File Transfer -->
+        <section class="card" id="settings-section-file_transfer">
           <div class="card-header">
             <div class="card-icon blue">&#9729;</div>
-            <div class="card-title">Cloud</div>
+            <div class="card-title">File Transfer</div>
           </div>
           <div class="card-desc">
-            Controls extra confirmations for cloud requests that upload local files.
+            Controls image resize/compression and upload thresholds for cloud requests and me.me file transfers.
           </div>
           <div class="btn-group">
-            <button class="btn" id="openCloudSettingsModalBtn">Cloud Upload Settings</button>
+            <button class="btn" id="openFtSettingsModalBtn">File Transfer Settings</button>
           </div>
         </section>
 
@@ -2267,9 +2267,13 @@
             </label>
             <span class="toggle-label">Auto-Approve My Devices</span>
           </div>
-          <div class="setting-row">
-            <div class="setting-label">Owner Identities (issuer:sub, comma/newline)</div>
-            <textarea id="meMeOwnerIdentities" data-setting-key="me_me_owner_identities" rows="2" placeholder="google:123..., github:456..."></textarea>
+          <div class="setting-row" id="ownerIdentityRow">
+            <div class="setting-label">Verified Owner Identity</div>
+            <div id="ownerIdentityDisplay" class="muted" style="margin-top:4px;">Not signed in</div>
+            <div class="btn-group" style="margin-top:8px;">
+              <button class="btn" id="googleSignInBtn">Sign in with Google</button>
+              <button class="btn danger" id="ownerSignOutBtn" style="display:none;">Sign Out</button>
+            </div>
           </div>
           <div class="setting-row">
             <div class="setting-label">Allowed Devices (comma/newline)</div>
@@ -2461,49 +2465,49 @@
       </div>
     </div>
 
-    <!-- Cloud Upload Settings Modal -->
-    <div class="modal" id="cloudSettingsModal" role="dialog" aria-modal="true" aria-labelledby="cloudSettingsModalTitle">
-      <div class="modal-card settings-detail" data-settings-section="cloud">
+    <!-- File Transfer Settings Modal -->
+    <div class="modal" id="ftSettingsModal" role="dialog" aria-modal="true" aria-labelledby="ftSettingsModalTitle">
+      <div class="modal-card settings-detail" data-settings-section="file_transfer">
         <div class="card-header">
           <div class="card-icon blue">&#9729;</div>
-          <div class="card-title" id="cloudSettingsModalTitle" style="margin-bottom:0;">Cloud Upload Settings</div>
-          <button class="icon-btn secondary" id="cloudSettingsModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+          <div class="card-title" id="ftSettingsModalTitle" style="margin-bottom:0;">File Transfer Settings</div>
+          <button class="icon-btn secondary" id="ftSettingsModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
         </div>
         <div class="field" style="margin-top:10px;">
           <label>Auto-upload without confirm (MB)</label>
-          <input type="number" id="cloudAutoUploadMb" data-setting-key="auto_upload_no_confirm_mb" min="0" max="25" step="0.5" placeholder="1.0" />
+          <input type="number" id="ftAutoUploadMb" data-setting-key="auto_upload_no_confirm_mb" min="0" max="25" step="0.5" placeholder="1.0" />
           <div class="muted" style="margin-top:4px;">
-            If a cloud request uploads more than this, the UI/agent should confirm before sending.
+            If a file transfer uploads more than this, the UI/agent should confirm before sending.
           </div>
         </div>
         <div class="field">
           <label>Min transfer speed (KB/s)</label>
-          <input type="number" id="cloudMinKbps" data-setting-key="min_transfer_kbps" min="0" max="50000" step="50" placeholder="0" />
+          <input type="number" id="ftMinKbps" data-setting-key="min_transfer_kbps" min="0" max="50000" step="50" placeholder="0" />
           <div class="muted" style="margin-top:4px;">
-            If set (>0), abort cloud requests when average upload/download rate drops below this.
+            If set (>0), abort transfers when average upload/download rate drops below this.
           </div>
         </div>
         <div class="field">
           <label style="display:flex; align-items:center; gap:10px;">
-            <input type="checkbox" id="cloudImgResizeEnabled" data-setting-key="image_resize_enabled" />
-            <span>Resize images before upload</span>
+            <input type="checkbox" id="ftImgResizeEnabled" data-setting-key="image_resize_enabled" />
+            <span>Resize images before transfer</span>
           </label>
           <div class="muted" style="margin-top:4px;">
-            Reduces upload size for vision requests (helps avoid extra confirmations).
+            Reduces transfer size for cloud uploads and me.me file transfers.
           </div>
         </div>
         <div class="field" style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
           <div>
             <label>Max image dim (px)</label>
-            <input type="number" id="cloudImgMaxDim" data-setting-key="image_resize_max_dim_px" min="64" max="4096" step="64" placeholder="512" />
+            <input type="number" id="ftImgMaxDim" data-setting-key="image_resize_max_dim_px" min="64" max="4096" step="64" placeholder="512" />
           </div>
           <div>
             <label>JPEG quality</label>
-            <input type="number" id="cloudImgJpegQ" data-setting-key="image_resize_jpeg_quality" min="30" max="95" step="1" placeholder="70" />
+            <input type="number" id="ftImgJpegQ" data-setting-key="image_resize_jpeg_quality" min="30" max="95" step="1" placeholder="70" />
           </div>
         </div>
         <div class="btn-group">
-          <button class="btn primary" id="cloudPrefsSave">Save</button>
+          <button class="btn primary" id="ftPrefsSave">Save</button>
         </div>
       </div>
     </div>
@@ -3054,7 +3058,7 @@
         { id: "reset_restore", domId: "settings-section-reset_restore", label: "Reset & Restore" },
         { id: "android", domId: "settings-section-android", label: "Android" },
         { id: "permissions", domId: "settings-section-permissions", label: "Permissions" },
-        { id: "cloud", domId: "settings-section-cloud", label: "Cloud" },
+        { id: "file_transfer", domId: "settings-section-file_transfer", label: "File Transfer" },
         { id: "me_me", domId: "settings-section-me_me", label: "me.me" },
         { id: "me_sync", domId: "settings-section-me_sync", label: "me.sync" },
         { id: "logs", domId: "settings-section-logs", label: "Logs" },
@@ -3110,7 +3114,8 @@
           audio_recording: "media_recording",
           video_recording: "media_recording",
           media: "media_recording",
-          cloud_upload: "cloud",
+          cloud_upload: "file_transfer",
+          cloud: "file_transfer",
           auto_update: "app_update",
         };
         const canonical = alias[token] || token;
@@ -7280,7 +7285,7 @@
       const openAudioRecordingModalBtn = $("openAudioRecordingModalBtn");
       const openVideoRecordingModalBtn = $("openVideoRecordingModalBtn");
       const openSshKeysModalBtn = $("openSshKeysModalBtn");
-      const openCloudSettingsModalBtn = $("openCloudSettingsModalBtn");
+      const openFtSettingsModalBtn = $("openFtSettingsModalBtn");
       const openAutoUpdateSettingsModalBtn = $("openAutoUpdateSettingsModalBtn");
       const openPermApprovalsModalBtn = $("openPermApprovalsModalBtn");
       const audioRecordingModal = $("audioRecordingModal");
@@ -7289,8 +7294,8 @@
       const videoRecordingModalClose = $("videoRecordingModalClose");
       const sshKeysModal = $("sshKeysModal");
       const sshKeysModalClose = $("sshKeysModalClose");
-      const cloudSettingsModal = $("cloudSettingsModal");
-      const cloudSettingsModalClose = $("cloudSettingsModalClose");
+      const ftSettingsModal = $("ftSettingsModal");
+      const ftSettingsModalClose = $("ftSettingsModalClose");
       const autoUpdateSettingsModal = $("autoUpdateSettingsModal");
       const autoUpdateSettingsModalClose = $("autoUpdateSettingsModalClose");
       const permApprovalsModal = $("permApprovalsModal");
@@ -8801,44 +8806,44 @@
         }
       });
 
-      async function loadCloudPrefs() {
+      async function loadFtPrefs() {
         try {
-          const res = await fetch(API + "/cloud/prefs");
+          const res = await fetch(API + "/file_transfer/prefs");
           if (!res.ok) throw 0;
           const data = await res.json().catch(() => ({}));
           const v = Number(data.auto_upload_no_confirm_mb);
-          $("cloudAutoUploadMb").value = (isFinite(v) ? String(v) : "1.0");
+          $("ftAutoUploadMb").value = (isFinite(v) ? String(v) : "1.0");
           const k = Number(data.min_transfer_kbps);
-          $("cloudMinKbps").value = (isFinite(k) ? String(k) : "0");
-          $("cloudImgResizeEnabled").checked = !!data.image_resize_enabled;
+          $("ftMinKbps").value = (isFinite(k) ? String(k) : "0");
+          $("ftImgResizeEnabled").checked = !!data.image_resize_enabled;
           const md = Number(data.image_resize_max_dim_px);
-          $("cloudImgMaxDim").value = (isFinite(md) ? String(md) : "512");
+          $("ftImgMaxDim").value = (isFinite(md) ? String(md) : "512");
           const q = Number(data.image_resize_jpeg_quality);
-          $("cloudImgJpegQ").value = (isFinite(q) ? String(q) : "70");
+          $("ftImgJpegQ").value = (isFinite(q) ? String(q) : "70");
         } catch (_) {
-          $("cloudAutoUploadMb").value = "1.0";
-          $("cloudMinKbps").value = "0";
-          $("cloudImgResizeEnabled").checked = true;
-          $("cloudImgMaxDim").value = "512";
-          $("cloudImgJpegQ").value = "70";
+          $("ftAutoUploadMb").value = "1.0";
+          $("ftMinKbps").value = "0";
+          $("ftImgResizeEnabled").checked = true;
+          $("ftImgMaxDim").value = "512";
+          $("ftImgJpegQ").value = "70";
         }
       }
 
 
-      $("cloudPrefsSave").addEventListener("click", async () => {
-        const raw = String($("cloudAutoUploadMb").value || "").trim();
+      $("ftPrefsSave").addEventListener("click", async () => {
+        const raw = String($("ftAutoUploadMb").value || "").trim();
         const v = parseFloat(raw);
         if (!isFinite(v) || v < 0) { showToast("Enter a valid number", 1600); return; }
-        const rawK = String($("cloudMinKbps").value || "").trim();
+        const rawK = String($("ftMinKbps").value || "").trim();
         const k = parseFloat(rawK);
         if (!isFinite(k) || k < 0) { showToast("Enter a valid number", 1600); return; }
-        const enabled = !!$("cloudImgResizeEnabled").checked;
-        const md = parseInt(String($("cloudImgMaxDim").value || "").trim() || "512", 10);
+        const enabled = !!$("ftImgResizeEnabled").checked;
+        const md = parseInt(String($("ftImgMaxDim").value || "").trim() || "512", 10);
         if (!Number.isFinite(md) || md < 64) { showToast("Enter a valid max dim", 1600); return; }
-        const q = parseInt(String($("cloudImgJpegQ").value || "").trim() || "70", 10);
+        const q = parseInt(String($("ftImgJpegQ").value || "").trim() || "70", 10);
         if (!Number.isFinite(q) || q < 30) { showToast("Enter a valid JPEG quality", 1600); return; }
         try {
-          const res = await fetch(API + "/cloud/prefs", {
+          const res = await fetch(API + "/file_transfer/prefs", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({
@@ -8850,9 +8855,9 @@
             }),
           });
           if (!res.ok) throw 0;
-          showToast("Cloud prefs saved", 1600);
+          showToast("File transfer prefs saved", 1600);
         } catch (_) {
-          showToast("Failed to save cloud prefs", 1800);
+          showToast("Failed to save file transfer prefs", 1800);
         }
       });
 
@@ -9016,7 +9021,7 @@
       wireSimpleModal(audioRecordingModal, openAudioRecordingModalBtn, audioRecordingModalClose);
       wireSimpleModal(videoRecordingModal, openVideoRecordingModalBtn, videoRecordingModalClose);
       wireSimpleModal(sshKeysModal, openSshKeysModalBtn, sshKeysModalClose);
-      wireSimpleModal(cloudSettingsModal, openCloudSettingsModalBtn, cloudSettingsModalClose);
+      wireSimpleModal(ftSettingsModal, openFtSettingsModalBtn, ftSettingsModalClose);
       wireSimpleModal(autoUpdateSettingsModal, openAutoUpdateSettingsModalBtn, autoUpdateSettingsModalClose);
       wireSimpleModal(permApprovalsModal, openPermApprovalsModalBtn, permApprovalsModalClose);
       wireSimpleModal(meMeSettingsModal, openMeMeSettingsModalBtn, meMeSettingsModalClose);
@@ -9125,7 +9130,7 @@
           meMeDiscoveryInterval.value = String(Number(cfg.discovery_interval || 60));
           meMeConnectionCheckInterval.value = String(Number(cfg.connection_check_interval || 30));
           meMeAutoApproveOwnDevices.checked = !!cfg.auto_approve_own_devices;
-          meMeOwnerIdentities.value = Array.isArray(cfg.owner_identities) ? cfg.owner_identities.join("\n") : "";
+          updateOwnerIdentityDisplay(Array.isArray(cfg.owner_identities) ? cfg.owner_identities : []);
           meMeAllowedDevices.value = Array.isArray(cfg.allowed_devices) ? cfg.allowed_devices.join("\n") : "";
           meMeBlockedDevices.value = Array.isArray(cfg.blocked_devices) ? cfg.blocked_devices.join("\n") : "";
           await refreshMeMeStatus();
@@ -9149,7 +9154,6 @@
           discovery_interval: Math.max(10, parseInt(String(meMeDiscoveryInterval.value || "60"), 10) || 60),
           connection_check_interval: Math.max(5, parseInt(String(meMeConnectionCheckInterval.value || "30"), 10) || 30),
           auto_approve_own_devices: !!meMeAutoApproveOwnDevices.checked,
-          owner_identities: splitDeviceListText(meMeOwnerIdentities.value),
           allowed_devices: splitDeviceListText(meMeAllowedDevices.value),
           blocked_devices: splitDeviceListText(meMeBlockedDevices.value),
         };
@@ -9170,6 +9174,57 @@
           meMeSaveBtn.disabled = false;
         }
       }
+
+      function updateOwnerIdentityDisplay(identities) {
+        const display = document.getElementById("ownerIdentityDisplay");
+        const signInBtn = document.getElementById("googleSignInBtn");
+        const signOutBtn = document.getElementById("ownerSignOutBtn");
+        if (!display) return;
+        if (identities.length > 0) {
+          display.textContent = identities.join(", ");
+          display.style.color = "var(--accent)";
+          if (signInBtn) signInBtn.style.display = "none";
+          if (signOutBtn) signOutBtn.style.display = "";
+        } else {
+          display.textContent = "Not signed in";
+          display.style.color = "";
+          if (signInBtn) signInBtn.style.display = "";
+          if (signOutBtn) signOutBtn.style.display = "none";
+        }
+      }
+
+      window.onGoogleSignInResult = function (result) {
+        if (result && result.ok && result.email) {
+          updateOwnerIdentityDisplay(["google:" + result.email]);
+          showToast("Signed in as " + result.email, 2000);
+        } else {
+          showToast("Sign-in failed: " + (result && result.error || "unknown"), 2500);
+        }
+      };
+
+      window.onOwnerSignOutResult = function (result) {
+        if (result && result.ok) {
+          updateOwnerIdentityDisplay([]);
+          showToast("Owner identity removed", 1600);
+        }
+      };
+
+      (function () {
+        var signInBtn = document.getElementById("googleSignInBtn");
+        var signOutBtn = document.getElementById("ownerSignOutBtn");
+        if (signInBtn) signInBtn.addEventListener("click", function () {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.startGoogleSignIn) {
+            AndroidBridge.startGoogleSignIn();
+          } else {
+            showToast("Google Sign-In not available", 1800);
+          }
+        });
+        if (signOutBtn) signOutBtn.addEventListener("click", function () {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.signOutOwnerIdentity) {
+            AndroidBridge.signOutOwnerIdentity();
+          }
+        });
+      })();
 
       async function refreshMeMeStatus() {
         try {
@@ -9953,7 +10008,7 @@
         if (audioRecordingModal.classList.contains("show")) closeSimpleModal(audioRecordingModal);
         if (videoRecordingModal.classList.contains("show")) closeSimpleModal(videoRecordingModal);
         if (sshKeysModal.classList.contains("show")) closeSimpleModal(sshKeysModal);
-        if (cloudSettingsModal.classList.contains("show")) closeSimpleModal(cloudSettingsModal);
+        if (ftSettingsModal.classList.contains("show")) closeSimpleModal(ftSettingsModal);
         if (autoUpdateSettingsModal.classList.contains("show")) closeSimpleModal(autoUpdateSettingsModal);
         if (permApprovalsModal.classList.contains("show")) closeSimpleModal(permApprovalsModal);
       });
@@ -10121,7 +10176,7 @@
       }
 
       loadPermissionPrefs();
-      loadCloudPrefs();
+      loadFtPrefs();
       loadMeMeConfig();
       loadNotifyPrefs();
       loadAudioRecSettings();

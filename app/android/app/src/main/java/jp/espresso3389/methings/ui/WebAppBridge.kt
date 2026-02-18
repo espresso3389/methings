@@ -12,6 +12,15 @@ import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import android.widget.Toast
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import jp.espresso3389.methings.BuildConfig
 import jp.espresso3389.methings.perm.CredentialStore
 import jp.espresso3389.methings.service.AgentService
 import java.io.File
@@ -479,6 +488,67 @@ class WebAppBridge(private val activity: MainActivity) {
     fun setMeSyncQrDisplayMode(enabled: Boolean) {
         handler.post {
             activity.setMeSyncQrDisplayMode(enabled)
+        }
+    }
+
+    // ── Google Sign-In (Owner Identity) ─────────────────────────────────────
+
+    @JavascriptInterface
+    fun startGoogleSignIn() {
+        val clientId = BuildConfig.GOOGLE_WEB_CLIENT_ID.trim()
+        if (clientId.isBlank()) {
+            handler.post {
+                activity.evalJs("window.onGoogleSignInResult && window.onGoogleSignInResult({ok:false,error:'no_client_id'})")
+            }
+            return
+        }
+        handler.post {
+            val googleIdOption = GetGoogleIdOption.Builder()
+                .setServerClientId(clientId)
+                .setFilterByAuthorizedAccounts(false)
+                .build()
+            val request = GetCredentialRequest.Builder()
+                .addCredentialOption(googleIdOption)
+                .build()
+            val credManager = CredentialManager.create(activity)
+            CoroutineScope(Dispatchers.Main).launch {
+                try {
+                    val result = credManager.getCredential(activity, request)
+                    val googleCred = GoogleIdTokenCredential.createFrom(result.credential.data)
+                    val email = googleCred.id.trim().lowercase(Locale.US)
+                    val idToken = googleCred.idToken ?: ""
+                    if (email.isNotBlank()) {
+                        credentialStore.set("me_me_owner:google", email)
+                        if (idToken.isNotBlank()) {
+                            credentialStore.set("me_me_owner:google:id_token", idToken)
+                        }
+                    }
+                    val safeEmail = email.replace("'", "\\'")
+                    activity.evalJs("window.onGoogleSignInResult && window.onGoogleSignInResult({ok:true,email:'$safeEmail'})")
+                } catch (e: GetCredentialException) {
+                    val msg = (e.message ?: "sign_in_failed").replace("'", "\\'")
+                    activity.evalJs("window.onGoogleSignInResult && window.onGoogleSignInResult({ok:false,error:'$msg'})")
+                } catch (e: Exception) {
+                    val msg = (e.message ?: "unknown_error").replace("'", "\\'")
+                    activity.evalJs("window.onGoogleSignInResult && window.onGoogleSignInResult({ok:false,error:'$msg'})")
+                }
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun getVerifiedOwnerIdentity(): String {
+        val email = credentialStore.get("me_me_owner:google")?.value?.trim().orEmpty()
+        if (email.isBlank()) return ""
+        return "google:$email"
+    }
+
+    @JavascriptInterface
+    fun signOutOwnerIdentity() {
+        credentialStore.delete("me_me_owner:google")
+        credentialStore.delete("me_me_owner:google:id_token")
+        handler.post {
+            activity.evalJs("window.onOwnerSignOutResult && window.onOwnerSignOutResult({ok:true})")
         }
     }
 }
