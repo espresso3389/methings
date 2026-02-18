@@ -118,6 +118,7 @@ class DeviceApiTool:
         "viewer.slideshow": {"method": "POST", "path": "/ui/viewer/slideshow", "permission": False},
         "viewer.goto": {"method": "POST", "path": "/ui/viewer/goto", "permission": False},
         # Non-sensitive configuration helpers (do not return secrets).
+        "android.device": {"method": "GET", "path": "/android/device", "permission": False},
         "brain.config.get": {"method": "GET", "path": "/brain/config", "permission": False},
         "file_transfer.prefs.get": {"method": "GET", "path": "/file_transfer/prefs", "permission": False},
         "notifications.prefs.get": {"method": "GET", "path": "/notifications/prefs", "permission": False},

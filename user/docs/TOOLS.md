@@ -105,6 +105,9 @@ Delete key tips:
 
 For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openapi/paths/*.yaml`. Read the relevant path file before using a domain for the first time.
 
+### Device Info
+- `android.device`: device manufacturer, model, Android version, screen size, locale, etc. No payload needed.
+
 ### Camera — `$sys/docs/openapi/paths/camera.yaml`
 - `camera.capture`: take a still photo. Key payload: `lens` (back/front), `path`. Returns `rel_path`.
 - `camera.preview.start/stop`: JPEG preview stream via `/ws/camera/preview`.
