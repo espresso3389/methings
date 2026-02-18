@@ -1745,12 +1745,18 @@
             <select id="brainProvider">
               <option value="" disabled selected>Choose a provider...</option>
               <option value="openai">OpenAI</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="kimi">Kimi</option>
               <option value="gemini">Gemini</option>
               <option value="anthropic">Anthropic</option>
+              <option value="openrouter">OpenRouter</option>
               <option value="custom">Custom...</option>
             </select>
+          </div>
+          <div class="field" id="brainOrVendorField" style="display:none;">
+            <label>Vendor</label>
+            <select id="brainOrVendor">
+              <option value="" disabled selected>Choose a vendor...</option>
+            </select>
+            <div class="muted" id="brainOrStatus" style="margin-top:4px;display:none;"></div>
           </div>
           <div class="field" id="brainModelField">
             <label>Model</label>
@@ -6782,22 +6788,6 @@
             { id: "gpt-5.1-codex-mini", label: "GPT-5.1 Codex Mini" },
           ],
         },
-        deepseek: {
-          base_url: "https://api.deepseek.com/v1",
-          models: [
-            { id: "deepseek-chat", label: "DeepSeek Chat" },
-            { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
-          ],
-        },
-        kimi: {
-          base_url: "https://api.moonshot.ai/v1",
-          models: [
-            { id: "kimi-k2.5", label: "Kimi K2.5" },
-            { id: "kimi-k2-0711-preview", label: "Kimi K2" },
-            { id: "moonshot-v1-8k", label: "Moonshot v1 8K" },
-            { id: "moonshot-v1-32k", label: "Moonshot v1 32K" },
-          ],
-        },
         gemini: {
           base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
           models: [
@@ -6814,6 +6804,10 @@
             { id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
           ],
         },
+        openrouter: {
+          base_url: "https://openrouter.ai/api/v1",
+          models: [],
+        },
       };
 
       function getProviderPreset(vendor) {
@@ -6821,7 +6815,119 @@
         return BRAIN_PROVIDER_PRESETS[key] || null;
       }
 
+      // --- OpenRouter fetch + cache ---
+      let _orCache = null;
+      let _orCacheTs = 0;
+      const OR_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+      async function fetchOpenRouterModels() {
+        if (_orCache && Date.now() - _orCacheTs < OR_CACHE_TTL) return _orCache;
+        const res = await fetch("https://openrouter.ai/api/v1/models");
+        if (!res.ok) throw new Error("Failed to fetch OpenRouter models");
+        const json = await res.json();
+        _orCache = (json.data || []).filter((m) => m.id && m.id.includes("/"));
+        _orCacheTs = Date.now();
+        return _orCache;
+      }
+
+      const OR_WELL_KNOWN_VENDORS = ["anthropic", "openai", "google", "meta-llama", "mistralai", "deepseek", "cohere"];
+
+      function getOrVendors(models) {
+        const set = new Set();
+        for (const m of models) set.add(m.id.split("/")[0]);
+        const arr = Array.from(set);
+        arr.sort((a, b) => {
+          const ai = OR_WELL_KNOWN_VENDORS.indexOf(a);
+          const bi = OR_WELL_KNOWN_VENDORS.indexOf(b);
+          if (ai !== -1 && bi !== -1) return ai - bi;
+          if (ai !== -1) return -1;
+          if (bi !== -1) return 1;
+          return a.localeCompare(b);
+        });
+        return arr;
+      }
+
+      function getOrModelsForVendor(models, vendor) {
+        return models.filter((m) => m.id.split("/")[0] === vendor);
+      }
+
+      function renderOrVendorOptions(models, selectedVendor) {
+        const sel = $("brainOrVendor");
+        sel.innerHTML = "";
+        const ph = document.createElement("option");
+        ph.value = "";
+        ph.disabled = true;
+        ph.textContent = "Choose a vendor...";
+        sel.appendChild(ph);
+        const vendors = getOrVendors(models);
+        for (const v of vendors) {
+          const opt = document.createElement("option");
+          opt.value = v;
+          opt.textContent = v;
+          sel.appendChild(opt);
+        }
+        if (selectedVendor && vendors.includes(selectedVendor)) {
+          sel.value = selectedVendor;
+        } else {
+          ph.selected = true;
+        }
+      }
+
+      function renderOrModelOptions(models, vendor, selectedModel) {
+        brainModelSelect.innerHTML = "";
+        const ph = document.createElement("option");
+        ph.value = "";
+        ph.disabled = true;
+        ph.textContent = "Choose a model...";
+        brainModelSelect.appendChild(ph);
+        if (!vendor) {
+          brainModelSelect.disabled = true;
+          ph.selected = true;
+          return;
+        }
+        const filtered = getOrModelsForVendor(models, vendor);
+        for (const m of filtered) {
+          const opt = document.createElement("option");
+          opt.value = m.id;
+          opt.textContent = m.name || m.id.split("/").slice(1).join("/");
+          brainModelSelect.appendChild(opt);
+        }
+        brainModelSelect.disabled = false;
+        if (selectedModel && filtered.some((m) => m.id === selectedModel)) {
+          brainModelSelect.value = selectedModel;
+        } else {
+          ph.selected = true;
+        }
+      }
+
+      let _orModelsLoaded = null; // resolved models for current session
+
+      async function initOpenRouterUI(selectedVendor, selectedModel) {
+        const statusEl = $("brainOrStatus");
+        const vendorField = $("brainOrVendorField");
+        vendorField.style.display = "block";
+        brainModelField.style.display = "block";
+        statusEl.style.display = "block";
+        statusEl.textContent = "Loading models...";
+        brainModelSelect.disabled = true;
+        $("brainOrVendor").disabled = true;
+        try {
+          const models = await fetchOpenRouterModels();
+          _orModelsLoaded = models;
+          statusEl.style.display = "none";
+          $("brainOrVendor").disabled = false;
+          renderOrVendorOptions(models, selectedVendor || "");
+          renderOrModelOptions(models, selectedVendor || "", selectedModel || "");
+        } catch (e) {
+          statusEl.textContent = "Failed to load models. Check your connection.";
+          _orModelsLoaded = null;
+        }
+        try { updateBrainSaveEnabled(); } catch (_) {}
+      }
+
       function renderBrainModelOptions(vendor, selectedModel) {
+        if (vendor === "openrouter") return; // OpenRouter uses its own rendering path
+
         const placeholder = document.createElement("option");
         placeholder.value = "";
         placeholder.disabled = true;
@@ -6870,8 +6976,21 @@
         const modelChoice = String(brainModelSelect.value || "").trim();
         const isCustomProvider = provider === "custom";
         const isCustomModel = !isCustomProvider && modelChoice === "__custom__";
+        const isOpenRouter = provider === "openrouter";
+
+        // Hide OpenRouter vendor field for all non-openrouter providers
+        if (!isOpenRouter) $("brainOrVendorField").style.display = "none";
 
         if (!provider) {
+          brainModelField.style.display = "block";
+          brainBaseUrlField.style.display = "none";
+          brainModelIdField.style.display = "none";
+          return;
+        }
+
+        if (isOpenRouter) {
+          // OpenRouter: show vendor + model fields, hide base URL + model ID
+          $("brainOrVendorField").style.display = "block";
           brainModelField.style.display = "block";
           brainBaseUrlField.style.display = "none";
           brainModelIdField.style.display = "none";
@@ -6907,6 +7026,13 @@
         const provider = String(brainProviderSelect.value || "").trim();
         if (!provider) return null;
         if (provider === "custom") return { vendor: "custom" };
+        if (provider === "openrouter") {
+          return {
+            vendor: "openrouter",
+            base_url: "https://openrouter.ai/api/v1",
+            model: String(brainModelSelect.value || "").trim(),
+          };
+        }
         const preset = getProviderPreset(provider);
         if (!preset) return { vendor: provider, base_url: "", model: "" };
         const model = String(brainModelSelect.value || "").trim();
@@ -6926,6 +7052,19 @@
 
       brainProviderSelect.addEventListener("change", () => {
         const provider = String(brainProviderSelect.value || "").trim();
+        if (provider === "openrouter") {
+          let savedVendor = "";
+          let savedModel = "";
+          if (String(brainInitial.vendor || "").trim() === "openrouter") {
+            savedModel = String(brainInitial.model || "").trim();
+            if (savedModel && savedModel.includes("/")) savedVendor = savedModel.split("/")[0];
+          }
+          initOpenRouterUI(savedVendor, savedModel);
+          syncBrainCustomFields();
+          try { lockSecretField($("brainApiKey")); } catch (_) {}
+          try { updateBrainSaveEnabled(); } catch (_) {}
+          return;
+        }
         let selectedModel = "";
         if (provider && provider === String(brainInitial.vendor || "").trim()) {
           const savedModel = String(brainInitial.model || "").trim();
@@ -6954,6 +7093,11 @@
       });
       brainModelSelect.addEventListener("change", () => {
         syncBrainCustomFields();
+        try { updateBrainSaveEnabled(); } catch (_) {}
+      });
+      $("brainOrVendor").addEventListener("change", () => {
+        const vendor = String($("brainOrVendor").value || "").trim();
+        if (_orModelsLoaded) renderOrModelOptions(_orModelsLoaded, vendor, "");
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
 
@@ -6996,7 +7140,11 @@
           const baseUrl = String(data.base_url || "").trim();
           const preset = getProviderPreset(vendor);
 
-          if (preset) {
+          if (vendor === "openrouter") {
+            brainProviderSelect.value = "openrouter";
+            const orVendorPrefix = model && model.includes("/") ? model.split("/")[0] : "";
+            await initOpenRouterUI(orVendorPrefix, model);
+          } else if (preset) {
             const modelKnown = preset.models.some((m) => m.id === model);
             const baseKnown = !baseUrl || baseUrl === preset.base_url;
             if (!baseKnown) {
