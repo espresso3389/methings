@@ -105,10 +105,19 @@ Delete key tips:
 
 For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openapi/paths/*.yaml`. Read the relevant path file before using a domain for the first time.
 
+### App Info & Updates
+- `app.info`: app version, build info, git SHA, repo URL. No payload needed.
+- `app.update.check`: check for available updates from release repository.
+- `app.update.install`: download and install an app update. Permission-gated.
+
 ### Device Info & Permissions
 - `android.device`: device manufacturer, model, Android version, screen size, locale, etc. No payload needed.
 - `android.permissions`: list all manifest-declared permissions with grant status. No payload needed.
 - `android.permissions.request`: request runtime permissions via system dialog. Payload: `{"permissions": ["android.permission.CAMERA", ...]}`. Returns grant results.
+
+### Screen
+- `screen.status`: display state (on/off, brightness). No payload needed.
+- `screen.keep_on`: keep screen awake. Payload: `{"keep_on": true/false}`.
 
 ### Camera — `$sys/docs/openapi/paths/camera.yaml`
 - `camera.capture`: take a still photo. Key payload: `lens` (back/front), `path`. Returns `rel_path`.
@@ -120,11 +129,44 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - Requires both in-app `device.usb` permission and Android OS USB permission.
 
 ### Location
+- `location.status`: current location provider state.
 - `location.get`: GPS fix. Key payload: `high_accuracy`, `timeout_ms`.
+
+### Network
+- `network.status`: connectivity state (wifi, mobile, type).
+- `wifi.status`: Wi-Fi details (SSID, signal, IP).
+- `mobile.status`: cellular network info.
 
 ### Sensors — `$sys/docs/openapi/paths/sensors.yaml`
 - `sensor.list`: enumerate available sensors.
 - Realtime data via WebSocket `/ws/sensors?sensors=a,g,m&rate_hz=200`.
+- Polling API (no WebSocket needed):
+  - `sensor.stream.start`: start sensor polling. Payload: `{"sensors": ["accelerometer"], "rate_hz": 50}`.
+  - `sensor.stream.stop`: stop polling.
+  - `sensor.stream.status`: current stream state.
+  - `sensor.stream.latest`: get latest sensor values.
+  - `sensor.stream.batch`: get buffered sensor batch.
+
+### TTS (Text-to-Speech) — `$sys/docs/openapi/paths/tts.yaml`
+- `tts.init`: initialize TTS engine. No payload needed (call before first use).
+- `tts.voices`: list available voices.
+- `tts.speak`: speak text. Payload: `{"text": "hello", "language": "en", "pitch": 1.0, "rate": 1.0}`.
+- `tts.stop`: stop speaking.
+
+### STT (Speech-to-Text) — `$sys/docs/openapi/paths/stt.yaml`
+- `stt.status`: recognizer state.
+- `stt.record`: record and transcribe speech. Returns recognized text.
+
+### BLE (Bluetooth Low Energy) — `$sys/docs/openapi/paths/ble.yaml`
+- `ble.scan.start/stop`: scan for BLE peripherals. Returns discovered devices.
+- `ble.connect/disconnect`: connect to a BLE GATT server.
+- `ble.gatt.discover`: discover services and characteristics.
+- `ble.gatt.read/write`: read or write GATT characteristics.
+- Events arrive via `/ws/ble/events` WebSocket.
+
+### Intent (Android)
+- `intent.send`: launch an Android intent. Payload: `{"action": "android.intent.action.VIEW", "data": "https://..."}`.
+- `intent.share_app`: share the app via Android share sheet.
 
 ### Media Playback
 - `media.audio.play`: play audio file (`path`) or base64 (`audio_b64` + `ext`).
