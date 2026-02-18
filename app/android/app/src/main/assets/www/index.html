@@ -2269,11 +2269,8 @@
           </div>
           <div class="setting-row" id="ownerIdentityRow">
             <div class="setting-label">Verified Owner Identity</div>
-            <div id="ownerIdentityDisplay" class="muted" style="margin-top:4px;">Not signed in</div>
-            <div class="btn-group" style="margin-top:8px;">
-              <button class="btn" id="googleSignInBtn">Sign in with Google</button>
-              <button class="btn danger" id="ownerSignOutBtn" style="display:none;">Sign Out</button>
-            </div>
+            <div id="ownerIdentityDisplay" class="muted" style="margin-top:4px;">No identity</div>
+            <button class="btn danger" id="ownerRemoveBtn" style="display:none; margin-top:8px;">Remove Identity</button>
           </div>
           <div class="setting-row">
             <div class="setting-label">Allowed Devices (comma/newline)</div>
@@ -9177,27 +9174,27 @@
 
       function updateOwnerIdentityDisplay(identities) {
         const display = document.getElementById("ownerIdentityDisplay");
-        const signInBtn = document.getElementById("googleSignInBtn");
-        const signOutBtn = document.getElementById("ownerSignOutBtn");
+        const removeBtn = document.getElementById("ownerRemoveBtn");
         if (!display) return;
         if (identities.length > 0) {
           display.textContent = identities.join(", ");
           display.style.color = "var(--accent)";
-          if (signInBtn) signInBtn.style.display = "none";
-          if (signOutBtn) signOutBtn.style.display = "";
+          if (removeBtn) removeBtn.style.display = "";
         } else {
-          display.textContent = "Not signed in";
+          display.textContent = "No identity";
           display.style.color = "";
-          if (signInBtn) signInBtn.style.display = "";
-          if (signOutBtn) signOutBtn.style.display = "none";
+          if (removeBtn) removeBtn.style.display = "none";
         }
       }
 
       window.onGoogleSignInResult = function (result) {
         if (result && result.ok && result.email) {
           updateOwnerIdentityDisplay(["google:" + result.email]);
-          showToast("Signed in as " + result.email, 2000);
+          showToast("Verified as " + result.email, 2000);
         } else {
+          // Sign-in failed or cancelled — turn the toggle back off
+          var toggle = document.getElementById("meMeAutoApproveOwnDevices");
+          if (toggle) toggle.checked = false;
           showToast("Sign-in failed: " + (result && result.error || "unknown"), 2500);
         }
       };
@@ -9210,16 +9207,19 @@
       };
 
       (function () {
-        var signInBtn = document.getElementById("googleSignInBtn");
-        var signOutBtn = document.getElementById("ownerSignOutBtn");
-        if (signInBtn) signInBtn.addEventListener("click", function () {
-          if (typeof AndroidBridge !== "undefined" && AndroidBridge.startGoogleSignIn) {
-            AndroidBridge.startGoogleSignIn();
-          } else {
-            showToast("Google Sign-In not available", 1800);
+        var toggle = document.getElementById("meMeAutoApproveOwnDevices");
+        var removeBtn = document.getElementById("ownerRemoveBtn");
+        if (toggle) toggle.addEventListener("change", function () {
+          if (!toggle.checked) return;
+          // If toggling ON and no identity in vault, prompt Google Sign-In
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.getVerifiedOwnerIdentity) {
+            var identity = AndroidBridge.getVerifiedOwnerIdentity();
+            if (!identity) {
+              AndroidBridge.startGoogleSignIn();
+            }
           }
         });
-        if (signOutBtn) signOutBtn.addEventListener("click", function () {
+        if (removeBtn) removeBtn.addEventListener("click", function () {
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.signOutOwnerIdentity) {
             AndroidBridge.signOutOwnerIdentity();
           }

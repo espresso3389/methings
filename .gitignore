@@ -27,8 +27,11 @@ app/android/app/src/main/assets/wheels/**/.facades_built
 # Generated native libs (built into app/android/app/src/main/jniLibs by gradle tasks).
 app/android/app/src/main/jniLibs/
 
-# Local build config (API keys, client IDs — never committed)
-local.env
+# Local build config (API keys, client IDs, google-services.json — never committed)
+.local_config/
+
+# google-services.json is copied from .local_config/ at build time
+app/android/app/google-services.json
 
 # logs
 logs/

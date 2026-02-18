@@ -19,6 +19,7 @@ import jp.espresso3389.methings.AppForegroundState
 import jp.espresso3389.methings.R
 import jp.espresso3389.methings.ui.MainActivity
 import android.media.RingtoneManager
+import com.google.firebase.messaging.FirebaseMessaging
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
@@ -102,6 +103,17 @@ class AgentService : LifecycleService() {
         vaultServer = KeystoreVaultServer(this).apply { start() }
         registerPermissionPromptReceiver()
         startForegroundCompat(buildNotification())
+        // Register FCM token with notify gateway for push notifications.
+        FirebaseMessaging.getInstance().token.addOnSuccessListener { fcmToken ->
+            Thread {
+                try {
+                    val deviceId = jp.espresso3389.methings.perm.InstallIdentity(applicationContext).get()
+                    NotifyGatewayClient.registerDevice(applicationContext, deviceId, fcmToken)
+                } catch (e: Exception) {
+                    android.util.Log.e("AgentService", "FCM registration failed", e)
+                }
+            }.start()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

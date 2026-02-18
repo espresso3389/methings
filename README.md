@@ -87,13 +87,32 @@ third_party/            Git submodules (dropbear, libusb, libuvc)
    scripts/build_p4a.sh
    ```
 
-3. Build the APK (native libs are compiled automatically):
+3. Set up local build config:
+   ```
+   mkdir .local_config
+   ```
+
+   Create `.local_config/local.env` with your build variables:
+   ```
+   GOOGLE_WEB_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
+   ```
+
+   Place your Firebase config:
+   ```
+   cp /path/to/google-services.json .local_config/google-services.json
+   ```
+
+   The `.local_config/` directory is gitignored. See [Local Build Config](#local-build-config) below for details.
+
+4. Build the APK (native libs are compiled automatically):
    ```
    cd app/android
    ./gradlew assembleDebug
    ```
 
 The build process automatically handles:
+- Copying `google-services.json` from `.local_config/` (or decoding from env var on CI)
+- Loading build variables from `.local_config/local.env` (env vars take precedence)
 - Syncing Python server code and user defaults into assets
 - Compiling native libraries (Dropbear, libusb, libuvc)
 - Building Python facade wheels for Android bindings
@@ -103,6 +122,74 @@ The build process automatically handles:
 - APK: `app/android/app/build/outputs/apk/`
 - Package: `jp.espresso3389.methings`
 - Architecture: arm64-v8a only
+
+## Local Build Config
+
+The `.local_config/` directory (gitignored) holds per-developer build secrets:
+
+```
+.local_config/
+  local.env              # KEY=VALUE pairs loaded by build.gradle.kts
+  google-services.json   # Firebase config (copied into app/ at build time)
+```
+
+### `.local_config/local.env`
+
+Environment variables override values in this file. Supported keys:
+
+| Key | Description |
+|---|---|
+| `GOOGLE_WEB_CLIENT_ID` | Google OAuth Web Client ID for Credential Manager sign-in |
+
+### `.local_config/google-services.json`
+
+Download from [Firebase Console](https://console.firebase.google.com/) → Project Settings → Your apps → Android (`jp.espresso3389.methings`).
+
+### Google Cloud / Firebase Setup
+
+To enable Google Sign-In for verified device ownership:
+
+1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
+2. Configure **APIs & Services → OAuth consent screen** (External)
+3. Create OAuth Client IDs under **APIs & Services → Credentials**:
+   - **Web application** → use this Client ID as `GOOGLE_WEB_CLIENT_ID`
+   - **Android** (debug) → package `jp.espresso3389.methings` + debug keystore SHA-1:
+     ```
+     keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android | grep SHA1
+     ```
+   - **Android** (release) → same package + release keystore SHA-1
+4. Add a Firebase Android app with the same package name to get `google-services.json`
+
+## GitHub Actions (CI)
+
+Set these in your repository settings:
+
+### Variables (`vars.*`)
+
+| Variable | Description |
+|---|---|
+| `GOOGLE_WEB_CLIENT_ID` | Google OAuth Web Client ID (not secret -- embedded in APK) |
+
+### Secrets (`secrets.*`)
+
+| Secret | Description | How to encode |
+|---|---|---|
+| `GOOGLE_SERVICES_JSON_BASE64` | Firebase config | `base64 -w0 .local_config/google-services.json` |
+| `ANDROID_KEYSTORE_BASE64` | Release signing keystore | `base64 -w0 /path/to/release.jks` |
+| `ANDROID_KEYSTORE_PASSWORD` | Keystore password | |
+| `ANDROID_KEY_ALIAS` | Key alias | |
+| `ANDROID_KEY_PASSWORD` | Key password | |
+
+Example workflow snippet:
+
+```yaml
+env:
+  GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
+  GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+  ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+  ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+  ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+```
 
 ## Security
 
@@ -131,7 +218,3 @@ To re-enable:
     adb shell settings put global settings_enable_monitor_phantom_procs true
 
 This setting persists across reboots but resets on factory reset.
-
-## License
-
-TBD
