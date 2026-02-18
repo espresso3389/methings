@@ -4,6 +4,21 @@ plugins {
     id("org.jetbrains.kotlin.kapt")
 }
 
+// Load local.env from repo root (KEY=VALUE, one per line). Env vars take precedence.
+val localEnv: Map<String, String> = run {
+    val f = rootProject.projectDir.parentFile.parentFile.resolve("local.env")
+    if (!f.exists()) return@run emptyMap()
+    f.readLines()
+        .map { it.trim() }
+        .filter { it.isNotBlank() && !it.startsWith("#") && '=' in it }
+        .associate { line ->
+            val k = line.substringBefore('=').trim()
+            val v = line.substringAfter('=').trim().removeSurrounding("\"")
+            k to v
+        }
+}
+fun localEnv(key: String): String = (System.getenv(key) ?: localEnv[key] ?: "").trim()
+
 val defaultAppVersionName = "0.1.0"
 val envVersionName = (System.getenv("METHINGS_VERSION_NAME") ?: "").trim()
 val appVersionName = if (envVersionName.isNotBlank()) envVersionName else defaultAppVersionName
@@ -32,7 +47,7 @@ android {
         versionName = appVersionName
         buildConfigField("String", "GIT_SHA", "\"$appGitSha\"")
         buildConfigField("String", "REPO_URL", "\"$appRepoUrl\"")
-        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${localEnv("GOOGLE_WEB_CLIENT_ID")}\"")
 
         // Target only arm64 for now (Android 14+ devices). This also keeps the
         // bundled native deps (libusb/libuvc/opencv) consistent and smaller.
