@@ -153,6 +153,32 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - `webview.back` / `webview.forward`: navigate history.
 - `webview.split`: toggle browser split panel visibility. Key payload: `visible` (bool), `fullscreen` (bool, hides chat), `position` (`"start"` = top/left, `"end"` = bottom/right).
 
+### me.me (Device-to-Device) — `$sys/docs/openapi/paths/me_me.yaml`
+
+All me.me actions use `device_api(action, payload)`. **Put all parameters in `payload`**, not `detail`.
+
+Discovery & connection:
+- `me.me.status`: peer presence snapshot. No payload needed.
+- `me.me.scan`: scan for nearby devices. Payload: `{}`.
+- `me.me.connect`: connect to a peer. Payload: `{"peer_device_id": "d_xxx"}`.
+- `me.me.disconnect`: disconnect. Payload: `{"peer_device_id": "d_xxx"}`.
+
+Messaging — always put `peer_device_id` inside `payload`:
+- `me.me.message.send`: send content to a peer.
+  - To trigger the **remote agent** (ask it to do something):
+    `{"peer_device_id": "d_xxx", "type": "request", "payload": {"text": "take a photo"}}`
+  - Informational text (no remote agent action):
+    `{"peer_device_id": "d_xxx", "text": "hello"}`
+  - Send a file (the server embeds file content automatically):
+    `{"peer_device_id": "d_xxx", "type": "file", "payload": {"rel_path": "captures/photo.jpg"}}`
+- `me.me.messages.pull`: pull received messages. Payload: `{"peer_device_id": "d_xxx"}`.
+
+Important:
+- **`peer_device_id` goes in `payload`**, never in `detail`. Every me.me action that targets a peer needs it.
+- There is no `me.me.message.send_file` action — use `me.me.message.send` with `payload.payload.rel_path`.
+- Use `type: "request"` when asking a peer to take action. `type: "message"` is informational only.
+- Transport (BLE/LAN/relay) is automatic; do not specify it.
+
 ### Web UI Customization — `www/index.html`
 
 The app's chat UI lives at `www/index.html` inside your home directory. You can read, modify, and replace it using filesystem tools (`read_file`, `write_file`).

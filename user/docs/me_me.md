@@ -2,30 +2,41 @@
 
 `me.me` is the app-to-app communication foundation for `me.things` devices.
 
-Agent-facing scope:
-- Discover peer presence via `GET /me/me/status`
-- Send structured content via `POST /me/me/message/send`
-- Receive all inbound content via `me.me.received` events
+Agent-facing actions (all via `device_api`):
+- `me.me.status`: peer presence and connection snapshot
+- `me.me.scan`: discover nearby devices
+- `me.me.connect`: connect to a peer (`peer_device_id` in payload)
+- `me.me.disconnect`: disconnect from a peer
+- `me.me.message.send`: send content to a connected peer
+- `me.me.messages.pull`: pull received messages from a peer
+- Receive inbound content via `me.me.received` events (pushed to brain)
 
-Endpoints:
-- `GET /me/me/status`
-- `POST /me/me/message/send`
+**Critical**: All parameters go in `payload`, not `detail`. Every action targeting a peer needs `peer_device_id` in `payload`.
+
+### Sending messages
+
+Use `me.me.message.send` for all sends. Put `peer_device_id` in `payload`.
+
+Payload contract:
+- Request (triggers remote agent): `{"peer_device_id":"...","type":"request","payload":{"text":"..."}}`
+- Text shortcut (informational only): `{"peer_device_id":"...","text":"..."}`
+- File send: `{"peer_device_id":"...","type":"file","payload":{"rel_path":"captures/photo.jpg"}}`
+- Backward compatible: `{"peer_device_id":"...","message":"..."}` (normalized to `payload.text`)
+- Empty content is rejected with `400 payload_required`.
+
+Message `type` determines how the remote device handles the message:
+- `request` / `agent_request` / `task` / `command` / `agent_task`: **triggers the remote agent** to process and respond. Use this when you want the peer device to take action.
+- `message`: informational only — stored on the remote device but does **not** trigger agent processing (unless priority is `high` or `urgent`).
+- `file`: send a file — the server reads and embeds the file content automatically from `payload.rel_path`.
+- **Important**: When asking a remote device to do something (take a photo, run a command, etc.), always use `type: "request"`. Using `type: "message"` or the text shortcut will NOT trigger the remote agent.
+
+### Pulling messages
+
+Use `me.me.messages.pull`: `{"peer_device_id":"d_xxx"}`.
 
 Notes:
 - Discovery and route selection are automatic (LAN/BLE/gateway fallback). Agents should not orchestrate low-level transport.
-- `GET /me/me/status` is the single snapshot API for peer visibility and runtime state.
-- `POST /me/me/message/send` is the single send API. It accepts message metadata plus payload/file attachment fields.
-- `POST /me/me/message/send` payload contract:
-  - Preferred: `{"peer_device_id":"...","type":"request","payload":{...}}`
-  - Text shortcut: `{"peer_device_id":"...","text":"..."}`
-  - Backward compatible: `{"peer_device_id":"...","message":"..."}` (normalized to `payload.text`)
-  - Object shortcut: `{"peer_device_id":"...","message":{"type":"...","...":...}}` (`message.type` becomes type; remaining fields become payload when `payload` is absent)
-  - Empty content is rejected with `400 payload_required`.
-- Message `type` determines how the remote device handles the message:
-  - `request` / `agent_request` / `task` / `command` / `agent_task`: **triggers the remote agent** to process and respond. Use this when you want the peer device to take action.
-  - `message`: informational only — stored on the remote device but does **not** trigger agent processing (unless priority is `high` or `urgent`).
-  - **Important**: When asking a remote device to do something (take a photo, run a command, etc.), always use `type: "request"`. Using `type: "message"` or the text shortcut will NOT trigger the remote agent.
-- Internal connection/scan/relay endpoints exist but are debug-only and intentionally omitted from agent workflow.
+- There is no `me.me.message.send_file` action. Use `me.me.message.send` with `payload.payload.rel_path`.
 - Connection handshake security:
   - Offer token is signed with source identity key:
     - preferred: `Ed25519`

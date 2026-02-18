@@ -9,6 +9,10 @@ The agent uses `device_api(action, payload, detail)` to call the local HTTP
 control plane on `http://127.0.0.1:33389`. Action names map to Kotlin HTTP
 endpoints (e.g. `camera.capture` → `POST /camera/capture`).
 
+- `action`: the endpoint action name (e.g. `"camera.capture"`, `"me.me.message.send"`)
+- `payload`: **all structured parameters** go here as a JSON object (e.g. `{"peer_device_id":"d_xxx","text":"hello"}`)
+- `detail`: optional free-text note for logging — **never put parameters here**
+
 See `openapi/openapi.yaml` for the complete endpoint reference.
 
 ## Identity + Permissions
