@@ -9627,9 +9627,13 @@ class LocalHttpServer(
                 .put("transport", "relay")
                 .put("error", "relay_route_token_missing")
         }
+        // Use provider=me_me so the gateway stores the raw encrypted payload
+        // without wrapping it in normalized/provider structure. This allows the
+        // receiving device's relay ingest handler to find the encrypted fields
+        // (session_id, iv_b64, ciphertext_b64) at the top level.
         val webhook = postMeMeRelayJson(
             baseUrl = cfg.gatewayBaseUrl,
-            path = "/webhook/$routeToken?provider=${URLEncoder.encode(cfg.provider.ifBlank { "generic" }, StandardCharsets.UTF_8.name())}",
+            path = "/webhook/$routeToken?provider=me_me",
             payload = encryptedPayload
         )
         if (!webhook.optBoolean("ok", false)) {

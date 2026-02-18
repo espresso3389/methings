@@ -205,7 +205,7 @@ class DeviceApiTool:
             "me.sync.v3.import.apply": 300.0,
             "me.me.scan": 45.0,
             "me.me.connect": 40.0,
-            "me.me.message.send_file": 30.0,
+            "me.me.message.send_file": 90.0,
             "debug.logs.export": 45.0,
             "debug.logs.stream": 140.0,
             "webview.open": 35.0,
@@ -290,26 +290,42 @@ class DeviceApiTool:
                 payload["target_device_id"] = target
 
         if action == "me.me.message.send_file":
-            # Normalize send_file into a regular message.send with rel_path.
-            # The Kotlin server auto-embeds file content when rel_path is present.
+            # Normalize send_file into a regular message.send with rel_path
+            # inside the nested payload object so the Kotlin server's
+            # embedMeMeFileContent() can find and embed the file content.
             file_path = str(
                 payload.get("rel_path")
                 or payload.get("file_path")
                 or payload.get("path")
                 or ""
             ).strip()
-            if file_path:
-                payload["rel_path"] = file_path
             peer = str(
                 payload.get("peer_device_id")
                 or payload.get("target_device_id")
                 or payload.get("device_id")
                 or ""
             ).strip()
-            if peer:
-                payload["peer_device_id"] = peer
-            if not payload.get("type"):
-                payload["type"] = "file"
+            text = str(
+                payload.get("message")
+                or payload.get("text")
+                or ""
+            ).strip()
+            inner: dict = {}
+            if isinstance(payload.get("payload"), dict):
+                inner = dict(payload["payload"])
+            if file_path:
+                inner["rel_path"] = file_path
+            if text and "text" not in inner:
+                inner["text"] = text
+            # Rebuild payload with proper structure for message.send.
+            # Use a generous timeout so BLE has time for large payloads
+            # and the relay fallback can kick in if BLE fails.
+            payload = {
+                "peer_device_id": peer,
+                "type": payload.get("type") or "file",
+                "payload": inner,
+                "timeout_ms": 60_000,
+            }
             # Treat as message.send from here on
             action = "me.me.message.send"
 

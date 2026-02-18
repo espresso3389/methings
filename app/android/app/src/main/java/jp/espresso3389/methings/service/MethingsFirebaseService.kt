@@ -53,6 +53,49 @@ class MethingsFirebaseService : FirebaseMessagingService() {
     }
 
     private fun injectIntoBrain(event: NotifyGatewayClient.PullEvent) {
+        // Route me.me encrypted payloads to the relay ingest handler for
+        // decryption. This source value is set by deliverMeMeRelayPayload when
+        // issuing the route token.
+        if (event.source == "me_me_data") {
+            routeToRelayIngest(event)
+            return
+        }
+        injectToBrainInbox(event)
+    }
+
+    private fun routeToRelayIngest(event: NotifyGatewayClient.PullEvent) {
+        try {
+            val body = JSONObject().apply {
+                put("source", event.source)
+                put("event_id", event.eventId)
+                put("provider", event.provider)
+                put("payload", event.payload)
+            }
+            val url = URL("$LOCAL_SERVER_URL/me/me/relay/ingest")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10_000
+                readTimeout = 30_000
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                doOutput = true
+            }
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
+            val code = conn.responseCode
+            conn.disconnect()
+
+            if (code in 200..299) {
+                Log.i(TAG, "Routed me.me relay event ${event.eventId} to data ingest")
+            } else {
+                Log.w(TAG, "Relay ingest failed: code=$code for ${event.eventId}, falling back to brain inject")
+                injectToBrainInbox(event)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to route me.me relay event ${event.eventId}", e)
+            injectToBrainInbox(event)
+        }
+    }
+
+    private fun injectToBrainInbox(event: NotifyGatewayClient.PullEvent) {
         try {
             val kind = event.payload.optJSONObject("normalized")?.optString("kind", "")
                 ?: ""
@@ -95,5 +138,6 @@ class MethingsFirebaseService : FirebaseMessagingService() {
     companion object {
         private const val TAG = "MethingsFirebaseService"
         private const val BRAIN_BASE_URL = "http://127.0.0.1:8776"
+        private const val LOCAL_SERVER_URL = "http://127.0.0.1:33389"
     }
 }
