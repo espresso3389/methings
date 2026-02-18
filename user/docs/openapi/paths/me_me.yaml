@@ -40,13 +40,24 @@ meMeMessageSend:
       Send structured content to a peer device using automatic route
       selection (LAN/BLE/gateway fallback). Supports multiple payload formats:
 
-      - Preferred: `{"peer_device_id":"...","type":"message","payload":{...}}`
+      - Preferred: `{"peer_device_id":"...","type":"request","payload":{...}}`
 
       - Text shortcut: `{"peer_device_id":"...","text":"..."}`
 
       - Backward compat: `{"peer_device_id":"...","message":"..."}` (string normalized to payload.text)
 
       - Object shortcut: `{"peer_device_id":"...","message":{"type":"...","...":...}}` (type becomes message type)
+
+
+      Message type determines remote handling:
+
+      - `request` / `agent_request` / `task` / `command` / `agent_task`: triggers
+        the remote agent to process and respond. Use when asking the peer to take action.
+
+      - `message`: informational only — stored but does NOT trigger the remote agent
+        (unless priority is high/urgent).
+
+      When asking a remote device to do something, always use type `request`.
 
 
       Connection security: offer token signed with Ed25519 (fallback ECDSA P-256),
@@ -76,7 +87,11 @@ meMeMessageSend:
                     description: Target peer device ID.
                   type:
                     type: string
-                    description: Message type (e.g. message, task, audio).
+                    description: >
+                      Message type. Use `request` to trigger the remote agent
+                      (also: agent_request, task, command, agent_task).
+                      Use `message` for informational content that does not
+                      require remote agent action.
                   payload:
                     type: object
                     description: Structured message payload (preferred format).
@@ -89,15 +104,15 @@ meMeMessageSend:
                       payload.text; object's type becomes message type.
               - $ref: '../components/schemas.yaml#/PermissionFields'
           examples:
-            structured:
-              summary: Preferred structured payload
+            request:
+              summary: Request remote agent action (preferred)
               value:
                 peer_device_id: "d_a1b2c3"
-                type: task
+                type: request
                 payload:
-                  action: "check_status"
+                  text: "Take a photo and send it back"
             text_shortcut:
-              summary: Text shortcut
+              summary: Informational text (no remote agent action)
               value:
                 peer_device_id: "d_a1b2c3"
                 text: "Hello from my device"

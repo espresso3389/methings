@@ -16,11 +16,15 @@ Notes:
 - `GET /me/me/status` is the single snapshot API for peer visibility and runtime state.
 - `POST /me/me/message/send` is the single send API. It accepts message metadata plus payload/file attachment fields.
 - `POST /me/me/message/send` payload contract:
-  - Preferred: `{"peer_device_id":"...","type":"message","payload":{...}}`
+  - Preferred: `{"peer_device_id":"...","type":"request","payload":{...}}`
   - Text shortcut: `{"peer_device_id":"...","text":"..."}`
   - Backward compatible: `{"peer_device_id":"...","message":"..."}` (normalized to `payload.text`)
   - Object shortcut: `{"peer_device_id":"...","message":{"type":"...","...":...}}` (`message.type` becomes type; remaining fields become payload when `payload` is absent)
   - Empty content is rejected with `400 payload_required`.
+- Message `type` determines how the remote device handles the message:
+  - `request` / `agent_request` / `task` / `command` / `agent_task`: **triggers the remote agent** to process and respond. Use this when you want the peer device to take action.
+  - `message`: informational only — stored on the remote device but does **not** trigger agent processing (unless priority is `high` or `urgent`).
+  - **Important**: When asking a remote device to do something (take a photo, run a command, etc.), always use `type: "request"`. Using `type: "message"` or the text shortcut will NOT trigger the remote agent.
 - Internal connection/scan/relay endpoints exist but are debug-only and intentionally omitted from agent workflow.
 - Connection handshake security:
   - Offer token is signed with source identity key:
