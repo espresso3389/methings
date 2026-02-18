@@ -768,6 +768,32 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Open a URL in a browser as a separate task so it doesn't remain in the
+     * app's back stack. Used for OAuth flows where the callback deep-links back.
+     */
+    fun openUrlInBrowserNewTask(url: String) {
+        val uri = Uri.parse(url)
+        try {
+            val useExternal = getSharedPreferences("browser_prefs", Context.MODE_PRIVATE)
+                .getBoolean("open_links_external", false)
+            if (useExternal) {
+                startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } else {
+                val cti = CustomTabsIntent.Builder()
+                    .setDefaultColorSchemeParams(
+                        CustomTabColorSchemeParams.Builder()
+                            .setToolbarColor(0xFF0e0e10.toInt())
+                            .build()
+                    )
+                    .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+                    .build()
+                cti.intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                cti.launchUrl(this, uri)
+            }
+        } catch (_: Exception) {}
+    }
+
     fun setBrowserFullscreen(fullscreen: Boolean) {
         browserFullscreen = fullscreen
         if (fullscreen) {

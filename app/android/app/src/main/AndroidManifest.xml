@@ -58,6 +58,7 @@
             android:name=".ui.MainActivity"
             android:theme="@style/Theme.Methings"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

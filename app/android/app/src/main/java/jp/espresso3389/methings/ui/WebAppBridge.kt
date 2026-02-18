@@ -404,6 +404,13 @@ class WebAppBridge(private val activity: MainActivity) {
         handler.post { activity.openUrlInBrowser(url) }
     }
 
+    /** Open a URL in CustomTabs / external browser as a separate task (not the embedded WebView). */
+    @JavascriptInterface
+    fun openInBrowser(url: String) {
+        if (url.isBlank()) return
+        handler.post { activity.openUrlInBrowserNewTask(url) }
+    }
+
     // ── Audio Recording Config ───────────────────────────────────────────────
 
     @JavascriptInterface

@@ -2280,21 +2280,22 @@
           </div>
         </div>
 
+        <!-- Account (Provisioning) -->
+        <div class="stg-section">
+          <div class="stg-section-title">Account</div>
+          <div class="setting-row" id="provisionStatusRow">
+            <div class="setting-label">Signed In As</div>
+            <div id="provisionIdentityDisplay" class="muted" style="margin-top:4px;">Not signed in</div>
+          </div>
+          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+            <button class="btn primary" id="provisionSignInBtn">Sign In</button>
+            <button class="btn" id="provisionRefreshBtn" style="display:none;">Refresh Devices</button>
+          </div>
+        </div>
+
         <!-- Access Control -->
         <div class="stg-section">
           <div class="stg-section-title">Access Control</div>
-          <div class="toggle-row">
-            <label class="toggle">
-              <input type="checkbox" id="meMeAutoApproveOwnDevices" data-setting-key="me_me_auto_approve_own_devices" />
-              <span class="slider"></span>
-            </label>
-            <span class="toggle-label">Auto-Approve My Devices</span>
-          </div>
-          <div class="setting-row" id="ownerIdentityRow">
-            <div class="setting-label">Verified Owner Identity</div>
-            <div id="ownerIdentityDisplay" class="muted" style="margin-top:4px;">No identity</div>
-            <button class="btn danger" id="ownerRemoveBtn" style="display:none; margin-top:8px;">Remove Identity</button>
-          </div>
           <div class="setting-row">
             <div class="setting-label">Allowed Devices (comma/newline)</div>
             <textarea id="meMeAllowedDevices" data-setting-key="me_me_allowed_devices" rows="2" placeholder="device_id_1, device_name_2"></textarea>
@@ -7501,8 +7502,9 @@
       const meMeConnectionCheckInterval = $("meMeConnectionCheckInterval");
       const meMeAllowedDevices = $("meMeAllowedDevices");
       const meMeBlockedDevices = $("meMeBlockedDevices");
-      const meMeAutoApproveOwnDevices = $("meMeAutoApproveOwnDevices");
-      const meMeOwnerIdentities = $("meMeOwnerIdentities");
+      const provisionIdentityDisplay = $("provisionIdentityDisplay");
+      const provisionSignInBtn = $("provisionSignInBtn");
+      const provisionRefreshBtn = $("provisionRefreshBtn");
       const meMeRefreshBtn = $("meMeRefreshBtn");
       const meMeSaveBtn = $("meMeSaveBtn");
       const meSyncStatus = $("meSyncStatus");
@@ -9316,11 +9318,10 @@
           meMeReconnectInterval.value = String(Number(cfg.reconnect_interval || 10));
           meMeDiscoveryInterval.value = String(Number(cfg.discovery_interval || 60));
           meMeConnectionCheckInterval.value = String(Number(cfg.connection_check_interval || 30));
-          meMeAutoApproveOwnDevices.checked = !!cfg.auto_approve_own_devices;
-          updateOwnerIdentityDisplay(Array.isArray(cfg.owner_identities) ? cfg.owner_identities : []);
           meMeAllowedDevices.value = Array.isArray(cfg.allowed_devices) ? cfg.allowed_devices.join("\n") : "";
           meMeBlockedDevices.value = Array.isArray(cfg.blocked_devices) ? cfg.blocked_devices.join("\n") : "";
           await refreshMeMeStatus();
+          await loadProvisionStatus();
         } catch (_) {
           showToast("Failed to load me.me config", 1800);
         }
@@ -9340,7 +9341,6 @@
           reconnect_interval: Math.max(3, parseInt(String(meMeReconnectInterval.value || "10"), 10) || 10),
           discovery_interval: Math.max(10, parseInt(String(meMeDiscoveryInterval.value || "60"), 10) || 60),
           connection_check_interval: Math.max(5, parseInt(String(meMeConnectionCheckInterval.value || "30"), 10) || 30),
-          auto_approve_own_devices: !!meMeAutoApproveOwnDevices.checked,
           allowed_devices: splitDeviceListText(meMeAllowedDevices.value),
           blocked_devices: splitDeviceListText(meMeBlockedDevices.value),
         };
@@ -9362,73 +9362,98 @@
         }
       }
 
-      function updateOwnerIdentityDisplay(identities) {
-        const display = document.getElementById("ownerIdentityDisplay");
-        const removeBtn = document.getElementById("ownerRemoveBtn");
-        if (!display) return;
-        if (identities.length > 0) {
-          display.textContent = identities.join(", ");
-          display.style.color = "var(--accent)";
-          if (removeBtn) removeBtn.style.display = "";
-        } else {
-          display.textContent = "No identity";
-          display.style.color = "";
-          if (removeBtn) removeBtn.style.display = "none";
-        }
+      async function loadProvisionStatus() {
+        try {
+          const res = await fetch(API + "/me/me/provision/status", { cache: "no-store" });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) return;
+          if (data.provisioned && data.user_subject) {
+            provisionIdentityDisplay.textContent = String(data.user_subject);
+            provisionIdentityDisplay.style.color = "var(--accent)";
+            provisionRefreshBtn.style.display = "";
+          } else {
+            provisionIdentityDisplay.textContent = "Not signed in";
+            provisionIdentityDisplay.style.color = "";
+            provisionRefreshBtn.style.display = "none";
+          }
+        } catch (_) {}
       }
 
-      window.onGoogleSignInResult = function (result) {
-        if (result && result.ok && result.email) {
-          updateOwnerIdentityDisplay(["google:" + result.email]);
-          showToast("Verified as " + result.email, 2000);
-        } else {
-          // Sign-in failed or cancelled — turn the toggle back off
-          var toggle = document.getElementById("meMeAutoApproveOwnDevices");
-          if (toggle) toggle.checked = false;
-          showToast("Sign-in failed: " + (result && result.error || "unknown"), 2500);
-        }
-      };
-
-      window.onOwnerSignOutResult = function (result) {
-        if (result && result.ok) {
-          updateOwnerIdentityDisplay([]);
-          showToast("Owner identity removed", 1600);
-        }
-      };
-
-      (function () {
-        var toggle = document.getElementById("meMeAutoApproveOwnDevices");
-        var removeBtn = document.getElementById("ownerRemoveBtn");
-        if (toggle) toggle.addEventListener("change", function () {
-          if (!toggle.checked) return;
-          // If toggling ON and no identity in vault, prompt Google Sign-In
-          if (typeof AndroidBridge !== "undefined" && AndroidBridge.getVerifiedOwnerIdentity) {
-            var identity = AndroidBridge.getVerifiedOwnerIdentity();
-            if (!identity) {
-              AndroidBridge.startGoogleSignIn();
-            }
+      provisionSignInBtn.addEventListener("click", async () => {
+        provisionSignInBtn.disabled = true;
+        try {
+          const res = await fetch(API + "/me/me/provision/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: "{}",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(String(data.error || "provision_start_failed"));
+          const url = String(data.url || "");
+          if (!url) throw new Error("no_url");
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInBrowser) {
+            AndroidBridge.openInBrowser(url);
+          } else {
+            window.open(url, "_blank");
           }
-        });
-        if (removeBtn) removeBtn.addEventListener("click", function () {
-          if (typeof AndroidBridge !== "undefined" && AndroidBridge.signOutOwnerIdentity) {
-            AndroidBridge.signOutOwnerIdentity();
+        } catch (e) {
+          showToast("Sign-in failed: " + e.message, 2500);
+        } finally {
+          provisionSignInBtn.disabled = false;
+        }
+      });
+
+      provisionRefreshBtn.addEventListener("click", async () => {
+        provisionRefreshBtn.disabled = true;
+        try {
+          const res = await fetch(API + "/me/me/provision/refresh", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: "{}",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(String(data.error || "refresh_failed"));
+          showToast("Devices refreshed", 1400);
+          await loadProvisionStatus();
+          await refreshMeMeStatus();
+        } catch (e) {
+          showToast("Refresh failed: " + e.message, 2000);
+        } finally {
+          provisionRefreshBtn.disabled = false;
+        }
+      });
+
+      window.onProvisionResult = function (ok, resultJson) {
+        try {
+          const data = typeof resultJson === "string" ? JSON.parse(resultJson) : (resultJson || {});
+          if (ok) {
+            showToast("Provisioning complete", 2000);
+          } else {
+            showToast("Provisioning failed: " + (data.error || "unknown"), 2500);
           }
-        });
-      })();
+        } catch (_) {
+          showToast(ok ? "Provisioning complete" : "Provisioning failed", 2000);
+        }
+        loadProvisionStatus();
+        refreshMeMeStatus();
+      };
 
       async function refreshMeMeStatus() {
         try {
-          const [res, cfgRes] = await Promise.all([
+          const [res, cfgRes, provRes] = await Promise.all([
             fetch(API + "/me/me/status", { cache: "no-store" }),
             fetch(API + "/me/me/config", { cache: "no-store" }),
+            fetch(API + "/me/me/provision/status", { cache: "no-store" }).catch(() => null),
           ]);
           const data = await res.json().catch(() => ({}));
           const cfgData = await cfgRes.json().catch(() => ({}));
+          const provData = provRes ? await provRes.json().catch(() => ({})) : {};
           if (!res.ok) throw new Error(String(data.error || "status_failed"));
           const cfg = (cfgData && cfgData.config && typeof cfgData.config === "object") ? cfgData.config : {};
           const allowed = new Set(Array.isArray(cfg.allowed_devices) ? cfg.allowed_devices.map((v) => String(v || "").trim()).filter(Boolean) : []);
           const blocked = new Set(Array.isArray(cfg.blocked_devices) ? cfg.blocked_devices.map((v) => String(v || "").trim()).filter(Boolean) : []);
           const self = (data && data.self) || {};
+          const selfDeviceId = String(self.device_id || "");
           const name = String(self.device_name || meMeDeviceName.value || "device");
           const allow = !!self.allow_discovery;
           const connections = Array.isArray(data.connections) ? data.connections : [];
@@ -9438,15 +9463,22 @@
           const putPeer = (id, attrs) => {
             const did = String(id || "").trim();
             if (!did) return;
-            const prev = peers.get(did) || { connected: false, pending: false, discovered: false };
+            const prev = peers.get(did) || { connected: false, pending: false, discovered: false, provisioned: false };
             peers.set(did, Object.assign({}, prev, attrs));
           };
           connections.forEach((c) => putPeer(c.peer_device_id, { connected: true }));
           pending.forEach((p) => putPeer(p.source_device_id, { pending: true }));
           discovered.forEach((d) => putPeer(d.device_id, { discovered: true }));
+          // Merge provisioned siblings (excluding self)
+          const provDevices = Array.isArray(provData.devices) ? provData.devices : [];
+          provDevices.forEach((d) => {
+            const did = String((d && d.device_id) || "").trim();
+            if (did && did !== selfDeviceId) putPeer(did, { provisioned: true });
+          });
           let authorizedCount = 0;
           let unapprovedCount = 0;
           let discoveredCount = 0;
+          let linkedCount = 0;
           peers.forEach((p, did) => {
             if (blocked.has(did)) return;
             if (allowed.has(did)) {
@@ -9457,7 +9489,11 @@
               unapprovedCount += 1;
               return;
             }
-            if (p.discovered) discoveredCount += 1;
+            if (p.discovered) {
+              discoveredCount += 1;
+              return;
+            }
+            if (p.provisioned) linkedCount += 1;
           });
           const parts = [
             name,
@@ -9466,9 +9502,10 @@
             "unapproved " + unapprovedCount,
             "discovered " + discoveredCount,
           ];
+          if (linkedCount > 0) parts.push("linked " + linkedCount);
           meMeStatus.textContent = parts.join(" \u00b7 ");
           topbarDeviceLabel.textContent = name;
-          if (authorizedCount > 0 || unapprovedCount > 0 || discoveredCount > 0) {
+          if (authorizedCount > 0 || unapprovedCount > 0 || discoveredCount > 0 || linkedCount > 0) {
             const miniIcon = '<svg viewBox="0 0 32 32" width="13" height="13"><rect x="6" y="10" width="20" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="12" cy="16" r="2" fill="currentColor"/><circle cx="20" cy="16" r="2" fill="currentColor"/><path d="M16 6v4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><circle cx="16" cy="4.5" r="1.5" fill="currentColor"/></svg>';
             const chips = [];
             if (authorizedCount > 0) {
@@ -9479,6 +9516,9 @@
             }
             if (discoveredCount > 0) {
               chips.push("<span style='display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:999px;background:rgba(148,163,184,0.18);color:var(--ink-secondary);font-size:11px;font-weight:700;'>" + miniIcon + "<span>" + discoveredCount + "</span></span>");
+            }
+            if (linkedCount > 0) {
+              chips.push("<span style='display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:999px;background:rgba(99,102,241,0.12);color:#818cf8;font-size:11px;font-weight:700;'>" + miniIcon + "<span>" + linkedCount + "</span></span>");
             }
             topbarConnCount.innerHTML = chips.join("");
             topbarConnCount.style.display = "";
@@ -9545,12 +9585,14 @@
           meMePeersRefreshBtn.disabled = true;
           meMePeersSummary.textContent = "Loading...";
           meMePeersList.innerHTML = "";
-          const [res, cfgRes] = await Promise.all([
+          const [res, cfgRes, provRes] = await Promise.all([
             fetch(API + "/me/me/status", { cache: "no-store" }),
             fetch(API + "/me/me/config", { cache: "no-store" }),
+            fetch(API + "/me/me/provision/status", { cache: "no-store" }).catch(() => null),
           ]);
           const data = await res.json().catch(() => ({}));
           const cfgData = await cfgRes.json().catch(() => ({}));
+          const provData = provRes ? await provRes.json().catch(() => ({})) : {};
           if (!res.ok) throw new Error(String(data.error || "status_failed"));
           const cfg = (cfgData && cfgData.config && typeof cfgData.config === "object") ? cfgData.config : {};
           const allowed = new Set(Array.isArray(cfg.allowed_devices) ? cfg.allowed_devices.map((v) => String(v || "").trim()).filter(Boolean) : []);
@@ -9561,14 +9603,27 @@
             if (id && allowed.has(id)) return "Authorized";
             return fallback;
           };
+          const selfDeviceId = String(((data && data.self) || {}).device_id || "");
           const connections = Array.isArray(data.connections) ? data.connections : [];
           const pending = Array.isArray(data.pending_requests) ? data.pending_requests : [];
           const discovered = Array.isArray(data.discovered) ? data.discovered : [];
+          // Collect all shown device IDs to avoid duplicating provisioned siblings
+          const shownIds = new Set();
+          connections.forEach((c) => { const id = String(c.peer_device_id || "").trim(); if (id) shownIds.add(id); });
+          pending.forEach((p) => { const id = String(p.source_device_id || "").trim(); if (id) shownIds.add(id); });
+          discovered.forEach((d) => { const id = String(d.device_id || "").trim(); if (id) shownIds.add(id); });
+          // Build provisioned siblings not already shown
+          const provDevices = Array.isArray(provData.devices) ? provData.devices : [];
+          const linkedSiblings = provDevices.filter((d) => {
+            const did = String((d && d.device_id) || "").trim();
+            return did && did !== selfDeviceId && !shownIds.has(did);
+          });
           meMePeersSummary.textContent =
-            String(connections.length) + " connected · " +
-            String(pending.length) + " unapproved · " +
-            String(discovered.length) + " discovered";
-          if (connections.length <= 0 && pending.length <= 0 && discovered.length <= 0) {
+            String(connections.length) + " connected \u00b7 " +
+            String(pending.length) + " unapproved \u00b7 " +
+            String(discovered.length) + " discovered" +
+            (linkedSiblings.length > 0 ? (" \u00b7 " + String(linkedSiblings.length) + " linked") : "");
+          if (connections.length <= 0 && pending.length <= 0 && discovered.length <= 0 && linkedSiblings.length <= 0) {
             const empty = document.createElement("div");
             empty.className = "muted";
             empty.textContent = "No devices.";
@@ -9613,7 +9668,7 @@
             item.innerHTML =
               "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
               "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
-              "<div class='muted' style='margin-top:2px;'>method " + escapeHtml(method) + " · state " + escapeHtml(state) + "</div>" +
+              "<div class='muted' style='margin-top:2px;'>method " + escapeHtml(method) + " \u00b7 state " + escapeHtml(state) + "</div>" +
               "<div class='muted' style='margin-top:2px;'>connected " + escapeHtml(connectedAt) + "</div>" +
               "<div style='display:flex; gap:8px; margin-top:8px;'>" +
                 "<button class='btn primary' data-mm-action='approve-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Approve</button>" +
@@ -9641,6 +9696,20 @@
                 "<button class='btn danger' data-mm-action='block-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Block</button>" +
                 "<button class='btn' data-mm-action='clear-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Clear</button>" +
               "</div>";
+            meMePeersList.appendChild(item);
+          });
+          linkedSiblings.forEach((dev) => {
+            const item = document.createElement("div");
+            item.style.border = "1px solid var(--border)";
+            item.style.borderRadius = "10px";
+            item.style.padding = "10px";
+            item.style.background = "rgba(255,255,255,0.02)";
+            const peerId = String(dev.device_id || "");
+            const peerName = String(dev.device_name || peerId || "unknown");
+            item.innerHTML =
+              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span style='font-weight:400; color:#818cf8;'>(Linked)</span></div>" +
+              "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
+              "<div class='muted' style='margin-top:2px;'>method p2p / relay</div>";
             meMePeersList.appendChild(item);
           });
           meMePeersList.querySelectorAll("button[data-mm-action]").forEach((btn) => {
@@ -9689,12 +9758,14 @@
           deviceInfoRefreshBtn.disabled = true;
           deviceInfoSelf.innerHTML = "<div class='muted'>Loading...</div>";
           deviceInfoDeviceList.innerHTML = "<div class='muted'>Loading...</div>";
-          const [res, cfgRes] = await Promise.all([
+          const [res, cfgRes, provRes] = await Promise.all([
             fetch(API + "/me/me/status", { cache: "no-store" }),
             fetch(API + "/me/me/config", { cache: "no-store" }),
+            fetch(API + "/me/me/provision/status", { cache: "no-store" }).catch(() => null),
           ]);
           const data = await res.json().catch(() => ({}));
           const cfgData = await cfgRes.json().catch(() => ({}));
+          const provData = provRes ? await provRes.json().catch(() => ({})) : {};
           if (!res.ok) throw new Error(String(data.error || "status_failed"));
           const cfg = (cfgData && cfgData.config && typeof cfgData.config === "object") ? cfgData.config : {};
           const allowed = new Set(Array.isArray(cfg.allowed_devices) ? cfg.allowed_devices.map((v) => String(v || "").trim()).filter(Boolean) : []);
@@ -9714,14 +9785,15 @@
             "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(selfName) + "</div>" +
             "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(selfId) + "</div>" +
             "<div class='muted' style='margin-top:2px;'>discovery " + (allowDisc ? "on" : "off") + "</div>";
-          // Merge connections, pending requests, and discovered into unified list
+          // Merge connections, pending requests, discovered, and provisioned into unified list
           const connIds = new Set();
           const pendingByPeerId = new Map();
+          const allShownIds = new Set();
           const devices = [];
           const connections = Array.isArray(data.connections) ? data.connections : [];
           connections.forEach((conn) => {
             const id = String(conn.peer_device_id || "");
-            if (id) connIds.add(id);
+            if (id) { connIds.add(id); allShownIds.add(id); }
             const name = String(conn.peer_device_name || "").trim();
             devices.push({
               name: name,
@@ -9738,6 +9810,7 @@
             const id = String(req.source_device_id || "").trim();
             if (!id) return;
             pendingByPeerId.set(id, String(req.id || ""));
+            allShownIds.add(id);
             if (connIds.has(id)) return; // already shown as connected
             const name = String(req.source_device_name || "").trim();
             devices.push({
@@ -9754,6 +9827,7 @@
           const discovered = Array.isArray(data.discovered) ? data.discovered : [];
           discovered.forEach((dev) => {
             const id = String(dev.device_id || "");
+            allShownIds.add(id);
             if (connIds.has(id)) return; // already shown as connected
             if (pendingByPeerId.has(id)) return; // already shown as pending
             const name = String(dev.device_name || "").trim();
@@ -9768,9 +9842,26 @@
               timeLabel: "last seen",
             });
           });
-          // Sort: connected, pending, discovered; then named before unnamed; then alphabetical
+          // Add provisioned siblings not already shown
+          const provDevices = Array.isArray(provData.devices) ? provData.devices : [];
+          provDevices.forEach((dev) => {
+            const id = String((dev && dev.device_id) || "").trim();
+            if (!id || id === selfId || allShownIds.has(id)) return;
+            allShownIds.add(id);
+            const name = String(dev.device_name || "").trim();
+            devices.push({
+              name: name,
+              id: id,
+              state: "linked",
+              authState: "Linked",
+              method: "p2p / relay",
+              time: 0,
+              timeLabel: "linked",
+            });
+          });
+          // Sort: connected, linked, pending, discovered; then named before unnamed; then alphabetical
           devices.sort((a, b) => {
-            const rank = (s) => s === "connected" ? 0 : (s === "pending" ? 1 : 2);
+            const rank = (s) => s === "connected" ? 0 : (s === "linked" ? 1 : (s === "pending" ? 2 : 3));
             if (a.state !== b.state) return rank(a.state) - rank(b.state);
             const aHas = !!a.name;
             const bHas = !!b.name;
@@ -9793,6 +9884,7 @@
                 stateLabel === "Authorized" ? "var(--green)" :
                 stateLabel === "Blocked" ? "var(--red)" :
                 stateLabel === "Unapproved" ? "#d6a84b" :
+                stateLabel === "Linked" ? "#818cf8" :
                 "var(--ink-secondary)";
               let html = "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(display) + "</div>";
               if (d.name && d.id) {
