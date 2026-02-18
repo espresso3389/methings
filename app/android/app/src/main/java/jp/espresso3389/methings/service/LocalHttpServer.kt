@@ -11862,13 +11862,11 @@ class LocalHttpServer(
                 .put("tid", ticketId)
                 .put("t", transfer.id)
                 .put("n", sessionNonce)
-                .put("transfer_id", transfer.id)
-                .put("session_nonce", sessionNonce)
-                .put("pair_code", pairCode)
-                .put("expires_at", expiresAt)
-                .put("source_name", sourceName)
-                .put("caps", JSONObject().put("nearby", true).put("lan_fallback", true))
-                .put("u", fallbackUrl)
+            val hostIp = sshdManager.getHostIp().trim()
+            if (hostIp.isNotBlank() && meSyncLanServerStarted) {
+                ticketPayload.put("h", hostIp)
+                ticketPayload.put("tk", transfer.token)
+            }
             val encodedPayload = Base64.encodeToString(
                 ticketPayload.toString().toByteArray(Charsets.UTF_8),
                 Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
@@ -12343,6 +12341,15 @@ class LocalHttpServer(
             .ifBlank { obj.optString("url", "").trim() }
             .ifBlank { obj.optString("download_url", "").trim() }
             .ifBlank { obj.optString("http_url", "").trim() }
+            .ifBlank {
+                // Reconstruct from compact v3 fields: h (host), tk (token), t (transfer id)
+                val h = obj.optString("h", "").trim()
+                val tk = obj.optString("tk", "").trim()
+                val t = obj.optString("t", "").trim()
+                if (h.isNotBlank() && tk.isNotBlank() && t.isNotBlank())
+                    "http://$h:$ME_SYNC_LAN_PORT/me/sync/download?id=${URLEncoder.encode(t, "UTF-8")}&token=${URLEncoder.encode(tk, "UTF-8")}"
+                else ""
+            }
             .takeIf { it.startsWith("http://") || it.startsWith("https://") }
             ?: ""
         val sshHost = (

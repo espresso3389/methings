@@ -10300,9 +10300,10 @@
           if (meSyncExportReq) {
             meSyncExportReq.abort();
             meSyncExportReq = null;
-          } else {
-            closeMeSyncModal();
           }
+          closeMeSyncModal();
+          meSyncActiveExport = null;
+          renderMeSyncChatPopup();
         } finally {
           meSyncPrepareExport.disabled = false;
         }
