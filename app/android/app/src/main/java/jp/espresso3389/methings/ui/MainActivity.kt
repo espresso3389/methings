@@ -855,14 +855,20 @@ class MainActivity : AppCompatActivity() {
     private fun maybeHandleDeepLinkIntent(intent: Intent?) {
         val data = intent?.dataString?.trim().orEmpty()
         if (data.startsWith("me.things:me.sync:", ignoreCase = true)) {
-            try { intent?.data = null } catch (_: Exception) {}
             pendingMeSyncDeepLink = data
             flushPendingMeSyncDeepLink()
+            clearDeepLinkIntent(intent)
         } else if (data.startsWith("me.things://provision", ignoreCase = true)) {
-            try { intent?.data = null } catch (_: Exception) {}
             pendingProvisionDeepLink = data
             flushPendingProvisionDeepLink()
+            clearDeepLinkIntent(intent)
         }
+    }
+
+    /** Replace the activity's intent so a stale deep-link is not replayed on recreation. */
+    private fun clearDeepLinkIntent(intent: Intent?) {
+        try { intent?.data = null } catch (_: Exception) {}
+        setIntent(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER))
     }
 
     private fun flushPendingMeSyncDeepLink() {
