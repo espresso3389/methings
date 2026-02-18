@@ -398,4 +398,7 @@ dependencies {
     // Firebase Cloud Messaging
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
     implementation("com.google.firebase:firebase-messaging")
+    // WebRTC DataChannel (me.me P2P transport)
+    implementation("io.getstream:stream-webrtc-android:1.3.7")
+    implementation("org.java-websocket:Java-WebSocket:1.5.7")
 }

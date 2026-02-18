@@ -2,7 +2,7 @@
 
 An Android app that turns your phone into an AI-powered agent with real access to device hardware. Cloud AI models (Claude, OpenAI, Gemini, DeepSeek, Kimi, etc.) act as autonomous agents that can operate your camera, Bluetooth, USB devices, sensors, filesystem, and shell -- all gated by explicit user consent.
 
-Your devices can also talk to each other. **me.me** connects your devices over WiFi, Bluetooth LE, or cloud relay for encrypted messaging and file transfer. **me.sync** migrates your entire setup between devices with a QR code.
+Your devices can also talk to each other. **me.me** connects your devices over WiFi, Bluetooth LE, WebRTC DataChannel (P2P across NATs), or cloud relay for encrypted messaging and file transfer. **me.sync** migrates your entire setup between devices with a QR code.
 
 ## What It Can Do
 
@@ -21,7 +21,7 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 | **SSH** | Built-in SSH server (Dropbear) with PIN/key/biometric auth; SSH client for remote exec and SCP |
 | **Browser** | Agent-controllable WebView with screenshot, JS injection, tap/scroll simulation |
 | **Cloud** | API broker with automatic secret injection from encrypted vault |
-| **me.me** | Encrypted device-to-device messaging over WiFi/BLE/relay, file transfer, auto-discovery |
+| **me.me** | Encrypted device-to-device messaging over WiFi/BLE/WebRTC P2P/relay, file transfer, auto-discovery |
 | **me.sync** | Full device state migration via QR code (Nearby Connections or LAN) |
 | **Notifications** | Android notifications, webhooks, Firebase Cloud Messaging |
 
@@ -36,7 +36,7 @@ Android App (Foreground Service)
  |    +-- WebView UI
  |    +-- Permission Broker (consent + audit)
  |    +-- Credential Vault (Android Keystore AES-GCM)
- |    +-- me.me Engine (BLE + WiFi + relay transport)
+ |    +-- me.me Engine (BLE + WiFi + WebRTC P2P + relay transport)
  |    +-- SSH Server (Dropbear)
  |    +-- Python Runtime Manager
  |
@@ -61,7 +61,7 @@ Every device capability is exposed as an HTTP endpoint on `127.0.0.1:33389`. The
 
 - **Credential encryption** -- API keys and SSH keys encrypted with Android Keystore (AES-GCM); ciphertext stored in Room DB
 - **Verified device ownership** -- Google Sign-In via Credential Manager for me.me auto-approve; identity stored in encrypted vault
-- **End-to-end encryption** -- me.me messages encrypted with AES-GCM; session keys derived from X25519/ECDH via HKDF-SHA256
+- **End-to-end encryption** -- me.me messages encrypted with AES-GCM; session keys derived from X25519/ECDH via HKDF-SHA256; WebRTC P2P uses DTLS transport encryption
 - **Permission gating** -- tool invocations requiring device access trigger user consent prompts
 - **Biometric option** -- sensitive operations can require fingerprint/face authentication
 - **Scoped access** -- file operations scoped to user root or app-private directories
@@ -76,7 +76,7 @@ Every device capability is exposed as an HTTP endpoint on `127.0.0.1:33389`. The
 ## Tech Stack
 
 **Android / Kotlin:**
-Gradle, Android SDK 34, Kotlin, NanoHTTPD, Room, CameraX, TFLite, AndroidX Credentials, Firebase Cloud Messaging
+Gradle, Android SDK 34, Kotlin, NanoHTTPD, Room, CameraX, TFLite, AndroidX Credentials, Firebase Cloud Messaging, Stream WebRTC Android
 
 **Python (on-device):**
 CPython 3.11+ (Python-for-Android), FastAPI, Uvicorn, Pydantic
