@@ -165,4 +165,7 @@ object NotifyGatewayClient {
         return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString(KEY_PULL_SECRET, "") ?: ""
     }
+
+    /** Public accessor for the pull_secret (used by provisioning refresh). */
+    fun loadPullSecretPublic(context: Context): String = loadPullSecret(context)
 }

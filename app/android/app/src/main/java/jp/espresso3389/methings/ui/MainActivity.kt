@@ -91,6 +91,7 @@ class MainActivity : AppCompatActivity() {
     private var meSyncQrDisplayBoosted: Boolean = false
     private var meSyncPrevKeepScreenOn: Boolean = false
     @Volatile private var pendingMeSyncDeepLink: String? = null
+    @Volatile private var pendingProvisionDeepLink: String? = null
     @Volatile private var mainUiLoaded: Boolean = false
     private var mainFrameError = false
     private val pendingAndroidPermRequestId = AtomicReference<String?>(null)
@@ -427,6 +428,7 @@ class MainActivity : AppCompatActivity() {
                 if (url.contains("/ui/index.html")) {
                     mainUiLoaded = true
                     flushPendingMeSyncDeepLink()
+                    flushPendingProvisionDeepLink()
                 }
                 if (!mainFrameError) {
                     dismissStartupBanner()
@@ -440,6 +442,11 @@ class MainActivity : AppCompatActivity() {
                 if (raw.startsWith("me.things:me.sync:", ignoreCase = true)) {
                     pendingMeSyncDeepLink = raw
                     flushPendingMeSyncDeepLink()
+                    return true
+                }
+                if (raw.startsWith("me.things://provision", ignoreCase = true)) {
+                    pendingProvisionDeepLink = raw
+                    flushPendingProvisionDeepLink()
                     return true
                 }
                 if (u.scheme == "methings" && u.host == "open_user_html") {
@@ -821,12 +828,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun maybeHandleDeepLinkIntent(intent: Intent?) {
         val data = intent?.dataString?.trim().orEmpty()
-        if (!data.startsWith("me.things:me.sync:", ignoreCase = true)) return
-        try {
-            intent?.data = null
-        } catch (_: Exception) {}
-        pendingMeSyncDeepLink = data
-        flushPendingMeSyncDeepLink()
+        if (data.startsWith("me.things:me.sync:", ignoreCase = true)) {
+            try { intent?.data = null } catch (_: Exception) {}
+            pendingMeSyncDeepLink = data
+            flushPendingMeSyncDeepLink()
+        } else if (data.startsWith("me.things://provision", ignoreCase = true)) {
+            try { intent?.data = null } catch (_: Exception) {}
+            pendingProvisionDeepLink = data
+            flushPendingProvisionDeepLink()
+        }
     }
 
     private fun flushPendingMeSyncDeepLink() {
@@ -835,6 +845,56 @@ class MainActivity : AppCompatActivity() {
         pendingMeSyncDeepLink = null
         val escaped = jsString(deep)
         evalJs("window.uiHandleMeSyncDeepLink && window.uiHandleMeSyncDeepLink('$escaped')")
+    }
+
+    private fun flushPendingProvisionDeepLink() {
+        val deep = pendingProvisionDeepLink ?: return
+        if (!mainUiLoaded || !::webView.isInitialized) return
+        pendingProvisionDeepLink = null
+        // Parse query params from me.things://provision?token=...&status=...
+        val uri = android.net.Uri.parse(deep)
+        val token = uri.getQueryParameter("token").orEmpty().trim()
+        val status = uri.getQueryParameter("status").orEmpty().trim()
+        val error = uri.getQueryParameter("error").orEmpty().trim()
+        if (status == "ok" && token.isNotBlank()) {
+            // Claim the provision token via local HTTP API on a background thread
+            Thread {
+                try {
+                    val url = java.net.URL("http://127.0.0.1:33389/me/me/provision/claim")
+                    val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        connectTimeout = 10_000
+                        readTimeout = 15_000
+                        setRequestProperty("Content-Type", "application/json")
+                        doOutput = true
+                    }
+                    val body = org.json.JSONObject()
+                        .put("provision_token", token)
+                    conn.outputStream.use { it.write(body.toString().toByteArray()) }
+                    val code = conn.responseCode
+                    val respText = runCatching {
+                        conn.inputStream.bufferedReader().use { it.readText() }
+                    }.getOrElse {
+                        conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
+                    }
+                    conn.disconnect()
+                    val result = runCatching { org.json.JSONObject(respText) }.getOrDefault(org.json.JSONObject())
+                    val ok = code in 200..299 && result.optString("status", "") == "ok"
+                    runOnUiThread {
+                        val escaped = jsString(result.toString())
+                        evalJs("window.onProvisionResult && window.onProvisionResult($ok, '$escaped')")
+                    }
+                } catch (ex: Exception) {
+                    runOnUiThread {
+                        val errMsg = jsString(ex.message ?: "claim_failed")
+                        evalJs("window.onProvisionResult && window.onProvisionResult(false, '{\"error\":\"$errMsg\"}')")
+                    }
+                }
+            }.start()
+        } else {
+            val errEscaped = jsString(error.ifBlank { "provision_failed" })
+            evalJs("window.onProvisionResult && window.onProvisionResult(false, '{\"error\":\"$errEscaped\"}')")
+        }
     }
 
     private fun jsString(raw: String): String {

@@ -741,6 +741,28 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 handleMeMeP2pDisconnect(payload)
             }
+            uri == "/me/me/provision/start" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.provision",
+                    detail = "Start device provisioning (sign in with Google/GitHub)"
+                )
+                if (!ok.first) return ok.second!!
+                handleProvisionStart(payload)
+            }
+            uri == "/me/me/provision/claim" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleProvisionClaim(payload)
+            }
+            uri == "/me/me/provision/status" && session.method == Method.GET -> {
+                handleProvisionStatus()
+            }
+            uri == "/me/me/provision/refresh" && session.method == Method.POST -> {
+                handleProvisionRefresh()
+            }
             uri == "/me/me/data/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 handleMeMeDataIngest(payload, sourceIp = "local")
@@ -8826,9 +8848,10 @@ class LocalHttpServer(
         if (meMeConnections.size >= cfg.maxConnections && !meMeConnections.containsKey(reqWithMeta.sourceDeviceId)) {
             return jsonError(Response.Status.FORBIDDEN, "max_connections_reached")
         }
-        val canAutoApprove = (cfg.autoApproveOwnDevices &&
-            hasOwnerIdentityMatch(cfg.ownerIdentities, reqWithMeta.sourceOwnerIdentities)) ||
-            cfg.allowedDevices.contains(reqWithMeta.sourceDeviceId)
+        val canAutoApprove = (cfg.autoApproveOwnDevices && (
+            hasOwnerIdentityMatch(cfg.ownerIdentities, reqWithMeta.sourceOwnerIdentities) ||
+            isProvisionedSibling(reqWithMeta.sourceDeviceId)
+        )) || cfg.allowedDevices.contains(reqWithMeta.sourceDeviceId)
         val manualAction = forceAccept || (requestId.isNotBlank() && !isAutoPath)
         if (!manualAction && !canAutoApprove) {
             meMeConnectIntents[reqWithMeta.id] = reqWithMeta.copy(accepted = false)
@@ -11385,6 +11408,186 @@ class LocalHttpServer(
                 .put("peer_device_id", peerDeviceId)
                 .put("disconnected", true)
         )
+    }
+
+    // ---------------------------------------------------------------------------
+    // Device provisioning
+    // ---------------------------------------------------------------------------
+
+    private fun handleProvisionStart(payload: JSONObject): Response {
+        val provider = payload.optString("provider", "google").trim().lowercase(Locale.US).ifBlank { "google" }
+        if (provider !in setOf("google", "github")) {
+            return jsonError(Response.Status.BAD_REQUEST, "unsupported_provider")
+        }
+        val cfg = currentMeMeConfig()
+        val relayCfg = currentMeMeRelayConfig()
+        val baseUrl = normalizeMeMeRelayBaseUrl(relayCfg.gatewayBaseUrl)
+        val deviceName = cfg.deviceName
+        val url = "$baseUrl/provision/start?device_id=${java.net.URLEncoder.encode(cfg.deviceId, "UTF-8")}" +
+            "&device_name=${java.net.URLEncoder.encode(deviceName, "UTF-8")}" +
+            "&provider=${java.net.URLEncoder.encode(provider, "UTF-8")}"
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("url", url)
+                .put("provider", provider)
+        )
+    }
+
+    private fun handleProvisionClaim(payload: JSONObject): Response {
+        val provisionToken = payload.optString("provision_token", "").trim()
+        if (provisionToken.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "provision_token_required")
+
+        val cfg = currentMeMeConfig()
+        val relayCfg = currentMeMeRelayConfig()
+        val baseUrl = normalizeMeMeRelayBaseUrl(relayCfg.gatewayBaseUrl)
+
+        val claimResult = postMeMeRelayJson(
+            baseUrl = baseUrl,
+            path = "/provision/claim",
+            payload = JSONObject()
+                .put("device_id", cfg.deviceId)
+                .put("provision_token", provisionToken)
+        )
+
+        val claimOk = claimResult.optBoolean("ok", false)
+        val body = claimResult.optJSONObject("body") ?: JSONObject()
+        if (!claimOk || body.optString("status", "") != "ok") {
+            val error = body.optString("error", "claim_failed")
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, error, claimResult)
+        }
+
+        val userSubject = body.optString("user_subject", "").trim()
+        val signalingToken = body.optString("signaling_token", "").trim()
+        val devicesArray = body.optJSONArray("devices") ?: org.json.JSONArray()
+
+        // Store user subject in credential store
+        if (userSubject.isNotBlank()) {
+            val parts = userSubject.split(":", limit = 2)
+            if (parts.size == 2) {
+                val issuer = parts[0].trim().lowercase(Locale.US)
+                val sub = parts[1].trim()
+                runCatching { credentialStore.set("me_me_owner:$issuer", sub) }
+            }
+        }
+
+        // Store signaling token and enable P2P
+        if (signalingToken.isNotBlank()) {
+            val prevP2p = currentMeMeP2pConfig()
+            saveMeMeP2pConfig(
+                prevP2p.copy(enabled = true, autoConnect = true),
+                tokenOverride = signalingToken,
+                clearToken = false
+            )
+            meMeExecutor.execute {
+                runCatching { meMeP2pManager.updateConfig(buildP2pManagerConfig(currentMeMeP2pConfig())) }
+            }
+        }
+
+        // Store sibling device list in SharedPrefs
+        val deviceList = mutableListOf<JSONObject>()
+        for (i in 0 until devicesArray.length()) {
+            val d = devicesArray.optJSONObject(i) ?: continue
+            deviceList.add(d)
+        }
+        meMePrefs.edit()
+            .putString("provision_user_subject", userSubject)
+            .putString("provision_devices", devicesArray.toString())
+            .putLong("provision_claimed_at", System.currentTimeMillis())
+            .apply()
+
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("user_subject", userSubject)
+                .put("signaling_token_configured", signalingToken.isNotBlank())
+                .put("devices", devicesArray)
+                .put("p2p_enabled", currentMeMeP2pConfig().enabled)
+        )
+    }
+
+    private fun handleProvisionStatus(): Response {
+        val cfg = currentMeMeConfig()
+        val p2pCfg = currentMeMeP2pConfig()
+        val userSubject = (meMePrefs.getString("provision_user_subject", "") ?: "").trim()
+        val devicesJson = (meMePrefs.getString("provision_devices", "[]") ?: "[]").trim()
+        val devices = runCatching { org.json.JSONArray(devicesJson) }.getOrDefault(org.json.JSONArray())
+        val claimedAt = meMePrefs.getLong("provision_claimed_at", 0L)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("provisioned", userSubject.isNotBlank() && p2pCfg.signalingToken.isNotBlank())
+                .put("user_subject", userSubject.ifBlank { JSONObject.NULL })
+                .put("device_id", cfg.deviceId)
+                .put("device_name", cfg.deviceName)
+                .put("devices", devices)
+                .put("claimed_at", if (claimedAt > 0L) claimedAt else JSONObject.NULL)
+                .put("p2p_enabled", p2pCfg.enabled)
+                .put("signaling_token_configured", p2pCfg.signalingToken.isNotBlank())
+        )
+    }
+
+    private fun handleProvisionRefresh(): Response {
+        val cfg = currentMeMeConfig()
+        val relayCfg = currentMeMeRelayConfig()
+        val baseUrl = normalizeMeMeRelayBaseUrl(relayCfg.gatewayBaseUrl)
+        val pullSecret = NotifyGatewayClient.loadPullSecretPublic(context)
+
+        val url = "$baseUrl/provision/devices?device_id=${java.net.URLEncoder.encode(cfg.deviceId, "UTF-8")}" +
+            "&pull_secret=${java.net.URLEncoder.encode(pullSecret, "UTF-8")}"
+        val result = try {
+            val conn = (java.net.URI(url).toURL().openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 6000
+                readTimeout = 10000
+                setRequestProperty("Connection", "close")
+            }
+            val code = conn.responseCode
+            val body = (if (code in 200..299) conn.inputStream else conn.errorStream)?.use {
+                it.readBytes().toString(java.nio.charset.StandardCharsets.UTF_8)
+            } ?: ""
+            val parsed = runCatching { JSONObject(body) }.getOrNull() ?: JSONObject()
+            JSONObject().put("ok", code in 200..299).put("http_status", code).put("body", parsed)
+        } catch (ex: Exception) {
+            JSONObject().put("ok", false).put("error", ex.message ?: "request_failed")
+        }
+
+        val resultOk = result.optBoolean("ok", false)
+        val body = result.optJSONObject("body") ?: JSONObject()
+        if (!resultOk || body.optString("status", "") != "ok") {
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "refresh_failed", result)
+        }
+
+        val userSubject = body.optString("user_subject", "").trim()
+        val devicesArray = body.optJSONArray("devices") ?: org.json.JSONArray()
+        meMePrefs.edit()
+            .putString("provision_user_subject", userSubject)
+            .putString("provision_devices", devicesArray.toString())
+            .apply()
+
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("user_subject", userSubject)
+                .put("devices", devicesArray)
+        )
+    }
+
+    private fun getProvisionedSiblingDeviceIds(): Set<String> {
+        val devicesJson = (meMePrefs.getString("provision_devices", "[]") ?: "[]").trim()
+        val arr = runCatching { org.json.JSONArray(devicesJson) }.getOrDefault(org.json.JSONArray())
+        val ids = mutableSetOf<String>()
+        for (i in 0 until arr.length()) {
+            val d = arr.optJSONObject(i) ?: continue
+            val id = d.optString("device_id", "").trim()
+            if (id.isNotBlank()) ids.add(id)
+        }
+        return ids
+    }
+
+    private fun isProvisionedSibling(deviceId: String): Boolean {
+        if (deviceId.isBlank()) return false
+        return getProvisionedSiblingDeviceIds().contains(deviceId)
     }
 
     private fun currentMeMeDiscoveryConfig(cfg: MeMeConfig = currentMeMeConfig()): MeMeDiscoveryManager.Config {
