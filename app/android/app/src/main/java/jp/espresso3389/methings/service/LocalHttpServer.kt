@@ -10295,7 +10295,7 @@ class LocalHttpServer(
     ): Boolean {
         if (messagePriority == "low") return false
         val normalizedType = messageType.trim().lowercase(Locale.US)
-        if (normalizedType in setOf("agent_request", "request", "task", "command", "agent_task")) {
+        if (normalizedType in setOf("agent_request", "request", "task", "command", "agent_task", "file", "response")) {
             return true
         }
         val payload = message.opt("payload")
@@ -10317,16 +10317,32 @@ class LocalHttpServer(
     ): String {
         val safeName = fromDeviceName.trim().ifBlank { fromDeviceId }
         val safePreview = messagePreview.trim().ifBlank { "none" }
-        return (
-            "A me.me message requiring action was received from '$safeName' ($fromDeviceId). " +
-                "Type=$messageType, priority=$messagePriority, preview='$safePreview'. " +
-                "Use device_api action me.me.messages.pull with peer_device_id='$fromDeviceId' to fetch the latest inbound message, " +
-                "perform the requested action if possible, then ALWAYS send the result back via " +
-                "device_api action me.me.message.send with peer_device_id='$fromDeviceId'. " +
-                "You MUST send a reply even if just to confirm completion. " +
-                "To send a file back, use device_api action me.me.message.send_file with " +
-                "peer_device_id='$fromDeviceId' and rel_path pointing to the file under user home."
-            )
+        val normalizedType = messageType.trim().lowercase(Locale.US)
+        val pullInstruction = "Use device_api action me.me.messages.pull with peer_device_id='$fromDeviceId' to fetch the full message."
+        return when (normalizedType) {
+            "file" -> (
+                "A file was received from '$safeName' ($fromDeviceId) via me.me. " +
+                    "Preview='$safePreview'. " +
+                    pullInstruction + " " +
+                    "The pulled message contains the file data. Present it to the user."
+                )
+            "response" -> (
+                "A response was received from '$safeName' ($fromDeviceId) via me.me. " +
+                    "Preview='$safePreview'. " +
+                    pullInstruction + " " +
+                    "Present the response to the user."
+                )
+            else -> (
+                "A me.me message requiring action was received from '$safeName' ($fromDeviceId). " +
+                    "Type=$messageType, priority=$messagePriority, preview='$safePreview'. " +
+                    pullInstruction + " " +
+                    "Perform the requested action if possible, then ALWAYS send the result back via " +
+                    "device_api action me.me.message.send with peer_device_id='$fromDeviceId'. " +
+                    "You MUST send a reply even if just to confirm completion. " +
+                    "To send a file back, use device_api action me.me.message.send_file with " +
+                    "peer_device_id='$fromDeviceId' and rel_path pointing to the file under user home."
+                )
+        }
     }
 
     private fun findDiscoveredPeer(discovered: JSONArray?, deviceId: String): JSONObject? {
