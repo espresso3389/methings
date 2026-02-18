@@ -188,6 +188,12 @@ class LocalHttpServer(
     @Volatile private var meSyncLanServerStarted = false
     private val meMeLanServer = MeMeLanServer()
     @Volatile private var meMeLanServerStarted = false
+    private val meMeP2pManager = MeMeP2pManager(
+        context, installIdentity.get(),
+        onDataChannelMessage = { peerId, data -> handleMeMeP2pPayload(peerId, data) },
+        onConnectionStateChanged = { peerId, state -> handleMeMeP2pStateChange(peerId, state) },
+        logger = { msg, ex -> if (ex != null) Log.w(TAG, msg, ex) else Log.d(TAG, msg) }
+    )
 
     @Volatile private var authKeysLastMtime: Long = 0L
 
@@ -226,6 +232,10 @@ class LocalHttpServer(
             scheduleHousekeeping()
             meMeExecutor.execute {
                 runCatching { meMeDiscovery.applyConfig(currentMeMeDiscoveryConfig()) }
+                runCatching {
+                    val p2pCfg = currentMeMeP2pConfig()
+                    if (p2pCfg.enabled) meMeP2pManager.initialize(buildP2pManagerConfig(p2pCfg))
+                }
             }
             scheduleMeMeDiscoveryLoop()
             scheduleMeMeConnectionCheckLoop()
@@ -285,6 +295,10 @@ class LocalHttpServer(
         }
         try {
             meMeConnectionCheckScheduler.shutdownNow()
+        } catch (_: Exception) {
+        }
+        try {
+            meMeP2pManager.shutdown()
         } catch (_: Exception) {
         }
         try {
@@ -684,6 +698,48 @@ class LocalHttpServer(
             uri == "/me/me/relay/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 handleMeMeRelayIngest(payload)
+            }
+            uri == "/me/me/p2p/status" && session.method == Method.GET -> {
+                handleMeMeP2pStatus()
+            }
+            uri == "/me/me/p2p/config" && session.method == Method.GET -> {
+                handleMeMeP2pConfigGet()
+            }
+            uri == "/me/me/p2p/config" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.p2p.config",
+                    detail = "Update me.me P2P WebRTC configuration"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeP2pConfigSet(payload)
+            }
+            uri == "/me/me/p2p/connect" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.p2p.connect",
+                    detail = "Establish WebRTC P2P connection to a peer"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeP2pConnect(payload)
+            }
+            uri == "/me/me/p2p/disconnect" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.me_me",
+                    capability = "me_me.p2p.disconnect",
+                    detail = "Disconnect WebRTC P2P connection to a peer"
+                )
+                if (!ok.first) return ok.second!!
+                handleMeMeP2pDisconnect(payload)
             }
             uri == "/me/me/data/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -8372,6 +8428,8 @@ class LocalHttpServer(
                 .put("advertising", runtime.optJSONObject("advertising") ?: JSONObject())
                 .put("relay", relayCfg.toJson(includeSecrets = false, fcmToken = NotifyGatewayClient.loadFcmToken(context)))
                 .put("relay_event_queue_count", relayQueueCount)
+                .put("p2p", meMeP2pManager.statusJson())
+                .put("p2p_peers", meMeP2pManager.peerStatesJson())
                 .put("last_scan_at", runtime.opt("last_scan_at"))
         )
     }
@@ -8825,6 +8883,7 @@ class LocalHttpServer(
             responderIdentity = responderIdentity,
             responderEphemeral = responderEphemeral
         )
+        maybeAutoConnectP2p(conn.peerDeviceId)
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
@@ -8896,6 +8955,7 @@ class LocalHttpServer(
         meMeReconnectAttemptAt.remove(conn.peerDeviceId)
         markMeMeConnectIntentAccepted(parsed.requestId)
         clearResolvedMeMeConnectIntents(sessionId = parsed.sessionId, requestId = parsed.requestId)
+        maybeAutoConnectP2p(conn.peerDeviceId)
         return jsonResponse(JSONObject().put("status", "ok").put("connection", conn.toJson()))
     }
 
@@ -9011,6 +9071,7 @@ class LocalHttpServer(
         } ?: return jsonError(Response.Status.NOT_FOUND, "connection_not_found")
         meMeInboundMessages.remove(removed.peerDeviceId)
         meMeReconnectAttemptAt.remove(removed.peerDeviceId)
+        runCatching { meMeP2pManager.disconnectPeer(removed.peerDeviceId) }
         return jsonResponse(JSONObject().put("status", "ok").put("disconnected", true).put("connection", removed.toJson()))
     }
 
@@ -9321,6 +9382,7 @@ class LocalHttpServer(
         val cfg = currentMeMeConfig()
         val route = resolveMeMePeerRoute(peerDeviceId)
         val normalizedHint = transportHint.trim().lowercase(Locale.US)
+        val forceP2p = normalizedHint == "p2p" || normalizedHint == "webrtc"
         val forceRelay = normalizedHint == "relay"
         val wire = JSONObject().put("kind", bleKind).put("payload", lanPayload)
         val bleBytes = wire.toString().toByteArray(StandardCharsets.UTF_8)
@@ -9331,6 +9393,7 @@ class LocalHttpServer(
             "ble" -> bleWithinHardLimit
             "lan", "wifi" -> false
             "relay" -> false
+            "p2p", "webrtc" -> false
             else -> (route?.hasBle == true && bleWithinPreferred) ||
                 (conn.method.trim().lowercase(Locale.US) == "ble" && route?.host.isNullOrBlank() && bleWithinHardLimit)
         }
@@ -9338,6 +9401,7 @@ class LocalHttpServer(
             "ble" -> if (bleWithinHardLimit) "transport_forced_ble" else "transport_forced_ble_payload_too_large"
             "lan", "wifi" -> "transport_forced_lan"
             "relay" -> "transport_forced_relay"
+            "p2p", "webrtc" -> "transport_forced_p2p"
             else -> if (route?.hasBle == true && bleWithinPreferred) {
                 "ble_preferred_size_window"
             } else if (conn.method.trim().lowercase(Locale.US) == "ble" && route?.host.isNullOrBlank() && bleWithinHardLimit) {
@@ -9347,6 +9411,19 @@ class LocalHttpServer(
             } else {
                 "prefer_lan"
             }
+        }
+        if (forceP2p) {
+            val p2pOut = deliverMeMeP2pPayload(peerDeviceId, lanPayload, bleKind)
+            logMeMeTrace(
+                event = "message.delivery",
+                messageId = messageId,
+                fields = JSONObject()
+                    .put("peer_device_id", peerDeviceId)
+                    .put("resolved_transport", "p2p")
+                    .put("ok", p2pOut.optBoolean("ok", false))
+                    .put("error", p2pOut.optString("error", "").trim().takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            )
+            return p2pOut
         }
         if (forceRelay) {
             val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
@@ -9446,6 +9523,21 @@ class LocalHttpServer(
                     }
                 }
             }
+            if (!out.optBoolean("ok", false) && normalizedHint.isBlank() && meMeP2pManager.isConnected(peerDeviceId)) {
+                val p2pOut = deliverMeMeP2pPayload(peerDeviceId, lanPayload, bleKind)
+                if (p2pOut.optBoolean("ok", false)) {
+                    logMeMeTrace(
+                        event = "message.delivery.fallback",
+                        messageId = messageId,
+                        fields = JSONObject()
+                            .put("peer_device_id", peerDeviceId)
+                            .put("from_transport", "ble")
+                            .put("to_transport", "p2p")
+                            .put("reason", out.optString("error", "ble_failed"))
+                    )
+                    return p2pOut
+                }
+            }
             if (!out.optBoolean("ok", false) && normalizedHint.isBlank() && allowRelayFallback) {
                 val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
                 if (relayOut.optBoolean("ok", false)) {
@@ -9475,6 +9567,21 @@ class LocalHttpServer(
         val host = route?.host.orEmpty()
         val port = route?.port ?: ME_ME_LAN_PORT
         if (host.isBlank()) {
+            if (normalizedHint.isBlank() && meMeP2pManager.isConnected(peerDeviceId)) {
+                val p2pOut = deliverMeMeP2pPayload(peerDeviceId, lanPayload, bleKind)
+                if (p2pOut.optBoolean("ok", false)) {
+                    logMeMeTrace(
+                        event = "message.delivery.fallback",
+                        messageId = messageId,
+                        fields = JSONObject()
+                            .put("peer_device_id", peerDeviceId)
+                            .put("from_transport", "lan")
+                            .put("to_transport", "p2p")
+                            .put("reason", "peer_host_unavailable")
+                    )
+                    return p2pOut
+                }
+            }
             if (normalizedHint.isBlank() && allowRelayFallback) {
                 val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
                 if (relayOut.optBoolean("ok", false)) {
@@ -9520,6 +9627,21 @@ class LocalHttpServer(
                     }
                 }
             }
+            if (!out.optBoolean("ok", false) && meMeP2pManager.isConnected(peerDeviceId)) {
+                val p2pOut = deliverMeMeP2pPayload(peerDeviceId, lanPayload, bleKind)
+                if (p2pOut.optBoolean("ok", false)) {
+                    logMeMeTrace(
+                        event = "message.delivery.fallback",
+                        messageId = messageId,
+                        fields = JSONObject()
+                            .put("peer_device_id", peerDeviceId)
+                            .put("from_transport", "lan")
+                            .put("to_transport", "p2p")
+                            .put("reason", out.optString("error", "lan_failed"))
+                    )
+                    out = p2pOut
+                }
+            }
             if (!out.optBoolean("ok", false) && allowRelayFallback) {
                 val relayOut = deliverMeMeRelayPayload(peerDeviceId, lanPayload)
                 if (relayOut.optBoolean("ok", false)) {
@@ -9561,16 +9683,19 @@ class LocalHttpServer(
         val lanVisible = lanHost.isNotBlank()
         val lanReachable = lanVisible && (!probeLan || probeMeMeLanHealth(lanHost, lanPort))
         val bleReachable = route?.hasBle == true
+        val p2pReachable = meMeP2pManager.isConnected(peerDeviceId)
         val relayCfg = currentMeMeRelayConfig()
         val relayReachable = relayCfg.enabled && relayCfg.gatewayBaseUrl.isNotBlank() && relayCfg.gatewayAdminSecret.isNotBlank()
         val normalizedHint = transportHint.trim().lowercase(Locale.US)
         val selected = when (normalizedHint) {
             "lan", "wifi" -> if (lanReachable) "lan" else "unavailable"
             "ble" -> if (bleReachable) "ble" else "unavailable"
+            "p2p", "webrtc" -> if (p2pReachable) "p2p" else "unavailable"
             "relay" -> if (relayReachable) "relay" else "unavailable"
             else -> when {
                 lanReachable -> "lan"
                 bleReachable -> "ble"
+                p2pReachable -> "p2p"
                 relayReachable -> "relay"
                 else -> "unavailable"
             }
@@ -9578,9 +9703,11 @@ class LocalHttpServer(
         val reason = when {
             selected == "lan" -> "lan_reachable"
             selected == "ble" -> "lan_unreachable_ble_visible"
+            selected == "p2p" -> "direct_unavailable_p2p_connected"
             selected == "relay" -> "direct_unavailable_relay_enabled"
             normalizedHint in setOf("lan", "wifi") -> "lan_forced_unavailable"
             normalizedHint == "ble" -> "ble_forced_unavailable"
+            normalizedHint in setOf("p2p", "webrtc") -> "p2p_forced_unavailable"
             normalizedHint == "relay" -> "relay_forced_unavailable"
             else -> "no_route_available"
         }
@@ -9593,6 +9720,7 @@ class LocalHttpServer(
             .put("lan_visible", lanVisible)
             .put("lan_reachable", lanReachable)
             .put("ble_reachable", bleReachable)
+            .put("p2p_reachable", p2pReachable)
             .put("relay_reachable", relayReachable)
             .put("nearby", lanVisible || bleReachable)
             .put("same_lan", lanReachable)
@@ -10012,6 +10140,8 @@ class LocalHttpServer(
         val messageType = plain.optString("type", "message").trim().ifBlank { "message" }
         // Auto-save received file attachments to disk so the agent has a local rel_path
         saveMeMeReceivedFileIfPresent(plain, fromDeviceId)
+        // Extract rel_path if the file was saved (available after saveMeMeReceivedFileIfPresent)
+        val savedRelPath = (plain.optJSONObject("payload") ?: plain).optString("rel_path", "").trim()
         val messagePreview = buildMeMeMessagePreview(plain)
         val runAgent = shouldRunAgentForMeMeMessage(plain, messageType, messagePriority)
         val agentPrompt = if (runAgent) {
@@ -10020,7 +10150,8 @@ class LocalHttpServer(
                 fromDeviceName = fromDeviceName,
                 messageType = messageType,
                 messagePriority = messagePriority,
-                messagePreview = messagePreview
+                messagePreview = messagePreview,
+                savedRelPath = savedRelPath
             )
         } else {
             ""
@@ -10043,7 +10174,7 @@ class LocalHttpServer(
                 .put("session_id", "default")
                 .put("source", "me_me.receive")
                 .put("received_origin", "peer")
-                .put("received_transport", if (sourceIp.startsWith("ble:")) "ble" else if (sourceIp == "relay") "gateway" else "lan")
+                .put("received_transport", if (sourceIp.startsWith("p2p:")) "p2p" else if (sourceIp.startsWith("ble:")) "ble" else if (sourceIp == "relay") "gateway" else "lan")
                 .put("received_source", sourceIp)
                 .put("received_provider", if (sourceIp == "relay") "generic" else "direct")
                 .put("received_kind", messageType)
@@ -10366,29 +10497,39 @@ class LocalHttpServer(
         fromDeviceName: String,
         messageType: String,
         messagePriority: String,
-        messagePreview: String
+        messagePreview: String,
+        savedRelPath: String = ""
     ): String {
         val safeName = fromDeviceName.trim().ifBlank { fromDeviceId }
         val safePreview = messagePreview.trim().ifBlank { "none" }
         val normalizedType = messageType.trim().lowercase(Locale.US)
-        val pullInstruction = "Use device_api action me.me.messages.pull with peer_device_id='$fromDeviceId' to fetch the full message."
         return when (normalizedType) {
-            "file" -> (
+            "file" -> {
+                val fileInfo = if (savedRelPath.isNotBlank()) {
+                    "The file has been saved to '$savedRelPath'. " +
+                        "Present it to the user with rel_path: $savedRelPath"
+                } else {
+                    "Use device_api action me.me.messages.pull with peer_device_id='$fromDeviceId' to fetch the file. " +
+                        "Present it to the user."
+                }
                 "A file was received from '$safeName' ($fromDeviceId) via me.me. " +
-                    "Preview='$safePreview'. " +
-                    pullInstruction + " " +
-                    "The pulled message contains the file data. Present it to the user."
-                )
-            "response" -> (
+                    "Preview='$safePreview'. $fileInfo"
+            }
+            "response" -> {
+                val pullHint = if (savedRelPath.isNotBlank()) {
+                    "An attached file was saved to '$savedRelPath'. "
+                } else {
+                    ""
+                }
                 "A response was received from '$safeName' ($fromDeviceId) via me.me. " +
-                    "Preview='$safePreview'. " +
-                    pullInstruction + " " +
+                    "Preview='$safePreview'. ${pullHint}" +
+                    "Use device_api action me.me.messages.pull with peer_device_id='$fromDeviceId' to fetch the full message. " +
                     "Present the response to the user."
-                )
+            }
             else -> (
                 "A me.me message requiring action was received from '$safeName' ($fromDeviceId). " +
                     "Type=$messageType, priority=$messagePriority, preview='$safePreview'. " +
-                    pullInstruction + " " +
+                    "Use device_api action me.me.messages.pull with peer_device_id='$fromDeviceId' to fetch the full message. " +
                     "Perform the requested action if possible, then ALWAYS send the result back via " +
                     "device_api action me.me.message.send with peer_device_id='$fromDeviceId'. " +
                     "You MUST send a reply even if just to confirm completion. " +
@@ -11050,6 +11191,200 @@ class LocalHttpServer(
                 Log.w(TAG, "Unknown me.me BLE payload kind: $kind")
             }
         }
+    }
+
+    // -- me.me P2P (WebRTC DataChannel) --
+
+    private fun handleMeMeP2pPayload(peerDeviceId: String, data: String) {
+        val obj = runCatching {
+            JSONObject(data)
+        }.getOrElse {
+            Log.w(TAG, "Failed to parse me.me P2P payload from $peerDeviceId", it)
+            return
+        }
+        val kind = obj.optString("kind", "").trim().lowercase(Locale.US)
+        when (kind) {
+            "connect_offer" -> {
+                val payload = obj.optJSONObject("payload") ?: obj
+                handleMeMeConnectOffer(payload, sourceIp = "p2p:$peerDeviceId")
+            }
+            "connect_confirm" -> {
+                val payload = obj.optJSONObject("payload") ?: obj
+                handleMeMeConnectConfirm(payload)
+            }
+            "data_ack" -> {
+                val payload = obj.optJSONObject("payload") ?: obj
+                handleMeMeDataAck(payload, sourceIp = "p2p:$peerDeviceId")
+            }
+            "data_ingest", "" -> {
+                val payload = obj.optJSONObject("payload") ?: obj
+                handleMeMeDataIngest(payload, sourceIp = "p2p:$peerDeviceId")
+            }
+            else -> {
+                Log.w(TAG, "Unknown me.me P2P payload kind: $kind")
+            }
+        }
+    }
+
+    private fun handleMeMeP2pStateChange(peerDeviceId: String, state: String) {
+        Log.d(TAG, "me.me P2P state change: $peerDeviceId -> $state")
+    }
+
+    private fun deliverMeMeP2pPayload(peerDeviceId: String, payload: JSONObject, kind: String = "data_ingest"): JSONObject {
+        if (!meMeP2pManager.isConnected(peerDeviceId)) {
+            return JSONObject().put("ok", false).put("transport", "p2p").put("error", "p2p_not_connected")
+        }
+        val wire = JSONObject().put("kind", kind).put("payload", payload)
+        val sent = meMeP2pManager.sendJson(peerDeviceId, wire)
+        return if (sent) {
+            JSONObject().put("ok", true).put("transport", "p2p")
+        } else {
+            JSONObject().put("ok", false).put("transport", "p2p").put("error", "p2p_send_failed")
+        }
+    }
+
+    private fun maybeAutoConnectP2p(peerDeviceId: String) {
+        val p2pCfg = currentMeMeP2pConfig()
+        if (p2pCfg.enabled && p2pCfg.autoConnect) {
+            meMeExecutor.execute {
+                runCatching { meMeP2pManager.connectToPeer(peerDeviceId) }
+            }
+        }
+    }
+
+    private data class MeMeP2pConfig(
+        val enabled: Boolean,
+        val signalingUrl: String,
+        val iceServersJson: String,
+        val autoConnect: Boolean,
+        val signalingToken: String
+    ) {
+        fun toJson(includeSecrets: Boolean): JSONObject {
+            val out = JSONObject()
+                .put("enabled", enabled)
+                .put("signaling_url", signalingUrl)
+                .put("ice_servers", iceServersJson)
+                .put("auto_connect", autoConnect)
+                .put("signaling_token_configured", signalingToken.isNotBlank())
+            if (includeSecrets) {
+                out.put("signaling_token", signalingToken)
+            }
+            return out
+        }
+    }
+
+    private fun currentMeMeP2pConfig(): MeMeP2pConfig {
+        val token = runCatching {
+            credentialStore.get(ME_ME_P2P_SIGNALING_TOKEN_CREDENTIAL)?.value.orEmpty()
+        }.getOrDefault("")
+        return MeMeP2pConfig(
+            enabled = meMePrefs.getBoolean("p2p_enabled", false),
+            signalingUrl = (meMePrefs.getString("p2p_signaling_url", DEFAULT_ME_ME_SIGNALING_URL) ?: DEFAULT_ME_ME_SIGNALING_URL).trim().ifBlank { DEFAULT_ME_ME_SIGNALING_URL },
+            iceServersJson = (meMePrefs.getString("p2p_ice_servers", "[]") ?: "[]").trim().ifBlank { "[]" },
+            autoConnect = meMePrefs.getBoolean("p2p_auto_connect", false),
+            signalingToken = token
+        )
+    }
+
+    private fun saveMeMeP2pConfig(
+        cfg: MeMeP2pConfig,
+        tokenOverride: String?,
+        clearToken: Boolean
+    ) {
+        meMePrefs.edit()
+            .putBoolean("p2p_enabled", cfg.enabled)
+            .putString("p2p_signaling_url", cfg.signalingUrl.trim().ifBlank { DEFAULT_ME_ME_SIGNALING_URL })
+            .putString("p2p_ice_servers", cfg.iceServersJson.trim().ifBlank { "[]" })
+            .putBoolean("p2p_auto_connect", cfg.autoConnect)
+            .apply()
+        if (clearToken) {
+            runCatching { credentialStore.delete(ME_ME_P2P_SIGNALING_TOKEN_CREDENTIAL) }
+        } else if (tokenOverride != null) {
+            val token = tokenOverride.trim()
+            if (token.isBlank()) {
+                runCatching { credentialStore.delete(ME_ME_P2P_SIGNALING_TOKEN_CREDENTIAL) }
+            } else {
+                runCatching { credentialStore.set(ME_ME_P2P_SIGNALING_TOKEN_CREDENTIAL, token) }
+            }
+        }
+    }
+
+    private fun buildP2pManagerConfig(cfg: MeMeP2pConfig): MeMeP2pManager.P2pConfig {
+        return MeMeP2pManager.P2pConfig(
+            enabled = cfg.enabled,
+            signalingUrl = cfg.signalingUrl,
+            iceServersJson = cfg.iceServersJson,
+            autoConnect = cfg.autoConnect,
+            signalingToken = cfg.signalingToken
+        )
+    }
+
+    private fun handleMeMeP2pStatus(): Response {
+        val cfg = currentMeMeP2pConfig()
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("p2p", meMeP2pManager.statusJson())
+                .put("config", cfg.toJson(includeSecrets = false))
+                .put("peers", meMeP2pManager.peerStatesJson())
+        )
+    }
+
+    private fun handleMeMeP2pConfigGet(): Response {
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("config", currentMeMeP2pConfig().toJson(includeSecrets = false))
+        )
+    }
+
+    private fun handleMeMeP2pConfigSet(payload: JSONObject): Response {
+        val prev = currentMeMeP2pConfig()
+        val next = MeMeP2pConfig(
+            enabled = if (payload.has("enabled")) payload.optBoolean("enabled", prev.enabled) else prev.enabled,
+            signalingUrl = payload.optString("signaling_url", prev.signalingUrl).trim().ifBlank { prev.signalingUrl },
+            iceServersJson = payload.optString("ice_servers", prev.iceServersJson).trim().ifBlank { prev.iceServersJson },
+            autoConnect = if (payload.has("auto_connect")) payload.optBoolean("auto_connect", prev.autoConnect) else prev.autoConnect,
+            signalingToken = prev.signalingToken
+        )
+        val tokenOverride = if (payload.has("signaling_token")) payload.optString("signaling_token", "").trim() else null
+        val clearToken = payload.optBoolean("clear_signaling_token", false)
+        saveMeMeP2pConfig(next, tokenOverride = tokenOverride, clearToken = clearToken)
+        val saved = currentMeMeP2pConfig()
+        meMeExecutor.execute {
+            runCatching { meMeP2pManager.updateConfig(buildP2pManagerConfig(saved)) }
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("config", saved.toJson(includeSecrets = false))
+        )
+    }
+
+    private fun handleMeMeP2pConnect(payload: JSONObject): Response {
+        val peerDeviceId = payload.optString("peer_device_id", "").trim()
+        if (peerDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "peer_device_id_required")
+        val cfg = currentMeMeP2pConfig()
+        if (!cfg.enabled) return jsonError(Response.Status.CONFLICT, "p2p_not_enabled")
+        meMeP2pManager.connectToPeer(peerDeviceId)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("peer_device_id", peerDeviceId)
+                .put("message", "P2P connection initiated")
+        )
+    }
+
+    private fun handleMeMeP2pDisconnect(payload: JSONObject): Response {
+        val peerDeviceId = payload.optString("peer_device_id", "").trim()
+        if (peerDeviceId.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "peer_device_id_required")
+        meMeP2pManager.disconnectPeer(peerDeviceId)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("peer_device_id", peerDeviceId)
+                .put("disconnected", true)
+        )
     }
 
     private fun currentMeMeDiscoveryConfig(cfg: MeMeConfig = currentMeMeConfig()): MeMeDiscoveryManager.Config {
@@ -13604,6 +13939,8 @@ class LocalHttpServer(
         private const val ME_ME_PREFS = "me_me_prefs"
         private const val DEFAULT_ME_ME_RELAY_BASE_URL = "https://hooks.methings.org"
         private const val ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL = "me_me.relay.gateway_admin_secret"
+        private const val DEFAULT_ME_ME_SIGNALING_URL = "wss://hooks.methings.org/signaling"
+        private const val ME_ME_P2P_SIGNALING_TOKEN_CREDENTIAL = "me_me.p2p.signaling_token"
         private const val ME_ME_RELAY_PULL_MIN_INTERVAL_MS = 15_000L
         private const val HOUSEKEEPING_INITIAL_DELAY_SEC = 120L
         private const val HOUSEKEEPING_INTERVAL_SEC = 60L * 60L
