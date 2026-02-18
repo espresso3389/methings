@@ -119,6 +119,8 @@ class DeviceApiTool:
         "viewer.goto": {"method": "POST", "path": "/ui/viewer/goto", "permission": False},
         # Non-sensitive configuration helpers (do not return secrets).
         "android.device": {"method": "GET", "path": "/android/device", "permission": False},
+        "android.permissions": {"method": "GET", "path": "/android/permissions", "permission": False},
+        "android.permissions.request": {"method": "POST", "path": "/android/permissions/request", "permission": True},
         "brain.config.get": {"method": "GET", "path": "/brain/config", "permission": False},
         "file_transfer.prefs.get": {"method": "GET", "path": "/file_transfer/prefs", "permission": False},
         "notifications.prefs.get": {"method": "GET", "path": "/notifications/prefs", "permission": False},
