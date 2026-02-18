@@ -77,6 +77,8 @@ tags:
     description: Credential vault.
   - name: WebView
     description: Agent-controllable WebView browser.
+  - name: Android
+    description: Android device info and runtime permission management.
   - name: Files
     description: User and system file endpoints.
 
@@ -450,6 +452,14 @@ paths:
     $ref: './paths/vault.yaml#/vaultCredentialsGet'
   /vault/credentials/has:
     $ref: './paths/vault.yaml#/vaultCredentialsHas'
+
+  # ── Android ──
+  /android/device:
+    $ref: './paths/android.yaml#/androidDevice'
+  /android/permissions:
+    $ref: './paths/android.yaml#/androidPermissions'
+  /android/permissions/request:
+    $ref: './paths/android.yaml#/androidPermissionsRequest'
 
   # ── Files ──
   /user/upload:

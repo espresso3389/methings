@@ -1,0 +1,201 @@
+androidDevice:
+  get:
+    operationId: getAndroidDevice
+    summary: Get Android device information
+    tags: [Android]
+    description: >
+      Returns hardware and software details about the Android device:
+      manufacturer, model, OS version, screen metrics, locale, etc.
+      No permission check required.
+    responses:
+      '200':
+        description: Device information.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                manufacturer:
+                  type: string
+                  description: Device manufacturer (e.g. "Google").
+                model:
+                  type: string
+                  description: Device model name (e.g. "Pixel 7").
+                brand:
+                  type: string
+                  description: Consumer-visible brand (e.g. "google").
+                device:
+                  type: string
+                  description: Industrial design name (e.g. "panther").
+                product:
+                  type: string
+                  description: Product name (e.g. "panther").
+                board:
+                  type: string
+                  description: Board name (e.g. "pantah").
+                hardware:
+                  type: string
+                  description: Hardware name (e.g. "tensor").
+                display:
+                  type: string
+                  description: Build display ID.
+                android_version:
+                  type: string
+                  description: Android version string (e.g. "13").
+                sdk_int:
+                  type: integer
+                  description: Android SDK integer (e.g. 33).
+                security_patch:
+                  type: string
+                  description: Security patch date (e.g. "2023-01-05").
+                build_id:
+                  type: string
+                  description: Build ID (e.g. "TP1A.221005.002").
+                fingerprint:
+                  type: string
+                  description: Full build fingerprint.
+                supported_abis:
+                  type: array
+                  items:
+                    type: string
+                  description: Supported CPU ABIs (e.g. ["arm64-v8a", "armeabi-v7a"]).
+                screen_density_dpi:
+                  type: integer
+                  description: Screen density in DPI (e.g. 420).
+                screen_width_px:
+                  type: integer
+                  description: Screen width in pixels.
+                screen_height_px:
+                  type: integer
+                  description: Screen height in pixels.
+                locale:
+                  type: string
+                  description: Device locale as BCP-47 tag (e.g. "en-US").
+            example:
+              status: ok
+              manufacturer: Google
+              model: Pixel 7
+              brand: google
+              device: panther
+              product: panther
+              board: pantah
+              hardware: tensor
+              display: TP1A.221005.002
+              android_version: "13"
+              sdk_int: 33
+              security_patch: "2023-01-05"
+              build_id: TP1A.221005.002
+              fingerprint: "google/panther/panther:13/..."
+              supported_abis: ["arm64-v8a", "armeabi-v7a"]
+              screen_density_dpi: 420
+              screen_width_px: 1080
+              screen_height_px: 2400
+              locale: en-US
+
+androidPermissions:
+  get:
+    operationId: getAndroidPermissions
+    summary: List Android manifest permissions with grant status
+    tags: [Android]
+    description: >
+      Returns every permission declared in the app manifest together with
+      whether it is currently granted by the Android runtime.
+      No permission check required.
+    responses:
+      '200':
+        description: Permission list.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, permissions]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                permissions:
+                  type: array
+                  items:
+                    type: object
+                    required: [name, granted]
+                    properties:
+                      name:
+                        type: string
+                        description: Fully-qualified Android permission name.
+                      granted:
+                        type: boolean
+                        description: Whether the permission is currently granted.
+            example:
+              status: ok
+              permissions:
+                - name: android.permission.BLUETOOTH_SCAN
+                  granted: true
+                - name: android.permission.CAMERA
+                  granted: false
+
+androidPermissionsRequest:
+  post:
+    operationId: postAndroidPermissionsRequest
+    summary: Request Android runtime permissions
+    tags: [Android]
+    description: >
+      Triggers the Android system permission dialog for the specified
+      permissions. Only permissions declared in the app manifest are
+      accepted. Already-granted permissions are skipped (no dialog shown).
+      The call blocks until the user responds or 60 seconds elapse.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [permissions]
+            properties:
+              permissions:
+                type: array
+                items:
+                  type: string
+                description: >
+                  Fully-qualified Android permission names to request
+                  (e.g. ["android.permission.BLUETOOTH_SCAN"]).
+          example:
+            permissions:
+              - android.permission.BLUETOOTH_SCAN
+              - android.permission.BLUETOOTH_CONNECT
+    responses:
+      '200':
+        description: Per-permission grant results.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, results, all_granted]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                results:
+                  type: object
+                  additionalProperties:
+                    type: boolean
+                  description: >
+                    Map of permission name to granted boolean.
+                all_granted:
+                  type: boolean
+                  description: True if every requested permission is now granted.
+            example:
+              status: ok
+              results:
+                android.permission.BLUETOOTH_SCAN: true
+                android.permission.BLUETOOTH_CONNECT: true
+              all_granted: true
+      '400':
+        description: Invalid request (missing/empty permissions array, or unknown permissions).
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'

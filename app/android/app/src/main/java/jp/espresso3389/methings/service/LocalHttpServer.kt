@@ -90,6 +90,7 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import jp.espresso3389.methings.device.AndroidPermissionWaiter
 import jp.espresso3389.methings.device.UsbPermissionWaiter
 import android.net.Uri
 import android.os.Handler
@@ -348,6 +349,7 @@ class LocalHttpServer(
             "/webview" -> routeWebview(session, uri, postBody)
             "/intent" -> routeIntent(session, uri, postBody)
             "/sys" -> routeSys(session, uri, postBody)
+            "/android" -> routeAndroid(session, uri, postBody)
             "" -> routeUi(session, uri, postBody)
             else -> notFound()
         }
@@ -13374,6 +13376,142 @@ class LocalHttpServer(
         }
     }
 
+    // ==============================
+    // /android — device info & runtime permissions
+    // ==============================
+
+    private fun routeAndroid(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            // GET /android/device — non-sensitive device info
+            (uri == "/android/device" || uri == "/android/device/") && session.method == Method.GET -> {
+                val dm = context.resources.displayMetrics
+                val locale = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N)
+                    context.resources.configuration.locales[0] else
+                    @Suppress("DEPRECATION") context.resources.configuration.locale
+                val payload = JSONObject()
+                    .put("status", "ok")
+                    .put("manufacturer", Build.MANUFACTURER)
+                    .put("model", Build.MODEL)
+                    .put("brand", Build.BRAND)
+                    .put("device", Build.DEVICE)
+                    .put("product", Build.PRODUCT)
+                    .put("board", Build.BOARD)
+                    .put("hardware", Build.HARDWARE)
+                    .put("display", Build.DISPLAY)
+                    .put("android_version", Build.VERSION.RELEASE)
+                    .put("sdk_int", Build.VERSION.SDK_INT)
+                    .put("security_patch", Build.VERSION.SECURITY_PATCH)
+                    .put("build_id", Build.ID)
+                    .put("fingerprint", Build.FINGERPRINT)
+                    .put("supported_abis", JSONArray(Build.SUPPORTED_ABIS))
+                    .put("screen_density_dpi", dm.densityDpi)
+                    .put("screen_width_px", dm.widthPixels)
+                    .put("screen_height_px", dm.heightPixels)
+                    .put("locale", locale.toLanguageTag())
+                jsonResponse(payload)
+            }
+
+            // GET /android/permissions — list manifest-declared permissions with grant status
+            (uri == "/android/permissions" || uri == "/android/permissions/") && session.method == Method.GET -> {
+                val pi = context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.GET_PERMISSIONS
+                )
+                val arr = JSONArray()
+                for (perm in pi.requestedPermissions ?: emptyArray()) {
+                    val granted = context.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
+                    arr.put(JSONObject().put("name", perm).put("granted", granted))
+                }
+                jsonResponse(JSONObject().put("status", "ok").put("permissions", arr))
+            }
+
+            // POST /android/permissions/request — request runtime permissions via system dialog
+            (uri == "/android/permissions/request" || uri == "/android/permissions/request/") && session.method == Method.POST -> {
+                val payload = try {
+                    JSONObject((postBody ?: "").ifBlank { "{}" })
+                } catch (_: Exception) {
+                    return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                }
+                val permsArr = payload.optJSONArray("permissions")
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "missing_permissions")
+                if (permsArr.length() == 0)
+                    return jsonError(Response.Status.BAD_REQUEST, "empty_permissions")
+
+                // Collect requested permission names
+                val requested = (0 until permsArr.length()).map { permsArr.getString(it) }
+
+                // Validate against manifest-declared permissions
+                val pi = context.packageManager.getPackageInfo(
+                    context.packageName,
+                    PackageManager.GET_PERMISSIONS
+                )
+                val declared = (pi.requestedPermissions ?: emptyArray()).toSet()
+                val unknown = requested.filter { it !in declared }
+                if (unknown.isNotEmpty()) {
+                    return jsonError(
+                        Response.Status.BAD_REQUEST, "unknown_permissions",
+                        JSONObject().put("unknown", JSONArray(unknown))
+                    )
+                }
+
+                // Check current grant status
+                val results = mutableMapOf<String, Boolean>()
+                val missing = mutableListOf<String>()
+                for (perm in requested) {
+                    val granted = context.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
+                    results[perm] = granted
+                    if (!granted) missing.add(perm)
+                }
+
+                // All already granted — return immediately
+                if (missing.isEmpty()) {
+                    val resultsJson = JSONObject()
+                    for ((k, v) in results) resultsJson.put(k, v)
+                    return jsonResponse(
+                        JSONObject()
+                            .put("status", "ok")
+                            .put("results", resultsJson)
+                            .put("all_granted", true)
+                    )
+                }
+
+                // Request missing permissions via MainActivity
+                val requestId = UUID.randomUUID().toString()
+                AndroidPermissionWaiter.begin(requestId, requested)
+                try {
+                    context.sendBroadcast(Intent(ACTION_ANDROID_PERM_REQUEST).apply {
+                        setPackage(context.packageName)
+                        putExtra(EXTRA_ANDROID_PERM_REQUEST_ID, requestId)
+                        putExtra(EXTRA_ANDROID_PERM_NAMES, requested.toTypedArray())
+                    })
+                    val waitResults = AndroidPermissionWaiter.await(requestId, 60_000L)
+                    if (waitResults == null) {
+                        // Timeout or no UI to handle — re-check grant status
+                        for (perm in requested) {
+                            results[perm] = context.checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED
+                        }
+                    } else {
+                        results.putAll(waitResults)
+                    }
+                } finally {
+                    AndroidPermissionWaiter.clear(requestId)
+                }
+
+                val resultsJson = JSONObject()
+                for ((k, v) in results) resultsJson.put(k, v)
+                val allGranted = results.values.all { it }
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("results", resultsJson)
+                        .put("all_granted", allGranted)
+                )
+            }
+
+            else -> notFound()
+        }
+    }
+
     companion object {
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
@@ -13440,6 +13578,9 @@ Policies:
         const val EXTRA_PERMISSION_STATUS = "permission_status"
         const val EXTRA_CHAT_PRESERVE_SESSION_ID = "chat_preserve_session_id"
         const val EXTRA_UI_RELOAD_TOAST = "ui_reload_toast"
+        const val ACTION_ANDROID_PERM_REQUEST = "jp.espresso3389.methings.action.ANDROID_PERM_REQUEST"
+        const val EXTRA_ANDROID_PERM_REQUEST_ID = "android_perm_request_id"
+        const val EXTRA_ANDROID_PERM_NAMES = "android_perm_names"
         private val ME_SYNC_SHARED_PREFS_EXPORT = listOf(
             "brain_config",
             "cloud_prefs",

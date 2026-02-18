@@ -44,6 +44,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import jp.espresso3389.methings.AppForegroundState
 import jp.espresso3389.methings.R
+import jp.espresso3389.methings.device.AndroidPermissionWaiter
 import jp.espresso3389.methings.device.UsbPermissionResultReceiver
 import jp.espresso3389.methings.device.UsbPermissionWaiter
 import jp.espresso3389.methings.device.WebViewBrowserManager
@@ -226,6 +227,47 @@ class MainActivity : AppCompatActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != WebViewBrowserManager.ACTION_BROWSER_CLOSE) return
             hideBrowserPanel()
+        }
+    }
+    private val androidPermRequestReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent?.action != LocalHttpServer.ACTION_ANDROID_PERM_REQUEST) return
+            val requestId = intent.getStringExtra(LocalHttpServer.EXTRA_ANDROID_PERM_REQUEST_ID) ?: return
+            val permNames = intent.getStringArrayExtra(LocalHttpServer.EXTRA_ANDROID_PERM_NAMES) ?: return
+            if (permNames.isEmpty()) return
+
+            val allPerms = permNames.toList()
+
+            // Determine which are still missing
+            val missing = allPerms.filter { p ->
+                ActivityCompat.checkSelfPermission(this@MainActivity, p) != PackageManager.PERMISSION_GRANTED
+            }
+
+            if (missing.isEmpty()) {
+                // All already granted — complete immediately
+                val results = allPerms.associateWith { true }
+                AndroidPermissionWaiter.complete(requestId, results)
+                return
+            }
+
+            // If another permission request is already in-flight, complete with current status
+            if (pendingAndroidPermAction.get() != null) {
+                val results = allPerms.associateWith { p ->
+                    ActivityCompat.checkSelfPermission(this@MainActivity, p) == PackageManager.PERMISSION_GRANTED
+                }
+                AndroidPermissionWaiter.complete(requestId, results)
+                return
+            }
+
+            pendingAndroidPermRequestId.set(requestId)
+            pendingAndroidPermAction.set { _ ->
+                // Re-check all requested permissions after the dialog returns
+                val results = allPerms.associateWith { p ->
+                    ActivityCompat.checkSelfPermission(this@MainActivity, p) == PackageManager.PERMISSION_GRANTED
+                }
+                AndroidPermissionWaiter.complete(requestId, results)
+            }
+            androidPermLauncher.launch(missing.toTypedArray())
         }
     }
 
@@ -926,6 +968,11 @@ class MainActivity : AppCompatActivity() {
                 IntentFilter(WebViewBrowserManager.ACTION_BROWSER_CLOSE),
                 Context.RECEIVER_NOT_EXPORTED
             )
+            registerReceiver(
+                androidPermRequestReceiver,
+                IntentFilter(LocalHttpServer.ACTION_ANDROID_PERM_REQUEST),
+                Context.RECEIVER_NOT_EXPORTED
+            )
         } else {
             registerReceiver(pythonHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
@@ -936,6 +983,7 @@ class MainActivity : AppCompatActivity() {
             registerReceiver(meSyncExportShowReceiver, IntentFilter(LocalHttpServer.ACTION_UI_ME_SYNC_EXPORT_SHOW))
             registerReceiver(browserShowReceiver, IntentFilter(WebViewBrowserManager.ACTION_BROWSER_SHOW))
             registerReceiver(browserCloseReceiver, IntentFilter(WebViewBrowserManager.ACTION_BROWSER_CLOSE))
+            registerReceiver(androidPermRequestReceiver, IntentFilter(LocalHttpServer.ACTION_ANDROID_PERM_REQUEST))
         }
     }
 
@@ -950,6 +998,7 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(meSyncExportShowReceiver)
         unregisterReceiver(browserShowReceiver)
         unregisterReceiver(browserCloseReceiver)
+        unregisterReceiver(androidPermRequestReceiver)
         AppForegroundState.isForeground = false
         super.onStop()
     }
