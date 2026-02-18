@@ -8368,7 +8368,7 @@ class LocalHttpServer(
                 .put("connections", connections)
                 .put("discovered", discovered)
                 .put("advertising", runtime.optJSONObject("advertising") ?: JSONObject())
-                .put("relay", relayCfg.toJson(includeSecrets = false))
+                .put("relay", relayCfg.toJson(includeSecrets = false, fcmToken = NotifyGatewayClient.loadFcmToken(context)))
                 .put("relay_event_queue_count", relayQueueCount)
                 .put("last_scan_at", runtime.opt("last_scan_at"))
         )
@@ -9728,7 +9728,7 @@ class LocalHttpServer(
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
-                .put("relay", cfg.toJson(includeSecrets = false))
+                .put("relay", cfg.toJson(includeSecrets = false, fcmToken = NotifyGatewayClient.loadFcmToken(context)))
                 .put("event_queue_count", relayEvents)
                 .put("last_register_at", if (meMeRelayLastRegisterAtMs > 0L) meMeRelayLastRegisterAtMs else JSONObject.NULL)
                 .put("last_notify_at", if (meMeRelayLastNotifyAtMs > 0L) meMeRelayLastNotifyAtMs else JSONObject.NULL)
@@ -9740,7 +9740,7 @@ class LocalHttpServer(
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
-                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false))
+                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false, fcmToken = NotifyGatewayClient.loadFcmToken(context)))
         )
     }
 
@@ -9751,7 +9751,6 @@ class LocalHttpServer(
             gatewayBaseUrl = normalizeMeMeRelayBaseUrl(payload.optString("gateway_base_url", prev.gatewayBaseUrl)),
             provider = payload.optString("provider", prev.provider).trim().ifBlank { prev.provider },
             routeTokenTtlSec = payload.optInt("route_token_ttl_sec", prev.routeTokenTtlSec).coerceIn(30, 86_400),
-            devicePushToken = payload.optString("device_push_token", prev.devicePushToken).trim(),
             gatewayAdminSecret = prev.gatewayAdminSecret
         )
         val adminSecretOverride = if (payload.has("gateway_admin_secret")) payload.optString("gateway_admin_secret", "").trim() else null
@@ -9760,14 +9759,14 @@ class LocalHttpServer(
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
-                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false))
+                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false, fcmToken = NotifyGatewayClient.loadFcmToken(context)))
         )
     }
 
     private fun handleMeMeRelayRegister(payload: JSONObject): Response {
         val cfg = currentMeMeRelayConfig()
-        val pushToken = payload.optString("device_push_token", cfg.devicePushToken).trim()
-        if (pushToken.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "device_push_token_required")
+        val pushToken = NotifyGatewayClient.loadFcmToken(context)
+        if (pushToken.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "fcm_token_not_available")
         val body = JSONObject()
             .put("device_id", currentMeMeConfig().deviceId)
             .put("fcm_token", pushToken)
@@ -9780,15 +9779,13 @@ class LocalHttpServer(
         if (!result.optBoolean("ok", false)) {
             return jsonError(Response.Status.SERVICE_UNAVAILABLE, "relay_register_failed", result)
         }
-        val saved = cfg.copy(devicePushToken = pushToken)
-        saveMeMeRelayConfig(saved, adminSecretOverride = null, clearAdminSecret = false)
         meMeRelayLastRegisterAtMs = System.currentTimeMillis()
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
                 .put("registered", true)
                 .put("relay_result", result)
-                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false))
+                .put("config", currentMeMeRelayConfig().toJson(includeSecrets = false, fcmToken = pushToken))
         )
     }
 
@@ -11000,7 +10997,6 @@ class LocalHttpServer(
             gatewayBaseUrl = normalizeMeMeRelayBaseUrl(meMePrefs.getString("relay_gateway_base_url", DEFAULT_ME_ME_RELAY_BASE_URL) ?: DEFAULT_ME_ME_RELAY_BASE_URL),
             provider = (meMePrefs.getString("relay_provider", "me_me") ?: "me_me").trim().ifBlank { "me_me" },
             routeTokenTtlSec = meMePrefs.getInt("relay_route_token_ttl_sec", 300).coerceIn(30, 86_400),
-            devicePushToken = (meMePrefs.getString("relay_device_push_token", "") ?: "").trim(),
             gatewayAdminSecret = adminSecret
         )
     }
@@ -11015,7 +11011,6 @@ class LocalHttpServer(
             .putString("relay_gateway_base_url", normalizeMeMeRelayBaseUrl(cfg.gatewayBaseUrl))
             .putString("relay_provider", cfg.provider.trim().ifBlank { "me_me" })
             .putInt("relay_route_token_ttl_sec", cfg.routeTokenTtlSec.coerceIn(30, 86_400))
-            .putString("relay_device_push_token", cfg.devicePushToken.trim())
             .apply()
         if (clearAdminSecret) {
             runCatching { credentialStore.delete(ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL) }
@@ -13023,16 +13018,15 @@ class LocalHttpServer(
         val gatewayBaseUrl: String,
         val provider: String,
         val routeTokenTtlSec: Int,
-        val devicePushToken: String,
         val gatewayAdminSecret: String
     ) {
-        fun toJson(includeSecrets: Boolean): JSONObject {
+        fun toJson(includeSecrets: Boolean, fcmToken: String = ""): JSONObject {
             val out = JSONObject()
                 .put("enabled", enabled)
                 .put("gateway_base_url", gatewayBaseUrl)
                 .put("provider", provider)
                 .put("route_token_ttl_sec", routeTokenTtlSec)
-                .put("device_push_token", devicePushToken)
+                .put("device_push_token", fcmToken)
                 .put("gateway_admin_secret_configured", gatewayAdminSecret.isNotBlank())
             if (includeSecrets) {
                 out.put("gateway_admin_secret", gatewayAdminSecret)

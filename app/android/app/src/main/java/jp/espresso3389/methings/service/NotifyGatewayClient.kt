@@ -19,6 +19,7 @@ object NotifyGatewayClient {
     private const val BASE_URL = "https://hooks.methings.org"
     private const val PREFS = "methings_fcm"
     private const val KEY_PULL_SECRET = "pull_secret"
+    private const val KEY_FCM_TOKEN = "fcm_token"
 
     data class RegisterResult(
         val ok: Boolean,
@@ -40,7 +41,22 @@ object NotifyGatewayClient {
         val error: String = ""
     )
 
+    /** Save the FCM token so other components (e.g. me.me relay) can read it. */
+    fun saveFcmToken(context: Context, token: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_FCM_TOKEN, token)
+            .apply()
+    }
+
+    /** Load the most recently saved FCM token, or empty string. */
+    fun loadFcmToken(context: Context): String {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_FCM_TOKEN, "") ?: ""
+    }
+
     fun registerDevice(context: Context, deviceId: String, fcmToken: String): RegisterResult {
+        saveFcmToken(context, fcmToken)
         return try {
             val url = URL("$BASE_URL/devices/register")
             val conn = (url.openConnection() as HttpURLConnection).apply {

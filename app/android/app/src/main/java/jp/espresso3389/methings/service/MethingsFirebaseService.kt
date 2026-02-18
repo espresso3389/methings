@@ -17,6 +17,7 @@ class MethingsFirebaseService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         Log.i(TAG, "FCM token refreshed")
+        NotifyGatewayClient.saveFcmToken(applicationContext, token)
         Thread {
             try {
                 val deviceId = InstallIdentity(applicationContext).get()
