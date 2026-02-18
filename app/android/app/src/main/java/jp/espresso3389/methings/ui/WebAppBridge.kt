@@ -485,6 +485,20 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun hasNearbyPermissions(): Boolean {
+        return activity.hasNearbyPermissions()
+    }
+
+    @JavascriptInterface
+    fun requestNearbyPermissions() {
+        handler.post {
+            activity.requestNearbyPermissions { ok ->
+                activity.evalJs("window.onNearbyPermissionsResult && window.onNearbyPermissionsResult($ok)")
+            }
+        }
+    }
+
+    @JavascriptInterface
     fun setMeSyncQrDisplayMode(enabled: Boolean) {
         handler.post {
             activity.setMeSyncQrDisplayMode(enabled)

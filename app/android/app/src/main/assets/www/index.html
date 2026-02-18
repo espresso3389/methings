@@ -2009,6 +2009,7 @@
           <div class="btn-group">
             <button class="btn" id="openMeMeSettingsModalBtn">me.me Settings</button>
             <button class="btn" id="openMeMePeersModalBtn">Status</button>
+            <button class="btn" id="meMePermissionsBtn">Permissions</button>
           </div>
         </section>
 
@@ -2170,6 +2171,22 @@
         </div>
         <div class="btn-group" style="margin-top:12px;">
           <button class="btn" id="meSyncExportCancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- me.me Onboarding / Permissions Modal -->
+    <div class="modal" id="meMeOnboardingModal" role="dialog" aria-modal="true" aria-labelledby="meMeOnboardingTitle">
+      <div class="modal-card" style="max-width:340px; text-align:center;">
+        <div style="font-size:40px; margin-bottom:8px;">&#129302;</div>
+        <div class="card-title" id="meMeOnboardingTitle" style="margin-bottom:4px;">me.me &mdash; Device Discovery</div>
+        <p class="muted" style="font-size:13px; line-height:1.5; margin:0 0 16px;">
+          me.me lets your devices discover and connect to each other nearby.
+          Bluetooth and Wi-Fi permissions are needed for this to work.
+        </p>
+        <div class="btn-group" style="justify-content:center;">
+          <button class="btn primary" id="meMeOnboardingAllowBtn">Allow</button>
+          <button class="btn" id="meMeOnboardingLaterBtn">Later</button>
         </div>
       </div>
     </div>
@@ -7300,6 +7317,10 @@
       const permApprovalsRefresh = $("permApprovalsRefresh");
       const permApprovalsList = $("permApprovalsList");
       const meMeStatus = $("meMeStatus");
+      const meMePermissionsBtn = $("meMePermissionsBtn");
+      const meMeOnboardingModal = $("meMeOnboardingModal");
+      const meMeOnboardingAllowBtn = $("meMeOnboardingAllowBtn");
+      const meMeOnboardingLaterBtn = $("meMeOnboardingLaterBtn");
       const openMeMeSettingsModalBtn = $("openMeMeSettingsModalBtn");
       const openMeMePeersModalBtn = $("openMeMePeersModalBtn");
       const meMeSettingsModal = $("meMeSettingsModal");
@@ -9023,6 +9044,27 @@
       wireSimpleModal(permApprovalsModal, openPermApprovalsModalBtn, permApprovalsModalClose);
       wireSimpleModal(meMeSettingsModal, openMeMeSettingsModalBtn, meMeSettingsModalClose);
       wireSimpleModal(meMePeersModal, null, meMePeersModalClose);
+      wireSimpleModal(meMeOnboardingModal, null, meMeOnboardingLaterBtn);
+      meMeOnboardingAllowBtn.addEventListener("click", () => {
+        if (typeof AndroidBridge !== "undefined" && AndroidBridge.requestNearbyPermissions) {
+          meMeOnboardingAllowBtn.disabled = true;
+          meMeOnboardingAllowBtn.textContent = "Requesting\u2026";
+          AndroidBridge.requestNearbyPermissions();
+        } else {
+          closeSimpleModal(meMeOnboardingModal);
+        }
+      });
+      meMePermissionsBtn.addEventListener("click", () => {
+        meMeOnboardingAllowBtn.disabled = false;
+        meMeOnboardingAllowBtn.textContent = "Allow";
+        openSimpleModal(meMeOnboardingModal);
+      });
+      window.onNearbyPermissionsResult = function(ok) {
+        meMeOnboardingAllowBtn.disabled = false;
+        meMeOnboardingAllowBtn.textContent = "Allow";
+        closeSimpleModal(meMeOnboardingModal);
+        showToast(ok ? "Permissions granted" : "Permissions denied", 1800);
+      };
       wireSimpleModal(deviceInfoModal, topbarDeviceName, deviceInfoModalClose);
       topbarDeviceName.addEventListener("click", async () => {
         await refreshDeviceInfoModal();
@@ -10202,6 +10244,16 @@
       setInterval(refreshPin, 1000);
       setInterval(updatePinCountdown, 1000);
       setInterval(refreshAppUpdateWorkStatus, 15000);
+
+      // me.me BLE onboarding: auto-show on first launch if permissions not yet granted
+      try {
+        if (typeof AndroidBridge !== "undefined" && AndroidBridge.hasNearbyPermissions
+            && !AndroidBridge.hasNearbyPermissions()
+            && !localStorage.getItem("me_me_onboarding_shown")) {
+          localStorage.setItem("me_me_onboarding_shown", "1");
+          openSimpleModal(meMeOnboardingModal);
+        }
+      } catch (_) {}
     </script>
   </body>
 </html>

@@ -237,8 +237,7 @@ class MainActivity : AppCompatActivity() {
         PythonActivity.mActivity = this
 
         startForegroundService(Intent(this, AgentService::class.java))
-        ensureNotificationPermission()
-        ensureNearbyPermissions()
+        ensureStartupPermissions()
 
         val dp = resources.displayMetrics.density
         val isPortrait = resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
@@ -1284,30 +1283,49 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Restart request sent…", Toast.LENGTH_SHORT).show()
     }
 
-    private fun ensureNotificationPermission() {
-        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
-            return
+    private fun ensureStartupPermissions() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val needed = mutableListOf<String>()
+        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            needed += Manifest.permission.POST_NOTIFICATIONS
         }
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf(Manifest.permission.POST_NOTIFICATIONS),
-            1001
-        )
+        // BLE/nearby permissions are now requested via the me.me onboarding popup in the UI.
+        if (needed.isEmpty()) return
+        ActivityCompat.requestPermissions(this, needed.toTypedArray(), 1001)
     }
 
-    private fun ensureNearbyPermissions() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        val needed = arrayOf(
-            Manifest.permission.NEARBY_WIFI_DEVICES,
+    fun hasNearbyPermissions(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
+        return checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(Manifest.permission.NEARBY_WIFI_DEVICES) == PackageManager.PERMISSION_GRANTED
+    }
+
+    fun requestNearbyPermissions(callback: (Boolean) -> Unit) {
+        if (hasNearbyPermissions()) {
+            callback(true)
+            return
+        }
+        if (pendingAndroidPermAction.get() != null) {
+            callback(false)
+            return
+        }
+        val perms = arrayOf(
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.BLUETOOTH_ADVERTISE
-        ).filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
-        if (needed.isEmpty()) return
-        ActivityCompat.requestPermissions(this, needed.toTypedArray(), 1002)
+            Manifest.permission.BLUETOOTH_ADVERTISE,
+            Manifest.permission.NEARBY_WIFI_DEVICES,
+        )
+        val missing = perms.filter { p ->
+            ActivityCompat.checkSelfPermission(this, p) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            callback(true)
+            return
+        }
+        pendingAndroidPermAction.set(callback)
+        androidPermLauncher.launch(missing.toTypedArray())
     }
 
     // ==============================
