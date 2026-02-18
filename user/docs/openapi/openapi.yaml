@@ -392,6 +392,10 @@ paths:
   # ── me.me ──
   /me/me/status:
     $ref: './paths/me_me.yaml#/meMeStatus'
+  /me/me/provision/status:
+    $ref: './paths/me_me.yaml#/meMeProvisionStatus'
+  /me/me/provision/refresh:
+    $ref: './paths/me_me.yaml#/meMeProvisionRefresh'
   /me/me/message/send:
     $ref: './paths/me_me.yaml#/meMeMessageSend'
 

@@ -32,6 +32,115 @@ meMeStatus:
                   type: object
                   description: Discovery runtime state.
 
+meMeProvisionStatus:
+  get:
+    operationId: getMeMeProvisionStatus
+    summary: Get device provisioning status
+    description: >
+      Returns the current provisioning state: whether this device is
+      provisioned (signed in), the account subject, the local device
+      identity, and the list of sibling devices linked to the same account.
+    tags: [MeMe]
+    responses:
+      '200':
+        description: Provisioning status and linked device list.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, provisioned]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                provisioned:
+                  type: boolean
+                  description: Whether the device is provisioned (signed in with a valid signaling token).
+                user_subject:
+                  type: string
+                  nullable: true
+                  description: Account subject identifier, or null if not provisioned.
+                device_id:
+                  type: string
+                  description: This device's unique identifier.
+                device_name:
+                  type: string
+                  description: This device's display name.
+                devices:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      device_id:
+                        type: string
+                      device_name:
+                        type: string
+                  description: All devices linked to the same account (including self).
+                claimed_at:
+                  type: integer
+                  format: int64
+                  nullable: true
+                  description: Unix epoch millis when provisioning was completed, or null.
+                p2p_enabled:
+                  type: boolean
+                  description: Whether P2P (WebRTC DataChannel) is enabled.
+                signaling_token_configured:
+                  type: boolean
+                  description: Whether a signaling token is configured for P2P.
+
+meMeProvisionRefresh:
+  post:
+    operationId: postMeMeProvisionRefresh
+    summary: Refresh provisioned device list from gateway
+    description: >
+      Fetches the latest sibling device list from the provisioning gateway
+      and saves it locally. Call this after a new device provisions under the
+      same account, or to ensure the device list is up to date. The device
+      list is also refreshed automatically via push notification when
+      siblings change.
+    tags: [MeMe]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+          example: {}
+    responses:
+      '200':
+        description: Device list refreshed successfully.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                user_subject:
+                  type: string
+                  description: Account subject identifier.
+                devices:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      device_id:
+                        type: string
+                      device_name:
+                        type: string
+                  description: Updated list of sibling devices.
+      '503':
+        description: Gateway unreachable or returned an error.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            example:
+              status: error
+              error: refresh_failed
+
 meMeMessageSend:
   post:
     operationId: postMeMeMessageSend

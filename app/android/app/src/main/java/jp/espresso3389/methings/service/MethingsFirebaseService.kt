@@ -60,6 +60,10 @@ class MethingsFirebaseService : FirebaseMessagingService() {
             routeToRelayIngest(event)
             return
         }
+        if (event.source == "provision") {
+            routeToProvisionRefresh(event)
+            return
+        }
         injectToBrainInbox(event)
     }
 
@@ -92,6 +96,30 @@ class MethingsFirebaseService : FirebaseMessagingService() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to route me.me relay event ${event.eventId}", e)
             injectToBrainInbox(event)
+        }
+    }
+
+    private fun routeToProvisionRefresh(event: NotifyGatewayClient.PullEvent) {
+        try {
+            val url = URL("$LOCAL_SERVER_URL/me/me/provision/refresh")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 10_000
+                readTimeout = 30_000
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                doOutput = true
+            }
+            OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write("{}") }
+            val code = conn.responseCode
+            conn.disconnect()
+
+            if (code in 200..299) {
+                Log.i(TAG, "Routed provision event ${event.eventId} to provision refresh")
+            } else {
+                Log.w(TAG, "Provision refresh failed: code=$code for ${event.eventId}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to route provision event ${event.eventId}", e)
         }
     }
 

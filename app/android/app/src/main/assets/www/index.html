@@ -2289,7 +2289,6 @@
           </div>
           <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
             <button class="btn primary" id="provisionSignInBtn">Sign In</button>
-            <button class="btn" id="provisionRefreshBtn" style="display:none;">Refresh Devices</button>
           </div>
         </div>
 
@@ -7504,7 +7503,6 @@
       const meMeBlockedDevices = $("meMeBlockedDevices");
       const provisionIdentityDisplay = $("provisionIdentityDisplay");
       const provisionSignInBtn = $("provisionSignInBtn");
-      const provisionRefreshBtn = $("provisionRefreshBtn");
       const meMeRefreshBtn = $("meMeRefreshBtn");
       const meMeSaveBtn = $("meMeSaveBtn");
       const meSyncStatus = $("meSyncStatus");
@@ -9220,7 +9218,16 @@
         await refreshDeviceInfoModal();
       });
       deviceInfoRefreshBtn.addEventListener("click", async () => {
-        await refreshDeviceInfoModal();
+        deviceInfoRefreshBtn.disabled = true;
+        try {
+          await fetch(API + "/me/me/provision/refresh", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: "{}",
+          }).catch(() => {});
+        } finally {
+          await refreshDeviceInfoModal();
+        }
       });
       openPermApprovalsModalBtn.addEventListener("click", async () => {
         await refreshPermApprovals();
@@ -9370,11 +9377,9 @@
           if (data.provisioned && data.user_subject) {
             provisionIdentityDisplay.textContent = String(data.user_subject);
             provisionIdentityDisplay.style.color = "var(--accent)";
-            provisionRefreshBtn.style.display = "";
           } else {
             provisionIdentityDisplay.textContent = "Not signed in";
             provisionIdentityDisplay.style.color = "";
-            provisionRefreshBtn.style.display = "none";
           }
         } catch (_) {}
       }
@@ -9400,26 +9405,6 @@
           showToast("Sign-in failed: " + e.message, 2500);
         } finally {
           provisionSignInBtn.disabled = false;
-        }
-      });
-
-      provisionRefreshBtn.addEventListener("click", async () => {
-        provisionRefreshBtn.disabled = true;
-        try {
-          const res = await fetch(API + "/me/me/provision/refresh", {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: "{}",
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(String(data.error || "refresh_failed"));
-          showToast("Devices refreshed", 1400);
-          await loadProvisionStatus();
-          await refreshMeMeStatus();
-        } catch (e) {
-          showToast("Refresh failed: " + e.message, 2000);
-        } finally {
-          provisionRefreshBtn.disabled = false;
         }
       });
 
