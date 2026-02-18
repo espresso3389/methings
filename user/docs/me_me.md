@@ -2,37 +2,61 @@
 
 `me.me` is the app-to-app communication foundation for `me.things` devices.
 
-Agent-facing actions (all via `device_api`):
+**Always use the `device_api` tool for me.me operations. Never use `run_curl` to call me.me endpoints directly.**
+
+Agent-facing actions (all via `device_api` tool):
 - `me.me.status`: peer presence and connection snapshot
 - `me.me.scan`: discover nearby devices
-- `me.me.connect`: connect to a peer (`peer_device_id` in payload)
+- `me.me.connect`: connect to a peer
 - `me.me.disconnect`: disconnect from a peer
 - `me.me.message.send`: send content to a connected peer
 - `me.me.messages.pull`: pull received messages from a peer
 - Receive inbound content via `me.me.received` events (pushed to brain)
 
-**Critical**: All parameters go in `payload`, not `detail`. Every action targeting a peer needs `peer_device_id` in `payload`.
+All parameters go in `payload`, not `detail`. Every action targeting a peer needs `peer_device_id` in `payload`.
 
 ### Sending messages
 
-Use `me.me.message.send` for all sends. Put `peer_device_id` in `payload`.
+Always use the `device_api` tool:
 
-Payload contract:
-- Request (triggers remote agent): `{"peer_device_id":"...","type":"request","payload":{"text":"..."}}`
-- Text shortcut (informational only): `{"peer_device_id":"...","text":"..."}`
-- File send: `{"peer_device_id":"...","type":"file","payload":{"rel_path":"captures/photo.jpg"}}`
-- Backward compatible: `{"peer_device_id":"...","message":"..."}` (normalized to `payload.text`)
-- Empty content is rejected with `400 payload_required`.
+```
+device_api(action="me.me.message.send", payload={
+  "peer_device_id": "d_xxx",
+  "type": "request",
+  "payload": {"text": "take a photo and send it back"}
+})
+```
 
-Message `type` determines how the remote device handles the message:
-- `request` / `agent_request` / `task` / `command` / `agent_task`: **triggers the remote agent** to process and respond. Use this when you want the peer device to take action.
-- `message`: informational only — stored on the remote device but does **not** trigger agent processing (unless priority is `high` or `urgent`).
-- `file`: send a file — the server reads and embeds the file content automatically from `payload.rel_path`.
-- **Important**: When asking a remote device to do something (take a photo, run a command, etc.), always use `type: "request"`. Using `type: "message"` or the text shortcut will NOT trigger the remote agent.
+Message `type` is critical:
+- **`request`**: triggers the remote agent to take action. **Always use this when asking a peer to do something.**
+- `message`: informational only — does NOT trigger the remote agent.
+- `file`: send a file — `payload.payload.rel_path` is auto-embedded by the server.
+
+Examples:
+
+Request (triggers remote agent):
+```
+device_api(action="me.me.message.send", payload={
+  "peer_device_id": "d_xxx", "type": "request",
+  "payload": {"text": "take a photo and send it back"}
+})
+```
+
+Send a file:
+```
+device_api(action="me.me.message.send", payload={
+  "peer_device_id": "d_xxx", "type": "file",
+  "payload": {"rel_path": "captures/photo.jpg"}
+})
+```
+
+**Warning**: `"text": "..."` shortcut (without `"type": "request"`) is informational only and will NOT trigger the remote agent.
 
 ### Pulling messages
 
-Use `me.me.messages.pull`: `{"peer_device_id":"d_xxx"}`.
+```
+device_api(action="me.me.messages.pull", payload={"peer_device_id": "d_xxx"})
+```
 
 Notes:
 - Discovery and route selection are automatic (LAN/BLE/gateway fallback). Agents should not orchestrate low-level transport.
