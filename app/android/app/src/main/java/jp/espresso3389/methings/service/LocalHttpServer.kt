@@ -10010,6 +10010,8 @@ class LocalHttpServer(
         val summary = buildMeMeIncomingSummary(fromDeviceName, plain)
         val messagePriority = resolveMeMeMessagePriority(plain)
         val messageType = plain.optString("type", "message").trim().ifBlank { "message" }
+        // Auto-save received file attachments to disk so the agent has a local rel_path
+        saveMeMeReceivedFileIfPresent(plain, fromDeviceId)
         val messagePreview = buildMeMeMessagePreview(plain)
         val runAgent = shouldRunAgentForMeMeMessage(plain, messageType, messagePriority)
         val agentPrompt = if (runAgent) {
@@ -10286,6 +10288,57 @@ class LocalHttpServer(
         if (file.isNotBlank()) return "file:$file"
         val type = message.optString("type", "message").trim().ifBlank { "message" }
         return "type:$type"
+    }
+
+    /**
+     * If the decrypted message payload contains `data_b64` (file attachment),
+     * save it under `me_me_received/<from_device_id>/` and inject `rel_path`
+     * into the payload so the agent can reference the local file.
+     */
+    private fun saveMeMeReceivedFileIfPresent(plain: JSONObject, fromDeviceId: String) {
+        try {
+            val innerPayload = plain.optJSONObject("payload") ?: plain
+            val dataKeys = listOf("data_b64", "file_b64", "attachment_b64", "content_b64", "bytes_b64")
+            val dataKey = dataKeys.firstOrNull { innerPayload.optString(it, "").trim().isNotBlank() }
+                ?: return
+            val b64 = innerPayload.optString(dataKey, "").trim()
+            if (b64.isBlank()) return
+            val bytes = try {
+                android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+            } catch (_: Exception) {
+                return
+            }
+            if (bytes.isEmpty()) return
+            val fileName = innerPayload.optString("file_name", "").trim().ifBlank {
+                val mime = innerPayload.optString("mime_type", "").trim()
+                val ext = when {
+                    mime.startsWith("image/jpeg") || mime.startsWith("image/jpg") -> ".jpg"
+                    mime.startsWith("image/png") -> ".png"
+                    mime.startsWith("image/webp") -> ".webp"
+                    mime.startsWith("audio/") -> ".audio"
+                    mime.startsWith("video/") -> ".mp4"
+                    else -> ".bin"
+                }
+                "received_${System.currentTimeMillis()}$ext"
+            }
+            // Sanitize filename
+            val safeName = fileName.replace(Regex("[^a-zA-Z0-9._\\-]"), "_").take(128)
+            val safeDeviceId = fromDeviceId.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")
+            val dir = File(File(context.filesDir, "user/me_me_received"), safeDeviceId)
+            dir.mkdirs()
+            val outFile = File(dir, safeName)
+            outFile.writeBytes(bytes)
+            val relPath = "me_me_received/$safeDeviceId/$safeName"
+            // Inject rel_path into the inner payload so the agent sees a local file path
+            innerPayload.put("rel_path", relPath)
+            // Remove raw data to keep the stored message small
+            innerPayload.remove(dataKey)
+            innerPayload.put("saved_to_disk", true)
+            innerPayload.put("file_size", bytes.size)
+            Log.i(TAG, "saveMeMeReceivedFile: saved ${bytes.size} bytes to $relPath")
+        } catch (ex: Exception) {
+            Log.w(TAG, "saveMeMeReceivedFile: failed to save attachment: ${ex.message}")
+        }
     }
 
     private fun shouldRunAgentForMeMeMessage(

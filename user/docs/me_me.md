@@ -58,6 +58,22 @@ device_api(action="me.me.message.send", payload={
 device_api(action="me.me.messages.pull", payload={"peer_device_id": "d_xxx"})
 ```
 
+### Receiving files
+
+When a peer sends a file (type `file`), the app automatically:
+1. Decodes the file data and saves it to `me_me_received/<peer_device_id>/<filename>`
+2. Injects `rel_path` into the pulled message pointing to the saved file
+3. Strips the raw base64 data to keep the message small
+
+The agent receives a `me.me.received` event with `run_agent=true`. Pull the message to get the `rel_path`:
+
+```
+device_api(action="me.me.messages.pull", payload={"peer_device_id": "d_xxx"})
+# → payload.rel_path = "me_me_received/d_xxx/photo.jpg"
+```
+
+Use `rel_path: <path>` in your chat response to show an inline preview card to the user.
+
 Notes:
 - Discovery and route selection are automatic (LAN/BLE/gateway fallback). Agents should not orchestrate low-level transport.
 - There is no `me.me.message.send_file` action. Use `me.me.message.send` with `payload.payload.rel_path`.

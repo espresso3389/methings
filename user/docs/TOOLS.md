@@ -215,8 +215,14 @@ Messaging:
 - Send file: `device_api(action="me.me.message.send", payload={"peer_device_id": "d_xxx", "type": "file", "payload": {"rel_path": "captures/photo.jpg"}})`
 - Pull messages: `device_api(action="me.me.messages.pull", payload={"peer_device_id": "d_xxx"})`
 
+Receiving files:
+- Received files are auto-saved to `me_me_received/<peer_device_id>/<filename>`.
+- The pulled message contains `rel_path` pointing to the saved file — use it directly.
+- Use `rel_path: <path>` in your chat response to show an inline preview card.
+
 Important:
 - **`type: "request"` is required** when asking a peer to take action. Without it, the remote agent is NOT triggered.
+- Inbound `file` and `response` messages trigger the local agent automatically.
 - `peer_device_id` goes in `payload`, never in `detail`.
 - Transport (BLE/LAN/relay) is automatic; do not specify it.
 
