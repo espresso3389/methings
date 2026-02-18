@@ -21,7 +21,7 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 | **SSH** | Built-in SSH server (Dropbear) with PIN/key/biometric auth; SSH client for remote exec and SCP |
 | **Browser** | Agent-controllable WebView with screenshot, JS injection, tap/scroll simulation |
 | **Cloud** | API broker with automatic secret injection from encrypted vault |
-| **me.me** | Encrypted device-to-device messaging over WiFi/BLE/WebRTC P2P/relay, file transfer, auto-discovery |
+| **me.me** | Encrypted device-to-device messaging over WiFi/BLE/WebRTC P2P/relay, file transfer, auto-discovery, device provisioning via OAuth sign-in |
 | **me.sync** | Full device state migration via QR code (Nearby Connections or LAN) |
 | **Notifications** | Android notifications, webhooks, Firebase Cloud Messaging |
 
@@ -57,10 +57,21 @@ Every device capability is exposed as an HTTP endpoint on `127.0.0.1:33389`. The
 - **Offline by default** -- everything runs locally except explicit cloud API calls
 - **Audit trail** -- all tool invocations and permission decisions are logged
 
+## Device Provisioning (Sign-In)
+
+Sign in with Google or GitHub to link your devices to a single account. Provisioning unlocks:
+
+- **Device management** -- all your provisioned devices appear in each other's device list with "Linked" status, visible in the toolbar and me.me peers modal
+- **Automatic mutual trust** -- provisioned siblings auto-approve each other unconditionally for me.me connections (no manual toggle or on-device identity verification needed)
+- **Enhanced P2P networking** -- sign-in auto-configures the WebRTC signaling token and TURN server credentials, enabling P2P DataChannel connections across NATs without manual setup
+- **Server-side provider selection** -- the app opens a sign-in page (hosted on the gateway) in CustomTabs where the user picks Google or GitHub; browser credentials are available so existing sessions work seamlessly
+
+Flow: App opens CustomTabs → gateway sign-in page → OAuth provider → callback deep link back to app → app claims provision token → receives signaling token + sibling device list → auto-configures P2P.
+
 ## Security
 
 - **Credential encryption** -- API keys and SSH keys encrypted with Android Keystore (AES-GCM); ciphertext stored in Room DB
-- **Verified device ownership** -- Google Sign-In via Credential Manager for me.me auto-approve; identity stored in encrypted vault
+- **Device provisioning** -- server-side OAuth (Google/GitHub) binds devices to a user account; provisioned siblings auto-approve each other for me.me connections
 - **End-to-end encryption** -- me.me messages encrypted with AES-GCM; session keys derived from X25519/ECDH via HKDF-SHA256; WebRTC P2P uses DTLS transport encryption
 - **Permission gating** -- tool invocations requiring device access trigger user consent prompts
 - **Biometric option** -- sensitive operations can require fingerprint/face authentication
@@ -175,18 +186,17 @@ Download from [Firebase Console](https://console.firebase.google.com/) -> Projec
 
 ### Google Cloud / Firebase Setup
 
-To enable Google Sign-In for verified device ownership:
-
 1. Create a project in [Google Cloud Console](https://console.cloud.google.com/)
 2. Configure **APIs & Services -> OAuth consent screen** (External)
 3. Create OAuth Client IDs under **APIs & Services -> Credentials**:
-   - **Web application** -- use this Client ID as `GOOGLE_WEB_CLIENT_ID`
+   - **Web application** -- used by the gateway for server-side OAuth provisioning flow. Also set as `GOOGLE_WEB_CLIENT_ID` for the Android build.
    - **Android** (debug) -- package `jp.espresso3389.methings` + debug keystore SHA-1:
      ```
      keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android | grep SHA1
      ```
    - **Android** (release) -- same package + release keystore SHA-1
 4. Add a Firebase Android app with the same package name to get `google-services.json`
+5. Set the Web Client ID and secret as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the gateway service (see [methings-notify-gateway](https://github.com/espresso3389/methings-notify-gateway))
 
 ## GitHub Actions (CI)
 

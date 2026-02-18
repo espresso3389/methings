@@ -80,6 +80,19 @@ Build an Android 14+ app that provides a Python development environment with:
 - Integration tests for WebView <-> local service <-> Python worker.
 - Manual test checklist for SSHD + permission prompts.
 
+## Device Provisioning (OAuth Sign-In)
+- Users sign in via Google or GitHub through the gateway's server-side OAuth flow (opened in CustomTabs from the app)
+- Sign-in binds the device to a user account on the gateway (`user_subject -> device_id` mapping in `user_devices` table)
+- Provisioned siblings (devices under the same account) auto-approve each other unconditionally for me.me connections
+- Sign-in auto-configures the WebRTC signaling token, enabling P2P DataChannel connections (including TURN relay for NAT traversal) without manual setup
+- Provisioned siblings appear in the device list with "Linked" status and are reachable via P2P or relay transport
+- The sign-in page is hosted on the gateway (`/provision/start`); provider selection (Google/GitHub) happens server-side, not in the app
+- Key files:
+  - `app/android/app/src/main/assets/www/index.html` — Account UI section, provision status display, linked device chips
+  - `app/android/app/src/main/java/jp/espresso3389/methings/service/LocalHttpServer.kt` — `/me/me/provision/*` endpoints, auto-approve logic, provisioned device list in `/me/me/status`
+  - `app/android/app/src/main/java/jp/espresso3389/methings/ui/MainActivity.kt` — `openUrlInBrowserNewTask()` for CustomTabs with `FLAG_ACTIVITY_NEW_TASK`, deep link handling via `onNewIntent()`
+  - `app/android/app/src/main/java/jp/espresso3389/methings/ui/WebAppBridge.kt` — `openInBrowser()` JS bridge method
+
 ## Current UI (2026-02)
 - Minimal control panel in WebView (Python worker, SSHD, PIN auth, Wi-Fi IP, Reset UI).
 - UI assets are served from `files/user/www` and can be reset from the UI or via `POST /ui/reset`.
