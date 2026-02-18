@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import base64
 import struct
@@ -205,7 +206,7 @@ class DeviceApiTool:
             "me.sync.v3.import.apply": 300.0,
             "me.me.scan": 45.0,
             "me.me.connect": 40.0,
-            "me.me.message.send_file": 90.0,
+            "me.me.message.send": 45.0,
             "debug.logs.export": 45.0,
             "debug.logs.stream": 140.0,
             "webview.open": 35.0,
@@ -320,11 +321,14 @@ class DeviceApiTool:
             # Rebuild payload with proper structure for message.send.
             # Use a generous timeout so BLE has time for large payloads
             # and the relay fallback can kick in if BLE fails.
+            # timeout_ms  = server-side BLE transport timeout
+            # timeout_s   = Python HTTP client timeout (checked at line ~390)
             payload = {
                 "peer_device_id": peer,
                 "type": payload.get("type") or "file",
                 "payload": inner,
                 "timeout_ms": 60_000,
+                "timeout_s": 120.0,
             }
             # Treat as message.send from here on
             action = "me.me.message.send"
@@ -337,6 +341,35 @@ class DeviceApiTool:
                 or ""
             ).strip()
             if peer and not str(payload.get("peer_device_id") or "").strip():
+                payload["peer_device_id"] = peer
+
+        # Generic peer_device_id extraction for all me.me actions.  Agents
+        # sometimes place peer_device_id at the top level of args or inside
+        # the detail string instead of the payload.  As a last resort, infer
+        # from the single active me.me connection.
+        if action.startswith("me.me.") and not str(payload.get("peer_device_id") or "").strip():
+            peer = str(
+                args.get("peer_device_id")
+                or args.get("target_device_id")
+                or args.get("device_id")
+                or ""
+            ).strip()
+            if not peer:
+                detail = str(args.get("detail") or "")
+                m = re.search(r"(?:peer_device_id|device_id)\s*[=:]\s*(\S+)", detail)
+                if m:
+                    peer = m.group(1).strip("'\"")
+            if not peer:
+                # Infer from the single active me.me connection so agents
+                # that forget to pass peer_device_id still work.
+                try:
+                    st = self._request_json("GET", "/me/me/status", None, timeout_s=4.0)
+                    conns = st.get("connections") or []
+                    if len(conns) == 1:
+                        peer = str(conns[0].get("peer_device_id") or "").strip()
+                except Exception:
+                    pass
+            if peer:
                 payload["peer_device_id"] = peer
 
         # me.me permissions are auto-approved server-side to keep nearby device workflows
