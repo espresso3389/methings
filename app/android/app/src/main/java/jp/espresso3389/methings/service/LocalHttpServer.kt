@@ -236,6 +236,8 @@ class LocalHttpServer(
                     val p2pCfg = currentMeMeP2pConfig()
                     if (p2pCfg.enabled) meMeP2pManager.initialize(buildP2pManagerConfig(p2pCfg))
                 }
+                // Refresh provisioned device list from gateway on startup
+                runCatching { handleProvisionRefresh() }
             }
             scheduleMeMeDiscoveryLoop()
             scheduleMeMeConnectionCheckLoop()
@@ -762,6 +764,9 @@ class LocalHttpServer(
             }
             uri == "/me/me/provision/refresh" && session.method == Method.POST -> {
                 handleProvisionRefresh()
+            }
+            uri == "/me/me/provision/signout" && session.method == Method.POST -> {
+                handleProvisionSignout()
             }
             uri == "/me/me/data/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -11575,6 +11580,53 @@ class LocalHttpServer(
                 .put("user_subject", userSubject)
                 .put("devices", devicesArray)
         )
+    }
+
+    private fun handleProvisionSignout(): Response {
+        val cfg = currentMeMeConfig()
+        val relayCfg = currentMeMeRelayConfig()
+        val baseUrl = normalizeMeMeRelayBaseUrl(relayCfg.gatewayBaseUrl)
+        val pullSecret = NotifyGatewayClient.loadPullSecretPublic(context)
+
+        // Tell gateway to remove this device from the account
+        try {
+            val url = java.net.URI("$baseUrl/provision/signout").toURL()
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 6000
+                readTimeout = 10000
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setRequestProperty("Connection", "close")
+                doOutput = true
+            }
+            val body = JSONObject()
+                .put("device_id", cfg.deviceId)
+                .put("pull_secret", pullSecret)
+            conn.outputStream.use { it.write(body.toString().toByteArray()) }
+            val code = conn.responseCode
+            conn.disconnect()
+            if (code !in 200..299) {
+                Log.w(TAG, "Gateway signout returned code=$code")
+            }
+        } catch (ex: Exception) {
+            Log.w(TAG, "Gateway signout failed", ex)
+        }
+
+        // Clear local provisioning state
+        meMePrefs.edit()
+            .remove("provision_user_subject")
+            .remove("provision_devices")
+            .remove("provision_claimed_at")
+            .apply()
+
+        // Clear signaling token (disables P2P)
+        val p2pCfg = currentMeMeP2pConfig()
+        if (p2pCfg.signalingToken.isNotBlank()) {
+            saveMeMeP2pConfig(p2pCfg, tokenOverride = null, clearToken = true)
+            meMeP2pManager.shutdown()
+        }
+
+        return jsonResponse(JSONObject().put("status", "ok"))
     }
 
     private fun getProvisionedSiblingDeviceIds(): Set<String> {

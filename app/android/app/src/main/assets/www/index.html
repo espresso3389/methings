@@ -2289,6 +2289,7 @@
           </div>
           <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
             <button class="btn primary" id="provisionSignInBtn">Sign In</button>
+            <button class="btn danger" id="provisionSignOutBtn" style="display:none;">Sign Out</button>
           </div>
         </div>
 
@@ -2336,25 +2337,24 @@
     </div>
 
     <!-- Device Info Modal (topbar) -->
-    <div class="modal" id="deviceInfoModal" role="dialog" aria-modal="true" aria-labelledby="deviceInfoModalTitle">
+    <div class="modal" id="deviceInfoModal" role="dialog" aria-modal="true" aria-label="Devices">
       <div class="modal-card settings-detail" data-settings-section="me_me" style="max-height:calc(100vh - 40px); display:flex; flex-direction:column; overflow:hidden;">
-        <div class="card-header">
-          <div class="card-icon blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px;"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg></div>
-          <div>
-            <div class="card-title" id="deviceInfoModalTitle" style="margin-bottom:0;">Device Info</div>
-            <div class="muted" style="font-size:12px;" id="deviceInfoSubtitle">Loading...</div>
+        <div style="display:flex; align-items:flex-start; gap:8px;">
+          <div id="deviceInfoSelf" style="flex:1; min-width:0;">
+            <div class="muted">Loading...</div>
           </div>
-          <button class="icon-btn secondary" id="deviceInfoModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+          <button class="icon-btn secondary" id="deviceInfoModalClose" style="width:32px; height:32px; flex-shrink:0;" title="Close" aria-label="Close">&times;</button>
         </div>
-        <div id="deviceInfoSelf" style="margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:10px; background:rgba(255,255,255,0.02);">
-          <div class="muted">Loading device info...</div>
-        </div>
-        <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
+        <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
           <div style="font-weight:600; font-size:14px;">Devices</div>
           <button class="btn" id="deviceInfoRefreshBtn" style="margin-left:auto;">Refresh</button>
         </div>
         <div id="deviceInfoDeviceList" style="margin-top:8px; display:grid; gap:8px; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:60px; flex:1 1 auto;">
           <div class="muted">Loading...</div>
+        </div>
+        <div id="deviceInfoSignIn" style="display:none; margin-top:10px; text-align:center; border-top:1px solid var(--border); padding-top:10px;">
+          <div class="muted" style="margin-bottom:8px;">Sign in to access your devices</div>
+          <button class="btn primary" id="deviceInfoSignInBtn">Sign In</button>
         </div>
       </div>
     </div>
@@ -7482,9 +7482,10 @@
       const deviceInfoModal = $("deviceInfoModal");
       const deviceInfoModalClose = $("deviceInfoModalClose");
       const deviceInfoRefreshBtn = $("deviceInfoRefreshBtn");
-      const deviceInfoSubtitle = $("deviceInfoSubtitle");
       const deviceInfoSelf = $("deviceInfoSelf");
       const deviceInfoDeviceList = $("deviceInfoDeviceList");
+      const deviceInfoSignIn = $("deviceInfoSignIn");
+      const deviceInfoSignInBtn = $("deviceInfoSignInBtn");
       const meMePeersSummary = $("meMePeersSummary");
       const meMePeersList = $("meMePeersList");
       const meMeDeviceName = $("meMeDeviceName");
@@ -7503,6 +7504,7 @@
       const meMeBlockedDevices = $("meMeBlockedDevices");
       const provisionIdentityDisplay = $("provisionIdentityDisplay");
       const provisionSignInBtn = $("provisionSignInBtn");
+      const provisionSignOutBtn = $("provisionSignOutBtn");
       const meMeRefreshBtn = $("meMeRefreshBtn");
       const meMeSaveBtn = $("meMeSaveBtn");
       const meSyncStatus = $("meSyncStatus");
@@ -9377,9 +9379,11 @@
           if (data.provisioned && data.user_subject) {
             provisionIdentityDisplay.textContent = String(data.user_subject);
             provisionIdentityDisplay.style.color = "var(--accent)";
+            provisionSignOutBtn.style.display = "";
           } else {
             provisionIdentityDisplay.textContent = "Not signed in";
             provisionIdentityDisplay.style.color = "";
+            provisionSignOutBtn.style.display = "none";
           }
         } catch (_) {}
       }
@@ -9408,6 +9412,51 @@
         }
       });
 
+      provisionSignOutBtn.addEventListener("click", async () => {
+        if (!await appConfirm("Sign Out", "This device will be removed from linked devices.", { ok: "Sign Out", okClass: "danger" })) return;
+        provisionSignOutBtn.disabled = true;
+        try {
+          const res = await fetch(API + "/me/me/provision/signout", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: "{}",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(String(data.error || "signout_failed"));
+          showToast("Signed out", 1400);
+          await loadProvisionStatus();
+          await refreshMeMeStatus();
+        } catch (e) {
+          showToast("Sign-out failed: " + e.message, 2000);
+        } finally {
+          provisionSignOutBtn.disabled = false;
+        }
+      });
+
+      deviceInfoSignInBtn.addEventListener("click", async () => {
+        deviceInfoSignInBtn.disabled = true;
+        try {
+          const res = await fetch(API + "/me/me/provision/start", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: "{}",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(String(data.error || "provision_start_failed"));
+          const url = String(data.url || "");
+          if (!url) throw new Error("no_url");
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInBrowser) {
+            AndroidBridge.openInBrowser(url);
+          } else {
+            window.open(url, "_blank");
+          }
+        } catch (e) {
+          showToast("Sign-in failed: " + e.message, 2500);
+        } finally {
+          deviceInfoSignInBtn.disabled = false;
+        }
+      });
+
       window.onProvisionResult = function (ok, resultJson) {
         try {
           const data = typeof resultJson === "string" ? JSON.parse(resultJson) : (resultJson || {});
@@ -9421,6 +9470,7 @@
         }
         loadProvisionStatus();
         refreshMeMeStatus();
+        if (deviceInfoModal.classList.contains("show")) refreshDeviceInfoModal();
       };
 
       async function refreshMeMeStatus() {
@@ -9765,10 +9815,11 @@
           const selfName = String(self.device_name || "device");
           const selfId = String(self.device_id || "");
           const allowDisc = !!self.allow_discovery;
-          deviceInfoSubtitle.textContent = selfName;
           deviceInfoSelf.innerHTML =
-            "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(selfName) + "</div>" +
-            "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(selfId) + "</div>" +
+            "<div style='display:flex; align-items:baseline; gap:6px; flex-wrap:wrap;'>" +
+              "<span class='mm-copy' style='font-weight:600; word-break:break-word; cursor:pointer;' data-copy='" + escapeHtml(selfName) + "'>" + escapeHtml(selfName) + "</span>" +
+              "<span class='muted mm-copy' style='word-break:break-all; font-size:12px; cursor:pointer;' data-copy='" + escapeHtml(selfId) + "'>" + escapeHtml(selfId) + "</span>" +
+            "</div>" +
             "<div class='muted' style='margin-top:2px;'>discovery " + (allowDisc ? "on" : "off") + "</div>";
           // Merge connections, pending requests, discovered, and provisioned into unified list
           const connIds = new Set();
@@ -9856,12 +9907,12 @@
             return aKey < bKey ? -1 : aKey > bKey ? 1 : 0;
           });
           if (devices.length <= 0) {
-            deviceInfoDeviceList.innerHTML = "<div class='muted'>No devices found</div>";
+            deviceInfoDeviceList.innerHTML = "<div class='muted'>No other devices found</div>";
           } else {
             deviceInfoDeviceList.innerHTML = "";
             devices.forEach((d) => {
               const item = document.createElement("div");
-              item.style.cssText = "border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,0.02);";
+              item.style.cssText = "border:1px solid var(--border); border-radius:10px; padding:10px; background:rgba(255,255,255,0.02); display:flex; align-items:center; gap:10px;";
               const display = d.name || d.id || "unknown";
               const icon = methodIcons[d.method] || d.method.split(", ").map((m) => methodIcons[m] || "").filter(Boolean).join("") || "";
               const stateLabel = String(d.authState || "Discovered");
@@ -9871,16 +9922,24 @@
                 stateLabel === "Unapproved" ? "#d6a84b" :
                 stateLabel === "Linked" ? "#818cf8" :
                 "var(--ink-secondary)";
-              let html = "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(display) + "</div>";
+              let html = "<div style='flex:1; min-width:0;'>";
+              html += "<div style='display:flex; align-items:baseline; gap:6px; flex-wrap:wrap;'>";
+              html += "<span class='mm-copy' style='font-weight:600; word-break:break-word; cursor:pointer;' data-copy='" + escapeHtml(display) + "'>" + escapeHtml(display) + "</span>";
               if (d.name && d.id) {
-                html += "<div class='muted' style='margin-top:2px; word-break:break-all; font-size:12px;'>" + escapeHtml(d.id) + "</div>";
+                html += "<span class='muted mm-copy' style='word-break:break-all; font-size:12px; cursor:pointer;' data-copy='" + escapeHtml(d.id) + "'>" + escapeHtml(d.id) + "</span>";
               }
+              html += "</div>";
               html += "<div class='muted' style='margin-top:2px;'><span style='color:" + stateColor + ";'>" + stateLabel + "</span> \u00b7 " + (icon ? icon + " " : "") + escapeHtml(d.method) + "</div>";
               html += "<div class='muted' style='margin-top:2px;'>" + escapeHtml(d.timeLabel) + " " + escapeHtml(formatEpochLocal(d.time)) + "</div>";
+              html += "</div>";
               if (d.id) {
-                html += "<div style='display:flex; gap:8px; margin-top:8px;'>" +
-                  "<button class='btn primary' data-mm-device-action='approve' data-mm-device-id='" + escapeHtml(d.id) + "' data-mm-request-id='" + escapeHtml(String(d.requestId || "")) + "'>Approve</button>" +
-                  "<button class='btn danger' data-mm-device-action='block' data-mm-device-id='" + escapeHtml(d.id) + "' data-mm-request-id='" + escapeHtml(String(d.requestId || "")) + "'>Block</button>" +
+                const isAuthorized = stateLabel === "Authorized" || stateLabel === "Linked";
+                const isBlocked = stateLabel === "Blocked";
+                html += "<div style='display:flex; flex-direction:column; gap:6px; flex-shrink:0;'>" +
+                  "<button class='btn primary' data-mm-device-action='approve' data-mm-device-id='" + escapeHtml(d.id) + "' data-mm-request-id='" + escapeHtml(String(d.requestId || "")) + "'" + (isAuthorized ? " disabled" : "") + " style='padding:4px 10px; font-size:12px;'>Approve</button>" +
+                  (isBlocked
+                    ? "<button class='btn' data-mm-device-action='unblock' data-mm-device-id='" + escapeHtml(d.id) + "' style='padding:4px 10px; font-size:12px;'>Unblock</button>"
+                    : "<button class='btn danger' data-mm-device-action='block' data-mm-device-id='" + escapeHtml(d.id) + "' data-mm-request-id='" + escapeHtml(String(d.requestId || "")) + "' style='padding:4px 10px; font-size:12px;'>Block</button>") +
                 "</div>";
               }
               item.innerHTML = html;
@@ -9908,6 +9967,9 @@
                       await setMeMePeerPolicy(peerId, "block");
                     }
                     showToast("Peer blocked", 1400);
+                  } else if (action === "unblock") {
+                    await setMeMePeerPolicy(peerId, "clear");
+                    showToast("Peer unblocked", 1400);
                   }
                   await Promise.all([
                     refreshDeviceInfoModal(),
@@ -9923,8 +9985,18 @@
               });
             });
           }
+          const isProvisioned = !!(provData.provisioned && provData.user_subject);
+          deviceInfoSignIn.style.display = isProvisioned ? "none" : "";
+          deviceInfoModal.querySelectorAll(".mm-copy[data-copy]").forEach((el) => {
+            el.addEventListener("click", () => {
+              const v = el.getAttribute("data-copy") || "";
+              if (v && navigator.clipboard) {
+                navigator.clipboard.writeText(v).then(() => showToast("Copied", 1000)).catch(() => {});
+              }
+            });
+          });
         } catch (_) {
-          deviceInfoSelf.innerHTML = "<div class='muted'>Failed to load device info</div>";
+          deviceInfoSelf.innerHTML = "<div class='muted'>Failed to load</div>";
           showToast("Failed to load device info", 1800);
         } finally {
           deviceInfoRefreshBtn.disabled = false;
