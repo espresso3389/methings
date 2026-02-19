@@ -1,10 +1,12 @@
-fastapi==0.99.1
-starlette==0.27.0
-pydantic==1.10.13
+fastapi==0.129.0
+starlette==0.47.2
+pydantic==2.12.5
 typing-extensions
-anyio==3.7.1
+typing-inspection
+annotated-doc
+anyio==4.12.1
 sniffio
-uvicorn==0.23.2
+uvicorn==0.41.0
 click
 h11
 requests
