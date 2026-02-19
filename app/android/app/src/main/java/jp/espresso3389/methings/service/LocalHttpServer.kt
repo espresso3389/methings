@@ -161,6 +161,16 @@ class LocalHttpServer(
     private val meMeRelayEvents = mutableListOf<JSONObject>()
     private val meMeRelayEventsLock = Any()
     private val meMePeerPresence = ConcurrentHashMap<String, MeMePeerPresence>()
+    private data class RemotePermission(
+        val permissionId: String,
+        val tool: String,
+        val detail: String,
+        val sourceDeviceId: String,
+        val sourceDeviceName: String,
+        val receivedAt: Long,
+        val status: String = "pending"
+    )
+    private val meMeRemotePermissions = ConcurrentHashMap<String, RemotePermission>()
     private val meMeReconnectAttemptAt = ConcurrentHashMap<String, Long>()
     @Volatile private var meMeLastScanAtMs: Long = 0L
     @Volatile private var meMeRelayLastRegisterAtMs: Long = 0L
@@ -768,6 +778,13 @@ class LocalHttpServer(
             uri == "/me/me/provision/signout" && session.method == Method.POST -> {
                 handleProvisionSignout()
             }
+            uri == "/me/me/permissions/remote" && session.method == Method.GET -> {
+                handleMeMeRemotePermissionsList()
+            }
+            uri.startsWith("/me/me/permissions/remote/") && uri.endsWith("/resolve") && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                handleMeMeRemotePermissionResolve(uri, payload)
+            }
             uri == "/me/me/data/ingest" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 handleMeMeDataIngest(payload, sourceIp = "local")
@@ -1230,6 +1247,10 @@ class LocalHttpServer(
                         }
                         // Notify the foreground service so it can advance queued permission notifications.
                         sendPermissionResolved(updated.id, updated.status)
+                        // Dismiss forwarded permission on connected siblings.
+                        Thread {
+                            dismissRemotePermission(updated.id, updated.status)
+                        }.apply { isDaemon = true }.start()
                         // Also notify the Python agent runtime so it can resume automatically.
                         // Run this off-thread so /permissions/{id}/approve responds immediately even if
                         // the worker is slow or temporarily blocked.
@@ -10172,6 +10193,26 @@ class LocalHttpServer(
         val summary = buildMeMeIncomingSummary(fromDeviceName, plain)
         val messagePriority = resolveMeMeMessagePriority(plain)
         val messageType = plain.optString("type", "message").trim().ifBlank { "message" }
+
+        // Intercept system-level me.me messages (not stored in inbox, not sent to brain).
+        when (messageType) {
+            "permission_forward" -> {
+                handleRemotePermissionForward(fromDeviceId, fromDeviceName, plain)
+                maybeSendMeMeDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = true, error = "")
+                return jsonResponse(JSONObject().put("status", "ok").put("stored", false))
+            }
+            "permission_resolve" -> {
+                handleRemotePermissionResolve(fromDeviceId, plain)
+                maybeSendMeMeDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = true, error = "")
+                return jsonResponse(JSONObject().put("status", "ok").put("stored", false))
+            }
+            "permission_dismiss" -> {
+                handleRemotePermissionDismiss(plain)
+                maybeSendMeMeDataAck(sourceIp, deliveryId, sessionId, fromDeviceId, ok = true, error = "")
+                return jsonResponse(JSONObject().put("status", "ok").put("stored", false))
+            }
+        }
+
         // Auto-save received file attachments to disk so the agent has a local rel_path
         saveMeMeReceivedFileIfPresent(plain, fromDeviceId)
         // Extract rel_path if the file was saved (available after saveMeMeReceivedFileIfPresent)
@@ -13899,6 +13940,162 @@ class LocalHttpServer(
         intent.putExtra(EXTRA_PERMISSION_DETAIL, detail)
         intent.putExtra(EXTRA_PERMISSION_BIOMETRIC, forceBiometric)
         context.sendBroadcast(intent)
+
+        // Forward to connected provisioned siblings for remote approval.
+        // Biometric permissions require local device auth and are never forwarded.
+        if (!forceBiometric) {
+            Thread {
+                forwardPermissionToSiblings(id, tool, detail)
+            }.apply { isDaemon = true }.start()
+        }
+    }
+
+    private fun forwardPermissionToSiblings(permissionId: String, tool: String, detail: String) {
+        val selfCfg = currentMeMeConfig()
+        val siblingIds = getProvisionedSiblingDeviceIds()
+        for ((peerId, conn) in meMeConnections) {
+            if (conn.state != "connected") continue
+            if (!siblingIds.contains(peerId)) continue
+            try {
+                sendMeMeEncryptedMessage(
+                    peerDeviceId = peerId,
+                    type = "permission_forward",
+                    payloadValue = JSONObject()
+                        .put("permission_id", permissionId)
+                        .put("tool", tool)
+                        .put("detail", detail)
+                        .put("device_id", selfCfg.deviceId)
+                        .put("device_name", selfCfg.deviceName),
+                    transportHint = "",
+                    timeoutMs = 5_000L
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun dismissRemotePermission(permissionId: String, status: String) {
+        val selfCfg = currentMeMeConfig()
+        val siblingIds = getProvisionedSiblingDeviceIds()
+        for ((peerId, conn) in meMeConnections) {
+            if (conn.state != "connected") continue
+            if (!siblingIds.contains(peerId)) continue
+            try {
+                sendMeMeEncryptedMessage(
+                    peerDeviceId = peerId,
+                    type = "permission_dismiss",
+                    payloadValue = JSONObject()
+                        .put("permission_id", permissionId)
+                        .put("status", status)
+                        .put("device_id", selfCfg.deviceId),
+                    transportHint = "",
+                    timeoutMs = 5_000L
+                )
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun handleRemotePermissionForward(fromDeviceId: String, fromDeviceName: String, plain: JSONObject) {
+        if (!isProvisionedSibling(fromDeviceId)) return
+        val p = plain.optJSONObject("payload") ?: plain
+        val permissionId = p.optString("permission_id", "").trim()
+        if (permissionId.isBlank()) return
+        val tool = p.optString("tool", "").trim()
+        val detail = p.optString("detail", "").trim()
+        val sourceDeviceId = p.optString("device_id", fromDeviceId).trim()
+        val sourceDeviceName = p.optString("device_name", fromDeviceName).trim()
+        meMeRemotePermissions[permissionId] = RemotePermission(
+            permissionId = permissionId,
+            tool = tool,
+            detail = detail,
+            sourceDeviceId = sourceDeviceId,
+            sourceDeviceName = sourceDeviceName,
+            receivedAt = System.currentTimeMillis()
+        )
+    }
+
+    private fun handleRemotePermissionResolve(fromDeviceId: String, plain: JSONObject) {
+        if (!isProvisionedSibling(fromDeviceId)) return
+        val p = plain.optJSONObject("payload") ?: plain
+        val permissionId = p.optString("permission_id", "").trim()
+        if (permissionId.isBlank()) return
+        val action = p.optString("action", "").trim()
+        val status = when (action) {
+            "approve" -> "approved"
+            "deny" -> "denied"
+            else -> return
+        }
+        val updated = permissionStore.updateStatus(permissionId, status) ?: return
+        if (status == "approved") {
+            maybeGrantDeviceCapability(updated)
+        }
+        sendPermissionResolved(updated.id, updated.status)
+        // Dismiss the forwarded permission on all other siblings.
+        Thread {
+            dismissRemotePermission(updated.id, updated.status)
+        }.apply { isDaemon = true }.start()
+        Thread {
+            notifyBrainPermissionResolved(updated)
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun handleRemotePermissionDismiss(plain: JSONObject) {
+        val p = plain.optJSONObject("payload") ?: plain
+        val permissionId = p.optString("permission_id", "").trim()
+        if (permissionId.isBlank()) return
+        meMeRemotePermissions.remove(permissionId)
+    }
+
+    private fun handleMeMeRemotePermissionsList(): Response {
+        // Evict stale entries older than 5 minutes.
+        val cutoff = System.currentTimeMillis() - 5 * 60_000L
+        meMeRemotePermissions.entries.removeIf { it.value.receivedAt < cutoff }
+        val arr = org.json.JSONArray()
+        for ((_, rp) in meMeRemotePermissions) {
+            if (rp.status != "pending") continue
+            arr.put(
+                JSONObject()
+                    .put("id", rp.permissionId)
+                    .put("tool", rp.tool)
+                    .put("detail", rp.detail)
+                    .put("source_device_id", rp.sourceDeviceId)
+                    .put("source_device_name", rp.sourceDeviceName)
+                    .put("received_at", rp.receivedAt)
+            )
+        }
+        return jsonResponse(JSONObject().put("items", arr))
+    }
+
+    private fun handleMeMeRemotePermissionResolve(uri: String, payload: JSONObject): Response {
+        // URI: /me/me/permissions/remote/{id}/resolve
+        val segments = uri.removePrefix("/me/me/permissions/remote/").removeSuffix("/resolve").trim()
+        if (segments.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "missing_permission_id")
+        val permissionId = segments
+        val rp = meMeRemotePermissions[permissionId]
+            ?: return jsonError(Response.Status.NOT_FOUND, "not_found")
+        val action = payload.optString("action", "").trim()
+        if (action !in setOf("approve", "deny")) {
+            return jsonError(Response.Status.BAD_REQUEST, "invalid_action")
+        }
+        // Send permission_resolve back to the source device.
+        val conn = meMeConnections[rp.sourceDeviceId]
+        if (conn == null || conn.state != "connected") {
+            return jsonError(Response.Status.CONFLICT, "source_device_not_connected")
+        }
+        try {
+            sendMeMeEncryptedMessage(
+                peerDeviceId = rp.sourceDeviceId,
+                type = "permission_resolve",
+                payloadValue = JSONObject()
+                    .put("permission_id", permissionId)
+                    .put("action", action),
+                transportHint = "",
+                timeoutMs = 5_000L
+            )
+        } catch (e: Exception) {
+            return jsonError(Response.Status.INTERNAL_ERROR, "send_failed: ${e.message}")
+        }
+        meMeRemotePermissions.remove(permissionId)
+        return jsonResponse(JSONObject().put("status", "ok").put("action", action))
     }
 
     private fun sendPermissionResolved(id: String, status: String) {

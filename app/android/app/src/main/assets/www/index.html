@@ -1572,6 +1572,12 @@
       }
       .perm-card-footer .btn { font-size: 12px; padding: 6px 14px; }
       .perm-card.resolved { opacity: 0.6; }
+      .perm-item-origin {
+        font-size: 10px;
+        color: var(--accent);
+        font-weight: 600;
+        margin-bottom: 1px;
+      }
       .perm-overlay {
         display: none;
         position: fixed;
@@ -2013,9 +2019,7 @@
           <div class="muted">Discover and connect nearby me.things devices.</div>
           <p class="muted" id="meMeStatus" style="margin-top:8px;">Discovery disabled</p>
           <div class="btn-group">
-            <button class="btn" id="openMeMeSettingsModalBtn">Settings</button>
             <button class="btn" id="openMeMePeersModalBtn">Status</button>
-            <button class="btn" id="meMePermissionsBtn">Permissions</button>
           </div>
         </section>
 
@@ -2224,59 +2228,20 @@
           <input type="url" id="meMeDeviceIcon" data-setting-key="me_me_device_icon" placeholder="https://..." />
         </div>
 
-        <!-- Discovery -->
-        <div class="stg-section">
-          <div class="stg-section-title">Discovery</div>
-          <div class="toggle-row">
+        <div style="display:flex; align-items:center; gap:12px; margin-top:12px; flex-wrap:wrap;">
+          <div class="toggle-row" style="margin:0;">
             <label class="toggle">
               <input type="checkbox" id="meMeAllowDiscovery" data-setting-key="me_me_allow_discovery" />
               <span class="slider"></span>
             </label>
-            <span class="toggle-label">Allow Discovery</span>
+            <span class="toggle-label">Discovery</span>
           </div>
-          <div class="setting-row">
-            <div class="setting-label">Connection Methods (comma)</div>
-            <input type="text" id="meMeConnectionMethods" data-setting-key="me_me_connection_methods" placeholder="wifi,ble" />
-          </div>
-          <div class="setting-grid two">
-            <div class="setting-row">
-              <div class="setting-label">Timeout (s)</div>
-              <input type="number" id="meMeConnectionTimeout" data-setting-key="me_me_connection_timeout" min="5" max="300" step="1" />
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">Max Connections</div>
-              <input type="number" id="meMeMaxConnections" data-setting-key="me_me_max_connections" min="1" max="32" step="1" />
-            </div>
-          </div>
-          <div class="setting-row">
-            <div class="setting-label">BLE Preferred Max (bytes)</div>
-            <input type="number" id="meMeBlePreferredMaxBytes" data-setting-key="me_me_ble_preferred_max_bytes" min="32768" max="1000000" step="1024" />
-          </div>
-        </div>
-
-        <!-- Reconnection -->
-        <div class="stg-section">
-          <div class="stg-section-title">Reconnection</div>
-          <div class="toggle-row">
+          <div class="toggle-row" style="margin:0;">
             <label class="toggle">
               <input type="checkbox" id="meMeAutoReconnect" data-setting-key="me_me_auto_reconnect" />
               <span class="slider"></span>
             </label>
             <span class="toggle-label">Auto Reconnect</span>
-          </div>
-          <div class="setting-grid three">
-            <div class="setting-row">
-              <div class="setting-label">Reconnect (s)</div>
-              <input type="number" id="meMeReconnectInterval" data-setting-key="me_me_reconnect_interval" min="3" max="3600" step="1" />
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">Discovery (s)</div>
-              <input type="number" id="meMeDiscoveryInterval" data-setting-key="me_me_discovery_interval" min="10" max="3600" step="1" />
-            </div>
-            <div class="setting-row">
-              <div class="setting-label">Check (s)</div>
-              <input type="number" id="meMeConnectionCheckInterval" data-setting-key="me_me_connection_check_interval" min="5" max="3600" step="1" />
-            </div>
           </div>
         </div>
 
@@ -2293,18 +2258,45 @@
           </div>
         </div>
 
-        <!-- Access Control -->
         <div class="stg-section">
-          <div class="stg-section-title">Access Control</div>
-          <div class="setting-row">
-            <div class="setting-label">Allowed Devices (comma/newline)</div>
-            <textarea id="meMeAllowedDevices" data-setting-key="me_me_allowed_devices" rows="2" placeholder="device_id_1, device_name_2"></textarea>
-          </div>
-          <div class="setting-row">
-            <div class="setting-label">Blocked Devices (comma/newline)</div>
-            <textarea id="meMeBlockedDevices" data-setting-key="me_me_blocked_devices" rows="2" placeholder="device_id_3"></textarea>
-          </div>
+          <button class="btn" id="meMePermissionsBtn" style="width:100%;">Permissions</button>
         </div>
+
+        <!-- Advanced Tuning -->
+        <details class="stg-section" style="margin-top:4px;">
+          <summary style="cursor:pointer; font-size:12px; font-weight:600; color:var(--ink-muted); text-transform:uppercase; letter-spacing:0.5px; user-select:none;">Advanced Tuning</summary>
+          <div class="muted" style="font-size:11px; margin-top:10px;">Connection</div>
+          <div class="setting-grid two" style="margin-top:4px;">
+            <div class="setting-row">
+              <div class="setting-label">Timeout (s)</div>
+              <input type="number" id="meMeConnectionTimeout" data-setting-key="me_me_connection_timeout" min="5" max="300" step="1" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">Max Connections</div>
+              <input type="number" id="meMeMaxConnections" data-setting-key="me_me_max_connections" min="1" max="32" step="1" />
+            </div>
+          </div>
+          <div class="muted" style="font-size:11px; margin-top:10px;">BLE transport</div>
+          <div class="setting-row" style="margin-top:4px;">
+            <div class="setting-label">Preferred Max (bytes)</div>
+            <input type="number" id="meMeBlePreferredMaxBytes" data-setting-key="me_me_ble_preferred_max_bytes" min="32768" max="1000000" step="1024" />
+          </div>
+          <div class="muted" style="font-size:11px; margin-top:10px;">Intervals</div>
+          <div class="setting-grid three" style="margin-top:4px;">
+            <div class="setting-row">
+              <div class="setting-label">Reconnect (s)</div>
+              <input type="number" id="meMeReconnectInterval" data-setting-key="me_me_reconnect_interval" min="3" max="3600" step="1" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">Discovery (s)</div>
+              <input type="number" id="meMeDiscoveryInterval" data-setting-key="me_me_discovery_interval" min="10" max="3600" step="1" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-label">Check (s)</div>
+              <input type="number" id="meMeConnectionCheckInterval" data-setting-key="me_me_connection_check_interval" min="5" max="3600" step="1" />
+            </div>
+          </div>
+        </details>
 
         <!-- Actions -->
         <div class="stg-section">
@@ -2343,6 +2335,7 @@
           <div id="deviceInfoSelf" style="flex:1; min-width:0;">
             <div class="muted">Loading...</div>
           </div>
+          <button class="icon-btn secondary" id="openMeMeSettingsModalBtn" style="width:32px; height:32px; flex-shrink:0;" title="me.me Settings" aria-label="me.me Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
           <button class="icon-btn secondary" id="deviceInfoModalClose" style="width:32px; height:32px; flex-shrink:0;" title="Close" aria-label="Close">&times;</button>
         </div>
         <div style="display:flex; align-items:center; gap:8px; margin-top:8px;">
@@ -5882,6 +5875,7 @@
       // ==============================
       const BIOMETRIC_TOOLS = new Set(["credentials", "ssh_keys", "ssh_pin"]);
       const _permState = { knownIds: new Set(), cardEl: null, items: {} };
+      const _remotePermState = { knownIds: new Set() };
 
       /** Append el to chatMessages, but keep active perm-card pinned at the bottom. */
       function chatAppend(el) {
@@ -5920,8 +5914,13 @@
           const row = document.createElement("div");
           row.className = "perm-item";
           row.dataset.pid = p.id;
+          if (p.remote) row.dataset.remote = "1";
+          const originHtml = p.source_device_name
+            ? "<div class='perm-item-origin'>on " + (p.source_device_name || "").replace(/</g, "&lt;") + "</div>"
+            : "";
           row.innerHTML =
             "<div class='perm-item-info'>" +
+              originHtml +
               "<div class='perm-item-tool'>" + (p.tool || "").replace(/</g, "&lt;") + "</div>" +
               "<div class='perm-item-detail'>" + (p.detail || "").replace(/</g, "&lt;") + "</div>" +
             "</div>" +
@@ -5978,11 +5977,21 @@
 
       async function postPermAction(pid, action) {
         try {
-          await fetch(API + "/permissions/" + pid + "/" + action, {
-            method: "POST",
-            headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: "{}",
-          });
+          const entry = _permState.items[pid];
+          const isRemote = entry && entry.el && entry.el.dataset.remote === "1";
+          if (isRemote) {
+            await fetch(API + "/me/me/permissions/remote/" + pid + "/resolve", {
+              method: "POST",
+              headers: { "Content-Type": "application/json; charset=utf-8" },
+              body: JSON.stringify({ action: action }),
+            });
+          } else {
+            await fetch(API + "/permissions/" + pid + "/" + action, {
+              method: "POST",
+              headers: { "Content-Type": "application/json; charset=utf-8" },
+              body: "{}",
+            });
+          }
           updatePermItemStatus(pid, action === "approve" ? "approved" : "denied");
         } catch (_) {
           showToast("Failed to " + action, 1500);
@@ -5995,9 +6004,30 @@
           if (!res.ok) return;
           const data = await res.json();
           const pending = Array.isArray(data) ? data : Array.isArray(data.items) ? data.items : [];
+
+          // Also fetch remote permissions forwarded from siblings.
+          let remotePending = [];
+          try {
+            const rr = await fetch(API + "/me/me/permissions/remote");
+            if (rr.ok) {
+              const rd = await rr.json();
+              const items = Array.isArray(rd) ? rd : Array.isArray(rd.items) ? rd.items : [];
+              remotePending = items.map(r => ({
+                id: r.id,
+                tool: r.tool,
+                detail: r.detail,
+                remote: true,
+                source_device_name: r.source_device_name || ""
+              }));
+            }
+          } catch (_) {}
+
+          const allPending = pending.concat(remotePending);
+          const allPendingIds = new Set(allPending.map(p => p.id));
+
           // Check for resolved permissions we're tracking.
           for (const [pid, entry] of Object.entries(_permState.items)) {
-            if (entry.status === "pending" && !pending.find(p => p.id === pid)) {
+            if (entry.status === "pending" && !allPendingIds.has(pid)) {
               // Was pending, now gone — resolved externally (notification, etc.)
               updatePermItemStatus(pid, "approved");
             }
@@ -6007,6 +6037,7 @@
             _permState.cardEl = null;
             _permState.items = {};
             _permState.knownIds.clear();
+            _remotePermState.knownIds.clear();
           }
           // Keep active perm-card pinned at the bottom (messages may have been appended after it).
           if (_permState.cardEl && _permState.cardEl.isConnected &&
@@ -6015,7 +6046,7 @@
             chatMessages.appendChild(_permState.cardEl);
           }
           // Filter to truly new pending items.
-          const newPending = pending.filter(p => !_permState.knownIds.has(p.id));
+          const newPending = allPending.filter(p => !_permState.knownIds.has(p.id));
           if (newPending.length > 0) renderPermCard(newPending);
           syncPermOverlay();
         } catch (_) {}
@@ -6039,11 +6070,14 @@
         for (const [pid, entry] of pendingItems) {
           const toolEl = entry.el.querySelector(".perm-item-tool");
           const detailEl = entry.el.querySelector(".perm-item-detail");
+          const originEl = entry.el.querySelector(".perm-item-origin");
           const tool = toolEl ? toolEl.textContent : "";
           const detail = detailEl ? detailEl.textContent : "";
+          const originHtml = originEl ? "<div class='perm-item-origin'>" + originEl.textContent.replace(/</g, "&lt;") + "</div>" : "";
           const isBio = entry.el.querySelector("[data-action]") === null;
-          html += "<div class='perm-item' data-pid='" + pid + "'>" +
+          html += "<div class='perm-item' data-pid='" + pid + "'" + (entry.el.dataset.remote === "1" ? " data-remote='1'" : "") + ">" +
             "<div class='perm-item-info'>" +
+              originHtml +
               "<div class='perm-item-tool'>" + tool.replace(/</g, "&lt;") + "</div>" +
               "<div class='perm-item-detail'>" + detail.replace(/</g, "&lt;") + "</div>" +
             "</div>" +
@@ -7492,7 +7526,6 @@
       const meMeDeviceDescription = $("meMeDeviceDescription");
       const meMeDeviceIcon = $("meMeDeviceIcon");
       const meMeAllowDiscovery = $("meMeAllowDiscovery");
-      const meMeConnectionMethods = $("meMeConnectionMethods");
       const meMeConnectionTimeout = $("meMeConnectionTimeout");
       const meMeMaxConnections = $("meMeMaxConnections");
       const meMeBlePreferredMaxBytes = $("meMeBlePreferredMaxBytes");
@@ -7500,8 +7533,6 @@
       const meMeReconnectInterval = $("meMeReconnectInterval");
       const meMeDiscoveryInterval = $("meMeDiscoveryInterval");
       const meMeConnectionCheckInterval = $("meMeConnectionCheckInterval");
-      const meMeAllowedDevices = $("meMeAllowedDevices");
-      const meMeBlockedDevices = $("meMeBlockedDevices");
       const provisionIdentityDisplay = $("provisionIdentityDisplay");
       const provisionSignInBtn = $("provisionSignInBtn");
       const provisionSignOutBtn = $("provisionSignOutBtn");
@@ -9192,7 +9223,11 @@
       wireSimpleModal(ftSettingsModal, openFtSettingsModalBtn, ftSettingsModalClose);
       wireSimpleModal(autoUpdateSettingsModal, openAutoUpdateSettingsModalBtn, autoUpdateSettingsModalClose);
       wireSimpleModal(permApprovalsModal, openPermApprovalsModalBtn, permApprovalsModalClose);
-      wireSimpleModal(meMeSettingsModal, openMeMeSettingsModalBtn, meMeSettingsModalClose);
+      wireSimpleModal(meMeSettingsModal, null, meMeSettingsModalClose);
+      openMeMeSettingsModalBtn.addEventListener("click", () => {
+        closeSimpleModal(deviceInfoModal);
+        openSimpleModal(meMeSettingsModal);
+      });
       wireSimpleModal(meMePeersModal, null, meMePeersModalClose);
       wireSimpleModal(meMeOnboardingModal, null, meMeOnboardingLaterBtn);
       meMeOnboardingAllowBtn.addEventListener("click", () => {
@@ -9205,14 +9240,20 @@
         }
       });
       meMePermissionsBtn.addEventListener("click", () => {
+        closeSimpleModal(meMeSettingsModal);
         meMeOnboardingAllowBtn.disabled = false;
         meMeOnboardingAllowBtn.textContent = "Allow";
         openSimpleModal(meMeOnboardingModal);
+      });
+      // Return to me.me settings when onboarding modal closes.
+      meMeOnboardingLaterBtn.addEventListener("click", () => {
+        openSimpleModal(meMeSettingsModal);
       });
       window.onNearbyPermissionsResult = function(ok) {
         meMeOnboardingAllowBtn.disabled = false;
         meMeOnboardingAllowBtn.textContent = "Allow";
         closeSimpleModal(meMeOnboardingModal);
+        openSimpleModal(meMeSettingsModal);
         showToast(ok ? "Permissions granted" : "Permissions denied", 1800);
       };
       wireSimpleModal(deviceInfoModal, topbarDeviceName, deviceInfoModalClose);
@@ -9319,7 +9360,6 @@
           meMeDeviceDescription.value = String(cfg.device_description || "");
           meMeDeviceIcon.value = String(cfg.device_icon || "");
           meMeAllowDiscovery.checked = !!cfg.allow_discovery;
-          meMeConnectionMethods.value = Array.isArray(cfg.connection_methods) ? cfg.connection_methods.join(",") : String(cfg.connection_methods || "wifi,ble");
           meMeConnectionTimeout.value = String(Number(cfg.connection_timeout || 30));
           meMeMaxConnections.value = String(Number(cfg.max_connections || 5));
           meMeBlePreferredMaxBytes.value = String(Number(cfg.ble_preferred_max_bytes || 524288));
@@ -9327,8 +9367,6 @@
           meMeReconnectInterval.value = String(Number(cfg.reconnect_interval || 10));
           meMeDiscoveryInterval.value = String(Number(cfg.discovery_interval || 60));
           meMeConnectionCheckInterval.value = String(Number(cfg.connection_check_interval || 30));
-          meMeAllowedDevices.value = Array.isArray(cfg.allowed_devices) ? cfg.allowed_devices.join("\n") : "";
-          meMeBlockedDevices.value = Array.isArray(cfg.blocked_devices) ? cfg.blocked_devices.join("\n") : "";
           await refreshMeMeStatus();
           await loadProvisionStatus();
         } catch (_) {
@@ -9342,7 +9380,6 @@
           device_description: String(meMeDeviceDescription.value || "").trim(),
           device_icon: String(meMeDeviceIcon.value || "").trim(),
           allow_discovery: !!meMeAllowDiscovery.checked,
-          connection_methods: splitDeviceListText(meMeConnectionMethods.value),
           connection_timeout: Math.max(5, parseInt(String(meMeConnectionTimeout.value || "30"), 10) || 30),
           max_connections: Math.max(1, parseInt(String(meMeMaxConnections.value || "5"), 10) || 5),
           ble_preferred_max_bytes: Math.max(32768, Math.min(1000000, parseInt(String(meMeBlePreferredMaxBytes.value || "524288"), 10) || 524288)),
@@ -9350,8 +9387,6 @@
           reconnect_interval: Math.max(3, parseInt(String(meMeReconnectInterval.value || "10"), 10) || 10),
           discovery_interval: Math.max(10, parseInt(String(meMeDiscoveryInterval.value || "60"), 10) || 60),
           connection_check_interval: Math.max(5, parseInt(String(meMeConnectionCheckInterval.value || "30"), 10) || 30),
-          allowed_devices: splitDeviceListText(meMeAllowedDevices.value),
-          blocked_devices: splitDeviceListText(meMeBlockedDevices.value),
         };
         try {
           meMeSaveBtn.disabled = true;
@@ -9815,10 +9850,18 @@
           const selfName = String(self.device_name || "device");
           const selfId = String(self.device_id || "");
           const allowDisc = !!self.allow_discovery;
+          const isProvisioned = !!(provData.provisioned && provData.user_subject);
+          const provSubject = isProvisioned ? String(provData.user_subject) : "";
+          const provIcon = provSubject.startsWith("google:")
+            ? "<svg viewBox='0 0 24 24' style='width:14px;height:14px;vertical-align:-2px;'><path fill='#4285F4' d='M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z'/><path fill='#34A853' d='M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z'/><path fill='#FBBC05' d='M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 0 0 1 12c0 1.77.42 3.45 1.18 4.93l3.66-2.84z'/><path fill='#EA4335' d='M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z'/></svg>"
+            : provSubject.startsWith("github:")
+            ? "<svg viewBox='0 0 24 24' style='width:14px;height:14px;vertical-align:-2px;fill:var(--ink);'><path d='M12 1C5.37 1 0 6.37 0 13c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.74.08-.73.08-.73 1.2.09 1.84 1.24 1.84 1.24 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58C20.56 22.8 24 18.3 24 13 24 6.37 18.63 1 12 1z'/></svg>"
+            : "";
           deviceInfoSelf.innerHTML =
             "<div style='display:flex; align-items:baseline; gap:6px; flex-wrap:wrap;'>" +
               "<span class='mm-copy' style='font-weight:600; word-break:break-word; cursor:pointer;' data-copy='" + escapeHtml(selfName) + "'>" + escapeHtml(selfName) + "</span>" +
               "<span class='muted mm-copy' style='word-break:break-all; font-size:12px; cursor:pointer;' data-copy='" + escapeHtml(selfId) + "'>" + escapeHtml(selfId) + "</span>" +
+              (provIcon ? "<span title='" + escapeHtml(provSubject) + "'>" + provIcon + "</span>" : "") +
             "</div>" +
             "<div class='muted' style='margin-top:2px;'>discovery " + (allowDisc ? "on" : "off") + "</div>";
           // Merge connections, pending requests, discovered, and provisioned into unified list
@@ -9985,7 +10028,6 @@
               });
             });
           }
-          const isProvisioned = !!(provData.provisioned && provData.user_subject);
           deviceInfoSignIn.style.display = isProvisioned ? "none" : "";
           deviceInfoModal.querySelectorAll(".mm-copy[data-copy]").forEach((el) => {
             el.addEventListener("click", () => {
