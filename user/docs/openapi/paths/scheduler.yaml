@@ -47,10 +47,86 @@ schedulerSchedules:
                   items:
                     $ref: '../components/schemas.yaml#/Schedule'
 
+schedulerCapabilityMap:
+  get:
+    operationId: getSchedulerCapabilityMap
+    summary: Get the device_api capability map for permission pre-acquisition
+    description: >
+      Returns the mapping from device_api action prefixes to permission
+      capabilities. For `run_js` schedules, permissions are checked
+      automatically at create/update time — this endpoint is informational.
+      For `run_python` schedules, use this mapping to identify which
+      permissions to pre-acquire manually (call each needed endpoint once
+      with `identity: scheduler` before creating the schedule).
+      Entries with `capability: "none"` require no permission.
+    tags: [Scheduler]
+    responses:
+      '200':
+        description: Capability mapping.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [capabilities]
+              properties:
+                capabilities:
+                  type: array
+                  items:
+                    type: object
+                    required: [prefix, tool, capability, label]
+                    properties:
+                      prefix:
+                        type: string
+                        description: >
+                          Action name prefix (the part before the first `.`
+                          in a device_api action name, e.g. `tts` for
+                          `tts.speak`).
+                      tool:
+                        type: string
+                        description: Permission tool identifier.
+                      capability:
+                        type: string
+                        description: Permission capability key.
+                      label:
+                        type: string
+                        description: Human-readable label.
+            example:
+              capabilities:
+                - prefix: tts
+                  tool: device.tts
+                  capability: tts
+                  label: Text-to-speech
+                - prefix: camera
+                  tool: device.camera
+                  capability: camera
+                  label: Camera
+
 schedulerCreate:
   post:
     operationId: postSchedulerCreate
     summary: Create a new schedule
+    description: >
+      Creates a new scheduled code execution entry.
+
+
+      **Permission pre-acquisition (run_js):** If the JS code contains
+      `device_api("action_name", ...)` calls that require permissions, those
+      permissions are automatically checked at creation time for the
+      `scheduler` identity. If a needed permission has not been granted, the
+      response will be 403 `permission_required` — approve it on the device
+      and retry. This ensures the schedule can run unattended without runtime
+      permission prompts.
+
+
+      **Permission pre-acquisition (run_python):** Python schedules make raw
+      HTTP calls to the local API, so static analysis is not possible. Before
+      creating a `run_python` schedule that calls permission-gated endpoints,
+      you must pre-acquire permissions yourself: call each needed endpoint
+      once with `{"identity": "scheduler"}` in the request body (or
+      `X-meThings-Identity: scheduler` header), approve the permission prompt
+      on the device, then create the schedule. Use
+      `GET /scheduler/capability_map` to see which action prefixes require
+      permissions.
     tags: [Scheduler]
     x-permission:
       tool: device.scheduler
@@ -182,6 +258,11 @@ schedulerUpdate:
   post:
     operationId: postSchedulerUpdate
     summary: Update a schedule
+    description: >
+      When the `code` field is included and `runtime` is `run_js`, device_api
+      permissions are re-checked for the `scheduler` identity (same behaviour
+      as create). For `run_python`, pre-acquire permissions manually before
+      updating — see the create endpoint description for details.
     tags: [Scheduler]
     x-permission:
       tool: device.scheduler

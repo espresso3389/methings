@@ -362,6 +362,8 @@ paths:
     $ref: './paths/scheduler.yaml#/schedulerTrigger'
   /scheduler/log:
     $ref: './paths/scheduler.yaml#/schedulerLog'
+  /scheduler/capability_map:
+    $ref: './paths/scheduler.yaml#/schedulerCapabilityMap'
 
   # ── WebView Browser ──
   /webview/open:

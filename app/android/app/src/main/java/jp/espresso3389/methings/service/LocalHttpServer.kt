@@ -643,6 +643,21 @@ class LocalHttpServer(
                     capability = "scheduler", detail = "Create scheduled code execution"
                 )
                 if (!ok.first) return ok.second!!
+                // Pre-check device API permissions for the scheduler identity
+                val createRuntime = payload.optString("runtime", "run_js")
+                if (createRuntime == "run_js") {
+                    val createCode = payload.optString("code", "")
+                    val needed = CapabilityMap.capabilitiesForCode(createCode)
+                    for ((tool, cap, label) in needed) {
+                        val schedPayload = JSONObject().put("identity", "scheduler")
+                        val capOk = ensureDevicePermission(
+                            session, schedPayload,
+                            tool = tool, capability = cap,
+                            detail = "Scheduled task '${payload.optString("name", "")}' needs $label"
+                        )
+                        if (!capOk.first) return capOk.second!!
+                    }
+                }
                 try {
                     val row = schedulerStore.createSchedule(
                         name = payload.optString("name", ""),
@@ -682,6 +697,20 @@ class LocalHttpServer(
                     capability = "scheduler", detail = "Update scheduled code execution"
                 )
                 if (!ok.first) return ok.second!!
+                // Pre-check device API permissions when code changes
+                if (payload.has("code") && payload.optString("runtime", "run_js") == "run_js") {
+                    val updateCode = payload.optString("code", "")
+                    val needed = CapabilityMap.capabilitiesForCode(updateCode)
+                    for ((tool, cap, label) in needed) {
+                        val schedPayload = JSONObject().put("identity", "scheduler")
+                        val capOk = ensureDevicePermission(
+                            session, schedPayload,
+                            tool = tool, capability = cap,
+                            detail = "Scheduled task update needs $label"
+                        )
+                        if (!capOk.first) return capOk.second!!
+                    }
+                }
                 val id = payload.optString("id", "")
                 val row = schedulerStore.updateSchedule(id, payload)
                     ?: return jsonError(Response.Status.NOT_FOUND, "not_found")
@@ -707,6 +736,9 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 val id = payload.optString("id", "")
                 jsonResponse(schedulerEngine.triggerNow(id))
+            }
+            uri == "/scheduler/capability_map" && session.method == Method.GET -> {
+                jsonResponse(CapabilityMap.toJson())
             }
             uri == "/scheduler/log" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })

@@ -65,6 +65,7 @@ Build an Android 14+ app that provides an agentic device environment with:
 - Keep security prompts minimal but explicit.
 - No silent elevation or background actions.
 - API docs policy: the canonical API reference is the OpenAPI 3.1.0 spec under `user/docs/openapi/`. When adding or changing endpoints, update the relevant `paths/*.yaml` file and `openapi.yaml`. Agent-side tool conventions (runtime helpers, chat shortcuts) are in `user/docs/agent_tools.md`.
+- Adding device APIs: when adding new `device_api` actions, follow the checklist in `docs/adding_device_apis.md` (ACTIONS map, CapabilityMap, route handler, OpenAPI spec).
 - API scope policy: the OpenAPI spec is agent-facing only. Include user/agent-invokable APIs (for example BLE device-operation APIs), but exclude internal plumbing/debug-only endpoints (for example me.me/me.sync internal transport wiring); document those in `docs/DEBUGGING.md` instead.
 - Built-in execution: `run_js` (QuickJS engine) and `run_curl` (native HTTP) work without Termux.
 - On-device shell tooling (optional): `run_python`/`run_pip` require Termux (pkg + pip). Host-side app development must use uv.
