@@ -303,6 +303,7 @@ class LocalHttpServer(
 
     @Volatile private var bootstrapPhase: String = "none"
     @Volatile private var bootstrapMessage: String = ""
+    private val bootstrapPrefs by lazy { context.getSharedPreferences("termux_bootstrap", Context.MODE_PRIVATE) }
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
@@ -2577,16 +2578,36 @@ class LocalHttpServer(
                 }
                 val msg = payload.optString("message", "")
                 if (msg.isNotBlank()) bootstrapMessage = msg
-                // When bootstrap finishes, auto-start the worker
+                // When bootstrap finishes, persist and auto-start the worker
                 if (phase == "done") {
+                    context.getSharedPreferences("termux_bootstrap", Context.MODE_PRIVATE)
+                        .edit().putBoolean("done", true).apply()
                     runtimeManager.startWorker()
                 }
                 jsonResponse(JSONObject().put("status", "ok").put("phase", bootstrapPhase))
             }
             path == "/termux/status" -> {
+                val installed = termuxManager.isTermuxInstalled()
+                // Compute effective bootstrap phase:
+                // - If Termux is not installed, any persisted "done" is stale → reset.
+                // - If actively bootstrapping (in-memory "running"), use that.
+                // - Otherwise, fall back to the persisted flag.
+                val effectivePhase = if (!installed) {
+                    if (bootstrapPrefs.getBoolean("done", false)) {
+                        bootstrapPrefs.edit().remove("done").apply()
+                    }
+                    bootstrapPhase = "none"
+                    "none"
+                } else if (bootstrapPhase == "running") {
+                    "running"
+                } else if (bootstrapPrefs.getBoolean("done", false)) {
+                    "done"
+                } else {
+                    bootstrapPhase
+                }
                 jsonResponse(
                     JSONObject()
-                        .put("installed", termuxManager.isTermuxInstalled())
+                        .put("installed", installed)
                         .put("ready", termuxManager.isTermuxReady())
                         .put("run_command_permitted", termuxManager.hasRunCommandPermission())
                         .put("sshd_running", termuxManager.isSshdRunning())
@@ -2594,7 +2615,7 @@ class LocalHttpServer(
                         .put("worker_status", runtimeManager.getStatus())
                         .put("releases_url", TermuxManager.TERMUX_RELEASES_URL)
                         .put("bootstrap_command", "curl -so ~/b.sh http://127.0.0.1:$PORT/termux/bootstrap.sh && bash ~/b.sh")
-                        .put("bootstrap_phase", bootstrapPhase)
+                        .put("bootstrap_phase", effectivePhase)
                         .put("bootstrap_message", bootstrapMessage)
                         .put("can_request_installs", termuxManager.canInstallPackages())
                 )

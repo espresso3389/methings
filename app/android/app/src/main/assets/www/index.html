@@ -1469,30 +1469,7 @@
         text-align: left;
       }
       .modal-card .card-title { margin-bottom: 12px; font-size: 16px; }
-      .pin-code {
-        font-size: 32px;
-        font-weight: 700;
-        letter-spacing: 4px;
-        margin: 8px 0;
-        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
-        color: var(--accent);
-      }
-      .pin-countdown { color: var(--ink-muted); font-size: 13px; margin-bottom: 12px; }
-      .pin-bar {
-        width: 100%;
-        height: 4px;
-        background: var(--surface);
-        border-radius: var(--radius-full);
-        overflow: hidden;
-        margin-bottom: 16px;
-      }
-      .pin-bar-fill {
-        height: 100%;
-        width: 0%;
-        background: var(--accent);
-        transition: width 0.2s ease;
-        border-radius: var(--radius-full);
-      }
+      /* PIN modal CSS removed — inline indicator in SSHD section is used instead */
       @keyframes meSyncPrepSlide {
         0% { transform: translateX(-65%); }
         100% { transform: translateX(250%); }
@@ -2040,7 +2017,7 @@
             </div>
           </div>
           <div id="termuxSetupComplete" class="setup-complete-banner" style="display:none;">
-            &#10003; Termux is set up and the worker is running.
+            &#10003; Termux is set up and ready.
           </div>
         </section>
 
@@ -2062,6 +2039,19 @@
             <button class="btn" id="authNotification">Notification</button>
             <button class="btn" id="authPin">PIN</button>
           </div>
+          <div id="sshdPinStatus" style="display:none;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.18);">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:13px;font-weight:600;color:var(--accent);">PIN active</span>
+              <span id="sshdPinCode" style="font-family:'JetBrains Mono','Fira Code','Menlo',monospace;font-size:18px;font-weight:700;letter-spacing:3px;color:var(--accent);margin-left:auto;"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+              <span id="sshdPinCountdown" class="muted" style="font-size:12px;"></span>
+              <div style="flex:1;height:3px;background:var(--surface);border-radius:2px;overflow:hidden;">
+                <div id="sshdPinBarFill" style="height:100%;width:0%;background:var(--accent);border-radius:2px;transition:width 1s linear;"></div>
+              </div>
+              <button class="btn danger" id="sshdPinStop" style="padding:4px 10px;font-size:12px;flex-shrink:0;">Stop</button>
+            </div>
+          </div>
           <p class="muted" id="sshDetail" style="margin-top:10px;">Waiting for status...</p>
           <div id="clientKeyRow" style="display:none;margin-top:8px;">
             <div style="display:flex;align-items:center;gap:8px;">
@@ -2074,27 +2064,7 @@
           </div>
         </section>
 
-        <!-- Agent Service -->
-        <section class="card" id="settings-section-agent_service">
-          <div class="card-header">
-            <div class="card-icon amber">&#9881;</div>
-            <div class="card-title">Agent Service</div>
-            <div id="workerStatus" class="status-badge offline" style="margin-left:auto;">offline</div>
-          </div>
-          <div class="toggle-row">
-            <label class="toggle">
-              <input type="checkbox" id="startOnBoot" data-setting-key="start_on_boot" checked />
-              <span class="slider"></span>
-            </label>
-            <span class="toggle-label">Start on boot</span>
-          </div>
-          <p class="muted">Emergency restart only.</p>
-          <div class="btn-group">
-            <button class="btn" id="restartWorker">Restart</button>
-            <button class="btn danger" id="stopWorker">Stop</button>
-          </div>
-          <p class="muted" id="workerDetail" style="margin-top:6px;"></p>
-        </section>
+        <!-- Agent Service section removed — Termux runs on-demand; Termux Setup shows status -->
 
         <!-- Packages section removed (agent can install via pip as needed) -->
 
@@ -2296,18 +2266,7 @@
       </div>
     </div>
 
-    <!-- PIN Modal -->
-    <div class="modal" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
-      <div class="modal-card">
-        <div class="card-title" id="pinTitle">PIN Authentication</div>
-        <div class="pin-code" id="pinCode">------</div>
-        <div class="pin-countdown" id="pinCountdown">PIN inactive.</div>
-        <div class="pin-bar" aria-hidden="true">
-          <div id="pinBarFill" class="pin-bar-fill"></div>
-        </div>
-        <button class="btn danger" id="pinClose" style="width:100%;">End PIN</button>
-      </div>
-    </div>
+    <!-- PIN Modal removed — inline indicator in SSHD section is used instead -->
 
     <!-- Session Modal -->
     <div class="modal" id="sessionModal" role="dialog" aria-modal="true" aria-labelledby="sessionTitle">
@@ -3310,7 +3269,6 @@
         { id: "media_recording", domId: "settings-section-audio_recording", label: "Media Recording" },
         { id: "termux_setup", domId: "settings-section-termux_setup", label: "Termux Setup" },
         { id: "sshd", domId: "settings-section-sshd", label: "SSHD" },
-        { id: "agent_service", domId: "settings-section-agent_service", label: "Agent Service" },
         { id: "user_interface", domId: "settings-section-user_interface", label: "User Interface" },
         { id: "reset_restore", domId: "settings-section-reset_restore", label: "Reset & Restore" },
         { id: "android", domId: "settings-section-android", label: "Android" },
@@ -7756,8 +7714,7 @@
       // ==============================
       // Settings: SSHD, Worker, etc.
       // ==============================
-      const workerStatus = $("workerStatus");
-      const workerDetail = $("workerDetail");
+      // Agent Service section removed — workerStatus/workerDetail no longer needed
       const appUpdateStatus = $("appUpdateStatus");
       const appUpdateDetail = $("appUpdateDetail");
       const appUpdateDownloadIndicator = $("appUpdateDownloadIndicator");
@@ -7882,14 +7839,14 @@
       const sshKeysAdd = $("sshKeysAdd");
       const sshKeysRefresh = $("sshKeysRefresh");
       let currentClientKeyPublic = "";
-      const pinModal = $("pinModal");
-      const pinCode = $("pinCode");
-      const pinCountdown = $("pinCountdown");
-      const pinClose = $("pinClose");
-      const pinBarFill = $("pinBarFill");
       const pinDurationMs = 20000;
       let pinExpiresAt = null;
       let lastPin = null;
+      const sshdPinStatus = $("sshdPinStatus");
+      const sshdPinCode = $("sshdPinCode");
+      const sshdPinCountdown = $("sshdPinCountdown");
+      const sshdPinBarFill = $("sshdPinBarFill");
+      const sshdPinStop = $("sshdPinStop");
 
       function esc(s) {
         return String(s || "")
@@ -8986,14 +8943,7 @@
       }
 
       async function refreshWorker() {
-        try {
-          const res = await fetch(API + "/termux/status");
-          if (!res.ok) throw 0;
-          const data = await res.json();
-          setStatus(workerStatus, data.status || "offline");
-        } catch (_) {
-          setStatus(workerStatus, "offline");
-        }
+        // Agent Service section removed; Termux Setup wizard handles status display
       }
 
       async function refreshSsh() {
@@ -9134,47 +9084,35 @@
           const data = await res.json();
           if (data.active) {
             pinExpiresAt = data.expires_at || null;
-            if (!pinModal.classList.contains("show")) pinModal.classList.add("show");
-            if (data.pin) { pinCode.textContent = data.pin; lastPin = data.pin; }
-            else if (lastPin && pinCode.textContent === "------") pinCode.textContent = lastPin;
+            if (data.pin) lastPin = data.pin;
             updatePinCountdown();
           } else {
             pinExpiresAt = null;
-            pinBarFill.style.width = "0%";
-            pinCountdown.textContent = "PIN inactive.";
-            pinCode.textContent = "------";
             lastPin = null;
-            if (pinModal.classList.contains("show")) {
-              pinModal.classList.remove("show");
-              await refreshSsh();
-            }
+            sshdPinStatus.style.display = "none";
           }
         } catch (_) {
           pinExpiresAt = null;
-          pinBarFill.style.width = "0%";
-          pinCountdown.textContent = "PIN unavailable.";
-          pinCode.textContent = "------";
-          pinModal.classList.remove("show");
+          sshdPinStatus.style.display = "none";
         }
       }
 
       function updatePinCountdown() {
         if (!pinExpiresAt) {
-          pinBarFill.style.width = "0%";
-          pinCountdown.textContent = "PIN inactive.";
+          sshdPinStatus.style.display = "none";
           return;
         }
         const rem = pinExpiresAt - Date.now();
         if (rem <= 0) {
-          pinBarFill.style.width = "0%";
           pinExpiresAt = null;
-          pinCountdown.textContent = "PIN inactive.";
-          pinCode.textContent = "------";
-          pinModal.classList.remove("show");
+          lastPin = null;
+          sshdPinStatus.style.display = "none";
           return;
         }
-        pinCountdown.textContent = "Active (" + Math.ceil(rem / 1000) + "s)";
-        pinBarFill.style.width = Math.round(Math.max(0, Math.min(1, rem / pinDurationMs)) * 100) + "%";
+        sshdPinStatus.style.display = "";
+        sshdPinCode.textContent = lastPin || "";
+        sshdPinCountdown.textContent = Math.ceil(rem / 1000) + "s remaining";
+        sshdPinBarFill.style.width = Math.round(Math.max(0, Math.min(1, rem / pinDurationMs)) * 100) + "%";
       }
 
       // ==============================
@@ -9418,25 +9356,7 @@
         }
       });
 
-      $("restartWorker").addEventListener("click", async () => {
-        if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartWorkerWorker) {
-          AndroidBridge.restartWorkerWorker();
-        } else {
-          await fetch(API + "/termux/restart", { method: "POST" });
-        }
-        workerDetail.textContent = "Restart requested";
-        setStatus(workerStatus, "starting");
-      });
-
-      $("stopWorker").addEventListener("click", async () => {
-        if (typeof AndroidBridge !== "undefined" && AndroidBridge.stopService) {
-          AndroidBridge.stopService();
-        } else {
-          await fetch(API + "/service/stop", { method: "POST" });
-        }
-        workerDetail.textContent = "Service stop requested";
-        setStatus(workerStatus, "stopping");
-      });
+      // Agent Service restart/stop buttons removed (Termux runs on-demand)
 
       $("openAppSettings").addEventListener("click", () => {
         try {
@@ -9475,33 +9395,7 @@
       });
 
       // Service prefs (start on boot)
-      async function loadServicePrefs() {
-        try {
-          if (typeof AndroidBridge !== "undefined" && AndroidBridge.getStartOnBoot) {
-            $("startOnBoot").checked = !!AndroidBridge.getStartOnBoot();
-          } else {
-            const r = await fetch(API + "/service/prefs");
-            const d = await r.json();
-            $("startOnBoot").checked = !!d.start_on_boot;
-          }
-        } catch (_) {}
-      }
-      $("startOnBoot").addEventListener("change", async () => {
-        const v = !!$("startOnBoot").checked;
-        try {
-          if (typeof AndroidBridge !== "undefined" && AndroidBridge.setStartOnBoot) {
-            AndroidBridge.setStartOnBoot(v);
-          } else {
-            await fetch(API + "/service/prefs", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ start_on_boot: v })
-            });
-          }
-        } catch (_) {
-          showToast("Failed to save service pref", 1800);
-        }
-      });
+      // loadServicePrefs / startOnBoot removed (Agent Service section removed)
 
       $("resetUi").addEventListener("click", async () => {
         if (!await appConfirm("Reset UI", "Reset UI to defaults? This will overwrite any local changes.")) return;
@@ -10769,13 +10663,10 @@
       });
       authPin.addEventListener("click", async () => {
         try {
-          pinCode.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022";
-          pinCountdown.textContent = "Generating PIN...";
-          pinBarFill.style.width = "0%";
-          pinModal.classList.add("show");
+          sshDetail.textContent = "Enabling PIN auth...";
           // Always require biometric for enabling auth modes.
           const u = await requestSettingsUnlock();
-          if (!u || !u.ok) { showToast("Unlock failed", 1400); pinModal.classList.remove("show"); return; }
+          if (!u || !u.ok) { showToast("Unlock failed", 1400); return; }
           const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
           const res = await fetch(API + "/sshd/pin/start", {
             method: "POST",
@@ -10784,10 +10675,7 @@
           });
           if (!res.ok) throw 0;
           const data = await res.json();
-          if (data.pin) { pinCode.textContent = data.pin; lastPin = data.pin; }
-          else if (lastPin) pinCode.textContent = lastPin;
-          else pinCode.textContent = "PIN unavailable";
-          pinModal.classList.add("show");
+          if (data.pin) lastPin = data.pin;
           pinExpiresAt = data.expires_at || (Date.now() + pinDurationMs);
           updatePinCountdown();
           await refreshSsh();
@@ -10808,7 +10696,7 @@
         }
       });
 
-      pinClose.addEventListener("click", async () => {
+      sshdPinStop.addEventListener("click", async () => {
         try {
           await fetch(API + "/sshd/pin/stop", {
             method: "POST",
@@ -10820,11 +10708,8 @@
         } catch (_) {
         } finally {
           pinExpiresAt = null;
-          pinBarFill.style.width = "0%";
-          pinCountdown.textContent = "PIN inactive.";
-          pinCode.textContent = "------";
           lastPin = null;
-          pinModal.classList.remove("show");
+          sshdPinStatus.style.display = "none";
         }
       });
 
@@ -10832,7 +10717,7 @@
       refreshSshKeys();
 
       window.onWorkerStatus = function(status) {
-        setStatus(workerStatus, status);
+        // Agent Service section removed; no-op
       };
 
       // When viewed in a normal browser (not Android WebView), open external
@@ -10856,7 +10741,6 @@
       loadAudioRecSettings();
       loadVideoRecSettings();
       loadBrowserPrefs();
-      loadServicePrefs();
       refreshWorker();
       updateAppUpdateButtons();
       refreshAppUpdate(true);
@@ -10876,13 +10760,13 @@
         const banner = $("termuxSetupComplete");
         const steps = stepper.querySelectorAll(".setup-step");
         const sshdCard = $("settings-section-sshd");
-        const agentCard = $("settings-section-agent_service");
         let txReleasesUrl = "";
         let txBootstrapCmd = "";
 
         function deriveStep(d) {
           if (!d.installed) return 0;
           if (!d.bootstrap_phase || d.bootstrap_phase === "none") return 1;
+          if (d.bootstrap_phase === "done") return 3;
           if (d.worker_status !== "ok") return 2;
           return 3;
         }
@@ -10911,7 +10795,6 @@
           // Dim dependent cards when setup incomplete
           var dimVal = allDone ? "" : "0.5";
           if (sshdCard) sshdCard.style.opacity = dimVal;
-          if (agentCard) agentCard.style.opacity = dimVal;
 
           // Update bootstrap progress message
           var progressEl = $("txSetupProgress");

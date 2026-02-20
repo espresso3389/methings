@@ -178,14 +178,20 @@ class SshdManager(
         val cmd = """
             cat > ${'$'}PREFIX/bin/methings-auth-keys << 'SCRIPT_EOF'
             #!/data/data/com.termux/files/usr/bin/bash
+            export PATH="/data/data/com.termux/files/usr/bin:${'$'}PATH"
             # AuthorizedKeysCommand — queries the app for authorized keys.
             # Args: %u=username %f=fingerprint %t=key-type %k=base64-key
-            curl -sf --max-time 35 \
-              "http://127.0.0.1:33389/sshd/auth/keys?user=${'$'}1&fp=${'$'}2&type=${'$'}3&key=${'$'}4" 2>/dev/null
+            curl -sfG --max-time 35 \
+              --data-urlencode "user=${'$'}1" \
+              --data-urlencode "fp=${'$'}2" \
+              --data-urlencode "type=${'$'}3" \
+              --data-urlencode "key=${'$'}4" \
+              "http://127.0.0.1:33389/sshd/auth/keys" 2>/dev/null
             SCRIPT_EOF
             chmod 755 ${'$'}PREFIX/bin/methings-auth-keys && \
             cat > ${'$'}PREFIX/bin/methings-pin-check << 'SCRIPT_EOF'
             #!/data/data/com.termux/files/usr/bin/bash
+            export PATH="/data/data/com.termux/files/usr/bin:${'$'}PATH"
             if [ -n "${'$'}SSH_ORIGINAL_COMMAND" ]; then
               echo "PIN auth only supports interactive sessions."
               exit 1
@@ -205,6 +211,7 @@ class SshdManager(
             sed -i '/^# methings-auth-start/,/^# methings-auth-end/d' "${'$'}SSHD_CONFIG" 2>/dev/null; \
             sed -i '/^AuthorizedKeysCommand /d; /^AuthorizedKeysCommandUser /d' "${'$'}SSHD_CONFIG" 2>/dev/null; \
             sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' "${'$'}SSHD_CONFIG" 2>/dev/null; \
+            sed -i 's/^AuthorizedKeysFile/#AuthorizedKeysFile/' "${'$'}SSHD_CONFIG" 2>/dev/null; \
             grep -q '^Port ' "${'$'}SSHD_CONFIG" && sed -i 's/^Port .*/Port $port/' "${'$'}SSHD_CONFIG" || echo "Port $port" >> "${'$'}SSHD_CONFIG"; \
             echo '' >> "${'$'}SSHD_CONFIG" && \
             echo '# methings-auth-start' >> "${'$'}SSHD_CONFIG" && \
