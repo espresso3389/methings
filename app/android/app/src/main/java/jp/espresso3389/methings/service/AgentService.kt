@@ -26,6 +26,9 @@ import java.util.concurrent.TimeUnit
 class AgentService : LifecycleService() {
     private lateinit var runtimeManager: TermuxWorkerManager
     private lateinit var termuxManager: TermuxManager
+    private lateinit var sshdManager: SshdManager
+    private lateinit var sshPinManager: SshPinManager
+    private lateinit var sshNoAuthManager: SshNoAuthManager
     private var localServer: LocalHttpServer? = null
     private val tickExecutor = Executors.newSingleThreadScheduledExecutor()
     private var permissionReceiverRegistered = false
@@ -74,14 +77,21 @@ class AgentService : LifecycleService() {
         CaBundleManager(this).ensureSeeded()
         termuxManager = TermuxManager(this)
         runtimeManager = TermuxWorkerManager(this)
+        sshdManager = SshdManager(this, termuxManager)
+        sshPinManager = SshPinManager()
+        sshNoAuthManager = SshNoAuthManager(this)
         localServer = LocalHttpServer(
             this,
             this,
             runtimeManager,
-            termuxManager
+            termuxManager,
+            sshdManager,
+            sshPinManager,
+            sshNoAuthManager
         ).also {
             it.startServer()
         }
+        sshdManager.startIfEnabled()
         registerPermissionPromptReceiver()
         startForegroundCompat(buildNotification())
         tickExecutor.scheduleAtFixedRate({ tickBrainWorkNotification() }, 3, 6, TimeUnit.SECONDS)
@@ -124,6 +134,8 @@ class AgentService : LifecycleService() {
     override fun onDestroy() {
         unregisterPermissionPromptReceiver()
         tickExecutor.shutdownNow()
+        sshNoAuthManager.stop()
+        sshdManager.stop()
         localServer?.stopServer()
         localServer = null
         runtimeManager.stop()

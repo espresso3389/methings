@@ -101,7 +101,10 @@ class LocalHttpServer(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
     private val runtimeManager: TermuxWorkerManager,
-    private val termuxManager: TermuxManager
+    private val termuxManager: TermuxManager,
+    private val sshdManager: SshdManager,
+    private val sshPinManager: SshPinManager,
+    private val sshNoAuthManager: SshNoAuthManager
 ) : NanoWSD(HOST, PORT) {
     private val uiRoot = File(context.filesDir, "user/www")
     private val permissionStore = PermissionStoreFacade(context)
@@ -109,6 +112,8 @@ class LocalHttpServer(
     private val installIdentity = InstallIdentity(context)
     private val credentialStore = CredentialStore(context)
     private val deviceGrantStore = jp.espresso3389.methings.perm.DeviceGrantStoreFacade(context)
+    private val sshKeyStore = jp.espresso3389.methings.perm.SshKeyStore(context)
+    private val sshKeyPolicy = jp.espresso3389.methings.perm.SshKeyPolicy(context)
     private val agentTasks = java.util.concurrent.ConcurrentHashMap<String, AgentTask>()
     private val lastPermissionPromptAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
     private val usbConnections = ConcurrentHashMap<String, UsbDeviceConnection>()
@@ -472,6 +477,8 @@ class LocalHttpServer(
             "/intent" -> routeIntent(session, uri, postBody)
             "/sys" -> routeSys(session, uri, postBody)
             "/android" -> routeAndroid(session, uri, postBody)
+            "/sshd" -> routeSshd(session, uri, postBody)
+            "/ssh" -> routeSsh(session, uri, postBody)
             "" -> routeUi(session, uri, postBody)
             else -> notFound()
         }
@@ -7460,6 +7467,318 @@ class LocalHttpServer(
         return jsonResponse(JSONObject().put("status", "ok"))
     }
 
+    // --- SSHD routes ---
+
+    private data class ParsedSshPublicKey(
+        val type: String,
+        val b64: String,
+        val comment: String?
+    ) {
+        fun canonicalNoComment(): String = "$type $b64"
+    }
+
+    private fun routeSshd(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            uri == "/sshd/status" && session.method == Method.GET -> {
+                val status = sshdManager.status()
+                jsonResponse(
+                    JSONObject()
+                        .put("enabled", status.enabled)
+                        .put("running", status.running)
+                        .put("port", status.port)
+                        .put("auth_mode", status.authMode)
+                        .put("host", status.host)
+                )
+            }
+            uri == "/sshd/config" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val enabled = payload.optBoolean("enabled", sshdManager.isEnabled())
+                val port = if (payload.has("port")) payload.optInt("port", sshdManager.getPort()) else null
+                val authMode = payload.optString("auth_mode", "").ifBlank { null }
+                val status = sshdManager.updateConfig(enabled, port, authMode)
+                jsonResponse(
+                    JSONObject()
+                        .put("enabled", status.enabled)
+                        .put("running", status.running)
+                        .put("port", status.port)
+                        .put("auth_mode", status.authMode)
+                )
+            }
+            uri == "/sshd/keys" && session.method == Method.GET -> {
+                sshKeyStore.pruneExpired()
+                val arr = org.json.JSONArray()
+                sshKeyStore.listAll().forEach { key ->
+                    arr.put(
+                        JSONObject()
+                            .put("fingerprint", key.fingerprint)
+                            .put("key", key.key)
+                            .put("label", key.label ?: "")
+                            .put("expires_at", key.expiresAt ?: JSONObject.NULL)
+                            .put("created_at", key.createdAt)
+                    )
+                }
+                jsonResponse(JSONObject().put("items", arr))
+            }
+            uri == "/sshd/keys/add" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val key = payload.optString("key", "")
+                val label = payload.optString("label", "")
+                val expiresAt = if (payload.has("expires_at")) payload.optLong("expires_at", 0L) else null
+                val permissionId = payload.optString("permission_id", "")
+                if (!isPermissionApproved(permissionId, consume = true)) {
+                    return forbidden("permission_required")
+                }
+                if (key.isBlank()) {
+                    return badRequest("key_required")
+                }
+                val parsed = parseSshPublicKey(key) ?: return badRequest("invalid_public_key")
+                val finalLabel = sanitizeSshKeyLabel(label).takeIf { it != null }
+                    ?: sanitizeSshKeyLabel(parsed.comment ?: "")
+                val entity = sshKeyStore.upsert(parsed.canonicalNoComment(), finalLabel, expiresAt)
+                jsonResponse(
+                    JSONObject()
+                        .put("fingerprint", entity.fingerprint)
+                        .put("status", "ok")
+                )
+            }
+            uri == "/sshd/keys/delete" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                var fingerprint = payload.optString("fingerprint", "").trim()
+                val keyRaw = payload.optString("key", "")
+                val permissionId = payload.optString("permission_id", "")
+                if (!isPermissionApproved(permissionId, consume = true)) {
+                    return forbidden("permission_required")
+                }
+                if (fingerprint.isBlank() && keyRaw.isNotBlank()) {
+                    val parsed = parseSshPublicKey(keyRaw)
+                    if (parsed != null) {
+                        val keyEntity = sshKeyStore.findByPublicKey(parsed.canonicalNoComment())
+                        if (keyEntity != null) {
+                            fingerprint = keyEntity.fingerprint
+                        }
+                    }
+                }
+                if (fingerprint.isBlank()) {
+                    return badRequest("fingerprint_or_key_required")
+                }
+                sshKeyStore.delete(fingerprint)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/sshd/keys/policy" && session.method == Method.GET -> {
+                jsonResponse(
+                    JSONObject()
+                        .put("require_biometric", sshKeyPolicy.isBiometricRequired())
+                )
+            }
+            uri == "/sshd/keys/policy" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val requireBio = payload.optBoolean("require_biometric", sshKeyPolicy.isBiometricRequired())
+                sshKeyPolicy.setBiometricRequired(requireBio)
+                jsonResponse(JSONObject().put("require_biometric", sshKeyPolicy.isBiometricRequired()))
+            }
+            uri == "/sshd/pin/status" && session.method == Method.GET -> {
+                val state = sshPinManager.status()
+                if (state.expired) {
+                    sshPinManager.stopPin()
+                    sshdManager.exitPinMode()
+                } else if (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_PIN) {
+                    sshdManager.exitPinMode()
+                }
+                jsonResponse(
+                    JSONObject()
+                        .put("active", state.active)
+                        .put("pin", state.pin ?: "")
+                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
+                )
+            }
+            uri == "/sshd/pin/start" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val permissionId = payload.optString("permission_id", "")
+                val seconds = payload.optInt("seconds", 10)
+                if (!isPermissionApproved(permissionId, consume = true)) {
+                    return forbidden("permission_required")
+                }
+                sshdManager.enterPinMode()
+                val state = sshPinManager.startPin(seconds)
+                jsonResponse(
+                    JSONObject()
+                        .put("active", state.active)
+                        .put("pin", state.pin ?: "")
+                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
+                )
+            }
+            uri == "/sshd/pin/stop" && session.method == Method.POST -> {
+                sshPinManager.stopPin()
+                sshdManager.exitPinMode()
+                jsonResponse(JSONObject().put("active", false))
+            }
+            uri == "/sshd/pin/verify" && session.method == Method.GET -> {
+                // Called by the methings-pin-check script running inside Termux SSH session
+                val pin = session.parms["pin"] ?: ""
+                val valid = sshPinManager.verifyPin(pin)
+                jsonResponse(JSONObject().put("valid", valid))
+            }
+            uri == "/sshd/noauth/status" && session.method == Method.GET -> {
+                val state = sshNoAuthManager.status()
+                if (state.expired) {
+                    sshNoAuthManager.stop()
+                    sshdManager.exitNotificationMode()
+                } else if (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_NOTIFICATION) {
+                    sshdManager.exitNotificationMode()
+                }
+                jsonResponse(
+                    JSONObject()
+                        .put("active", state.active)
+                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
+                )
+            }
+            uri == "/sshd/noauth/start" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val permissionId = payload.optString("permission_id", "")
+                val seconds = payload.optInt("seconds", 30)
+                if (!isPermissionApproved(permissionId, consume = true)) {
+                    return forbidden("permission_required")
+                }
+                sshdManager.enterNotificationMode()
+                val state = sshNoAuthManager.start(seconds)
+                jsonResponse(
+                    JSONObject()
+                        .put("active", state.active)
+                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
+                )
+            }
+            uri == "/sshd/noauth/stop" && session.method == Method.POST -> {
+                sshNoAuthManager.stop()
+                sshdManager.exitNotificationMode()
+                jsonResponse(JSONObject().put("active", false))
+            }
+            uri == "/sshd/auth/keys" && session.method == Method.GET -> {
+                // THE BRIDGE endpoint — called by AuthorizedKeysCommand script in Termux.
+                // Returns authorized_keys-format lines based on current auth mode.
+                handleAuthKeysQuery(session)
+            }
+            else -> notFound()
+        }
+    }
+
+    /**
+     * AuthorizedKeysCommand bridge: returns authorized_keys lines to stdout.
+     * The script calls: curl http://127.0.0.1:33389/sshd/auth/keys?user=X&fp=Y&type=Z&key=W
+     */
+    private fun handleAuthKeysQuery(session: IHTTPSession): Response {
+        val user = session.parms["user"] ?: ""
+        val fp = session.parms["fp"] ?: ""
+        val keyType = session.parms["type"] ?: ""
+        val keyB64 = session.parms["key"] ?: ""
+        val offeredKey = if (keyType.isNotBlank() && keyB64.isNotBlank()) "$keyType $keyB64" else ""
+
+        val authMode = sshdManager.getAuthMode()
+
+        return when (authMode) {
+            SshdManager.AUTH_MODE_PUBLIC_KEY -> {
+                // Return DB keys that match the offered key (or all active keys if no key offered)
+                sshKeyStore.pruneExpired()
+                val now = System.currentTimeMillis()
+                val active = sshKeyStore.listActive(now)
+                val lines = active.mapNotNull { row ->
+                    val key = row.key.trim()
+                    if (key.isBlank()) return@mapNotNull null
+                    key
+                }
+                newFixedLengthResponse(
+                    Response.Status.OK,
+                    "text/plain",
+                    lines.joinToString("\n") + if (lines.isNotEmpty()) "\n" else ""
+                )
+            }
+            SshdManager.AUTH_MODE_PIN -> {
+                // Accept any offered key but wrap with command= to force PIN check
+                if (offeredKey.isBlank()) {
+                    return newFixedLengthResponse(Response.Status.OK, "text/plain", "")
+                }
+                val line = "command=\"/data/data/com.termux/files/usr/bin/methings-pin-check\" $offeredKey"
+                newFixedLengthResponse(Response.Status.OK, "text/plain", line + "\n")
+            }
+            SshdManager.AUTH_MODE_NOTIFICATION -> {
+                // Block until user approves via notification
+                if (offeredKey.isBlank()) {
+                    return newFixedLengthResponse(Response.Status.OK, "text/plain", "")
+                }
+                if (!sshNoAuthManager.isActive()) {
+                    return newFixedLengthResponse(Response.Status.OK, "text/plain", "")
+                }
+                val requestId = fp.ifBlank { offeredKey.hashCode().toString() }
+                val approved = sshNoAuthManager.waitForApproval(requestId, user, 30_000L)
+                if (approved) {
+                    newFixedLengthResponse(Response.Status.OK, "text/plain", offeredKey + "\n")
+                } else {
+                    newFixedLengthResponse(Response.Status.OK, "text/plain", "")
+                }
+            }
+            else -> newFixedLengthResponse(Response.Status.OK, "text/plain", "")
+        }
+    }
+
+    private fun routeSsh(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            uri == "/ssh/ws/contract" && session.method == Method.GET -> {
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("ws_path", "/ws/ssh/interactive")
+                        .put("query", JSONObject()
+                            .put("host", "required hostname or IP")
+                            .put("user", "optional user")
+                            .put("port", "optional port (default 22)")
+                            .put("permission_id", "optional approved permission id")
+                            .put("identity", "optional stable identity for permission reuse"))
+                )
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun sanitizeSshKeyLabel(raw: String): String? {
+        val s = raw.trim().replace(Regex("\\s+"), " ")
+        if (s.isBlank()) return null
+        return s.take(120)
+    }
+
+    private fun parseSshPublicKey(raw: String): ParsedSshPublicKey? {
+        val line = raw.trim()
+            .replace("\r", " ")
+            .replace("\n", " ")
+            .trim()
+        if (line.isBlank()) return null
+        val parts = line.split(Regex("\\s+"), limit = 3)
+        if (parts.size < 2) return null
+        val type = parts[0].trim()
+        val b64 = parts[1].trim()
+        val comment = parts.getOrNull(2)?.trim()?.ifBlank { null }
+
+        val t = type.lowercase(Locale.US)
+        val allowed = setOf(
+            "ssh-ed25519",
+            "ssh-rsa",
+            "ecdsa-sha2-nistp256",
+            "ecdsa-sha2-nistp384",
+            "ecdsa-sha2-nistp521",
+            "sk-ssh-ed25519@openssh.com",
+            "sk-ecdsa-sha2-nistp256@openssh.com"
+        )
+        if (!allowed.contains(t)) return null
+
+        try {
+            val decoded = Base64.decode(b64, Base64.DEFAULT)
+            if (decoded.isEmpty()) return null
+        } catch (_: Exception) {
+            return null
+        }
+        return ParsedSshPublicKey(type = type, b64 = b64, comment = comment)
+    }
+
+    // --- End SSHD routes ---
+
     private fun notFound(): Response {
         return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found")
     }
@@ -7532,6 +7851,10 @@ class LocalHttpServer(
 
     private fun runHousekeepingOnce() {
         runCatching {
+            val pruned = sshKeyStore.pruneExpired()
+            if (pruned > 0) {
+                Log.i(TAG, "Housekeeping pruned expired SSH keys: $pruned")
+            }
             cleanupExpiredMeSyncTransfers()
             cleanupExpiredMeSyncV3Tickets()
         }.onFailure {

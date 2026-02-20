@@ -111,6 +111,9 @@
         <receiver
             android:name=".service.BrainInterruptReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".service.SshNoAuthReceiver"
+            android:exported="false" />
         <receiver android:name=".service.BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
