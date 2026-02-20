@@ -1,8 +1,5 @@
 # Scripts
 
-## smoke_test.py
-Simple localhost smoke test for the server. Run after starting `server/app.py`.
-
 ## ui_hot_reload.sh
 Pushes the WebView UI to a connected device and triggers a reload.
 
