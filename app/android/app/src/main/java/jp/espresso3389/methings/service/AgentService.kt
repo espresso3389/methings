@@ -27,7 +27,6 @@ class AgentService : LifecycleService() {
     private lateinit var runtimeManager: TermuxWorkerManager
     private lateinit var termuxManager: TermuxManager
     private var localServer: LocalHttpServer? = null
-    private var vaultServer: KeystoreVaultServer? = null
     private val tickExecutor = Executors.newSingleThreadScheduledExecutor()
     private var permissionReceiverRegistered = false
     private var brainWorkNotificationShown = false
@@ -70,7 +69,6 @@ class AgentService : LifecycleService() {
         val extractor = AssetExtractor(this)
         extractor.extractUiAssetsIfMissing()
         extractor.extractUserDefaultsIfMissing()
-        extractor.extractNodeAssetsIfMissing()
         extractor.extractServerAssets()
         jp.espresso3389.methings.db.PlainDbProvider.get(this)
         CaBundleManager(this).ensureSeeded()
@@ -84,7 +82,6 @@ class AgentService : LifecycleService() {
         ).also {
             it.startServer()
         }
-        vaultServer = KeystoreVaultServer(this).apply { start() }
         registerPermissionPromptReceiver()
         startForegroundCompat(buildNotification())
         tickExecutor.scheduleAtFixedRate({ tickBrainWorkNotification() }, 3, 6, TimeUnit.SECONDS)
@@ -126,8 +123,6 @@ class AgentService : LifecycleService() {
 
     override fun onDestroy() {
         unregisterPermissionPromptReceiver()
-        vaultServer?.stop()
-        vaultServer = null
         tickExecutor.shutdownNow()
         localServer?.stopServer()
         localServer = null

@@ -873,7 +873,7 @@ class AgentRuntime(
             "read_file" -> "Reading ${args.optString("path", "file")}"
             "write_file" -> "Writing ${args.optString("path", "file")}"
             "list_dir" -> "Listing ${args.optString("path", ".")}"
-            "run_python" -> "Running Python"
+            "run_python" -> "Running python"
             "run_pip" -> "Running pip"
             "run_curl" -> "Running curl"
             "web_search" -> "Searching: ${args.optString("query", "").take(40)}"

@@ -38,70 +38,6 @@ def parse_gradle_dependencies(repo_root: Path) -> List[Dict[str, str]]:
     return out
 
 
-def parse_node_modules(repo_root: Path) -> List[Dict[str, str]]:
-    node_root = repo_root / "app" / "android" / "app" / "src" / "main" / "assets" / "node" / "usr" / "lib" / "node_modules"
-    if not node_root.exists():
-        return []
-    out: List[Dict[str, str]] = []
-    for pkg_file in sorted(node_root.glob("*/package.json")):
-        try:
-            obj = json.loads(pkg_file.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        name = str(obj.get("name") or pkg_file.parent.name).strip()
-        version = str(obj.get("version") or "").strip()
-        license_name = str(obj.get("license") or "").strip()
-        out.append(
-            {
-                "ecosystem": "node",
-                "name": name,
-                "version": version,
-                "license": license_name,
-                "source_path": str(pkg_file.relative_to(repo_root)),
-            }
-        )
-    return out
-
-
-def parse_wheels(repo_root: Path) -> List[Dict[str, str]]:
-    wheels_root = repo_root / "app" / "android" / "app" / "src" / "main" / "assets" / "wheels"
-    if not wheels_root.exists():
-        return []
-    out: List[Dict[str, str]] = []
-    wheel_pat = re.compile(r"^([A-Za-z0-9_.-]+)-([0-9][A-Za-z0-9_.!+-]*)-")
-    for whl in sorted(wheels_root.rglob("*.whl")):
-        m = wheel_pat.match(whl.name)
-        if m:
-            raw_name, version = m.groups()
-            name = normalize_name(raw_name)
-        else:
-            name = whl.stem
-            version = ""
-        license_name = ""
-        try:
-            with zipfile.ZipFile(whl, "r") as zf:
-                meta_name = next((n for n in zf.namelist() if n.endswith(".dist-info/METADATA")), "")
-                if meta_name:
-                    meta = zf.read(meta_name).decode("utf-8", errors="ignore")
-                    m_lic = re.search(r"^License:\s*(.+)$", meta, re.MULTILINE)
-                    if m_lic:
-                        license_name = m_lic.group(1).strip()
-                    if not license_name:
-                        classifiers = re.findall(r"^Classifier:\s*License :: (.+)$", meta, re.MULTILINE)
-                        if classifiers:
-                            license_name = classifiers[0].strip()
-        except Exception:
-            pass
-        out.append(
-            {
-                "ecosystem": "python-wheel",
-                "name": name,
-                "version": version,
-                "license": license_name,
-                "source_path": str(whl.relative_to(repo_root)),
-            }
-        )
-    return out
 
 
 def detect_license_from_text(text: str) -> str:
@@ -256,11 +192,6 @@ def find_local_license_files(base_dir: Path) -> List[Path]:
     return out[:4]
 
 
-def docs_for_node(repo_root: Path, dep: Dict[str, str]) -> List[Dict[str, str]]:
-    pkg_json = repo_root / dep.get("source_path", "")
-    base = pkg_json.parent
-    return docs_from_files(repo_root, find_local_license_files(base))
-
 
 def docs_from_zip_member(zf: zipfile.ZipFile, member: str, title: str) -> Dict[str, str] | None:
     try:
@@ -404,22 +335,6 @@ def docs_for_vendored(repo_root: Path, dep: Dict[str, str]) -> List[Dict[str, st
     return docs_from_files(repo_root, find_local_license_files(base))
 
 
-def docs_for_python_wheel(repo_root: Path, dep: Dict[str, str]) -> List[Dict[str, str]]:
-    whl = repo_root / dep.get("source_path", "")
-    if not whl.exists():
-        return []
-    docs: List[Dict[str, str]] = []
-    try:
-        with zipfile.ZipFile(whl, "r") as zf:
-            names = [n for n in zf.namelist() if re.search(r"\.dist-info/(license|copying|notice|licenses?/)", n, re.IGNORECASE)]
-            for n in names[:3]:
-                d = docs_from_zip_member(zf, n, f"{whl.name}:{n}")
-                if d:
-                    docs.append(d)
-    except Exception:
-        return []
-    return docs
-
 
 def docs_from_files(root: Path, files: List[Path]) -> List[Dict[str, str]]:
     out: List[Dict[str, str]] = []
@@ -443,22 +358,16 @@ def docs_from_files(root: Path, files: List[Path]) -> List[Dict[str, str]]:
 def build_full_licenses(repo_root: Path, deps: List[Dict[str, str]]) -> Dict[str, object]:
     section_labels = {
         "android-gradle": "Android (Gradle)",
-        "node": "Node.js",
-        "python-wheel": "Python Wheels",
         "vendored-native": "Vendored Native",
     }
     grouped: Dict[str, List[Dict[str, object]]] = {}
     for dep in deps:
         eco = dep.get("ecosystem", "other")
         docs: List[Dict[str, str]] = []
-        if eco == "node":
-            docs = docs_for_node(repo_root, dep)
-        elif eco == "vendored-native":
+        if eco == "vendored-native":
             docs = docs_for_vendored(repo_root, dep)
         elif eco == "android-gradle":
             docs = docs_for_gradle(dep)
-        elif eco == "python-wheel":
-            docs = docs_for_python_wheel(repo_root, dep)
         item = {
             "name": dep.get("name", ""),
             "version": dep.get("version", ""),
@@ -469,7 +378,7 @@ def build_full_licenses(repo_root: Path, deps: List[Dict[str, str]]) -> Dict[str
         grouped.setdefault(eco, []).append(item)
 
     sections = []
-    order = ["android-gradle", "node", "python-wheel", "vendored-native"]
+    order = ["android-gradle", "vendored-native"]
     ecos = order + sorted([k for k in grouped.keys() if k not in order])
     for eco in ecos:
         items = grouped.get(eco, [])
@@ -501,8 +410,6 @@ def main() -> int:
 
     deps = dedupe(
         parse_gradle_dependencies(repo_root)
-        + parse_node_modules(repo_root)
-        + parse_wheels(repo_root)
         + parse_third_party(repo_root)
     )
     deps = [d for d in deps if not is_ignored(d, cfg)]

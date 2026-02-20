@@ -143,7 +143,7 @@ class LocalHttpServer(
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
 
-    // --- Native Kotlin Agent Runtime (replaces Python/Termux brain) ---
+    // --- Native Agent Runtime ---
     private val agentStorage by lazy { AgentStorage(context) }
     private val agentJournalStore by lazy { JournalStore(File(context.filesDir, "user/journal")) }
     private val agentConfigManager by lazy { AgentConfigManager(context) }
@@ -178,8 +178,8 @@ class LocalHttpServer(
             )
             runtime.onEvent = { name, payload -> broadcastBrainEvent(name, payload) }
             agentRuntime = runtime
-            // One-time: migrate chat history from old Python DB
-            try { agentStorage.migrateFromPythonDbIfNeeded() } catch (_: Exception) {}
+            // One-time: migrate chat history from legacy DB
+            try { agentStorage.migrateLegacyDbIfNeeded() } catch (_: Exception) {}
             return runtime
         }
     }
@@ -474,7 +474,7 @@ class LocalHttpServer(
                 JSONObject()
                     .put("status", "ok")
                     .put("service", "local")
-                    .put("python", runtimeManager.getStatus())
+                    .put("termux", runtimeManager.getStatus())
             )
             else -> notFound()
         }
@@ -1279,7 +1279,7 @@ class LocalHttpServer(
                         Thread {
                             dismissRemotePermission(updated.id, updated.status)
                         }.apply { isDaemon = true }.start()
-                        // Also notify the Python agent runtime so it can resume automatically.
+                        // Also notify the agent runtime so it can resume automatically.
                         // Run this off-thread so /permissions/{id}/approve responds immediately even if
                         // the worker is slow or temporarily blocked.
                         Thread {
@@ -1398,7 +1398,7 @@ class LocalHttpServer(
     private fun routeBrain(session: IHTTPSession, uri: String, postBody: String?): Response {
         val runtime = getOrCreateAgentRuntime()
         return when {
-            // --- SSE event stream (native, no Python proxy) ---
+            // --- SSE event stream (native) ---
             uri == "/brain/events" && session.method == Method.GET -> {
                 serveBrainSse()
             }
@@ -1581,13 +1581,13 @@ class LocalHttpServer(
 
         if (runtimeManager.getStatus() != "ok") {
             runtimeManager.startWorker()
-            waitForPythonHealth(5000)
+            waitForTermuxHealth(5000)
         }
         val proxied = proxyShellExecToWorker(cmd, args, cwd)
         if (proxied != null) {
             return proxied
         }
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
     }
 
     private fun routeWeb(session: IHTTPSession, uri: String, postBody: String?): Response {
@@ -5425,7 +5425,7 @@ class LocalHttpServer(
         val extraIndexUrls = payload.optJSONArray("extra_index_urls")
         val trustedHosts = payload.optJSONArray("trusted_hosts")
 
-        val detail = "pip download (to wheelhouse): " + pkgs.joinToString(" ").take(180)
+        val detail = "pip download: " + pkgs.joinToString(" ").take(180)
         val perm = ensurePipPermission(session, payload, capability = "pip.download", detail = detail)
         if (!perm.first) return perm.second!!
 
@@ -5469,11 +5469,11 @@ class LocalHttpServer(
 
         if (runtimeManager.getStatus() != "ok") {
             runtimeManager.startWorker()
-            waitForPythonHealth(5000)
+            waitForTermuxHealth(5000)
         }
         val proxied = proxyShellExecToWorker("pip", args.joinToString(" "), "")
         if (proxied != null) return proxied
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
     }
 
     private fun handlePipInstall(session: IHTTPSession, payload: JSONObject): Response {
@@ -5515,7 +5515,6 @@ class LocalHttpServer(
         if (!allowNetwork) {
             args.add("--no-index")
         }
-        // wheelhouse removed — pip uses Termux default paths
         if (onlyBinary) {
             args.add("--only-binary=:all:")
             args.add("--prefer-binary")
@@ -5552,11 +5551,11 @@ class LocalHttpServer(
 
         if (runtimeManager.getStatus() != "ok") {
             runtimeManager.startWorker()
-            waitForPythonHealth(5000)
+            waitForTermuxHealth(5000)
         }
         val proxied = proxyShellExecToWorker("pip", args.joinToString(" "), "")
         if (proxied != null) return proxied
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
     }
 
     private fun handleWebSearch(session: IHTTPSession, payload: JSONObject): Response {
@@ -6429,21 +6428,6 @@ class LocalHttpServer(
         }
     }
 
-    private fun resolvePythonBinary(): File? {
-        // Prefer native lib (has correct SELinux context for execution)
-        val nativeDir = context.applicationInfo.nativeLibraryDir
-        val nativePython = File(nativeDir, "libmethingspy.so")
-        if (nativePython.exists()) {
-            return nativePython
-        }
-        // Wrapper script in bin/
-        val binPython = File(context.filesDir, "bin/python3")
-        if (binPython.exists() && binPython.canExecute()) {
-            return binPython
-        }
-        return null
-    }
-
     private fun proxyShellExecToWorker(cmd: String, args: String, cwd: String): Response? {
         val payload = JSONObject()
             .put("cmd", cmd)
@@ -6517,7 +6501,7 @@ class LocalHttpServer(
     }
 
     private fun buildWorkerSystemPrompt(): String {
-        // Passed to the Python worker brain (tool-calling runtime).
+        // System prompt for the agent runtime (tool-calling loop).
         //
         // Keep this short. Detailed operational rules live in user-root docs so we can evolve them
         // without bloating the system prompt.
@@ -6923,7 +6907,7 @@ class LocalHttpServer(
         }
     }
 
-    private fun waitForPythonHealth(timeoutMs: Long) {
+    private fun waitForTermuxHealth(timeoutMs: Long) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             try {
@@ -11693,9 +11677,9 @@ class LocalHttpServer(
                 )
             }
             val restarted = if (restartApp) restartAppIfPossible() else false
-            var restartedPython = false
+            var restartedWorker = false
             if (!restarted) {
-                restartedPython = runCatching { runtimeManager.restartSoft() }.getOrDefault(false)
+                restartedWorker = runCatching { runtimeManager.restartSoft() }.getOrDefault(false)
             }
             jsonResponse(
                 JSONObject()
@@ -11703,7 +11687,7 @@ class LocalHttpServer(
                     .put("wiped", true)
                     .put("restart_requested", restartApp)
                     .put("restarted_app", restarted)
-                    .put("restarted_python", restartedPython)
+                    .put("restarted_worker", restartedWorker)
                     .put("preserved_session_id", if (preserveSessionId.isNotBlank()) preserveSessionId else JSONObject.NULL)
             )
         } catch (ex: Exception) {

@@ -138,7 +138,7 @@ class MainActivity : AppCompatActivity() {
             val escaped = jsString(txt)
             evalJs("window.onMeSyncQrScanResult && window.onMeSyncQrScanResult({ok:true,text:'$escaped'})")
         }
-    private val pythonHealthReceiver = object : BroadcastReceiver() {
+    private val workerHealthReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val status = intent?.getStringExtra(TermuxWorkerManager.EXTRA_STATUS) ?: return
             publishStatusToWeb(status)
@@ -1011,7 +1011,7 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
-                pythonHealthReceiver,
+                workerHealthReceiver,
                 IntentFilter(TermuxWorkerManager.ACTION_WORKER_HEALTH),
                 Context.RECEIVER_NOT_EXPORTED
             )
@@ -1061,7 +1061,7 @@ class MainActivity : AppCompatActivity() {
                 Context.RECEIVER_NOT_EXPORTED
             )
         } else {
-            registerReceiver(pythonHealthReceiver, IntentFilter(TermuxWorkerManager.ACTION_WORKER_HEALTH))
+            registerReceiver(workerHealthReceiver, IntentFilter(TermuxWorkerManager.ACTION_WORKER_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
             registerReceiver(uiReloadReceiver, IntentFilter(LocalHttpServer.ACTION_UI_RELOAD))
             registerReceiver(uiChatCacheClearReceiver, IntentFilter(LocalHttpServer.ACTION_UI_CHAT_CACHE_CLEAR))
@@ -1076,7 +1076,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         if (isImmersive) exitImmersiveMode()
-        unregisterReceiver(pythonHealthReceiver)
+        unregisterReceiver(workerHealthReceiver)
         unregisterReceiver(permissionPromptReceiver)
         unregisterReceiver(uiReloadReceiver)
         unregisterReceiver(uiChatCacheClearReceiver)
@@ -1119,7 +1119,7 @@ class MainActivity : AppCompatActivity() {
         val payload = status.replace("'", "\\'")
         webView.post {
             webView.evaluateJavascript(
-                "window.onPythonStatus && window.onPythonStatus('${payload}')",
+                "window.onWorkerStatus && window.onWorkerStatus('${payload}')",
                 null
             )
         }
@@ -1351,7 +1351,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Special-case: for USB tools, complete the Android OS USB permission dialog before
-        // approving the in-app tool request, so the Python agent can auto-resume reliably.
+        // approving the in-app tool request, so the agent can auto-resume reliably.
         if (tool == "device.usb") {
             val (name, vid, pid) = extractUsbHint(detail)
             val dev = findUsbDeviceByHint(name, vid, pid)
@@ -1393,7 +1393,7 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun startPythonWorker() {
+    private fun startWorker() {
         val intent = Intent(this, AgentService::class.java)
         intent.action = AgentService.ACTION_START_WORKER
         startForegroundService(intent)
@@ -1412,7 +1412,7 @@ class MainActivity : AppCompatActivity() {
         startForegroundService(intent)
         webView.post {
             webView.evaluateJavascript(
-                "window.onPythonRestartRequested && window.onPythonRestartRequested()",
+                "window.onWorkerRestartRequested && window.onWorkerRestartRequested()",
                 null
             )
         }

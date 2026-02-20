@@ -192,15 +192,15 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * One-time migration: copy chat_messages from the old Python app.db into agent.db.
+     * One-time migration: copy chat_messages from the legacy app.db into agent.db.
      * Safe to call multiple times — skips if already migrated or old DB doesn't exist.
      */
-    fun migrateFromPythonDbIfNeeded() {
-        if (getSetting("python_db_migrated") != null) return
+    fun migrateLegacyDbIfNeeded() {
+        if (getSetting("legacy_db_migrated") != null) return
 
         val oldDb = File(filesDir, "protected/app.db")
         if (!oldDb.exists()) {
-            setSetting("python_db_migrated", "no_source")
+            setSetting("legacy_db_migrated", "no_source")
             return
         }
 
@@ -213,7 +213,7 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
                 )
                 val hasTable = tables.use { it.moveToFirst() }
                 if (!hasTable) {
-                    setSetting("python_db_migrated", "no_table")
+                    setSetting("legacy_db_migrated", "no_table")
                     return
                 }
 
@@ -244,12 +244,12 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
                 } finally {
                     dst.endTransaction()
                 }
-                Log.i(TAG, "Migrated $count chat messages from Python app.db")
+                Log.i(TAG, "Migrated $count chat messages from legacy app.db")
             }
-            setSetting("python_db_migrated", System.currentTimeMillis().toString())
+            setSetting("legacy_db_migrated", System.currentTimeMillis().toString())
         } catch (ex: Exception) {
-            Log.w(TAG, "Python DB migration failed (non-fatal)", ex)
-            setSetting("python_db_migrated", "error:${ex.message?.take(100)}")
+            Log.w(TAG, "Legacy DB migration failed (non-fatal)", ex)
+            setSetting("legacy_db_migrated", "error:${ex.message?.take(100)}")
         }
     }
 

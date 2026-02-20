@@ -1,31 +1,28 @@
 # First Build Checklist
 
-## 1) Build Python-for-Android runtime
-- Run `scripts/build_p4a.sh` in Linux/WSL
-- Verify `app/android/app/src/main/assets/pyenv/bin/python` exists
-
-## 2) Sync server assets
+## 1) Sync server assets
 - Ensure latest `server/app.py` and `server/storage/db.py` are copied into
   `app/android/app/src/main/assets/server/`
+- (Gradle preBuild handles this automatically)
 
-## 3) Build native USB libs
+## 2) Build native USB libs
 - Run `NDK_DIR=... ./scripts/build_libusb_android.sh`
 - Run `NDK_DIR=... ./scripts/build_libuvc_android.sh`
 - Verify `app/android/app/src/main/jniLibs/<ABI>/libusb1.0.so` and
   `app/android/app/src/main/jniLibs/<ABI>/libuvc.so` exist
 
-## 4) Android build
+## 3) Android build
 - Open `app/android` in Android Studio
 - Set your final applicationId if needed
 - Build and install on a device (Android 14+)
 
-## 5) Runtime smoke check (device)
+## 4) Runtime smoke check (device)
 - Launch the app
 - Confirm the UI loads (from `files/www`)
 - Toggle SSHD and verify status shows running
-- Start/stop Python worker and confirm status updates
+- Start the agent and send a test chat message
 - Test SSH login (public-key, notification-based no-auth, or PIN auth)
 
-## 6) Optional local smoke test (desktop)
-- Run `python server/app.py`
-- Run `python scripts/smoke_test.py`
+## 5) Optional: Termux setup
+- Install Termux for shell tools (`run_python`, `run_pip`, `run_curl`)
+- Verify Termux status shows "ok" in Settings → Agent Service

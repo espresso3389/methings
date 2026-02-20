@@ -13,7 +13,6 @@ import threading
 import subprocess
 import signal
 import secrets
-import socket
 import shutil
 from typing import Dict
 from pathlib import Path
@@ -234,16 +233,9 @@ def _spawn_program(code: str, args: Dict) -> Dict:
 
 
 def _vault_request(command: str, name: str, payload: str = "") -> str:
-    try:
-        with socket.create_connection(("127.0.0.1", 8766), timeout=2.0) as sock:
-            msg = f"{command} {name} {payload}".strip() + "\n"
-            sock.sendall(msg.encode("utf-8"))
-            data = sock.recv(65536).decode("utf-8").strip()
-            if not data.startswith("OK "):
-                return ""
-            return data[3:]
-    except Exception:
-        return ""
+    # Vault server removed — credential encryption is handled natively by the app.
+    # This stub keeps the service-registration endpoints from crashing.
+    return ""
 
 
 def _resolve_user_cwd(cwd: str) -> Path:

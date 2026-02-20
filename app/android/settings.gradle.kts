@@ -5,5 +5,5 @@ pluginManagement {
     }
 }
 
-rootProject.name = "android_vive_python"
+rootProject.name = "methings"
 include(":app")

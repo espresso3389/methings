@@ -37,15 +37,9 @@ Fix:
 
 ## pyusb / libusb on Android
 
-### “Kivy” / JNI crash when importing or using `pyusb`
+### JNI crash when importing or using `pyusb`
 
-Symptom: JVM exception mentioning missing `org.kivy.android.PythonActivity` when
-calling `ctypes.util.find_library()` (triggered by `pyusb`'s libusb backend).
-
-Mitigation:
-
-- The worker patches `ctypes.util.find_library()` to prefer `$METHINGS_NATIVELIB`
-  and avoid any Kivy/JNI lookup.
+Symptom: `ctypes.util.find_library()` fails (triggered by `pyusb`'s libusb backend).
 - `libusb` is packaged under multiple common names (`libusb1.0.so`,
   `libusb-1.0.so`, `libusb.so`) so ecosystem code can find it.
 

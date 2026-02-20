@@ -145,7 +145,7 @@ class TermuxWorkerManager(private val context: Context) {
 
     /**
      * Returns true if the worker is only needed for shell tools (run_python, run_pip, run_curl).
-     * The AI agent now runs natively in Kotlin; Termux is only needed for Python/shell execution.
+     * The agent runs natively in the app; Termux is only needed for shell execution.
      */
     fun isNeededForShellOnly(): Boolean = true
 

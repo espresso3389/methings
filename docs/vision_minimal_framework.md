@@ -5,7 +5,7 @@ methings intentionally avoids bundling OpenCV for on-device vision.
 Goals:
 - Keep the image/signal pipeline small, understandable, and fast.
 - Use Android-side primitives for performance (TFLite + small CPU intrinsics).
-- Keep Python as orchestration: control plane calls + small result parsing.
+- Keep the agent as orchestration: control plane calls + small result parsing.
 
 ## Internal Format
 

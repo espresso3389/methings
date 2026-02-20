@@ -189,34 +189,14 @@
       "version": "2.17.0",
       "source_path": "app/android/app/build.gradle.kts",
       "note": "implementation"
-    },
-    {
-      "ecosystem": "node",
-      "name": "corepack",
-      "version": "0.34.5",
-      "license": "MIT",
-      "source_path": "app/android/app/src/main/assets/node/usr/lib/node_modules/corepack/package.json"
-    },
-    {
-      "ecosystem": "node",
-      "name": "npm",
-      "version": "11.9.0",
-      "license": "Artistic-2.0",
-      "source_path": "app/android/app/src/main/assets/node/usr/lib/node_modules/npm/package.json"
     }
   ],
   "ignore_config": {
-    "ignore_ecosystems": [
-      "python-wheel"
-    ],
+    "ignore_ecosystems": [],
     "ignore_names": [
       "libusb",
-      "libuvc",
-      "opencv-android",
-      "opencv-python"
+      "libuvc"
     ],
-    "ignore_name_patterns": [
-      "opencv"
-    ]
+    "ignore_name_patterns": []
   }
 }

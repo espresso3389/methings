@@ -10,7 +10,7 @@ health:
           application/json:
             schema:
               type: object
-              required: [status, service, python]
+              required: [status, service, termux]
               properties:
                 status:
                   type: string
@@ -18,11 +18,11 @@ health:
                 service:
                   type: string
                   const: local
-                python:
+                termux:
                   type: string
                   enum: [ok, offline, starting, stopping]
-                  description: Status of the Python runtime.
+                  description: Status of the Termux worker.
             example:
               status: ok
               service: local
-              python: ok
+              termux: ok

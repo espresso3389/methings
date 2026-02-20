@@ -97,8 +97,6 @@
         const sections = document.getElementById("depSections");
         const sectionLabel = {
           "android-gradle": "Android (Gradle)",
-          "node": "Node.js",
-          "python-wheel": "Python Wheels",
           "vendored-native": "Vendored Native",
         };
         try {
@@ -117,7 +115,7 @@
             if (!byEco[eco]) byEco[eco] = [];
             byEco[eco].push(d);
           }
-          const order = ["android-gradle", "node", "python-wheel", "vendored-native"];
+          const order = ["android-gradle", "vendored-native"];
           const ecos = order.concat(Object.keys(byEco).filter((e) => !order.includes(e)).sort());
           sections.innerHTML = "";
           for (const eco of ecos) {

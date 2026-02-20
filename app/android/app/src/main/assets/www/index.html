@@ -2065,7 +2065,7 @@
           <div class="card-header">
             <div class="card-icon amber">&#9881;</div>
             <div class="card-title">Agent Service</div>
-            <div id="pythonStatus" class="status-badge offline" style="margin-left:auto;">offline</div>
+            <div id="workerStatus" class="status-badge offline" style="margin-left:auto;">offline</div>
           </div>
           <div class="toggle-row">
             <label class="toggle">
@@ -2076,13 +2076,13 @@
           </div>
           <p class="muted">Emergency restart only.</p>
           <div class="btn-group">
-            <button class="btn" id="restartPython">Restart</button>
-            <button class="btn danger" id="stopPython">Stop</button>
+            <button class="btn" id="restartWorker">Restart</button>
+            <button class="btn danger" id="stopWorker">Stop</button>
           </div>
-          <p class="muted" id="pythonDetail" style="margin-top:6px;"></p>
+          <p class="muted" id="workerDetail" style="margin-top:6px;"></p>
         </section>
 
-        <!-- Python Packages section removed (agent can install via pip as needed) -->
+        <!-- Packages section removed (agent can install via pip as needed) -->
 
         <!-- User Interface -->
         <section class="card" id="settings-section-user_interface">
@@ -7625,10 +7625,10 @@
       });
 
       // ==============================
-      // Settings: SSHD, Python, etc.
+      // Settings: SSHD, Worker, etc.
       // ==============================
-      const pythonStatus = $("pythonStatus");
-      const pythonDetail = $("pythonDetail");
+      const workerStatus = $("workerStatus");
+      const workerDetail = $("workerDetail");
       const appUpdateStatus = $("appUpdateStatus");
       const appUpdateDetail = $("appUpdateDetail");
       const appUpdateDownloadIndicator = $("appUpdateDownloadIndicator");
@@ -8856,14 +8856,14 @@
         }
       }
 
-      async function refreshPython() {
+      async function refreshWorker() {
         try {
           const res = await fetch(API + "/termux/status");
           if (!res.ok) throw 0;
           const data = await res.json();
-          setStatus(pythonStatus, data.status || "offline");
+          setStatus(workerStatus, data.status || "offline");
         } catch (_) {
-          setStatus(pythonStatus, "offline");
+          setStatus(workerStatus, "offline");
         }
       }
 
@@ -9093,7 +9093,7 @@
         throw new Error("permission timeout");
       }
 
-      // Python Packages UI removed.
+      // Packages UI removed.
 
       $("permRemember").addEventListener("change", async () => {
         const enabled = !!$("permRemember").checked;
@@ -9289,24 +9289,24 @@
         }
       });
 
-      $("restartPython").addEventListener("click", async () => {
-        if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonWorker) {
-          AndroidBridge.restartPythonWorker();
+      $("restartWorker").addEventListener("click", async () => {
+        if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartWorkerWorker) {
+          AndroidBridge.restartWorkerWorker();
         } else {
           await fetch(API + "/termux/restart", { method: "POST" });
         }
-        pythonDetail.textContent = "Restart requested";
-        setStatus(pythonStatus, "starting");
+        workerDetail.textContent = "Restart requested";
+        setStatus(workerStatus, "starting");
       });
 
-      $("stopPython").addEventListener("click", async () => {
+      $("stopWorker").addEventListener("click", async () => {
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.stopService) {
           AndroidBridge.stopService();
         } else {
           await fetch(API + "/service/stop", { method: "POST" });
         }
-        pythonDetail.textContent = "Service stop requested";
-        setStatus(pythonStatus, "stopping");
+        workerDetail.textContent = "Service stop requested";
+        setStatus(workerStatus, "stopping");
       });
 
       $("openAppSettings").addEventListener("click", () => {
@@ -10378,12 +10378,11 @@
 
       {
         const allLogTags = [
-          "AgentService", "AppUpdateManager", "AssetExtractor",
-          "AudioRecordManager", "CaBundleManager", "CameraXManager",
-          "KeystoreVaultServer", "LocalHttpServer", "MediaStreamManager",
+          "AgentRuntime", "AgentService", "AgentStorage", "AppUpdateManager",
+          "AssetExtractor", "AudioRecordManager", "CaBundleManager", "CameraXManager",
+          "DeviceToolBridge", "LlmClient", "LocalHttpServer", "MediaStreamManager",
           "MeSyncNearbyTransport", "MethingsPerm", "MethingsStt", "MethingsWeb",
-          "PermissionStoreFacade", "PythonBridge", "PythonRuntimeInstaller",
-          "PythonRuntimeManager", "ScreenCaptureActivity", "ScreenRecordManager",
+          "PermissionStoreFacade", "ScreenCaptureActivity", "ScreenRecordManager",
           "SensorsStreamManager", "SshdManager", "TfliteModelManager",
           "UsbIsoBridge", "UsbPermissionActivity", "UsbPermissionResultReceiver",
           "VideoRecordManager",
@@ -10703,8 +10702,8 @@
       // Agent console initial load (stubs removed; kept as no-ops for safety).
       refreshSshKeys();
 
-      window.onPythonStatus = function(status) {
-        setStatus(pythonStatus, status);
+      window.onWorkerStatus = function(status) {
+        setStatus(workerStatus, status);
       };
 
       // When viewed in a normal browser (not Android WebView), open external
@@ -10729,7 +10728,7 @@
       loadVideoRecSettings();
       loadBrowserPrefs();
       loadServicePrefs();
-      refreshPython();
+      refreshWorker();
       updateAppUpdateButtons();
       refreshAppUpdate(true);
       refreshAppUpdateWorkStatus();
@@ -10738,7 +10737,7 @@
       refreshAppInfo();
       refreshSsh();
       refreshPin();
-      setInterval(refreshPython, 5000);
+      setInterval(refreshWorker, 5000);
       setInterval(refreshSsh, 5000);
 
       // --- Termux Setup Wizard ---

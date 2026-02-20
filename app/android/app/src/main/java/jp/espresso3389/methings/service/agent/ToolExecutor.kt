@@ -244,7 +244,7 @@ class ToolExecutor(
         }
         val exec = shellExec
             ?: return JSONObject().put("status", "error").put("error", "shell_unavailable")
-                .put("detail", "Termux is not installed or not running. Install Termux for Python/pip/curl support.")
+                .put("detail", "Termux is not installed or not running. Install Termux for python/pip/curl support.")
         val cmdArgs = args.optString("args", "")
         val cwd = args.optString("cwd", "")
         return exec(cmd, cmdArgs, cwd)

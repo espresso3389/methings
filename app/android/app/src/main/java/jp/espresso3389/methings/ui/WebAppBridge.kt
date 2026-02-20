@@ -44,7 +44,7 @@ class WebAppBridge(private val activity: MainActivity) {
     private val settingsUnlockTimeoutMs = 30_000L
 
     @JavascriptInterface
-    fun startPythonWorker() {
+    fun startWorker() {
         handler.post {
             val intent = Intent(activity, AgentService::class.java)
             intent.action = AgentService.ACTION_START_WORKER
@@ -53,7 +53,7 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
-    fun restartPythonWorker() {
+    fun restartWorker() {
         handler.post {
             val intent = Intent(activity, AgentService::class.java)
             intent.action = AgentService.ACTION_RESTART_WORKER
@@ -62,7 +62,7 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
-    fun stopPythonWorker() {
+    fun stopWorker() {
         handler.post {
             val intent = Intent(activity, AgentService::class.java)
             intent.action = AgentService.ACTION_STOP_WORKER
