@@ -297,6 +297,7 @@ class LocalHttpServer(
     )
 
     @Volatile private var bootstrapPhase: String = "none"
+    @Volatile private var bootstrapMessage: String = ""
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
@@ -2567,6 +2568,8 @@ class LocalHttpServer(
                 if (phase in listOf("running", "done")) {
                     bootstrapPhase = phase
                 }
+                val msg = payload.optString("message", "")
+                if (msg.isNotBlank()) bootstrapMessage = msg
                 // When bootstrap finishes, auto-start the worker
                 if (phase == "done") {
                     runtimeManager.startWorker()
@@ -2585,6 +2588,7 @@ class LocalHttpServer(
                         .put("releases_url", TermuxManager.TERMUX_RELEASES_URL)
                         .put("bootstrap_command", "curl -so ~/b.sh http://127.0.0.1:$PORT/termux/bootstrap.sh && bash ~/b.sh")
                         .put("bootstrap_phase", bootstrapPhase)
+                        .put("bootstrap_message", bootstrapMessage)
                         .put("can_request_installs", termuxManager.canInstallPackages())
                 )
             }

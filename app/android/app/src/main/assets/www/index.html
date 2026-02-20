@@ -2034,7 +2034,7 @@
                 <div class="setup-step-title">Setting up</div>
                 <div class="setup-step-desc">Installing packages and configuring the environment. If a permission dialog appears, tap Allow.</div>
                 <div class="setup-step-actions">
-                  <span class="thinking-dots">Setting up<span></span><span></span><span></span></span>
+                  <span id="txSetupProgress" class="thinking-dots">Setting up<span></span><span></span><span></span></span>
                 </div>
               </div>
             </div>
@@ -10912,6 +10912,13 @@
           var dimVal = allDone ? "" : "0.5";
           if (sshdCard) sshdCard.style.opacity = dimVal;
           if (agentCard) agentCard.style.opacity = dimVal;
+
+          // Update bootstrap progress message
+          var progressEl = $("txSetupProgress");
+          if (progressEl) {
+            var msg = d.bootstrap_message || "Setting up";
+            progressEl.firstChild.textContent = msg;
+          }
 
           if (d.releases_url) txReleasesUrl = d.releases_url;
           if (d.bootstrap_command) {
