@@ -5321,11 +5321,20 @@
               saveConversation();
             } catch (_) {}
           });
-          es.addEventListener("brain_item_started", function(e) {
-            try {
-              // Show thinking indicator (unless streaming owns it).
+          // Debounce timer for thinking indicator — suppresses flash from
+          // fast event cycles (e.g. me.me.device.presence processed in <200ms).
+          let _thinkingDebounce = null;
+          let _pendingThinkingLabel = "";
+          function scheduleThinkingShow(label) {
+            _pendingThinkingLabel = label || _pendingThinkingLabel || "";
+            if (_thinkingDebounce) return; // already scheduled
+            _thinkingDebounce = setTimeout(function() {
+              _thinkingDebounce = null;
               if (streaming) return;
-              if (_thinking.el && _thinking.el.isConnected) return;
+              if (_thinking.el && _thinking.el.isConnected) {
+                if (_pendingThinkingLabel) updateThinkingLabel(_pendingThinkingLabel);
+                return;
+              }
               const allAssistant = chatMessages.querySelectorAll(".msg.assistant");
               const last = allAssistant.length ? allAssistant[allAssistant.length - 1] : null;
               let hasUserAfter = false;
@@ -5337,18 +5346,33 @@
                 }
               }
               if (last && !hasUserAfter) {
-                setMsgWorking(last, true);
+                setMsgWorking(last, true, _pendingThinkingLabel);
               } else {
-                addThinkingIndicator();
+                addThinkingIndicator(_pendingThinkingLabel);
               }
+              _pendingThinkingLabel = "";
+            }, 200);
+          }
+          function cancelThinkingDebounce() {
+            if (_thinkingDebounce) { clearTimeout(_thinkingDebounce); _thinkingDebounce = null; }
+            _pendingThinkingLabel = "";
+          }
+          function dismissThinkingNow() {
+            cancelThinkingDebounce();
+            if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
+            _thinking.el = null;
+            chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
+          }
+          es.addEventListener("brain_item_started", function(e) {
+            try {
+              if (streaming) return;
+              scheduleThinkingShow("");
             } catch (_) {}
           });
           es.addEventListener("brain_idle", function(e) {
             try {
               if (streaming) return;
-              if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
-              _thinking.el = null;
-              chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
+              dismissThinkingNow();
             } catch (_) {}
           });
           es.addEventListener("brain_item_failed", function(e) {
@@ -5365,9 +5389,7 @@
                 resolveSseWaiter(id, err ? ("Error: " + err) : "");
               }
               if (streaming) return;
-              if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
-              _thinking.el = null;
-              chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
+              dismissThinkingNow();
             } catch (_) {}
           });
           es.addEventListener("brain_item_done", function(e) {
@@ -5375,6 +5397,7 @@
               const data = JSON.parse((e && e.data) || "{}");
               const id = String(data.id || data.item_id || "").trim();
               if (id) resolveSseWaiter(id, "");
+              if (!streaming) dismissThinkingNow();
             } catch (_) {}
           });
           es.addEventListener("brain_item_interrupted", function(e) {
@@ -5383,9 +5406,7 @@
               const id = String(data.id || data.item_id || "").trim();
               if (id && _sseWaiters.has(id)) resolveSseWaiter(id, "Interrupted.");
               if (streaming) return;
-              if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
-              _thinking.el = null;
-              chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
+              dismissThinkingNow();
             } catch (_) {}
           });
           es.addEventListener("brain_status", function(e) {
@@ -5394,8 +5415,7 @@
               const data = JSON.parse(e.data);
               const label = data.label || "";
               if (!label) return;
-              // If a thinking bubble or working indicator is visible, update its label.
-              // If none exists yet, create one (the status event may arrive before brain_item_started).
+              // If indicator already visible, update label immediately.
               if (_thinking.el && _thinking.el.isConnected) {
                 updateThinkingLabel(label);
               } else {
@@ -5403,7 +5423,8 @@
                 if (workingEls.length) {
                   for (var i = 0; i < workingEls.length; i++) workingEls[i].textContent = label;
                 } else {
-                  addThinkingIndicator(label);
+                  // Schedule indicator with label (debounced).
+                  scheduleThinkingShow(label);
                 }
               }
             } catch (_) {}

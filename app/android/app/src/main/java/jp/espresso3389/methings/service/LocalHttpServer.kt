@@ -1419,6 +1419,10 @@ class LocalHttpServer(
                     if (metaStr.isNotEmpty()) {
                         try { obj.put("meta", JSONObject(metaStr)) } catch (_: Exception) {}
                     }
+                    // Alias created_at → ts for JS poll dedup
+                    if (obj.has("created_at") && !obj.has("ts")) {
+                        obj.put("ts", obj.optLong("created_at", 0))
+                    }
                     arr.put(obj)
                 }
                 jsonResponse(JSONObject().put("messages", arr))
