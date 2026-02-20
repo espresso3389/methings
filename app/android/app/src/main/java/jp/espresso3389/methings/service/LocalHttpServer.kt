@@ -206,8 +206,8 @@ class LocalHttpServer(
     // SSE event broadcasting for brain events
     private val brainSseClients = CopyOnWriteArrayList<java.io.PipedOutputStream>()
     private fun broadcastBrainEvent(name: String, payload: JSONObject) {
-        val data = JSONObject().put("type", name).put("data", payload).toString()
-        val sseMsg = "data: $data\n\n"
+        val data = payload.toString()
+        val sseMsg = "event: $name\ndata: $data\n\n"
         val bytes = sseMsg.toByteArray(Charsets.UTF_8)
         for (client in brainSseClients) {
             try {
@@ -1413,7 +1413,13 @@ class LocalHttpServer(
                 val msgs = runtime.listMessagesForSession(sessionId, limit)
                 val arr = JSONArray()
                 for (m in msgs) {
-                    arr.put(JSONObject(m))
+                    val obj = JSONObject(m)
+                    // Parse meta from string to object for the UI
+                    val metaStr = obj.optString("meta", "")
+                    if (metaStr.isNotEmpty()) {
+                        try { obj.put("meta", JSONObject(metaStr)) } catch (_: Exception) {}
+                    }
+                    arr.put(obj)
                 }
                 jsonResponse(JSONObject().put("messages", arr))
             }
@@ -1546,8 +1552,8 @@ class LocalHttpServer(
         // Send initial status event
         try {
             val runtime = agentRuntime
-            val initData = JSONObject().put("type", "brain_status").put("data", runtime?.status() ?: JSONObject().put("running", false))
-            pipedOut.write("data: ${initData}\n\n".toByteArray(Charsets.UTF_8))
+            val initData = runtime?.status() ?: JSONObject().put("running", false)
+            pipedOut.write("event: brain_status\ndata: ${initData}\n\n".toByteArray(Charsets.UTF_8))
             pipedOut.flush()
         } catch (_: Exception) {}
         val response = newChunkedResponse(Response.Status.OK, "text/event-stream", pipedIn)
@@ -6498,31 +6504,6 @@ class LocalHttpServer(
     private fun buildSystemPrompt(): String {
         val memory = readMemory().trim()
         return BRAIN_SYSTEM_PROMPT + if (memory.isEmpty()) "(empty)" else memory
-    }
-
-    private fun buildWorkerSystemPrompt(): String {
-        // System prompt for the agent runtime (tool-calling loop).
-        //
-        // Keep this short. Detailed operational rules live in user-root docs so we can evolve them
-        // without bloating the system prompt.
-        return listOf(
-            "You are a senior Android device programming professional (systems-level engineer). ",
-            "You are expected to already know Android/USB/BLE/Camera/GPS basics and practical debugging techniques. ",
-            "You are \"methings\" running on an Android device. ",
-            "Your goal is to produce the user's requested outcome (artifact/state change), not to narrate steps. ",
-            "You MUST use function tools for any real action (no pretending). ",
-            "If you can satisfy a request by writing code/scripts, do it and execute them via tools. ",
-            "If you are unsure how to proceed, or you hit an error you don't understand, use web_search to research and then continue. ",
-            "If a needed device capability is not exposed by tools, say so and propose the smallest code change to add it. ",
-            "Do not delegate implementable steps back to the user (implementation/builds/api calls/log inspection); do them yourself when possible. ",
-            "User-root docs (`AGENTS.md`, `TOOLS.md`) are auto-injected into your context and reloaded if they change on disk; do not repeatedly read them via filesystem tools unless the user explicitly asks. ",
-            "Prefer consulting the provided user-root docs under `docs/` and `examples/` (camera/usb/vision) before guessing tool names. ",
-            "For files: use filesystem tools under the user root (not shell `ls`/`cat`). ",
-            "For execution: use run_python/run_pip/run_curl only. ",
-            "For cloud calls: prefer the configured Brain provider (Settings -> Brain). If Brain is not configured or has no API key, ask the user to configure it, then retry. ",
-            "Device/resource access requires explicit user approval; if the user request implies consent, trigger the tool call immediately to surface the permission prompt (no pre-negotiation). If permission_required, ask the user to approve in the app UI and then retry automatically (approvals are remembered for the session). ",
-            "Keep responses concise: do the work first, then summarize and include relevant tool output snippets."
-        ).joinToString("")
     }
 
     private fun handleBrainConfigGet(): Response {

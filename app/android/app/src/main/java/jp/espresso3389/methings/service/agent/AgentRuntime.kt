@@ -211,6 +211,11 @@ class AgentRuntime(
                 synchronized(lock) {
                     lastProcessedAt = System.currentTimeMillis()
                 }
+                emitLog("brain_item_done", JSONObject().apply {
+                    put("id", item?.optString("id"))
+                    put("item_id", item?.optString("id"))
+                    put("session_id", sessionIdForItem(item ?: JSONObject()))
+                })
             } catch (_: InterruptedException) {
                 emitLog("brain_item_interrupted", JSONObject().apply {
                     put("id", item?.optString("id"))
@@ -366,7 +371,8 @@ class AgentRuntime(
         ) dialogue.dropLast(1) else dialogue
 
         val tools = when (providerKind) {
-            ProviderKind.OPENAI_COMPAT -> ToolDefinitions.responsesTools(ToolDefinitions.deviceApiActionNames())
+            ProviderKind.OPENAI_RESPONSES -> ToolDefinitions.responsesTools(ToolDefinitions.deviceApiActionNames())
+            ProviderKind.OPENAI_CHAT -> ToolDefinitions.chatTools(ToolDefinitions.deviceApiActionNames())
             ProviderKind.ANTHROPIC -> ToolDefinitions.anthropicTools(ToolDefinitions.deviceApiActionNames())
         }
 
@@ -465,6 +471,35 @@ class AgentRuntime(
 
             // Execute tool calls
             pendingInput = JSONArray()
+
+            // Responses API: echo back all output items (reasoning + function_call) so
+            // function_call_output items have their required context
+            if (providerKind == ProviderKind.OPENAI_RESPONSES) {
+                for (ci in 0 until lastResponsesOutputItems.length()) {
+                    pendingInput.put(lastResponsesOutputItems.get(ci))
+                }
+            }
+
+            // Chat Completions: include the assistant message (with tool_calls) before tool results
+            if (providerKind == ProviderKind.OPENAI_CHAT) {
+                val assistantMsg = JSONObject().put("role", "assistant")
+                if (messageTexts.isNotEmpty()) assistantMsg.put("content", messageTexts.joinToString("\n"))
+                val tcArr = JSONArray()
+                for (ci in 0 until calls.length()) {
+                    val c = calls.getJSONObject(ci)
+                    tcArr.put(JSONObject().apply {
+                        put("id", c.optString("call_id", c.optString("id", "")))
+                        put("type", "function")
+                        put("function", JSONObject().apply {
+                            put("name", c.optString("name", ""))
+                            put("arguments", (c.opt("arguments") as? JSONObject)?.toString() ?: "{}")
+                        })
+                    })
+                }
+                assistantMsg.put("tool_calls", tcArr)
+                pendingInput.put(assistantMsg)
+            }
+
             for (i in 0 until calls.length().coerceAtMost(maxActions)) {
                 checkInterrupt()
                 val call = calls.getJSONObject(i)
@@ -573,12 +608,25 @@ class AgentRuntime(
         input: Any, systemPrompt: String, requireTool: Boolean
     ): JSONObject {
         return when (kind) {
-            ProviderKind.OPENAI_COMPAT -> JSONObject().apply {
+            ProviderKind.OPENAI_RESPONSES -> JSONObject().apply {
                 put("model", model)
                 put("tools", tools)
                 put("input", input)
                 put("instructions", systemPrompt)
                 put("truncation", "auto")
+                if (requireTool) put("tool_choice", "required")
+            }
+            ProviderKind.OPENAI_CHAT -> JSONObject().apply {
+                put("model", model)
+                put("tools", tools)
+                // Prepend system message, then the dialogue messages
+                val messages = JSONArray()
+                messages.put(JSONObject().put("role", "system").put("content", systemPrompt))
+                val inputArr = input as? JSONArray ?: JSONArray()
+                for (i in 0 until inputArr.length()) {
+                    messages.put(inputArr.get(i))
+                }
+                put("messages", messages)
                 if (requireTool) put("tool_choice", "required")
             }
             ProviderKind.ANTHROPIC -> JSONObject().apply {
@@ -594,15 +642,21 @@ class AgentRuntime(
 
     private fun parseProviderResponse(kind: ProviderKind, payload: JSONObject): Pair<List<String>, JSONArray> {
         return when (kind) {
-            ProviderKind.OPENAI_COMPAT -> parseOpenAiResponse(payload)
+            ProviderKind.OPENAI_RESPONSES -> parseOpenAiResponsesResponse(payload)
+            ProviderKind.OPENAI_CHAT -> parseOpenAiChatResponse(payload)
             ProviderKind.ANTHROPIC -> parseAnthropicResponse(payload)
         }
     }
 
-    private fun parseOpenAiResponse(payload: JSONObject): Pair<List<String>, JSONArray> {
+    /** All non-message output items from the last Responses API call (reasoning + function_call).
+     *  Must be echoed back in the input when sending function_call_output items. */
+    private var lastResponsesOutputItems = JSONArray()
+
+    private fun parseOpenAiResponsesResponse(payload: JSONObject): Pair<List<String>, JSONArray> {
         val outputItems = payload.optJSONArray("output") ?: JSONArray()
         val messageTexts = mutableListOf<String>()
         val calls = JSONArray()
+        val echoItems = JSONArray()
 
         for (i in 0 until outputItems.length()) {
             val out = outputItems.optJSONObject(i) ?: continue
@@ -619,7 +673,43 @@ class AgentRuntime(
                     }
                     if (parts.isNotEmpty()) messageTexts.add(parts.joinToString("\n"))
                 }
-                "function_call" -> calls.put(out)
+                "function_call" -> {
+                    calls.put(out)
+                    echoItems.put(out)
+                }
+                else -> {
+                    // Capture reasoning and other items needed for echo-back
+                    echoItems.put(out)
+                }
+            }
+        }
+        lastResponsesOutputItems = echoItems
+        return Pair(messageTexts, calls)
+    }
+
+    private fun parseOpenAiChatResponse(payload: JSONObject): Pair<List<String>, JSONArray> {
+        val messageTexts = mutableListOf<String>()
+        val calls = JSONArray()
+
+        val choices = payload.optJSONArray("choices") ?: JSONArray()
+        for (ci in 0 until choices.length()) {
+            val choice = choices.optJSONObject(ci) ?: continue
+            val msg = choice.optJSONObject("message") ?: continue
+            val content = if (msg.isNull("content")) "" else msg.optString("content", "").trim()
+            if (content.isNotEmpty()) messageTexts.add(content)
+            val toolCalls = msg.optJSONArray("tool_calls")
+            if (toolCalls != null) {
+                for (ti in 0 until toolCalls.length()) {
+                    val tc = toolCalls.optJSONObject(ti) ?: continue
+                    val fn = tc.optJSONObject("function") ?: continue
+                    val argsStr = fn.optString("arguments", "{}")
+                    val argsJson = try { JSONObject(argsStr) } catch (_: Exception) { JSONObject() }
+                    calls.put(JSONObject().apply {
+                        put("name", fn.optString("name", ""))
+                        put("call_id", tc.optString("id", ""))
+                        put("arguments", argsJson)
+                    })
+                }
             }
         }
         return Pair(messageTexts, calls)
@@ -655,7 +745,7 @@ class AgentRuntime(
     ): JSONArray {
         val input = JSONArray()
         when (kind) {
-            ProviderKind.OPENAI_COMPAT -> {
+            ProviderKind.OPENAI_RESPONSES -> {
                 for (msg in dialogue) {
                     val role = msg.optString("role")
                     val text = msg.optString("text", "")
@@ -671,6 +761,16 @@ class AgentRuntime(
                 // Current user message
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", curText))))
+            }
+            ProviderKind.OPENAI_CHAT -> {
+                for (msg in dialogue) {
+                    val role = msg.optString("role")
+                    val text = msg.optString("text", "")
+                    if (role in setOf("user", "assistant") && text.isNotBlank()) {
+                        input.put(JSONObject().put("role", role).put("content", text))
+                    }
+                }
+                input.put(JSONObject().put("role", "user").put("content", "$journalBlob\n\n$curText"))
             }
             ProviderKind.ANTHROPIC -> {
                 for (msg in dialogue) {
@@ -688,11 +788,18 @@ class AgentRuntime(
 
     private fun appendToolResult(kind: ProviderKind, input: JSONArray, callId: String, result: JSONObject) {
         when (kind) {
-            ProviderKind.OPENAI_COMPAT -> {
+            ProviderKind.OPENAI_RESPONSES -> {
                 input.put(JSONObject().apply {
                     put("type", "function_call_output")
                     put("call_id", callId)
                     put("output", result.toString())
+                })
+            }
+            ProviderKind.OPENAI_CHAT -> {
+                input.put(JSONObject().apply {
+                    put("role", "tool")
+                    put("tool_call_id", callId)
+                    put("content", result.toString())
                 })
             }
             ProviderKind.ANTHROPIC -> {
@@ -710,11 +817,11 @@ class AgentRuntime(
 
     private fun appendUserNudge(kind: ProviderKind, input: JSONArray, nudge: String): JSONArray {
         when (kind) {
-            ProviderKind.OPENAI_COMPAT -> {
+            ProviderKind.OPENAI_RESPONSES -> {
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", nudge))))
             }
-            ProviderKind.ANTHROPIC -> {
+            ProviderKind.OPENAI_CHAT, ProviderKind.ANTHROPIC -> {
                 input.put(JSONObject().put("role", "user").put("content", nudge))
             }
         }
@@ -727,11 +834,11 @@ class AgentRuntime(
             "then summarize after tool outputs are provided."
         val input = JSONArray()
         when (kind) {
-            ProviderKind.OPENAI_COMPAT -> {
+            ProviderKind.OPENAI_RESPONSES -> {
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", nudge))))
             }
-            ProviderKind.ANTHROPIC -> {
+            ProviderKind.OPENAI_CHAT, ProviderKind.ANTHROPIC -> {
                 input.put(JSONObject().put("role", "user").put("content", nudge))
             }
         }
@@ -743,7 +850,9 @@ class AgentRuntime(
     private fun buildSystemPrompt(config: AgentConfig): String {
         val base = config.systemPrompt.ifEmpty { AgentConfig.DEFAULT_SYSTEM_PROMPT }
         val policyBlob = userRootPolicyBlob()
-        return if (policyBlob.isNotEmpty()) "$base\n\n$policyBlob" else base
+        val prompt = if (policyBlob.isNotEmpty()) "$base\n\n$policyBlob" else base
+        // Language instruction MUST come last, after policy docs, so it's not drowned out.
+        return "$prompt\n\nIMPORTANT: Always respond in the same language the user writes in."
     }
 
     private fun buildJournalBlob(journalCurrent: String, sessionId: String, persistentMemory: String): String {

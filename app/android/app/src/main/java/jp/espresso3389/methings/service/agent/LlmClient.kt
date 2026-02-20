@@ -9,17 +9,17 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
-enum class ProviderKind { ANTHROPIC, OPENAI_COMPAT }
+enum class ProviderKind { ANTHROPIC, OPENAI_RESPONSES, OPENAI_CHAT }
 
 class LlmClient {
 
     fun detectProviderKind(url: String, vendor: String): ProviderKind {
         val v = vendor.trim().lowercase(Locale.US)
         val u = url.trim().lowercase(Locale.US)
-        return if (v == "anthropic" || u.contains("anthropic.com")) {
-            ProviderKind.ANTHROPIC
-        } else {
-            ProviderKind.OPENAI_COMPAT
+        return when {
+            v == "anthropic" || u.contains("anthropic.com") -> ProviderKind.ANTHROPIC
+            u.endsWith("/responses") || u.contains("/responses?") -> ProviderKind.OPENAI_RESPONSES
+            else -> ProviderKind.OPENAI_CHAT
         }
     }
 
@@ -30,7 +30,7 @@ class LlmClient {
                 headers["x-api-key"] = apiKey
                 headers["anthropic-version"] = "2023-06-01"
             }
-            ProviderKind.OPENAI_COMPAT -> {
+            ProviderKind.OPENAI_RESPONSES, ProviderKind.OPENAI_CHAT -> {
                 headers["Authorization"] = "Bearer $apiKey"
             }
         }
@@ -91,7 +91,8 @@ class LlmClient {
             }
 
             return when (kind) {
-                ProviderKind.OPENAI_COMPAT -> parseOpenAiSse(conn, interruptCheck)
+                ProviderKind.OPENAI_RESPONSES -> parseOpenAiResponsesSse(conn, interruptCheck)
+                ProviderKind.OPENAI_CHAT -> parseOpenAiChatSse(conn, interruptCheck)
                 ProviderKind.ANTHROPIC -> parseAnthropicSse(conn, interruptCheck)
             }
         } finally {
@@ -99,7 +100,7 @@ class LlmClient {
         }
     }
 
-    private fun parseOpenAiSse(conn: HttpURLConnection, interruptCheck: () -> Boolean): JSONObject {
+    private fun parseOpenAiResponsesSse(conn: HttpURLConnection, interruptCheck: () -> Boolean): JSONObject {
         var completedPayload: JSONObject? = null
         var failedError: String? = null
 
@@ -135,6 +136,95 @@ class LlmClient {
         if (completedPayload != null) return completedPayload
         if (failedError != null) throw RuntimeException("provider_stream_failed: $failedError")
         throw RuntimeException("provider_stream_incomplete: SSE ended without response.completed")
+    }
+
+    private fun parseOpenAiChatSse(conn: HttpURLConnection, interruptCheck: () -> Boolean): JSONObject {
+        // Chat Completions SSE: accumulate delta chunks into a final message
+        var contentText = StringBuilder()
+        var finishReason: String? = null
+        var model = ""
+        var responseId = ""
+        // Tool calls: index -> (id, name, arguments accumulator)
+        data class ToolCallAccum(var id: String, var name: String, val args: StringBuilder = StringBuilder())
+        val toolCallMap = mutableMapOf<Int, ToolCallAccum>()
+
+        val reader = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8))
+        try {
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                if (interruptCheck()) throw InterruptedException("interrupted during streaming")
+                val l = line?.trim() ?: continue
+                if (!l.startsWith("data:")) continue
+                val dataStr = l.substring(5).trim()
+                if (dataStr.isEmpty()) continue
+                if (dataStr == "[DONE]") break
+
+                val chunk = try { JSONObject(dataStr) } catch (_: Exception) { continue }
+                if (responseId.isEmpty()) responseId = chunk.optString("id", "")
+                if (model.isEmpty()) model = chunk.optString("model", "")
+
+                val choices = chunk.optJSONArray("choices") ?: continue
+                for (ci in 0 until choices.length()) {
+                    val choice = choices.optJSONObject(ci) ?: continue
+                    val delta = choice.optJSONObject("delta") ?: continue
+                    val fr = choice.optString("finish_reason", "")
+                    if (fr.isNotEmpty() && fr != "null") finishReason = fr
+
+                    if (!delta.isNull("content")) {
+                        val dc = delta.optString("content", "")
+                        if (dc.isNotEmpty()) contentText.append(dc)
+                    }
+
+                    val toolCalls = delta.optJSONArray("tool_calls")
+                    if (toolCalls != null) {
+                        for (ti in 0 until toolCalls.length()) {
+                            val tc = toolCalls.optJSONObject(ti) ?: continue
+                            val idx = tc.optInt("index", ti)
+                            val accum = toolCallMap.getOrPut(idx) { ToolCallAccum("", "") }
+                            val tcId = tc.optString("id", "")
+                            if (tcId.isNotEmpty()) accum.id = tcId
+                            val fn = tc.optJSONObject("function")
+                            if (fn != null) {
+                                val fname = fn.optString("name", "")
+                                if (fname.isNotEmpty()) accum.name = fname
+                                accum.args.append(fn.optString("arguments", ""))
+                            }
+                        }
+                    }
+                }
+            }
+        } finally {
+            reader.close()
+        }
+
+        // Build a normalized response matching Chat Completions non-streaming format
+        val message = JSONObject().apply {
+            put("role", "assistant")
+            if (contentText.isNotEmpty()) put("content", contentText.toString())
+            if (toolCallMap.isNotEmpty()) {
+                val tcArr = JSONArray()
+                for ((_, accum) in toolCallMap.entries.sortedBy { it.key }) {
+                    tcArr.put(JSONObject().apply {
+                        put("id", accum.id)
+                        put("type", "function")
+                        put("function", JSONObject().apply {
+                            put("name", accum.name)
+                            put("arguments", accum.args.toString())
+                        })
+                    })
+                }
+                put("tool_calls", tcArr)
+            }
+        }
+
+        return JSONObject().apply {
+            put("id", responseId)
+            put("model", model)
+            put("choices", JSONArray().put(JSONObject().apply {
+                put("message", message)
+                put("finish_reason", finishReason ?: "stop")
+            }))
+        }
     }
 
     private fun parseAnthropicSse(conn: HttpURLConnection, interruptCheck: () -> Boolean): JSONObject {

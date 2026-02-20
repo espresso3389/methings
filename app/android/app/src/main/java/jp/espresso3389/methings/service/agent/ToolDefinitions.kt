@@ -125,6 +125,24 @@ object ToolDefinitions {
     }
 
     // Anthropic Messages API tool format (different from OpenAI Responses API)
+    /** Chat Completions format: wraps each tool in {"type":"function","function":{...}} */
+    fun chatTools(deviceApiActions: List<String>): JSONArray {
+        val tools = JSONArray()
+        val responseTools = responsesTools(deviceApiActions)
+        for (i in 0 until responseTools.length()) {
+            val tool = responseTools.getJSONObject(i)
+            tools.put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", tool.getString("name"))
+                    put("description", tool.getString("description"))
+                    put("parameters", tool.getJSONObject("parameters"))
+                })
+            })
+        }
+        return tools
+    }
+
     fun anthropicTools(deviceApiActions: List<String>): JSONArray {
         val tools = JSONArray()
         val responseTools = responsesTools(deviceApiActions)
