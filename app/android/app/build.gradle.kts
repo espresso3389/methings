@@ -121,7 +121,6 @@ val syncServerAssets by tasks.registering(Copy::class) {
     val srcDir = repoRoot.resolve("server")
     val dstDir = projectDir.resolve("src/main/assets/server")
     from(srcDir)
-    exclude("**/__pycache__/**", "**/*.pyc")
     into(dstDir)
     doFirst {
         dstDir.deleteRecursively()
@@ -135,7 +134,6 @@ val syncSystemAssets by tasks.registering(Copy::class) {
     from(srcDir) {
         include("docs/**", "examples/**", "lib/**")
     }
-    exclude("**/__pycache__/**", "**/*.pyc")
     into(dstDir)
     doFirst {
         dstDir.deleteRecursively()
@@ -147,7 +145,6 @@ val syncUserDefaults by tasks.registering(Copy::class) {
     val srcDir = repoRoot.resolve("user")
     val dstDir = projectDir.resolve("src/main/assets/user_defaults")
     from(srcDir)
-    exclude("**/__pycache__/**", "**/*.pyc")
     // docs/, examples/, lib/ are read-only system assets (synced by syncSystemAssets)
     exclude("docs/**", "examples/**", "lib/**")
     into(dstDir)

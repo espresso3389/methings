@@ -26,14 +26,6 @@ jobs:
           set -euo pipefail
           git submodule sync --recursive
           git -c protocol.version=2 submodule update --init --depth=1 third_party/libusb third_party/libuvc
-          if ! git -c protocol.version=2 submodule update --init --depth=1 third_party/dropbear; then
-            dropbear_branch="$(git config -f .gitmodules --get submodule.third_party/dropbear.branch || true)"
-            dropbear_branch="${dropbear_branch:-feat/uv-shell-alias}"
-            echo "Falling back to dropbear fork branch '${dropbear_branch}' because pinned submodule commit is unavailable"
-            rm -rf third_party/dropbear
-            git clone --depth=1 --branch "${dropbear_branch}" https://github.com/espresso3389/dropbear.git third_party/dropbear
-            git -C third_party/dropbear log -1 --oneline
-          fi
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -42,22 +34,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            autoconf \
-            automake \
-            autoconf-archive \
             build-essential \
             cmake \
-            gettext \
-            libtool-bin \
-            libltdl-dev \
-            m4 \
-            libtool \
             ninja-build \
             pkg-config \
-            pkgconf \
             unzip \
-            zip \
-            zlib1g-dev
+            zip
       - name: Install Gradle
         run: |
           curl -fsSL -o /tmp/gradle-8.2.1-bin.zip https://services.gradle.org/distributions/gradle-8.2.1-bin.zip
