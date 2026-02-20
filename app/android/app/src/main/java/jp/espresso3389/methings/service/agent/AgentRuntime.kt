@@ -444,7 +444,10 @@ class AgentRuntime(
                 }
                 if (toolRequiredUnsatisfied && forcedRounds < 1) {
                     forcedRounds++
-                    pendingInput = buildToolRequiredNudge(providerKind)
+                    pendingInput = appendUserNudge(providerKind, pendingInput,
+                        "Tool policy is REQUIRED for this request. " +
+                        "You MUST call one or more tools to perform the action(s), " +
+                        "then summarize after tool outputs are provided.")
                     continue
                 }
                 // Final assistant message
@@ -470,11 +473,11 @@ class AgentRuntime(
             }
 
             // Execute tool calls
-            pendingInput = JSONArray()
-
-            // Responses API: echo back all output items (reasoning + function_call) so
-            // function_call_output items have their required context
+            // Responses API is stateful — reset and echo back only new items.
+            // Chat Completions and Anthropic are stateless — keep accumulating
+            // the full conversation history so multi-round tool loops retain context.
             if (providerKind == ProviderKind.OPENAI_RESPONSES) {
+                pendingInput = JSONArray()
                 for (ci in 0 until lastResponsesOutputItems.length()) {
                     pendingInput.put(lastResponsesOutputItems.get(ci))
                 }
@@ -869,23 +872,6 @@ class AgentRuntime(
                 }
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "text").put("text", nudge))))
-            }
-        }
-        return input
-    }
-
-    private fun buildToolRequiredNudge(kind: ProviderKind): JSONArray {
-        val nudge = "Tool policy is REQUIRED for this request. " +
-            "You MUST call one or more tools to perform the action(s), " +
-            "then summarize after tool outputs are provided."
-        val input = JSONArray()
-        when (kind) {
-            ProviderKind.OPENAI_RESPONSES -> {
-                input.put(JSONObject().put("role", "user")
-                    .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", nudge))))
-            }
-            ProviderKind.OPENAI_CHAT, ProviderKind.ANTHROPIC -> {
-                input.put(JSONObject().put("role", "user").put("content", nudge))
             }
         }
         return input
