@@ -296,6 +296,8 @@ class LocalHttpServer(
         logger = { msg, ex -> if (ex != null) Log.w(TAG, msg, ex) else Log.d(TAG, msg) }
     )
 
+    @Volatile private var bootstrapPhase: String = "none"
+
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
     private val screenScheduler = Executors.newSingleThreadScheduledExecutor()
@@ -2559,6 +2561,18 @@ class LocalHttpServer(
                 runtimeManager.restartSoft()
                 jsonResponse(JSONObject().put("status", "starting"))
             }
+            path == "/termux/bootstrap/notify" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val phase = payload.optString("phase", "")
+                if (phase in listOf("running", "done")) {
+                    bootstrapPhase = phase
+                }
+                // When bootstrap finishes, auto-start the worker
+                if (phase == "done") {
+                    runtimeManager.startWorker()
+                }
+                jsonResponse(JSONObject().put("status", "ok").put("phase", bootstrapPhase))
+            }
             path == "/termux/status" -> {
                 jsonResponse(
                     JSONObject()
@@ -2570,6 +2584,7 @@ class LocalHttpServer(
                         .put("worker_status", runtimeManager.getStatus())
                         .put("releases_url", TermuxManager.TERMUX_RELEASES_URL)
                         .put("bootstrap_command", "curl -so ~/b.sh http://127.0.0.1:$PORT/termux/bootstrap.sh && bash ~/b.sh")
+                        .put("bootstrap_phase", bootstrapPhase)
                         .put("can_request_installs", termuxManager.canInstallPackages())
                 )
             }
@@ -5224,13 +5239,8 @@ class LocalHttpServer(
     }
 
     private fun handleAppUpdateInstallPermissionOpenSettings(): Response {
-        if (BuildConfig.DEBUG) {
-            return jsonError(
-                Response.Status.BAD_REQUEST,
-                "debug_build_update_disabled",
-                JSONObject().put("message", "Auto update/install is disabled for debug builds.")
-            )
-        }
+        // No debug guard here — opening the "install unknown apps" settings page
+        // is needed for Termux installation regardless of build type.
         return try {
             appUpdateManager.openInstallPermissionSettings()
             jsonResponse(JSONObject().put("status", "ok"))

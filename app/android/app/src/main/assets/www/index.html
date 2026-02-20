@@ -1104,7 +1104,7 @@
         position: absolute;
         left: 15px;
         top: 38px;
-        bottom: 0;
+        bottom: -10px;
         width: 2px;
         background: var(--border);
       }
@@ -1125,12 +1125,12 @@
         z-index: 1;
       }
       .setup-step.done .setup-step-num {
-        background: var(--green-soft);
+        background: #0e2a16;
         color: var(--green);
         border-color: var(--green);
       }
       .setup-step.active .setup-step-num {
-        background: var(--accent-soft);
+        background: #141428;
         color: var(--accent);
         border-color: var(--accent);
       }
@@ -1171,7 +1171,7 @@
       }
       .setup-step .done-check { display: none; }
       .setup-step.done .done-check { display: inline; }
-      .setup-step.done .setup-step-num span { display: none; }
+      .setup-step.done .setup-step-num span:not(.done-check) { display: none; }
       .setup-complete-banner {
         display: flex;
         align-items: center;
@@ -2012,7 +2012,7 @@
                 <div class="setup-step-actions">
                   <button class="btn primary" id="txSetupInstall">Install Termux</button>
                   <button class="btn" id="txSetupDownload">Download manually</button>
-                  <span id="txInstallIndicator" class="thinking-dots" style="display:none;">Downloading Termux<span>.</span><span>.</span><span>.</span></span>
+                  <span id="txInstallIndicator" class="thinking-dots" style="display:none;">Downloading Termux<span></span><span></span><span></span></span>
                 </div>
               </div>
             </div>
@@ -2031,31 +2031,10 @@
             <div class="setup-step" data-step="2">
               <div class="setup-step-num"><span>3</span><span class="done-check">&#10003;</span></div>
               <div class="setup-step-body">
-                <div class="setup-step-title">Restart Termux</div>
-                <div class="setup-step-desc">Close Termux completely and reopen it so allow-external-apps takes effect.</div>
+                <div class="setup-step-title">Setting up</div>
+                <div class="setup-step-desc">Installing packages and configuring the environment. If a permission dialog appears, tap Allow.</div>
                 <div class="setup-step-actions">
-                  <button class="btn primary" id="txSetupOpenTermux2">Open Termux</button>
-                  <p class="muted" style="margin-top:4px;font-size:12px;">Swipe Termux away from recents first, then tap the button above.</p>
-                </div>
-              </div>
-            </div>
-            <div class="setup-step" data-step="3">
-              <div class="setup-step-num"><span>4</span><span class="done-check">&#10003;</span></div>
-              <div class="setup-step-body">
-                <div class="setup-step-title">Grant permission</div>
-                <div class="setup-step-desc">Allow me.things to run commands in Termux when prompted.</div>
-                <div class="setup-step-actions">
-                  <p class="muted" style="font-size:12px;">Waiting for RUN_COMMAND permission...</p>
-                </div>
-              </div>
-            </div>
-            <div class="setup-step" data-step="4">
-              <div class="setup-step-num"><span>5</span><span class="done-check">&#10003;</span></div>
-              <div class="setup-step-body">
-                <div class="setup-step-title">Worker running</div>
-                <div class="setup-step-desc">The agent worker is starting up automatically.</div>
-                <div class="setup-step-actions">
-                  <p class="muted" style="font-size:12px;">Starting worker...</p>
+                  <span class="thinking-dots">Setting up<span></span><span></span><span></span></span>
                 </div>
               </div>
             </div>
@@ -10903,15 +10882,14 @@
 
         function deriveStep(d) {
           if (!d.installed) return 0;
-          if (!d.run_command_permitted && !d.ready) return 1;
-          if (!d.run_command_permitted) return 2;
-          if (d.run_command_permitted && d.worker_status !== "ok") return 3;
-          return 4;
+          if (!d.bootstrap_phase || d.bootstrap_phase === "none") return 1;
+          if (d.worker_status !== "ok") return 2;
+          return 3;
         }
 
         function renderWizard(d) {
           const current = deriveStep(d);
-          const allDone = current >= 4;
+          const allDone = current >= steps.length;
           steps.forEach(function(el) {
             const idx = Number(el.getAttribute("data-step"));
             el.classList.remove("done", "active");
@@ -11006,10 +10984,7 @@
           fetch(API + "/termux/launch", { method: "POST" }).catch(function() {});
         });
 
-        $("txSetupOpenTermux2").addEventListener("click", function() {
-          fetch(API + "/termux/launch", { method: "POST" }).catch(function() {});
-          showToast("Make sure you closed Termux from recents first", 2400);
-        });
+        // Step 3 "Setting up" is fully automatic — no button handler needed.
 
         refreshTermuxSetup();
         setInterval(refreshTermuxSetup, 3000);

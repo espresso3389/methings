@@ -280,22 +280,26 @@ grep -q '^allow-external-apps' ~/.termux/termux.properties 2>/dev/null || \
   echo 'allow-external-apps=true' >> ~/.termux/termux.properties
 termux-reload-settings
 
-# 2. Install system packages
+# 2. Signal start and switch back to me.things
+curl -sf -X POST http://127.0.0.1:33389/termux/bootstrap/notify \
+  -H 'Content-Type: application/json' -d '{"phase":"running"}' >/dev/null 2>&1 || true
+am start -n jp.espresso3389.methings/.ui.MainActivity >/dev/null 2>&1 || true
+
+# 3. Install system packages (runs while user sees me.things progress)
 pkg update -y && pkg install -y python openssh
 
-# 3. Download server code from the app
+# 4. Download server code from the app
 mkdir -p ~/methings/server
 curl -sf http://127.0.0.1:33389/termux/server.tar.gz | tar xz -C ~/methings/server
 
-# 4. Install Python dependencies from requirements.txt
+# 5. Install Python dependencies from requirements.txt
 # Use extra index for prebuilt pydantic-core wheels (Rust compilation fails on Termux)
 pip install --extra-index-url https://eutalix.github.io/android-pydantic-core/ \
   -r ~/methings/server/requirements.txt
 
-echo ""
-echo "Bootstrap complete!"
-echo "The app can now start the agent worker automatically."
-echo "To start manually: cd ~/methings/server && python worker.py"
+# 6. Signal done — the app auto-starts the worker and requests permission
+curl -sf -X POST http://127.0.0.1:33389/termux/bootstrap/notify \
+  -H 'Content-Type: application/json' -d '{"phase":"done"}' >/dev/null 2>&1 || true
 """
     }
 }
