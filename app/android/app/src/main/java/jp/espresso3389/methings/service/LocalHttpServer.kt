@@ -2261,6 +2261,7 @@ class LocalHttpServer(
                     JSONObject()
                         .put("installed", termuxManager.isTermuxInstalled())
                         .put("ready", termuxManager.isTermuxReady())
+                        .put("run_command_permitted", termuxManager.hasRunCommandPermission())
                         .put("sshd_running", termuxManager.isSshdRunning())
                         .put("sshd_port", TermuxManager.TERMUX_SSHD_PORT)
                         .put("worker_status", runtimeManager.getStatus())

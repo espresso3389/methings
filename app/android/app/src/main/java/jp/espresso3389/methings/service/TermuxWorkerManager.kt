@@ -3,8 +3,10 @@ package jp.espresso3389.methings.service
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import jp.espresso3389.methings.device.AndroidPermissionWaiter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 
 class TermuxWorkerManager(private val context: Context) {
     private val termux = TermuxManager(context)
@@ -17,10 +19,46 @@ class TermuxWorkerManager(private val context: Context) {
             updateStatus("offline")
             return false
         }
+        if (!termux.hasRunCommandPermission()) {
+            Log.w(TAG, "RUN_COMMAND permission not granted, requesting...")
+            updateStatus("permission_needed")
+            requestRunCommandPermission()
+            return false
+        }
         updateStatus("starting")
-        termux.startWorker()
+        try {
+            termux.startWorker()
+        } catch (e: SecurityException) {
+            Log.e(TAG, "RUN_COMMAND permission denied", e)
+            updateStatus("permission_needed")
+            return false
+        }
         startHealthProbe()
         return true
+    }
+
+    private fun requestRunCommandPermission() {
+        Thread {
+            val perm = TermuxManager.RUN_COMMAND_PERMISSION
+            val requestId = UUID.randomUUID().toString()
+            AndroidPermissionWaiter.begin(requestId, listOf(perm))
+            try {
+                context.sendBroadcast(Intent(LocalHttpServer.ACTION_ANDROID_PERM_REQUEST).apply {
+                    setPackage(context.packageName)
+                    putExtra(LocalHttpServer.EXTRA_ANDROID_PERM_REQUEST_ID, requestId)
+                    putExtra(LocalHttpServer.EXTRA_ANDROID_PERM_NAMES, arrayOf(perm))
+                })
+                val results = AndroidPermissionWaiter.await(requestId, 60_000L)
+                if (results?.get(perm) == true) {
+                    Log.i(TAG, "RUN_COMMAND permission granted, starting worker")
+                    startWorker()
+                } else {
+                    Log.w(TAG, "RUN_COMMAND permission was not granted")
+                }
+            } finally {
+                AndroidPermissionWaiter.clear(requestId)
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     fun stop() {

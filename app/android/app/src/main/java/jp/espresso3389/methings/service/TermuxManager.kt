@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
@@ -31,6 +32,12 @@ class TermuxManager(private val context: Context) {
         return isPortOpen(TERMUX_SSHD_PORT)
     }
 
+    fun hasRunCommandPermission(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            context, RUN_COMMAND_PERMISSION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
     fun launchTermux() {
         val intent = context.packageManager.getLaunchIntentForPackage(TERMUX_PACKAGE)
         if (intent != null) {
@@ -39,6 +46,10 @@ class TermuxManager(private val context: Context) {
         }
     }
 
+    /**
+     * Execute a command in Termux via the RUN_COMMAND intent.
+     * @throws SecurityException if RUN_COMMAND permission is not granted.
+     */
     fun runCommand(command: String, background: Boolean = true) {
         val intent = Intent().apply {
             setClassName(TERMUX_PACKAGE, "$TERMUX_PACKAGE.app.RunCommandService")
@@ -107,6 +118,7 @@ class TermuxManager(private val context: Context) {
         const val TERMUX_PACKAGE = "com.termux"
         const val WORKER_PORT = 8776
         const val TERMUX_SSHD_PORT = 8022
+        const val RUN_COMMAND_PERMISSION = "$TERMUX_PACKAGE.permission.RUN_COMMAND"
         const val TERMUX_RELEASES_URL = "https://github.com/termux/termux-app/releases"
 
         private const val DEFAULT_BOOTSTRAP = """#!/data/data/com.termux/files/usr/bin/bash
