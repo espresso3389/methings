@@ -500,6 +500,24 @@ class AgentRuntime(
                 pendingInput.put(assistantMsg)
             }
 
+            // Anthropic: echo back assistant message with tool_use content blocks
+            if (providerKind == ProviderKind.ANTHROPIC) {
+                val contentArr = JSONArray()
+                for (t in messageTexts) {
+                    contentArr.put(JSONObject().put("type", "text").put("text", t))
+                }
+                for (ci in 0 until calls.length()) {
+                    val c = calls.getJSONObject(ci)
+                    contentArr.put(JSONObject().apply {
+                        put("type", "tool_use")
+                        put("id", c.optString("call_id", c.optString("id", "")))
+                        put("name", c.optString("name", ""))
+                        put("input", c.opt("arguments") ?: JSONObject())
+                    })
+                }
+                pendingInput.put(JSONObject().put("role", "assistant").put("content", contentArr))
+            }
+
             for (i in 0 until calls.length().coerceAtMost(maxActions)) {
                 checkInterrupt()
                 val call = calls.getJSONObject(i)
@@ -803,13 +821,24 @@ class AgentRuntime(
                 })
             }
             ProviderKind.ANTHROPIC -> {
+                val block = JSONObject().apply {
+                    put("type", "tool_result")
+                    put("tool_use_id", callId)
+                    put("content", result.toString())
+                }
+                // Anthropic requires alternating user/assistant — merge tool_result
+                // blocks into a single user message
+                val lastIdx = input.length() - 1
+                if (lastIdx >= 0) {
+                    val last = input.optJSONObject(lastIdx)
+                    if (last != null && last.optString("role") == "user") {
+                        last.optJSONArray("content")?.put(block)
+                        return
+                    }
+                }
                 input.put(JSONObject().apply {
                     put("role", "user")
-                    put("content", JSONArray().put(JSONObject().apply {
-                        put("type", "tool_result")
-                        put("tool_use_id", callId)
-                        put("content", result.toString())
-                    }))
+                    put("content", JSONArray().put(block))
                 })
             }
         }
@@ -821,8 +850,25 @@ class AgentRuntime(
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", nudge))))
             }
-            ProviderKind.OPENAI_CHAT, ProviderKind.ANTHROPIC -> {
+            ProviderKind.OPENAI_CHAT -> {
                 input.put(JSONObject().put("role", "user").put("content", nudge))
+            }
+            ProviderKind.ANTHROPIC -> {
+                // Merge nudge into last user message (which contains tool_result blocks)
+                // to maintain alternating user/assistant message ordering
+                val lastIdx = input.length() - 1
+                if (lastIdx >= 0) {
+                    val last = input.optJSONObject(lastIdx)
+                    if (last != null && last.optString("role") == "user") {
+                        val content = last.optJSONArray("content")
+                        if (content != null) {
+                            content.put(JSONObject().put("type", "text").put("text", nudge))
+                            return input
+                        }
+                    }
+                }
+                input.put(JSONObject().put("role", "user")
+                    .put("content", JSONArray().put(JSONObject().put("type", "text").put("text", nudge))))
             }
         }
         return input

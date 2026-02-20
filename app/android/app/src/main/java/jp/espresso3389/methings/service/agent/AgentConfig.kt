@@ -170,7 +170,7 @@ class AgentConfigManager(private val context: Context) {
         if (knownSuffixes.any { baseUrl.contains(it) }) return baseUrl
         // Otherwise, append the vendor-appropriate default path.
         return when (vendor) {
-            "anthropic" -> "$baseUrl/messages"
+            "anthropic" -> "$baseUrl/v1/messages"
             "openai" -> "$baseUrl/responses"
             else -> "$baseUrl/chat/completions"
         }
