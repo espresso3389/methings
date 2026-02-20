@@ -22,7 +22,7 @@ class CaBundleManager(private val context: Context) {
 
     fun caLogFile(): File = File(caDir(), "ca_update.log")
 
-    fun ensureSeededFromPyenv(pyenvDir: File) {
+    fun ensureSeeded() {
         val dir = caDir()
         dir.mkdirs()
 
@@ -31,18 +31,8 @@ class CaBundleManager(private val context: Context) {
             return
         }
 
-        val certifi = File(pyenvDir, "site-packages/certifi/cacert.pem")
-        if (!certifi.exists()) {
-            appendLog("seed_missing_certifi", "path=${certifi.absolutePath}")
-            return
-        }
-
-        try {
-            copyAtomic(certifi, dst)
-            appendLog("seeded_from_certifi", "size=${dst.length()}")
-        } catch (ex: Throwable) {
-            appendLog("seed_failed", "error=${ex.javaClass.simpleName}:${ex.message}")
-        }
+        // No embedded certifi; trigger an immediate network update instead.
+        updateIfDue(force = true)
     }
 
     fun updateIfDue(force: Boolean = false): UpdateResult {

@@ -203,13 +203,6 @@
       "version": "11.9.0",
       "license": "Artistic-2.0",
       "source_path": "app/android/app/src/main/assets/node/usr/lib/node_modules/npm/package.json"
-    },
-    {
-      "ecosystem": "vendored-native",
-      "name": "dropbear",
-      "version": "",
-      "license": "",
-      "source_path": "third_party/dropbear"
     }
   ],
   "ignore_config": {

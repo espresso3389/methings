@@ -11,7 +11,7 @@ Build an Android 14+ app that provides a Python development environment with:
 ## Target Platform
 - Android 14+
 - WebView for UI rendering
-- Embedded CPython runtime (Python-for-Android)
+- Termux for Python runtime and SSH (external app, bootstrapped by methings)
 - Background service required
 
 ## Core Tenets
@@ -31,7 +31,7 @@ Build an Android 14+ app that provides a Python development environment with:
   - Permission broker (runtime prompts + audit log)
 - Local service layer (on-device)
   - Local HTTP server for UI + control APIs
-  - Embedded CPython runtime (worker, started on-demand)
+  - Termux-managed Python worker (started on-demand via RUN_COMMAND intent)
   - Background service for agent tasks
 - Agent orchestration
   - Cloud provider adapters (OpenAI/Claude/Kimi/etc.)
@@ -61,24 +61,25 @@ Build an Android 14+ app that provides a Python development environment with:
 - No silent elevation or background actions.
 - API docs policy: the canonical API reference is the OpenAPI 3.1.0 spec under `user/docs/openapi/`. When adding or changing endpoints, update the relevant `paths/*.yaml` file and `openapi.yaml`. Agent-side tool conventions (Python runtime helpers, chat shortcuts) are in `user/docs/agent_tools.md`.
 - API scope policy: the OpenAPI spec is agent-facing only. Include user/agent-invokable APIs (for example BLE device-operation APIs), but exclude internal plumbing/debug-only endpoints (for example me.me/me.sync internal transport wiring); document those in `docs/DEBUGGING.md` instead.
-- On-device Python tooling: use venv + pip (avoid system pip). Host-side app development must use uv.
+- On-device Python tooling: managed by Termux (pkg + pip). Host-side app development must use uv.
 - WSL usage is allowed but only when the user explicitly opts in for that session.
 
 ## Security & Permissions
 - All actions that touch filesystem, network, or shell must pass the permission broker.
 - Maintain a per-session audit trail.
 - Provide granular toggles (e.g., read-only FS, no network, no shell).
-- Permissions/SSH keys use a plain Room DB; credentials are encrypted with Android Keystore (AES-GCM) and stored as ciphertext in the same DB.
+- Permissions and credentials use a plain Room DB; credentials are encrypted with Android Keystore (AES-GCM) and stored as ciphertext in the same DB.
 - Credential keys live in Android Keystore and are removed on app uninstall; vault data is not intended to be backed up.
 
 ## Background Execution
-- Background service runs local HTTP service and SSHD.
-- Python worker is started on-demand and can be stopped independently.
+- Background service runs local HTTP service.
+- Python worker runs in Termux, started on-demand via RUN_COMMAND intent, and can be stopped independently.
+- SSH (OpenSSH via Termux) is controlled via `/termux/sshd/start` and `/termux/sshd/stop` endpoints.
 
 ## Testing
 - Unit tests for permission broker and tool router.
 - Integration tests for WebView <-> local service <-> Python worker.
-- Manual test checklist for SSHD + permission prompts.
+- Manual test checklist for Termux + permission prompts.
 
 ## Device Provisioning (OAuth Sign-In)
 - Users sign in via Google or GitHub through the gateway's server-side OAuth flow (opened in CustomTabs from the app)
@@ -94,7 +95,7 @@ Build an Android 14+ app that provides a Python development environment with:
   - `app/android/app/src/main/java/jp/espresso3389/methings/ui/WebAppBridge.kt` — `openInBrowser()` JS bridge method
 
 ## Current UI (2026-02)
-- Minimal control panel in WebView (Python worker, SSHD, PIN auth, Wi-Fi IP, Reset UI).
+- Minimal control panel in WebView (Termux status, agent worker, Wi-Fi IP, Reset UI).
 - UI assets are served from `files/user/www` and can be reset from the UI or via `POST /ui/reset`.
 - No chat/terminal/shell UI at the moment (to be reconsidered later).
 

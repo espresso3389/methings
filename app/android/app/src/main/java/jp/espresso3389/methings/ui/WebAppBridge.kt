@@ -47,7 +47,7 @@ class WebAppBridge(private val activity: MainActivity) {
     fun startPythonWorker() {
         handler.post {
             val intent = Intent(activity, AgentService::class.java)
-            intent.action = AgentService.ACTION_START_PYTHON
+            intent.action = AgentService.ACTION_START_WORKER
             activity.startForegroundService(intent)
         }
     }
@@ -56,7 +56,7 @@ class WebAppBridge(private val activity: MainActivity) {
     fun restartPythonWorker() {
         handler.post {
             val intent = Intent(activity, AgentService::class.java)
-            intent.action = AgentService.ACTION_RESTART_PYTHON
+            intent.action = AgentService.ACTION_RESTART_WORKER
             activity.startForegroundService(intent)
         }
     }
@@ -65,7 +65,7 @@ class WebAppBridge(private val activity: MainActivity) {
     fun stopPythonWorker() {
         handler.post {
             val intent = Intent(activity, AgentService::class.java)
-            intent.action = AgentService.ACTION_STOP_PYTHON
+            intent.action = AgentService.ACTION_STOP_WORKER
             activity.startForegroundService(intent)
         }
     }
