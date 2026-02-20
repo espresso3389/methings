@@ -922,6 +922,7 @@ class LocalHttpServer(
                 // Hot-reload WebView UI after updating files/user/www on disk.
                 context.sendBroadcast(
                     android.content.Intent(ACTION_UI_RELOAD).apply {
+                        setPackage(context.packageName)
                         putExtra(EXTRA_UI_RELOAD_TOAST, "UI reloaded")
                     }
                 )
@@ -934,6 +935,7 @@ class LocalHttpServer(
                 if (result != null) {
                     context.sendBroadcast(
                         android.content.Intent(ACTION_UI_RELOAD).apply {
+                            setPackage(context.packageName)
                             putExtra(EXTRA_UI_RELOAD_TOAST, "UI reset to factory default")
                         }
                     )
