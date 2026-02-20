@@ -13141,8 +13141,17 @@ class LocalHttpServer(
         coalesceWindowMs: Long? = null
     ) {
         try {
-            val runtime = agentRuntime ?: return
-            if (!runtime.isRunning()) return
+            var runtime = agentRuntime
+            if (runtime == null || !runtime.isRunning()) {
+                // Auto-start agent for actionable events if brain is configured
+                val autoStartEvents = setOf("me.me.received", "permission.resolved")
+                if (name in autoStartEvents && agentConfigManager.isConfigured()) {
+                    runtime = getOrCreateAgentRuntime()
+                    runtime.start()
+                } else {
+                    return
+                }
+            }
             runtime.enqueueEvent(
                 name = name.trim().ifBlank { "unnamed_event" },
                 payload = payload,

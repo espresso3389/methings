@@ -295,12 +295,14 @@ class AgentRuntime(
                 val summary = "Event: $name"
                 recordMessage("tool", summary, JSONObject().put("actor", "system").put("event", name))
                 // If run_agent is requested, escalate to a chat-like processing
-                val meta = item.optJSONObject("meta") ?: JSONObject()
-                if (meta.optBoolean("run_agent", false)) {
+                if (payload.optBoolean("run_agent", false)) {
+                    val prompt = payload.optString("prompt", "").ifEmpty {
+                        "System event: $name. ${payload.optString("summary", "")}"
+                    }
                     val chatItem = JSONObject().apply {
                         put("id", item.optString("id"))
                         put("kind", "chat")
-                        put("text", "System event: $name. ${payload.optString("summary", "")}")
+                        put("text", prompt)
                         put("meta", JSONObject().put("session_id", sessionIdForItem(item)).put("actor", "system"))
                         put("created_at", System.currentTimeMillis())
                     }
