@@ -36,7 +36,8 @@ Build an Android 14+ app that provides an agentic device environment with:
   - Background service for agent tasks
 - Agent orchestration (built-in)
   - `LlmClient`: SSE streaming to OpenAI Responses API and Anthropic Messages API
-  - `ToolExecutor`: tool dispatch (filesystem, device API, journal, memory, shell, web search, cloud requests)
+  - `ToolExecutor`: tool dispatch (filesystem, device API, journal, memory, JS engine, native HTTP, shell, web search, cloud requests)
+  - `JsEngine`: built-in QuickJS JavaScript engine for `run_js` tool (no Termux dependency)
   - `DeviceToolBridge`: calls device handlers via HTTP loopback
   - `AgentStorage`: chat persistence in SQLite (`agent/agent.db`)
   - `JournalStore`: JSONL session journal (`user/journal/`)
@@ -65,7 +66,8 @@ Build an Android 14+ app that provides an agentic device environment with:
 - No silent elevation or background actions.
 - API docs policy: the canonical API reference is the OpenAPI 3.1.0 spec under `user/docs/openapi/`. When adding or changing endpoints, update the relevant `paths/*.yaml` file and `openapi.yaml`. Agent-side tool conventions (runtime helpers, chat shortcuts) are in `user/docs/agent_tools.md`.
 - API scope policy: the OpenAPI spec is agent-facing only. Include user/agent-invokable APIs (for example BLE device-operation APIs), but exclude internal plumbing/debug-only endpoints (for example me.me/me.sync internal transport wiring); document those in `docs/DEBUGGING.md` instead.
-- On-device shell tooling (optional): managed by Termux (pkg + pip). Host-side app development must use uv.
+- Built-in execution: `run_js` (QuickJS engine) and `run_curl` (native HTTP) work without Termux.
+- On-device shell tooling (optional): `run_python`/`run_pip` require Termux (pkg + pip). Host-side app development must use uv.
 - WSL usage is allowed but only when the user explicitly opts in for that session.
 
 ## Security & Permissions
@@ -78,7 +80,8 @@ Build an Android 14+ app that provides an agentic device environment with:
 ## Background Execution
 - Background service runs local HTTP service and built-in agent runtime.
 - Agent runs in-process — no Termux required for core agent functionality.
-- Termux is started on-demand when the agent invokes shell tools or SSH.
+- `run_js` (QuickJS) and `run_curl` (native HTTP) work without Termux.
+- Termux is started on-demand when the agent invokes `run_python`/`run_pip` or SSH.
 - SSH (OpenSSH via Termux) is controlled via `/termux/sshd/start` and `/termux/sshd/stop` endpoints.
 
 ## Testing

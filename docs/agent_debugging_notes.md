@@ -6,13 +6,14 @@ Android, and the quickest ways to reproduce / debug them.
 ## Local Control Plane Basics
 
 The Android app exposes a loopback-only HTTP API. The agent runs
-in-process (`AgentRuntime`). Shell tools (`run_python`/`run_pip`/`run_curl`)
-are delegated to Termux when installed.
+in-process (`AgentRuntime`). Built-in tools `run_js` (QuickJS) and
+`run_curl` (native HTTP) work without Termux. Shell tools
+(`run_python`/`run_pip`) are delegated to Termux when installed.
 
 Useful endpoints (via `adb forward`):
 
 - `GET /health`
-- `POST /shell/exec` with `{cmd:"python"|"pip"|"curl", args:"...", cwd:"..."}` (requires Termux)
+- `POST /shell/exec` with `{cmd:"python"|"pip", args:"...", cwd:"..."}` (requires Termux)
 - `GET /brain/sessions`, `GET /brain/messages`
 - `POST /brain/debug/comment` (local-only) to inject debug/system notes into a session timeline
 

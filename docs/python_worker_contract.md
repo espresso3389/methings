@@ -19,9 +19,11 @@ The app owns the entire control plane: agent runtime, UI hosting, permissions, S
 
 ## Shell Exec Endpoint (Worker)
 When the Termux worker is running (`127.0.0.1:8776`):
-- `POST /shell/exec` — execute allowed commands (`python`, `pip`, `curl`)
+- `POST /shell/exec` — execute allowed commands (`python`, `pip`)
 
-The agent's ToolExecutor delegates shell commands to this endpoint via HTTP loopback.
+The agent's ToolExecutor delegates `run_python`/`run_pip` to this endpoint via HTTP loopback.
+
+Note: `run_js` (QuickJS) and `run_curl` (native HTTP) are handled in-process by the app and do not use the Termux worker.
 
 ## Lifecycle
 - Worker is **not** auto-started at boot.

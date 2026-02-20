@@ -12,7 +12,8 @@ Android App
   ├─ Local HTTP Server (127.0.0.1:33389)  [always up]
   ├─ AgentRuntime                          [started on demand]
   │   ├─ LlmClient (SSE streaming to OpenAI / Anthropic APIs)
-  │   ├─ ToolExecutor (filesystem, device API, journal, memory)
+  │   ├─ ToolExecutor (filesystem, device API, journal, memory, JS engine, native HTTP)
+  │   ├─ JsEngine (QuickJS — run_js, always available without Termux)
   │   └─ DeviceToolBridge (calls device handlers via loopback)
   ├─ UI assets served from files/www
   ├─ Storage + permissions (Room + Keystore AES-GCM)
@@ -32,18 +33,20 @@ Android App
 - Implemented in the `service.agent` package.
 - **AgentRuntime**: Queue-based loop with interrupt support, processes chat messages and events.
 - **LlmClient**: SSE streaming for both OpenAI Responses API and Anthropic Messages API.
-- **ToolExecutor**: Dispatches tool calls (filesystem, device API, journal, memory, shell, web search, cloud requests).
+- **ToolExecutor**: Dispatches tool calls (filesystem, device API, journal, memory, JS engine, native HTTP, shell, web search, cloud requests).
+- **JsEngine**: Built-in QuickJS JavaScript engine for `run_js` tool. Always available without Termux.
 - **DeviceToolBridge**: Executes device API actions via HTTP loopback to LocalHttpServer handlers.
 - **AgentStorage**: Chat message persistence in `agent/agent.db` (SQLite). Migrates old messages from legacy `protected/app.db` on first run.
 - **JournalStore**: JSONL file-based session journal.
 - All `/brain/*` routes are handled directly by the app — no external process proxy.
 
 ## Termux (optional, on-demand)
-- Provides a general-purpose Linux environment for agentic tasks (shell commands, package management, SSH).
-- Started on-demand when the agent invokes shell tools (`run_python`, `run_pip`, `run_curl`).
+- Provides a general-purpose Linux environment for Python, package management, and SSH.
+- Started on-demand when the agent invokes `run_python`, `run_pip`, or SSH.
+- **Not required** for `run_js` (built-in QuickJS) or `run_curl` (native HTTP) — these work without Termux.
 - Not required for agent startup or core functionality.
 - Worker health endpoint: `127.0.0.1:8776` (when running).
-- Can crash without affecting the agent — only shell tool calls will fail.
+- Can crash without affecting the agent — only `run_python`/`run_pip` calls will fail.
 
 ## Data Storage
 | Data | Location | Format |

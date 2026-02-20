@@ -24,5 +24,6 @@
 - Test SSH login (public-key, notification-based no-auth, or PIN auth)
 
 ## 5) Optional: Termux setup
-- Install Termux for shell tools (`run_python`, `run_pip`, `run_curl`)
+- `run_js` (QuickJS) and `run_curl` (native HTTP) work out of the box — no Termux needed
+- Install Termux only if you need `run_python` or `run_pip`
 - Verify Termux status shows "ok" in Settings → Agent Service

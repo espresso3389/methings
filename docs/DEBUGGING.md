@@ -288,8 +288,14 @@ Important files:
 
 ## Common Failure Patterns
 
+### Built-in tools (always available)
+- `run_js` (QuickJS engine) and `run_curl` (native HTTP) work without Termux.
+- `run_js` errors include `console_output` captured during execution.
+- `run_curl` returns `{status, http_status, headers, body}` for successful requests.
+
 ### Shell tool errors (requires Termux)
-- If Termux is not installed, shell tools (`run_python`, `run_pip`, `run_curl`) return `shell_unavailable`.
+- If Termux is not installed, shell tools (`run_python`, `run_pip`) return `shell_unavailable`.
+- `run_curl` no longer requires Termux — it uses native HTTP. Legacy `run_curl(args, cwd)` form falls back to Termux shell.
 - Shell errors are returned in the tool call output and stored in chat messages.
 - `python -` (stdin mode) is not supported in `shell_exec` (no interactive stdin). Use:
   - `python -c "..."`, or

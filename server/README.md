@@ -122,7 +122,8 @@ SSE stream of agent events (tool calls, responses, errors).
 Requires Termux to be installed. Allowed `cmd` values:
 - `python`
 - `pip`
-- `curl`
+
+Note: `run_js` (QuickJS engine) and `run_curl` (native HTTP) are handled in-process by the app and do not use this endpoint or Termux.
 
 Example body:
 ```json

@@ -27,13 +27,21 @@ Use these instead of shell commands like `ls`/`cat`.
 
 Paths starting with `$sys/` read from **system-protected reference docs** (read-only, always current with app version). Use `list_dir("$sys/docs")` to discover available reference documentation. Writing, deleting, or moving `$sys/` paths returns `system_files_read_only`.
 
-## Execution Tools (Allowlist)
+## Execution Tools
 
-- `run_python(args, cwd)`
-- `run_pip(args, cwd)`
-- `run_curl(args, cwd)`
+### Built-in (always available, no Termux)
+
+- `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine. Use for data processing, calculations, string manipulation, JSON parsing, and general programming. No network or filesystem access from JS — use other tools for that. Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`.
+- `run_curl(url, method?, headers?, body?, timeout_ms?)` — Make HTTP requests natively. Parameters: `url` (required), `method` (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), `headers` (JSON object), `body` (string), `timeout_ms` (default 30000). Returns `{status, http_status, headers, body}`.
+
+### Termux-dependent (require Termux installed)
+
+- `run_python(args, cwd)` — Run Python locally. Requires Termux.
+- `run_pip(args, cwd)` — Run pip locally. Requires Termux.
 
 Notes:
+- Prefer `run_js` over `run_python` for tasks that don't need filesystem/network access from the script.
+- `run_curl` now works natively without Termux. Legacy `run_curl(args, cwd)` form is still supported for backward compatibility.
 - `python -` (stdin) is not supported (no interactive stdin). Use `python -c "..."` or write a script file and run it.
 
 ## Web Search Tool (Permission-Gated)
@@ -233,7 +241,7 @@ The app's chat UI lives at `www/index.html` inside your home directory. You can 
 After editing `www/index.html`, reload the WebView so the user sees the change:
 
 ```
-run_curl(["-X", "POST", "http://127.0.0.1:33389/ui/reload"])
+run_curl(url="http://127.0.0.1:33389/ui/reload", method="POST")
 ```
 
 To check the current UI version: `read_file("www/.version")`
@@ -241,7 +249,7 @@ To check the current UI version: `read_file("www/.version")`
 To revert to the factory UI bundled with the APK:
 
 ```
-run_curl(["-X", "POST", "http://127.0.0.1:33389/ui/reset"])
+run_curl(url="http://127.0.0.1:33389/ui/reset", method="POST")
 ```
 
 This re-extracts the original `index.html` from the APK and reloads the WebView automatically.
@@ -351,7 +359,7 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 
 - `permission_required`: user needs to approve on device UI, then retry.
 - `path_outside_user_dir`: use paths under the user root only.
-- `command_not_allowed`: only `python|pip|curl` are permitted in execution tools.
+- `command_not_allowed`: only `python|pip` are permitted in shell execution tools (use `run_js` and `run_curl` for JS/HTTP — they work natively).
 
 ## Package Name Gotchas
 

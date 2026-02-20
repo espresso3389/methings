@@ -17,7 +17,7 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 | **Sensors** | Accelerometer, gyroscope, magnetometer, and more via real-time WebSocket streams |
 | **Location** | GPS, fused, network, passive providers |
 | **Vision / ML** | On-device TensorFlow Lite inference on camera frames |
-| **Shell** | On-device command execution via Termux Linux environment |
+| **Code Execution** | Built-in QuickJS JavaScript engine (`run_js`), native HTTP client (`run_curl`), Python/pip via optional Termux |
 | **SSH** | Built-in SSH server (Dropbear) with PIN/key/biometric auth; SSH client for remote exec and SCP |
 | **Browser** | Agent-controllable WebView with screenshot, JS injection, tap/scroll simulation |
 | **Cloud** | API broker with automatic secret injection from encrypted vault |
@@ -27,7 +27,7 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 
 ## Architecture
 
-The app owns the entire control plane and built-in agent runtime. Termux is optional — it provides a general-purpose Linux environment for agentic shell tasks.
+The app owns the entire control plane and built-in agent runtime. Code execution (`run_js`) and HTTP requests (`run_curl`) work natively. Termux is optional — it provides a general-purpose Linux environment for Python and SSH.
 
 ```
 Android App (Foreground Service)
@@ -41,11 +41,12 @@ Android App (Foreground Service)
  |
  +-- Agent Runtime (built-in)
  |    +-- LlmClient (OpenAI + Anthropic SSE streaming)
- |    +-- Tool Router (device APIs, filesystem, shell, cloud)
+ |    +-- Tool Router (device APIs, filesystem, JS engine, native HTTP, cloud)
+ |    +-- JsEngine (QuickJS — run_js, always available)
  |    +-- AgentStorage (SQLite)
  |
  +-- Termux (optional, on-demand)
-      +-- Linux shell environment
+      +-- Linux shell environment (run_python, run_pip)
       +-- Package management (apt, pip)
       +-- SSH server (OpenSSH)
 ```
@@ -90,10 +91,10 @@ Flow: App opens CustomTabs → gateway sign-in page → OAuth provider → callb
 ## Tech Stack
 
 **Android:**
-Gradle, Android SDK 34, NanoHTTPD, Room, CameraX, TFLite, AndroidX Credentials, Firebase Cloud Messaging, Stream WebRTC Android
+Gradle, Android SDK 34, NanoHTTPD, Room, CameraX, TFLite, AndroidX Credentials, Firebase Cloud Messaging, Stream WebRTC Android, quickjs-kt (in-process JS engine)
 
 **On-device (optional, via Termux):**
-Linux shell, package management, OpenSSH
+Linux shell, Python, package management, OpenSSH
 
 **Native (NDK):**
 libusb, libuvc, custom C launchers

@@ -52,7 +52,9 @@ This file documents how the on-device AI agent should operate. It is referenced 
 
 ## Execution
 
-- Only use the allowlisted execution tools: `run_python`, `run_pip`, `run_curl`.
+- Built-in tools (always available, no Termux): `run_js` (QuickJS engine), `run_curl` (native HTTP).
+- Termux-dependent tools: `run_python`, `run_pip`.
+- Prefer `run_js` for data processing, calculations, and general programming tasks.
 - Do not request a generic shell for arbitrary commands.
 
 ## Device Permissions (Camera/Mic/GPS/BLE/USB)
