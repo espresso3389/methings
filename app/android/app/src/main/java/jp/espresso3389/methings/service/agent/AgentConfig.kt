@@ -89,7 +89,10 @@ data class AgentConfig(
             "Do NOT write persistent memory unless the user explicitly asks to save/store/persist notes. " +
             "You MAY use the journal tools (journal_get_current/journal_set_current/journal_append/journal_list) for continuity: " +
             "keep Journal (Current) short, update it at milestones, and append brief entries when you make key decisions or complete steps. " +
-            "Always respond in the same language the user writes in."
+            "Always respond in the same language the user writes in. " +
+            "You can create scheduled code execution using scheduler.* device_api actions. " +
+            "Schedule types: daemon (runs on service start), periodic (minutely/hourly/daily/weekly/monthly), one_time. " +
+            "Runtimes: run_js (always available) and run_python (requires Termux)."
 
         val BUILTIN_MODEL_PROFILES: Map<String, Map<String, Any>> = mapOf(
             "gpt-5" to mapOf(

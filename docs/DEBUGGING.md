@@ -281,6 +281,7 @@ adb -s <serial> shell run-as jp.espresso3389.methings ls -la files/user
 
 Important files:
 - `files/agent/agent.db`: chat history + settings + audit log (agent database)
+- `files/agent/scheduler.db`: code scheduler schedules + execution log
 - `files/protected/app.db`: legacy chat history + permissions (read-only reference; migrated to `agent.db` on first agent start)
 - `files/user/journal/<session_id>/`: per-session journal (CURRENT.md + entries.jsonl)
 - `files/system/docs/AGENTS.md`, `files/system/docs/TOOLS.md`: system agent docs (read-only, always current with app version)
@@ -309,8 +310,56 @@ Important files:
 - `LlmApiException` is logged with HTTP status and response body.
 - Check logcat for `LlmClient` tag for SSE parsing errors.
 
+## Scheduler (Code Execution)
+
+The scheduler persists to `files/agent/scheduler.db` (separate from agent.db). It starts automatically with the local HTTP server and ticks every 60 seconds.
+
+List all schedules:
+
+```bash
+curl -sS 'http://127.0.0.1:43389/scheduler/schedules'
+```
+
+Create a minutely JS schedule:
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:43389/scheduler/create' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"test","launch_type":"periodic","schedule_pattern":"minutely","runtime":"run_js","code":"Date.now()"}'
+```
+
+Check execution log:
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:43389/scheduler/log' \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"<schedule-id>","limit":20}'
+```
+
+Engine status (running schedules):
+
+```bash
+curl -sS 'http://127.0.0.1:43389/scheduler/status'
+```
+
+Trigger a schedule immediately (skip waiting for next tick):
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:43389/scheduler/trigger' \
+  -H 'Content-Type: application/json' \
+  -d '{"id":"<schedule-id>"}'
+```
+
+Notes:
+- Permission-gated endpoints (create/update/delete/trigger) may return `permission_required` when called via `device_api`.
+- Daemon schedules restart automatically on service start.
+- One-time schedules auto-disable after firing.
+- `run_python` schedules require Termux installed.
+- Max 50 schedules, 200 log entries per schedule, 2000 global log entries.
+- Stale `running` log entries are marked `interrupted` on engine restart.
+
 ## logcat Grep
 
 ```bash
-adb -s <serial> logcat -d | rg -n 'AgentRuntime|LlmClient|ToolExecutor|brain/inbox/chat|/shell/exec|/web/search|permission_required|401'
+adb -s <serial> logcat -d | rg -n 'AgentRuntime|LlmClient|ToolExecutor|SchedulerEngine|brain/inbox/chat|/shell/exec|/web/search|permission_required|401'
 ```

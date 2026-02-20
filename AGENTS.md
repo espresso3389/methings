@@ -83,6 +83,7 @@ Build an Android 14+ app that provides an agentic device environment with:
 - `run_js` (QuickJS) and `run_curl` (native HTTP) work without Termux.
 - Termux is started on-demand when the agent invokes `run_python`/`run_pip` or SSH.
 - SSH (OpenSSH via Termux) is controlled via `/termux/sshd/start` and `/termux/sshd/stop` endpoints.
+- **Code Scheduler**: in-process scheduler with 1-minute resolution for recurring code execution (daemon/periodic/one_time). Persists to `agent/scheduler.db`. Key files: `SchedulerStore.kt` (SQLite), `SchedulerEngine.kt` (ticker + execution). Agent accesses via `scheduler.*` device_api actions.
 
 ## Testing
 - Unit tests for permission broker and tool router.

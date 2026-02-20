@@ -119,6 +119,123 @@ SshTargetFields:
       default: 22
       description: Remote SSH port.
 
+Schedule:
+  type: object
+  required: [id, name, launch_type, schedule_pattern, runtime, code, enabled, created_at, updated_at]
+  properties:
+    id:
+      type: string
+      description: Schedule UUID.
+    name:
+      type: string
+      description: Human-readable label.
+    launch_type:
+      type: string
+      enum: [daemon, periodic, one_time]
+    schedule_pattern:
+      type: string
+      description: >
+        Firing pattern. `minutely`, `hourly`, `daily`, `weekly:Mon`..`weekly:Sun`,
+        `monthly:1`..`monthly:28`, or empty string for daemon/one_time.
+    runtime:
+      type: string
+      enum: [run_js, run_python]
+    code:
+      type: string
+      description: Source code to execute.
+    args:
+      type: string
+      description: Extra CLI args (run_python only).
+    cwd:
+      type: string
+      description: Working directory (run_python only).
+    timeout_ms:
+      type: integer
+      description: Execution timeout in milliseconds.
+    enabled:
+      type: boolean
+    created_at:
+      type: integer
+      format: int64
+      description: Unix epoch millis.
+    updated_at:
+      type: integer
+      format: int64
+    last_run_at:
+      type: integer
+      format: int64
+      description: Epoch ms of last execution start (0 if never run).
+    next_run_at:
+      type: integer
+      format: int64
+      nullable: true
+      description: Epoch ms of next planned run (null for daemons).
+    run_count:
+      type: integer
+    error_count:
+      type: integer
+    meta:
+      type: string
+      description: JSON blob for extensibility.
+  example:
+    id: "a1b2c3d4-5678-90ab-cdef-1234567890ab"
+    name: "heartbeat"
+    launch_type: "periodic"
+    schedule_pattern: "minutely"
+    runtime: "run_js"
+    code: "Date.now()"
+    args: ""
+    cwd: ""
+    timeout_ms: 60000
+    enabled: true
+    created_at: 1700000000000
+    updated_at: 1700000000000
+    last_run_at: 1700000060000
+    next_run_at: 1700000120000
+    run_count: 5
+    error_count: 0
+    meta: "{}"
+
+ExecutionLogEntry:
+  type: object
+  required: [id, schedule_id, started_at, finished_at, status]
+  properties:
+    id:
+      type: integer
+      description: Log row ID.
+    schedule_id:
+      type: string
+    started_at:
+      type: integer
+      format: int64
+    finished_at:
+      type: integer
+      format: int64
+    status:
+      type: string
+      enum: [running, ok, error, timeout, interrupted]
+    result:
+      type: string
+      nullable: true
+      description: Return value / stdout (truncated to 8 KB).
+    console_output:
+      type: string
+      nullable: true
+      description: console.log output (JS) or stderr (Python).
+    error:
+      type: string
+      nullable: true
+      description: Error message if failed.
+  example:
+    id: 42
+    schedule_id: "a1b2c3d4-..."
+    started_at: 1700000060000
+    finished_at: 1700000060050
+    status: "ok"
+    result: "1700000060025"
+    console_output: ""
+    error: null
+
 SshOutputFields:
   type: object
   description: Common SSH command output fields.

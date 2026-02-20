@@ -59,6 +59,8 @@ tags:
     description: Per-session journal notes and entries.
   - name: Work
     description: Background jobs (app update check).
+  - name: Scheduler
+    description: General-purpose code scheduler (1-minute resolution).
   - name: UI
     description: Viewer control and Settings navigation.
   - name: MeMe
@@ -342,6 +344,24 @@ paths:
     $ref: './paths/work.yaml#/workAppUpdateCheckRunOnce'
   /work/jobs/app_update_check/cancel:
     $ref: './paths/work.yaml#/workAppUpdateCheckCancel'
+
+  # ── Scheduler ──
+  /scheduler/status:
+    $ref: './paths/scheduler.yaml#/schedulerStatus'
+  /scheduler/schedules:
+    $ref: './paths/scheduler.yaml#/schedulerSchedules'
+  /scheduler/create:
+    $ref: './paths/scheduler.yaml#/schedulerCreate'
+  /scheduler/get:
+    $ref: './paths/scheduler.yaml#/schedulerGet'
+  /scheduler/update:
+    $ref: './paths/scheduler.yaml#/schedulerUpdate'
+  /scheduler/delete:
+    $ref: './paths/scheduler.yaml#/schedulerDelete'
+  /scheduler/trigger:
+    $ref: './paths/scheduler.yaml#/schedulerTrigger'
+  /scheduler/log:
+    $ref: './paths/scheduler.yaml#/schedulerLog'
 
   # ── WebView Browser ──
   /webview/open:

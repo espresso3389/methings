@@ -172,6 +172,24 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - `ble.gatt.read/write`: read or write GATT characteristics.
 - Events arrive via `/ws/ble/events` WebSocket.
 
+### Scheduler (Code Execution) — `$sys/docs/openapi/paths/scheduler.yaml`
+- `scheduler.status`: engine state (started, running count). No payload needed.
+- `scheduler.list`: list all schedules. No payload needed.
+- `scheduler.create`: create a schedule. Payload: `name`, `launch_type` (`daemon`/`periodic`/`one_time`), `schedule_pattern` (`minutely`/`hourly`/`daily`/`weekly:Mon`/`monthly:15`/`""`), `runtime` (`run_js`/`run_python`), `code`, optional `args`, `cwd`, `timeout_ms`, `enabled`, `meta`. Permission-gated.
+- `scheduler.get`: get schedule by ID. Payload: `{"id": "..."}`.
+- `scheduler.update`: update schedule fields. Payload: `{"id": "...", ...fields}`. Permission-gated.
+- `scheduler.delete`: delete a schedule and its logs. Payload: `{"id": "..."}`. Permission-gated.
+- `scheduler.trigger`: trigger immediate execution. Payload: `{"id": "..."}`. Permission-gated.
+- `scheduler.log`: get execution log. Payload: `{"id": "...", "limit": 20}`.
+
+Schedule types:
+- `daemon`: runs on service start (restarts automatically).
+- `periodic`: fires on pattern (minutely, hourly, daily, weekly:Mon..Sun, monthly:1..28). 1-minute resolution.
+- `one_time`: fires once at next tick, then auto-disables.
+
+Runtimes: `run_js` (built-in QuickJS, always available), `run_python` (requires Termux).
+Limits: max 50 schedules, 200 log entries per schedule, 2000 global log entries.
+
 ### Intent (Android)
 - `intent.send`: launch an Android intent. Payload: `{"action": "android.intent.action.VIEW", "data": "https://..."}`.
 - `intent.share_app`: share the app via Android share sheet.
@@ -382,6 +400,7 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 - `$sys/docs/openapi/paths/screen_record.yaml` — screen recording
 - `$sys/docs/openapi/paths/media_stream.yaml` — file-based media decode streaming
 - `$sys/docs/openapi/paths/webview.yaml` — agent-controllable WebView browser
+- `$sys/docs/openapi/paths/scheduler.yaml` — general-purpose code scheduler
 - `$sys/docs/openapi/paths/vision.yaml` — RGBA8888 + TFLite inference
 - `$sys/docs/openapi/paths/me_me.yaml` — device discovery/connection (`me.me`)
 - `$sys/docs/openapi/paths/me_sync.yaml` — export/import transfer flow (`me.sync`)

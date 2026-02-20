@@ -143,6 +143,17 @@ class LocalHttpServer(
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
 
+    // --- Scheduler ---
+    private val schedulerStore by lazy { SchedulerStore(context) }
+    private val schedulerEngine by lazy {
+        SchedulerEngine(
+            store = schedulerStore,
+            userDir = File(context.filesDir, "user"),
+            executeRunJs = { code, timeoutMs -> JsEngine().execute(code, timeoutMs) },
+            executeShellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
+        )
+    }
+
     // --- Native Agent Runtime ---
     private val agentStorage by lazy { AgentStorage(context) }
     private val agentJournalStore by lazy { JournalStore(File(context.filesDir, "user/journal")) }
@@ -310,6 +321,7 @@ class LocalHttpServer(
                 false
             }
             scheduleHousekeeping()
+            try { schedulerEngine.start() } catch (e: Exception) { Log.w(TAG, "Failed to start scheduler", e) }
             meMeExecutor.execute {
                 runCatching { meMeDiscovery.applyConfig(currentMeMeDiscoveryConfig()) }
                 runCatching {
@@ -355,6 +367,10 @@ class LocalHttpServer(
         try {
             housekeepingFuture?.cancel(true)
             housekeepingFuture = null
+        } catch (_: Exception) {
+        }
+        try {
+            schedulerEngine.stop()
         } catch (_: Exception) {
         }
         try {
@@ -433,6 +449,7 @@ class LocalHttpServer(
             "/media" -> routeMedia(session, uri, postBody)
             "/audio" -> routeAudio(session, uri, postBody)
             "/video" -> routeVideo(session, uri, postBody)
+            "/scheduler" -> routeScheduler(session, uri, postBody)
             "/stt" -> routeStt(session, uri, postBody)
             "/location" -> routeLocation(session, uri, postBody)
             "/network" -> routeNetwork(session, uri, postBody)
@@ -595,6 +612,102 @@ class LocalHttpServer(
                 )
                 if (!ok.first) return ok.second!!
                 handleWorkAppUpdateCheckCancel()
+            }
+            else -> notFound()
+        }
+    }
+
+    private fun routeScheduler(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            uri == "/scheduler/status" && session.method == Method.GET -> {
+                jsonResponse(schedulerEngine.status())
+            }
+            uri == "/scheduler/schedules" && session.method == Method.GET -> {
+                val list = schedulerStore.listSchedules()
+                jsonResponse(JSONObject().put("schedules", org.json.JSONArray().apply {
+                    list.forEach { put(it.toJson()) }
+                }))
+            }
+            uri == "/scheduler/create" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session, payload, tool = "device.scheduler",
+                    capability = "scheduler", detail = "Create scheduled code execution"
+                )
+                if (!ok.first) return ok.second!!
+                try {
+                    val row = schedulerStore.createSchedule(
+                        name = payload.optString("name", ""),
+                        launchType = payload.optString("launch_type", "one_time"),
+                        schedulePattern = payload.optString("schedule_pattern", ""),
+                        runtime = payload.optString("runtime", "run_js"),
+                        code = payload.optString("code", ""),
+                        args = payload.optString("args", ""),
+                        cwd = payload.optString("cwd", ""),
+                        timeoutMs = payload.optLong("timeout_ms", 60_000),
+                        enabled = payload.optBoolean("enabled", true),
+                        meta = payload.optString("meta", "{}"),
+                    )
+                    // If daemon or one_time and enabled, trigger immediately
+                    if (row.enabled && (row.launchType == "daemon" || row.launchType == "one_time")) {
+                        schedulerEngine.triggerNow(row.id)
+                    }
+                    jsonResponse(row.toJson())
+                } catch (e: IllegalStateException) {
+                    jsonError(Response.Status.BAD_REQUEST, e.message ?: "create_failed")
+                } catch (e: Exception) {
+                    jsonError(Response.Status.INTERNAL_ERROR, "create_failed",
+                        JSONObject().put("detail", e.message ?: ""))
+                }
+            }
+            uri == "/scheduler/get" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val id = payload.optString("id", "")
+                val row = schedulerStore.getSchedule(id)
+                    ?: return jsonError(Response.Status.NOT_FOUND, "not_found")
+                jsonResponse(row.toJson().put("running", schedulerEngine.isRunning(id)))
+            }
+            uri == "/scheduler/update" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session, payload, tool = "device.scheduler",
+                    capability = "scheduler", detail = "Update scheduled code execution"
+                )
+                if (!ok.first) return ok.second!!
+                val id = payload.optString("id", "")
+                val row = schedulerStore.updateSchedule(id, payload)
+                    ?: return jsonError(Response.Status.NOT_FOUND, "not_found")
+                jsonResponse(row.toJson())
+            }
+            uri == "/scheduler/delete" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session, payload, tool = "device.scheduler",
+                    capability = "scheduler", detail = "Delete scheduled code execution"
+                )
+                if (!ok.first) return ok.second!!
+                val id = payload.optString("id", "")
+                val deleted = schedulerStore.deleteSchedule(id)
+                jsonResponse(JSONObject().put("status", if (deleted) "ok" else "not_found"))
+            }
+            uri == "/scheduler/trigger" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session, payload, tool = "device.scheduler",
+                    capability = "scheduler", detail = "Trigger scheduled code execution"
+                )
+                if (!ok.first) return ok.second!!
+                val id = payload.optString("id", "")
+                jsonResponse(schedulerEngine.triggerNow(id))
+            }
+            uri == "/scheduler/log" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val id = payload.optString("id", "")
+                val limit = payload.optInt("limit", 20)
+                val logs = schedulerStore.listExecutionLog(id, limit)
+                jsonResponse(JSONObject().put("logs", org.json.JSONArray().apply {
+                    logs.forEach { put(it.toJson()) }
+                }))
             }
             else -> notFound()
         }

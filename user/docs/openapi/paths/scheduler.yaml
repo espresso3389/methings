@@ -1,0 +1,372 @@
+schedulerStatus:
+  get:
+    operationId: getSchedulerStatus
+    summary: Get scheduler engine status
+    tags: [Scheduler]
+    responses:
+      '200':
+        description: Scheduler engine state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [started, running_count, running_ids]
+              properties:
+                started:
+                  type: boolean
+                  description: Whether the scheduler engine is running.
+                running_count:
+                  type: integer
+                  description: Number of currently executing schedules.
+                running_ids:
+                  type: array
+                  items:
+                    type: string
+                  description: IDs of currently executing schedules.
+            example:
+              started: true
+              running_count: 1
+              running_ids: ["a1b2c3d4-..."]
+
+schedulerSchedules:
+  get:
+    operationId: getSchedulerSchedules
+    summary: List all schedules
+    tags: [Scheduler]
+    responses:
+      '200':
+        description: All schedules.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [schedules]
+              properties:
+                schedules:
+                  type: array
+                  items:
+                    $ref: '../components/schemas.yaml#/Schedule'
+
+schedulerCreate:
+  post:
+    operationId: postSchedulerCreate
+    summary: Create a new schedule
+    tags: [Scheduler]
+    x-permission:
+      tool: device.scheduler
+      capability: scheduler
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [name, launch_type, runtime, code]
+                properties:
+                  name:
+                    type: string
+                    description: Human-readable label.
+                  launch_type:
+                    type: string
+                    enum: [daemon, periodic, one_time]
+                    description: >
+                      `daemon` — runs on service start.
+                      `periodic` — fires on a recurring pattern.
+                      `one_time` — fires once and auto-disables.
+                  schedule_pattern:
+                    type: string
+                    description: >
+                      Pattern for periodic schedules: `minutely`, `hourly`, `daily`,
+                      `weekly:Mon`..`weekly:Sun`, `monthly:1`..`monthly:28`.
+                      Empty string for daemon/one_time.
+                    default: ""
+                  runtime:
+                    type: string
+                    enum: [run_js, run_python]
+                    description: >
+                      `run_js` — built-in QuickJS engine (always available).
+                      `run_python` — Termux shell (requires Termux installed).
+                  code:
+                    type: string
+                    description: Source code to execute.
+                  args:
+                    type: string
+                    default: ""
+                    description: Extra CLI args (run_python only).
+                  cwd:
+                    type: string
+                    default: ""
+                    description: Working directory (run_python only).
+                  timeout_ms:
+                    type: integer
+                    default: 60000
+                    description: Execution timeout in milliseconds.
+                  enabled:
+                    type: boolean
+                    default: true
+                  meta:
+                    type: string
+                    default: "{}"
+                    description: JSON blob for extensibility.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            name: "heartbeat"
+            launch_type: "periodic"
+            schedule_pattern: "minutely"
+            runtime: "run_js"
+            code: "Date.now()"
+            timeout_ms: 30000
+    responses:
+      '200':
+        description: Schedule created. Returns the full schedule object.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/Schedule'
+      '400':
+        description: Validation error or schedule limit reached (max 50).
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+schedulerGet:
+  post:
+    operationId: postSchedulerGet
+    summary: Get a schedule by ID
+    description: >
+      Uses POST because DeviceToolBridge only sends body on POST.
+      Pass the schedule ID in the request body.
+    tags: [Scheduler]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id]
+            properties:
+              id:
+                type: string
+                description: Schedule UUID.
+          example:
+            id: "a1b2c3d4-..."
+    responses:
+      '200':
+        description: Schedule details with running state.
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas.yaml#/Schedule'
+                - type: object
+                  properties:
+                    running:
+                      type: boolean
+                      description: Whether this schedule is currently executing.
+      '404':
+        description: Schedule not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+schedulerUpdate:
+  post:
+    operationId: postSchedulerUpdate
+    summary: Update a schedule
+    tags: [Scheduler]
+    x-permission:
+      tool: device.scheduler
+      capability: scheduler
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [id]
+                properties:
+                  id:
+                    type: string
+                    description: Schedule UUID to update.
+                  name:
+                    type: string
+                  schedule_pattern:
+                    type: string
+                  runtime:
+                    type: string
+                    enum: [run_js, run_python]
+                  code:
+                    type: string
+                  args:
+                    type: string
+                  cwd:
+                    type: string
+                  timeout_ms:
+                    type: integer
+                  enabled:
+                    type: boolean
+                  meta:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            id: "a1b2c3d4-..."
+            enabled: false
+    responses:
+      '200':
+        description: Updated schedule.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/Schedule'
+      '404':
+        description: Schedule not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+schedulerDelete:
+  post:
+    operationId: postSchedulerDelete
+    summary: Delete a schedule
+    tags: [Scheduler]
+    x-permission:
+      tool: device.scheduler
+      capability: scheduler
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [id]
+                properties:
+                  id:
+                    type: string
+                    description: Schedule UUID to delete.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            id: "a1b2c3d4-..."
+    responses:
+      '200':
+        description: Deletion result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [ok, not_found]
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+schedulerTrigger:
+  post:
+    operationId: postSchedulerTrigger
+    summary: Trigger immediate execution of a schedule
+    tags: [Scheduler]
+    x-permission:
+      tool: device.scheduler
+      capability: scheduler
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [id]
+                properties:
+                  id:
+                    type: string
+                    description: Schedule UUID to trigger.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            id: "a1b2c3d4-..."
+    responses:
+      '200':
+        description: Trigger result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [ok, error]
+                message:
+                  type: string
+                error:
+                  type: string
+                  description: Error code if trigger failed (e.g. `not_found`, `already_running`).
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+schedulerLog:
+  post:
+    operationId: postSchedulerLog
+    summary: Get execution log for a schedule
+    description: >
+      Uses POST because DeviceToolBridge only sends body on POST.
+    tags: [Scheduler]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [id]
+            properties:
+              id:
+                type: string
+                description: Schedule UUID.
+              limit:
+                type: integer
+                default: 20
+                minimum: 1
+                maximum: 200
+                description: Max log entries to return.
+          example:
+            id: "a1b2c3d4-..."
+            limit: 20
+    responses:
+      '200':
+        description: Execution log entries (oldest first).
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [logs]
+              properties:
+                logs:
+                  type: array
+                  items:
+                    $ref: '../components/schemas.yaml#/ExecutionLogEntry'

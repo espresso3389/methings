@@ -357,6 +357,14 @@ object ToolDefinitions {
         "webview.back" to ActionSpec("POST", "/webview/back", false),
         "webview.forward" to ActionSpec("POST", "/webview/forward", false),
         "webview.split" to ActionSpec("POST", "/webview/split", false),
+        "scheduler.status" to ActionSpec("GET", "/scheduler/status", false),
+        "scheduler.list" to ActionSpec("GET", "/scheduler/schedules", false),
+        "scheduler.create" to ActionSpec("POST", "/scheduler/create", true),
+        "scheduler.get" to ActionSpec("POST", "/scheduler/get", false),
+        "scheduler.update" to ActionSpec("POST", "/scheduler/update", true),
+        "scheduler.delete" to ActionSpec("POST", "/scheduler/delete", true),
+        "scheduler.trigger" to ActionSpec("POST", "/scheduler/trigger", true),
+        "scheduler.log" to ActionSpec("POST", "/scheduler/log", false),
     )
 
     val ACTION_TIMEOUTS: Map<String, Double> = mapOf(
