@@ -159,7 +159,7 @@ class AgentConfigManager(private val context: Context) {
             providerUrl = providerUrl,
             model = model,
             apiKeyCredential = if (apiKey.isNotEmpty()) "direct" else "openai_api_key",
-            toolPolicy = "required",
+            toolPolicy = "auto",
         )
     }
 
