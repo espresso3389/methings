@@ -3,13 +3,21 @@ package jp.espresso3389.methings.service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
+import java.util.Locale
 
 class TermuxManager(private val context: Context) {
 
@@ -100,6 +108,147 @@ class TermuxManager(private val context: Context) {
         } catch (_: Exception) {
             DEFAULT_BOOTSTRAP
         }
+    }
+
+    fun checkTermuxRelease(): JSONObject {
+        val url = URL("https://api.github.com/repos/termux/termux-app/releases/latest")
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 12_000
+            readTimeout = 20_000
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("User-Agent", "methings")
+        }
+        val code = conn.responseCode
+        val body = if (code in 200..299) {
+            conn.inputStream.bufferedReader().use { it.readText() }
+        } else {
+            val err = conn.errorStream?.bufferedReader()?.use { it.readText().take(500) } ?: ""
+            throw IllegalStateException("github_release_http_${code}:${err.ifBlank { "empty_error" }}")
+        }
+
+        val obj = JSONObject(body)
+        val tagName = obj.optString("tag_name", "").trim()
+        if (tagName.isBlank()) throw IllegalStateException("release_tag_missing")
+        val assets = obj.optJSONArray("assets") ?: JSONArray()
+        val apk = pickTermuxApkAsset(assets)
+
+        return JSONObject()
+            .put("status", "ok")
+            .put("tag_name", tagName)
+            .put("apk_name", apk?.getString("name") ?: "")
+            .put("apk_size", apk?.optLong("size", 0L) ?: 0L)
+            .put("apk_url", apk?.optString("url", "") ?: "")
+            .put("can_request_installs", canInstallPackages())
+    }
+
+    fun downloadAndInstallTermux(): JSONObject {
+        val releaseInfo = checkTermuxRelease()
+        val apkUrl = releaseInfo.optString("apk_url", "").trim()
+        if (apkUrl.isBlank()) throw IllegalStateException("termux_apk_not_found")
+        val tagName = releaseInfo.optString("tag_name", "").trim()
+        val apkName = releaseInfo.optString("apk_name", "")
+
+        val updateDir = File(context.filesDir, "user/updates")
+        updateDir.mkdirs()
+        val safeTag = tagName.ifBlank { "latest" }.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val outFile = File(updateDir, "termux-$safeTag.apk")
+        val tmpFile = File(updateDir, outFile.name + ".tmp")
+
+        val conn = (URL(apkUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 60_000
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "methings")
+            setRequestProperty("Accept", "application/octet-stream")
+        }
+        val dlCode = conn.responseCode
+        if (dlCode !in 200..299) {
+            val err = conn.errorStream?.bufferedReader()?.use { it.readText().take(500) } ?: ""
+            throw IllegalStateException("apk_download_http_${dlCode}:${err.ifBlank { "empty_error" }}")
+        }
+        conn.inputStream.use { input ->
+            FileOutputStream(tmpFile).use { output ->
+                input.copyTo(output)
+            }
+        }
+        if (!tmpFile.renameTo(outFile)) {
+            tmpFile.delete()
+            throw IllegalStateException("apk_rename_failed")
+        }
+
+        if (!canInstallPackages()) {
+            return JSONObject()
+                .put("status", "install_permission_required")
+                .put("tag_name", tagName)
+                .put("apk_name", apkName)
+                .put("apk_path", outFile.absolutePath)
+                .put("message", "Allow installs from this app, then tap Install Termux again.")
+        }
+
+        startPackageInstaller(outFile)
+        return JSONObject()
+            .put("status", "ok")
+            .put("tag_name", tagName)
+            .put("apk_name", apkName)
+            .put("apk_path", outFile.absolutePath)
+    }
+
+    fun canInstallPackages(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+        return context.packageManager.canRequestPackageInstalls()
+    }
+
+    fun openInstallPermissionSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val intent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:${context.packageName}")
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        runCatching { context.startActivity(intent) }
+            .onFailure { Log.w(TAG, "Failed to open unknown-sources settings", it) }
+    }
+
+    private fun pickTermuxApkAsset(assets: JSONArray): JSONObject? {
+        val apks = mutableListOf<JSONObject>()
+        for (i in 0 until assets.length()) {
+            val a = assets.optJSONObject(i) ?: continue
+            val name = a.optString("name", "").trim()
+            val dl = a.optString("browser_download_url", "").trim()
+            if (!name.lowercase(Locale.US).endsWith(".apk")) continue
+            if (dl.isBlank()) continue
+            apks.add(JSONObject()
+                .put("name", name)
+                .put("url", dl)
+                .put("size", a.optLong("size", 0L)))
+        }
+        if (apks.isEmpty()) return null
+
+        val primaryAbi = Build.SUPPORTED_ABIS.firstOrNull()?.lowercase(Locale.US) ?: ""
+        // Try arch-specific match first
+        val abiMatch = if (primaryAbi.isNotBlank()) {
+            apks.firstOrNull { it.getString("name").lowercase(Locale.US).contains(primaryAbi) }
+        } else null
+        if (abiMatch != null) return abiMatch
+        // Fallback to universal
+        val universal = apks.firstOrNull { it.getString("name").lowercase(Locale.US).contains("universal") }
+        if (universal != null) return universal
+        // Fallback to first APK
+        return apks.first()
+    }
+
+    private fun startPackageInstaller(apkFile: File) {
+        val authority = context.packageName + ".fileprovider"
+        val uri = FileProvider.getUriForFile(context, authority, apkFile)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(intent)
     }
 
     private fun isPortOpen(port: Int): Boolean {

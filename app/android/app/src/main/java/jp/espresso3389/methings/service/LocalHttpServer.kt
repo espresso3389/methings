@@ -2266,6 +2266,8 @@ class LocalHttpServer(
                         .put("sshd_port", TermuxManager.TERMUX_SSHD_PORT)
                         .put("worker_status", runtimeManager.getStatus())
                         .put("releases_url", TermuxManager.TERMUX_RELEASES_URL)
+                        .put("bootstrap_command", "curl -so ~/b.sh http://127.0.0.1:$PORT/termux/bootstrap.sh && bash ~/b.sh")
+                        .put("can_request_installs", termuxManager.canInstallPackages())
                 )
             }
             uri == "/termux/bootstrap.sh" && session.method == Method.GET -> {
@@ -2315,6 +2317,30 @@ class LocalHttpServer(
             uri == "/termux/sshd/stop" && session.method == Method.POST -> {
                 termuxManager.stopSshd()
                 jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/termux/install/check" && session.method == Method.GET -> {
+                try {
+                    jsonResponse(termuxManager.checkTermuxRelease())
+                } catch (ex: Throwable) {
+                    Log.w(TAG, "Termux install check failed", ex)
+                    jsonError(
+                        Response.Status.INTERNAL_ERROR,
+                        "termux_install_check_failed",
+                        JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+                    )
+                }
+            }
+            uri == "/termux/install" && session.method == Method.POST -> {
+                try {
+                    jsonResponse(termuxManager.downloadAndInstallTermux())
+                } catch (ex: Throwable) {
+                    Log.w(TAG, "Termux install failed", ex)
+                    jsonError(
+                        Response.Status.INTERNAL_ERROR,
+                        "termux_install_failed",
+                        JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+                    )
+                }
             }
             else -> notFound()
         }
