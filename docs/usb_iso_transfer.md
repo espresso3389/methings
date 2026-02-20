@@ -27,7 +27,7 @@ Response JSON:
 - `data_b64`: concatenated payload bytes from all packets with `actual_length > 0`
 - `packets`: array of `{status, actual_length}` per packet
 
-Python tool access:
+Agent tool access:
 
 - `device_api` action `usb.iso_transfer` maps to `/usb/iso_transfer`.
 
@@ -36,4 +36,4 @@ Python tool access:
 - This is a low-level primitive. Higher-level UVC streaming requires parsing UVC payload headers,
   handling frame boundaries, and selecting the correct VideoStreaming alternate setting.
 - The transfer is performed entirely inside the app process; only the resulting bytes are returned
-  to the Python/agent side via HTTP.
+  to the agent side via HTTP.

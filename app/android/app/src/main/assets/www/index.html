@@ -1091,6 +1091,100 @@
         font-size: 12px;
       }
 
+      /* Termux setup stepper */
+      .setup-stepper { margin-top: 12px; }
+      .setup-step {
+        display: flex;
+        gap: 12px;
+        padding: 10px 0;
+        position: relative;
+      }
+      .setup-step:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        left: 15px;
+        top: 38px;
+        bottom: 0;
+        width: 2px;
+        background: var(--border);
+      }
+      .setup-step.done:not(:last-child)::after { background: var(--green); opacity: 0.5; }
+      .setup-step-num {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 600;
+        flex-shrink: 0;
+        background: var(--surface);
+        color: var(--ink-muted);
+        border: 2px solid var(--border);
+        z-index: 1;
+      }
+      .setup-step.done .setup-step-num {
+        background: var(--green-soft);
+        color: var(--green);
+        border-color: var(--green);
+      }
+      .setup-step.active .setup-step-num {
+        background: var(--accent-soft);
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+      .setup-step-body { flex: 1; min-width: 0; }
+      .setup-step-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--ink-muted);
+        line-height: 32px;
+      }
+      .setup-step.done .setup-step-title { color: var(--green); }
+      .setup-step.active .setup-step-title { color: var(--ink); }
+      .setup-step-desc {
+        font-size: 12px;
+        color: var(--ink-muted);
+        margin-top: 2px;
+        display: none;
+      }
+      .setup-step.active .setup-step-desc { display: block; }
+      .setup-step-actions {
+        display: none;
+        gap: 8px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      .setup-step.active .setup-step-actions { display: flex; }
+      .setup-step-actions code {
+        display: block;
+        width: 100%;
+        font-size: 12px;
+        padding: 8px 10px;
+        background: rgba(0,0,0,0.25);
+        border-radius: var(--radius-sm);
+        color: var(--ink-secondary);
+        word-break: break-all;
+        user-select: all;
+        margin-bottom: 4px;
+      }
+      .setup-step .done-check { display: none; }
+      .setup-step.done .done-check { display: inline; }
+      .setup-step.done .setup-step-num span { display: none; }
+      .setup-complete-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        background: var(--green-soft);
+        border-radius: var(--radius-sm);
+        color: var(--green);
+        font-size: 13px;
+        font-weight: 500;
+        margin-top: 12px;
+      }
+
       /* Form fields */
       .field { margin-top: 10px; }
       .field label {
@@ -1867,6 +1961,75 @@
           </div>
         </section>
 
+        <!-- Termux Setup -->
+        <section class="card" id="settings-section-termux_setup">
+          <div class="card-header">
+            <div class="card-icon amber">&#9881;</div>
+            <div class="card-title">Termux Setup</div>
+            <div id="termuxSetupStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
+          </div>
+          <div id="termuxSetupStepper" class="setup-stepper">
+            <div class="setup-step" data-step="0">
+              <div class="setup-step-num"><span>1</span><span class="done-check">&#10003;</span></div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Install Termux</div>
+                <div class="setup-step-desc">Download and install Termux from GitHub releases.</div>
+                <div class="setup-step-actions">
+                  <button class="btn primary" id="txSetupInstall">Install Termux</button>
+                  <button class="btn" id="txSetupDownload">Download manually</button>
+                  <span id="txInstallIndicator" class="thinking-dots" style="display:none;">Downloading Termux<span>.</span><span>.</span><span>.</span></span>
+                </div>
+              </div>
+            </div>
+            <div class="setup-step" data-step="1">
+              <div class="setup-step-num"><span>2</span><span class="done-check">&#10003;</span></div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Run bootstrap</div>
+                <div class="setup-step-desc">Copy the command below, then paste and run it in Termux.</div>
+                <div class="setup-step-actions">
+                  <code id="txSetupCmd">loading...</code>
+                  <button class="btn primary" id="txSetupCopy">Copy Command</button>
+                  <button class="btn" id="txSetupOpenTermux1">Open Termux</button>
+                </div>
+              </div>
+            </div>
+            <div class="setup-step" data-step="2">
+              <div class="setup-step-num"><span>3</span><span class="done-check">&#10003;</span></div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Restart Termux</div>
+                <div class="setup-step-desc">Close Termux completely and reopen it so allow-external-apps takes effect.</div>
+                <div class="setup-step-actions">
+                  <button class="btn primary" id="txSetupOpenTermux2">Open Termux</button>
+                  <p class="muted" style="margin-top:4px;font-size:12px;">Swipe Termux away from recents first, then tap the button above.</p>
+                </div>
+              </div>
+            </div>
+            <div class="setup-step" data-step="3">
+              <div class="setup-step-num"><span>4</span><span class="done-check">&#10003;</span></div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Grant permission</div>
+                <div class="setup-step-desc">Allow me.things to run commands in Termux when prompted.</div>
+                <div class="setup-step-actions">
+                  <p class="muted" style="font-size:12px;">Waiting for RUN_COMMAND permission...</p>
+                </div>
+              </div>
+            </div>
+            <div class="setup-step" data-step="4">
+              <div class="setup-step-num"><span>5</span><span class="done-check">&#10003;</span></div>
+              <div class="setup-step-body">
+                <div class="setup-step-title">Worker running</div>
+                <div class="setup-step-desc">The agent worker is starting up automatically.</div>
+                <div class="setup-step-actions">
+                  <p class="muted" style="font-size:12px;">Starting worker...</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="termuxSetupComplete" class="setup-complete-banner" style="display:none;">
+            &#10003; Termux is set up and the worker is running.
+          </div>
+        </section>
+
         <!-- SSHD -->
         <section class="card" id="settings-section-sshd">
           <div class="card-header">
@@ -1902,7 +2065,7 @@
           <div class="card-header">
             <div class="card-icon amber">&#9881;</div>
             <div class="card-title">Agent Service</div>
-            <div id="pythonStatus" class="status-badge offline" style="margin-left:auto;">offline</div>
+            <div id="workerStatus" class="status-badge offline" style="margin-left:auto;">offline</div>
           </div>
           <div class="toggle-row">
             <label class="toggle">
@@ -1913,13 +2076,13 @@
           </div>
           <p class="muted">Emergency restart only.</p>
           <div class="btn-group">
-            <button class="btn" id="restartPython">Restart</button>
-            <button class="btn danger" id="stopPython">Stop</button>
+            <button class="btn" id="restartWorker">Restart</button>
+            <button class="btn danger" id="stopWorker">Stop</button>
           </div>
-          <p class="muted" id="pythonDetail" style="margin-top:6px;"></p>
+          <p class="muted" id="workerDetail" style="margin-top:6px;"></p>
         </section>
 
-        <!-- Python Packages section removed (agent can install via pip as needed) -->
+        <!-- Packages section removed (agent can install via pip as needed) -->
 
         <!-- User Interface -->
         <section class="card" id="settings-section-user_interface">
@@ -3065,6 +3228,7 @@
         { id: "memory", domId: "settings-section-memory", label: "Memory" },
         { id: "task_notifications", domId: "settings-section-task_notifications", label: "Task Notifications" },
         { id: "media_recording", domId: "settings-section-audio_recording", label: "Media Recording" },
+        { id: "termux_setup", domId: "settings-section-termux_setup", label: "Termux Setup" },
         { id: "sshd", domId: "settings-section-sshd", label: "SSHD" },
         { id: "agent_service", domId: "settings-section-agent_service", label: "Agent Service" },
         { id: "user_interface", domId: "settings-section-user_interface", label: "User Interface" },
@@ -7461,10 +7625,10 @@
       });
 
       // ==============================
-      // Settings: SSHD, Python, etc.
+      // Settings: SSHD, Worker, etc.
       // ==============================
-      const pythonStatus = $("pythonStatus");
-      const pythonDetail = $("pythonDetail");
+      const workerStatus = $("workerStatus");
+      const workerDetail = $("workerDetail");
       const appUpdateStatus = $("appUpdateStatus");
       const appUpdateDetail = $("appUpdateDetail");
       const appUpdateDownloadIndicator = $("appUpdateDownloadIndicator");
@@ -8692,14 +8856,14 @@
         }
       }
 
-      async function refreshPython() {
+      async function refreshWorker() {
         try {
-          const res = await fetch(API + "/python/status");
+          const res = await fetch(API + "/termux/status");
           if (!res.ok) throw 0;
           const data = await res.json();
-          setStatus(pythonStatus, data.status || "offline");
+          setStatus(workerStatus, data.status || "offline");
         } catch (_) {
-          setStatus(pythonStatus, "offline");
+          setStatus(workerStatus, "offline");
         }
       }
 
@@ -8929,7 +9093,7 @@
         throw new Error("permission timeout");
       }
 
-      // Python Packages UI removed.
+      // Packages UI removed.
 
       $("permRemember").addEventListener("change", async () => {
         const enabled = !!$("permRemember").checked;
@@ -9125,24 +9289,24 @@
         }
       });
 
-      $("restartPython").addEventListener("click", async () => {
-        if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonWorker) {
-          AndroidBridge.restartPythonWorker();
+      $("restartWorker").addEventListener("click", async () => {
+        if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartWorkerWorker) {
+          AndroidBridge.restartWorkerWorker();
         } else {
-          await fetch(API + "/python/restart", { method: "POST" });
+          await fetch(API + "/termux/restart", { method: "POST" });
         }
-        pythonDetail.textContent = "Restart requested";
-        setStatus(pythonStatus, "starting");
+        workerDetail.textContent = "Restart requested";
+        setStatus(workerStatus, "starting");
       });
 
-      $("stopPython").addEventListener("click", async () => {
+      $("stopWorker").addEventListener("click", async () => {
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.stopService) {
           AndroidBridge.stopService();
         } else {
           await fetch(API + "/service/stop", { method: "POST" });
         }
-        pythonDetail.textContent = "Service stop requested";
-        setStatus(pythonStatus, "stopping");
+        workerDetail.textContent = "Service stop requested";
+        setStatus(workerStatus, "stopping");
       });
 
       $("openAppSettings").addEventListener("click", () => {
@@ -10214,12 +10378,11 @@
 
       {
         const allLogTags = [
-          "AgentService", "AppUpdateManager", "AssetExtractor",
-          "AudioRecordManager", "CaBundleManager", "CameraXManager",
-          "KeystoreVaultServer", "LocalHttpServer", "MediaStreamManager",
+          "AgentRuntime", "AgentService", "AgentStorage", "AppUpdateManager",
+          "AssetExtractor", "AudioRecordManager", "CaBundleManager", "CameraXManager",
+          "DeviceToolBridge", "LlmClient", "LocalHttpServer", "MediaStreamManager",
           "MeSyncNearbyTransport", "MethingsPerm", "MethingsStt", "MethingsWeb",
-          "PermissionStoreFacade", "PythonBridge", "PythonRuntimeInstaller",
-          "PythonRuntimeManager", "ScreenCaptureActivity", "ScreenRecordManager",
+          "PermissionStoreFacade", "ScreenCaptureActivity", "ScreenRecordManager",
           "SensorsStreamManager", "SshdManager", "TfliteModelManager",
           "UsbIsoBridge", "UsbPermissionActivity", "UsbPermissionResultReceiver",
           "VideoRecordManager",
@@ -10539,8 +10702,8 @@
       // Agent console initial load (stubs removed; kept as no-ops for safety).
       refreshSshKeys();
 
-      window.onPythonStatus = function(status) {
-        setStatus(pythonStatus, status);
+      window.onWorkerStatus = function(status) {
+        setStatus(workerStatus, status);
       };
 
       // When viewed in a normal browser (not Android WebView), open external
@@ -10565,7 +10728,7 @@
       loadVideoRecSettings();
       loadBrowserPrefs();
       loadServicePrefs();
-      refreshPython();
+      refreshWorker();
       updateAppUpdateButtons();
       refreshAppUpdate(true);
       refreshAppUpdateWorkStatus();
@@ -10574,8 +10737,134 @@
       refreshAppInfo();
       refreshSsh();
       refreshPin();
-      setInterval(refreshPython, 5000);
+      setInterval(refreshWorker, 5000);
       setInterval(refreshSsh, 5000);
+
+      // --- Termux Setup Wizard ---
+      (function() {
+        const stepper = $("termuxSetupStepper");
+        const badge = $("termuxSetupStatus");
+        const banner = $("termuxSetupComplete");
+        const steps = stepper.querySelectorAll(".setup-step");
+        const sshdCard = $("settings-section-sshd");
+        const agentCard = $("settings-section-agent_service");
+        let txReleasesUrl = "";
+        let txBootstrapCmd = "";
+
+        function deriveStep(d) {
+          if (!d.installed) return 0;
+          if (!d.run_command_permitted && !d.ready) return 1;
+          if (!d.run_command_permitted) return 2;
+          if (d.run_command_permitted && d.worker_status !== "ok") return 3;
+          return 4;
+        }
+
+        function renderWizard(d) {
+          const current = deriveStep(d);
+          const allDone = current >= 4;
+          steps.forEach(function(el) {
+            const idx = Number(el.getAttribute("data-step"));
+            el.classList.remove("done", "active");
+            if (idx < current) el.classList.add("done");
+            else if (idx === current) el.classList.add("active");
+          });
+          if (allDone) {
+            stepper.style.display = "none";
+            banner.style.display = "flex";
+            setStatus(badge, "ok");
+            badge.textContent = "ready";
+          } else {
+            stepper.style.display = "";
+            banner.style.display = "none";
+            if (current === 0) { setStatus(badge, "offline"); badge.textContent = "not installed"; }
+            else if (current <= 2) { setStatus(badge, "starting"); badge.textContent = "setup needed"; }
+            else { setStatus(badge, "starting"); badge.textContent = "starting"; }
+          }
+          // Dim dependent cards when setup incomplete
+          var dimVal = allDone ? "" : "0.5";
+          if (sshdCard) sshdCard.style.opacity = dimVal;
+          if (agentCard) agentCard.style.opacity = dimVal;
+
+          if (d.releases_url) txReleasesUrl = d.releases_url;
+          if (d.bootstrap_command) {
+            txBootstrapCmd = d.bootstrap_command;
+            $("txSetupCmd").textContent = txBootstrapCmd;
+          }
+        }
+
+        async function refreshTermuxSetup() {
+          try {
+            var res = await fetch(API + "/termux/status");
+            if (!res.ok) throw 0;
+            var d = await res.json();
+            renderWizard(d);
+          } catch (_) {
+            setStatus(badge, "offline");
+            badge.textContent = "error";
+          }
+        }
+
+        var txInstallIndicator = $("txInstallIndicator");
+        var txInstallBtn = $("txSetupInstall");
+
+        txInstallBtn.addEventListener("click", async function() {
+          try {
+            var permitted = await ensureInstallPermissionBeforeInstall();
+            if (!permitted) return;
+            txInstallBtn.disabled = true;
+            txInstallIndicator.style.display = "";
+            var res = await fetch(API + "/termux/install", { method: "POST" });
+            var data = await res.json();
+            if (!res.ok) {
+              showToast("Install failed: " + (data.error || "unknown error"), 2400);
+              return;
+            }
+            if (data.status === "install_permission_required") {
+              showToast(data.message || "Install permission required", 2400);
+              return;
+            }
+            showToast("Installer opened — follow the prompts to install Termux", 3000);
+          } catch (ex) {
+            showToast("Install failed: " + (ex.message || ex), 2400);
+          } finally {
+            txInstallBtn.disabled = false;
+            txInstallIndicator.style.display = "none";
+          }
+        });
+
+        $("txSetupDownload").addEventListener("click", function() {
+          if (!txReleasesUrl) { showToast("Releases URL not available", 1600); return; }
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInBrowser) {
+            AndroidBridge.openInBrowser(txReleasesUrl);
+          } else {
+            window.open(txReleasesUrl, "_blank");
+          }
+        });
+
+        $("txSetupCopy").addEventListener("click", function() {
+          if (!txBootstrapCmd) return;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(txBootstrapCmd).then(function() {
+              showToast("Copied to clipboard", 1200);
+            }).catch(function() { showToast("Copy failed", 1400); });
+          } else {
+            showToast("Clipboard not available", 1400);
+          }
+        });
+
+        $("txSetupOpenTermux1").addEventListener("click", function() {
+          fetch(API + "/termux/launch", { method: "POST" }).catch(function() {});
+        });
+
+        $("txSetupOpenTermux2").addEventListener("click", function() {
+          fetch(API + "/termux/launch", { method: "POST" }).catch(function() {});
+          showToast("Make sure you closed Termux from recents first", 2400);
+        });
+
+        refreshTermuxSetup();
+        setInterval(refreshTermuxSetup, 3000);
+      })();
+
       setInterval(refreshMeMeStatus, 8000);
       setInterval(refreshMeSyncStatus, 1000);
       setInterval(refreshMeSyncProgress, 1000);

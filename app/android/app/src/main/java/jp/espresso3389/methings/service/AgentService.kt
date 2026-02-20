@@ -24,16 +24,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class AgentService : LifecycleService() {
-    private lateinit var runtimeManager: PythonRuntimeManager
+    private lateinit var runtimeManager: TermuxWorkerManager
+    private lateinit var termuxManager: TermuxManager
     private var localServer: LocalHttpServer? = null
-    private var vaultServer: KeystoreVaultServer? = null
-    private var sshdManager: SshdManager? = null
-    private var sshPinManager: SshPinManager? = null
-    private var sshNoAuthModeManager: SshNoAuthModeManager? = null
-    private var noAuthPromptManager: SshNoAuthPromptManager? = null
-    private val sshAuthExecutor = Executors.newSingleThreadScheduledExecutor()
-    private var lastActiveAuthMode: String = ""
-    private var lastForegroundText: String = ""
+    private val tickExecutor = Executors.newSingleThreadScheduledExecutor()
     private var permissionReceiverRegistered = false
     private var brainWorkNotificationShown = false
     private var lastBrainWorkCheckAtMs: Long = 0L
@@ -75,34 +69,22 @@ class AgentService : LifecycleService() {
         val extractor = AssetExtractor(this)
         extractor.extractUiAssetsIfMissing()
         extractor.extractUserDefaultsIfMissing()
-        extractor.extractNodeAssetsIfMissing()
-        extractor.extractDropbearIfMissing()
-        // Ensure Python runtime is installed for SSH/pip subprocesses (build isolation) even if the
-        // main Python worker hasn't been started yet.
-        PythonRuntimeInstaller(this).ensureInstalled()
+        extractor.extractServerAssets()
         jp.espresso3389.methings.db.PlainDbProvider.get(this)
-        // Make sure we always have a CA bundle file in app-private storage before SSH sessions start.
-        // The periodic updater will refresh it when the network is available.
-        CaBundleManager(this).ensureSeededFromPyenv(java.io.File(filesDir, "pyenv"))
-        runtimeManager = PythonRuntimeManager(this)
-        sshdManager = SshdManager(this).also { it.startIfEnabled() }
-        sshPinManager = SshPinManager(this)
-        sshNoAuthModeManager = SshNoAuthModeManager(this)
-        noAuthPromptManager = SshNoAuthPromptManager(this).also { it.start() }
-        startSshAuthMonitor()
+        CaBundleManager(this).ensureSeeded()
+        termuxManager = TermuxManager(this)
+        runtimeManager = TermuxWorkerManager(this)
         localServer = LocalHttpServer(
             this,
             this,
             runtimeManager,
-            sshdManager!!,
-            sshPinManager!!,
-            sshNoAuthModeManager!!
+            termuxManager
         ).also {
             it.startServer()
         }
-        vaultServer = KeystoreVaultServer(this).apply { start() }
         registerPermissionPromptReceiver()
         startForegroundCompat(buildNotification())
+        tickExecutor.scheduleAtFixedRate({ tickBrainWorkNotification() }, 3, 6, TimeUnit.SECONDS)
         // Register FCM token with notify gateway for push notifications.
         FirebaseMessaging.getInstance().token.addOnSuccessListener { fcmToken ->
             Thread {
@@ -118,31 +100,21 @@ class AgentService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START_PYTHON -> {
-                android.util.Log.i("AgentService", "Start action received")
+            ACTION_START_WORKER -> {
+                android.util.Log.i("AgentService", "Start worker action received")
                 runtimeManager.startWorker()
             }
-            ACTION_RESTART_PYTHON -> {
-                android.util.Log.i("AgentService", "Restart action received")
+            ACTION_RESTART_WORKER -> {
+                android.util.Log.i("AgentService", "Restart worker action received")
                 runtimeManager.restartSoft()
             }
-            ACTION_STOP_PYTHON -> {
-                android.util.Log.i("AgentService", "Stop action received")
+            ACTION_STOP_WORKER -> {
+                android.util.Log.i("AgentService", "Stop worker action received")
                 runtimeManager.requestShutdown()
             }
             ACTION_STOP_SERVICE -> {
                 android.util.Log.i("AgentService", "Stop service action received")
                 stopSelf()
-            }
-            ACTION_SSH_PIN_STOP -> {
-                android.util.Log.i("AgentService", "SSH PIN stop requested")
-                sshPinManager?.stopPin()
-                sshdManager?.exitPinMode()
-            }
-            ACTION_SSH_NOAUTH_STOP -> {
-                android.util.Log.i("AgentService", "SSH notification auth stop requested")
-                sshNoAuthModeManager?.stop()
-                sshdManager?.exitNotificationMode()
             }
             else -> {}
         }
@@ -151,173 +123,99 @@ class AgentService : LifecycleService() {
 
     override fun onDestroy() {
         unregisterPermissionPromptReceiver()
-        vaultServer?.stop()
-        vaultServer = null
-        sshAuthExecutor.shutdownNow()
-        noAuthPromptManager?.stop()
-        noAuthPromptManager = null
-        sshNoAuthModeManager = null
-        sshPinManager = null
-        sshdManager?.stop()
-        sshdManager = null
+        tickExecutor.shutdownNow()
         localServer?.stopServer()
         localServer = null
         runtimeManager.stop()
         super.onDestroy()
     }
 
-    private fun startSshAuthMonitor() {
-        sshAuthExecutor.scheduleAtFixedRate({ tickSshAuth() }, 0, 3, TimeUnit.SECONDS)
-    }
-
-    private fun tickSshAuth() {
-        try {
-            val sshd = sshdManager ?: return
-            val pinMgr = sshPinManager ?: return
-            val noAuthMgr = sshNoAuthModeManager ?: return
-
-            // Watchdog: restart SSHD if it was killed externally (e.g. Phantom Process Killer)
-            sshd.ensureRunning()
-
-            val pin = pinMgr.status()
-            if (pin.expired) {
-                android.util.Log.i("AgentService", "PIN auth expired; exiting PIN mode")
-                pinMgr.stopPin()
-                sshd.exitPinMode()
-            }
-
-            val noauth = noAuthMgr.status()
-            if (noauth.expired) {
-                android.util.Log.i("AgentService", "Notification auth expired; exiting notification mode")
-                noAuthMgr.stop()
-                sshd.exitNotificationMode()
-            }
-
-            val authMode = sshd.getAuthMode()
-            val activeMode = when {
-                authMode == SshdManager.AUTH_MODE_PIN && pin.active -> SshdManager.AUTH_MODE_PIN
-                authMode == SshdManager.AUTH_MODE_NOTIFICATION && noauth.active -> SshdManager.AUTH_MODE_NOTIFICATION
-                else -> ""
-            }
-
-            if (activeMode != lastActiveAuthMode) {
-                // Fire a heads-up style alert when enabling a temporary auth mode.
-                if (activeMode.isNotBlank()) {
-                    showSshAuthAlert(activeMode, when (activeMode) {
-                        SshdManager.AUTH_MODE_PIN -> pin.expiresAt
-                        SshdManager.AUTH_MODE_NOTIFICATION -> noauth.expiresAt
-                        else -> null
-                    })
-                }
-                lastActiveAuthMode = activeMode
-            }
-
-            // Only re-post the foreground notification when visible content changes.
-            val fgText = foregroundText(activeMode, when (activeMode) {
-                SshdManager.AUTH_MODE_PIN -> pin.expiresAt
-                SshdManager.AUTH_MODE_NOTIFICATION -> noauth.expiresAt
-                else -> null
-            })
-            if (fgText != lastForegroundText) {
-                lastForegroundText = fgText
-                val fg = buildForegroundNotification(activeMode, when (activeMode) {
-                    SshdManager.AUTH_MODE_PIN -> pin.expiresAt
-                    SshdManager.AUTH_MODE_NOTIFICATION -> noauth.expiresAt
-                    else -> null
-                })
-                startForegroundCompat(fg)
-            }
-
-            tickBrainWorkNotification()
-        } catch (_: Exception) {
-        }
-    }
-
     private fun tickBrainWorkNotification() {
-        val now = System.currentTimeMillis()
-        if (now - lastBrainWorkCheckAtMs < 6000) return
-        lastBrainWorkCheckAtMs = now
+        try {
+            val now = System.currentTimeMillis()
+            if (now - lastBrainWorkCheckAtMs < 6000) return
+            lastBrainWorkCheckAtMs = now
 
-        val nm = getSystemService(NotificationManager::class.java)
-        val id = 82010
-        if (AppForegroundState.isForeground) {
-            if (brainWorkNotificationShown) {
-                nm.cancel(id)
-                brainWorkNotificationShown = false
+            val nm = getSystemService(NotificationManager::class.java)
+            val id = 82010
+            if (AppForegroundState.isForeground) {
+                if (brainWorkNotificationShown) {
+                    nm.cancel(id)
+                    brainWorkNotificationShown = false
+                }
+                return
             }
-            return
-        }
 
-        // Query the python worker brain status (best-effort).
-        // Use a short timeout: if the worker is too busy to respond quickly, treat it as busy.
-        val raw = try {
-            val url = java.net.URL("http://127.0.0.1:8776/brain/status")
-            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 300
-                readTimeout = 400
+            // Query the worker brain status (best-effort).
+            val raw = try {
+                val url = java.net.URL("http://127.0.0.1:${TermuxManager.WORKER_PORT}/brain/status")
+                val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 300
+                    readTimeout = 400
+                }
+                val txt = runCatching { conn.inputStream.bufferedReader().use { it.readText() } }.getOrDefault("")
+                conn.disconnect()
+                txt
+            } catch (_: java.net.SocketTimeoutException) {
+                "timeout"
+            } catch (_: Exception) {
+                ""
             }
-            val txt = runCatching { conn.inputStream.bufferedReader().use { it.readText() } }.getOrDefault("")
-            conn.disconnect()
-            txt
-        } catch (_: java.net.SocketTimeoutException) {
-            // Timeout means the worker is busy — treat as busy without parsing.
-            "timeout"
+            val timedOut = raw == "timeout"
+            val st = if (timedOut) null else runCatching { org.json.JSONObject(raw) }.getOrNull()
+            val busy = timedOut || (st?.optBoolean("busy", false) ?: false)
+            val q = st?.optInt("queue_size", 0) ?: 0
+            val shouldShow = busy || q > 0
+            if (shouldShow) {
+                wasBrainBusy = true
+            } else {
+                if (wasBrainBusy) {
+                    wasBrainBusy = false
+                    onBrainTaskCompleted()
+                }
+                if (brainWorkNotificationShown) {
+                    nm.cancel(id)
+                    brainWorkNotificationShown = false
+                }
+                return
+            }
+
+            val channelId = "methings_agent_work"
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val ch = NotificationChannel(channelId, "Agent Activity", NotificationManager.IMPORTANCE_LOW)
+                nm.createNotificationChannel(ch)
+            }
+            val openIntent = Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            val openPi = PendingIntent.getActivity(
+                this,
+                82010,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val interruptIntent = Intent(this, BrainInterruptReceiver::class.java).apply {
+                action = BrainInterruptReceiver.ACTION_INTERRUPT
+            }
+            val interruptPi = PendingIntent.getBroadcast(
+                this,
+                82011,
+                interruptIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notif = NotificationCompat.Builder(this, channelId)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("methings")
+                .setContentText("Agent is working")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(openPi)
+                .setAutoCancel(true)
+                .addAction(NotificationCompat.Action(0, "Interrupt", interruptPi))
+                .build()
+            nm.notify(id, notif)
+            brainWorkNotificationShown = true
         } catch (_: Exception) {
-            ""
         }
-        val timedOut = raw == "timeout"
-        val st = if (timedOut) null else runCatching { org.json.JSONObject(raw) }.getOrNull()
-        val busy = timedOut || (st?.optBoolean("busy", false) ?: false)
-        val q = st?.optInt("queue_size", 0) ?: 0
-        val shouldShow = busy || q > 0
-        if (shouldShow) {
-            wasBrainBusy = true
-        } else {
-            if (wasBrainBusy) {
-                wasBrainBusy = false
-                onBrainTaskCompleted()
-            }
-            if (brainWorkNotificationShown) {
-                nm.cancel(id)
-                brainWorkNotificationShown = false
-            }
-            return
-        }
-
-        val channelId = "methings_agent_work"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val ch = NotificationChannel(channelId, "Agent Activity", NotificationManager.IMPORTANCE_LOW)
-            nm.createNotificationChannel(ch)
-        }
-        val openIntent = Intent(this, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        val openPi = PendingIntent.getActivity(
-            this,
-            82010,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val interruptIntent = Intent(this, BrainInterruptReceiver::class.java).apply {
-            action = BrainInterruptReceiver.ACTION_INTERRUPT
-        }
-        val interruptPi = PendingIntent.getBroadcast(
-            this,
-            82011,
-            interruptIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notif = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("methings")
-            .setContentText("Agent is working")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(openPi)
-            .setAutoCancel(true)
-            .addAction(NotificationCompat.Action(0, "Interrupt", interruptPi))
-            .build()
-        nm.notify(id, notif)
-        brainWorkNotificationShown = true
     }
 
     private fun onBrainTaskCompleted() {
@@ -388,7 +286,7 @@ class AgentService : LifecycleService() {
                     put("source", "methings")
                 }.toString()
                 conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                conn.responseCode // trigger the request
+                conn.responseCode
                 conn.disconnect()
             } catch (_: Exception) {
             }
@@ -397,13 +295,6 @@ class AgentService : LifecycleService() {
 
     private fun startForegroundCompat(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Declare only types we are currently eligible for.
-            //
-            // On Android 14+ a foreground service started with type MICROPHONE/CAMERA/etc can throw
-            // SecurityException if the corresponding runtime permission isn't granted yet.
-            //
-            // We keep the manifest declaration broad (so features can work), but keep the runtime
-            // startForeground(...) types conservative and permission-aware.
             var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
             if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
                 types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
@@ -411,8 +302,6 @@ class AgentService : LifecycleService() {
             if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                 types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
             }
-            // Connected-device is only safe to declare when the relevant runtime permission is granted.
-            // This keeps us compatible with Android 12+ Bluetooth runtime permission model.
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                     types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
@@ -467,8 +356,8 @@ class AgentService : LifecycleService() {
         }
     }
 
-    // Tools that require native biometric/PIN consent (keep individual notification flow).
-    private val biometricTools = setOf("credentials", "ssh_keys", "ssh_pin")
+    // Tools that require native biometric/PIN consent.
+    private val biometricTools = setOf("credentials")
 
     private fun enqueuePermissionPrompt(prompt: PermissionPrompt) {
         synchronized(permissionNotifLock) {
@@ -476,13 +365,10 @@ class AgentService : LifecycleService() {
             if (id.isBlank()) return
 
             if (biometricTools.contains(prompt.tool)) {
-                // Biometric permissions: use the individual notification + PermissionBroker flow.
                 showBiometricPermissionNotification(prompt)
                 return
             }
 
-            // Non-biometric: track and show a single summary notification.
-            // Avoid duplicates.
             if (activePermissionPrompt?.id == id) return
             if (permissionPromptQueue.any { it.id == id }) return
             permissionPromptQueue.addLast(prompt)
@@ -496,7 +382,6 @@ class AgentService : LifecycleService() {
 
     private fun onPermissionResolved(id: String, status: String) {
         synchronized(permissionNotifLock) {
-            // Drop from queue.
             if (permissionPromptQueue.isNotEmpty()) {
                 val it = permissionPromptQueue.iterator()
                 while (it.hasNext()) {
@@ -527,12 +412,7 @@ class AgentService : LifecycleService() {
         nm.cancel(PERMISSION_NOTIFICATION_ID)
     }
 
-    /**
-     * Show a single summary notification for all non-biometric pending permissions.
-     * Tapping it just opens the app (no PermissionBroker dialog).
-     */
     private fun showSummaryPermissionNotification() {
-        // Skip notification when the app is in the foreground — user sees in-chat permission cards.
         if (AppForegroundState.isForeground) return
         val channelId = "permission_prompts"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -542,10 +422,9 @@ class AgentService : LifecycleService() {
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
 
-        val total = 1 + permissionPromptQueue.size  // active + queued
+        val total = 1 + permissionPromptQueue.size
         val text = if (total == 1) "1 permission waiting for review" else "$total permissions waiting for review"
 
-        // Tap: just open the app (no permission extras → no PermissionBroker).
         val openIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -566,10 +445,6 @@ class AgentService : LifecycleService() {
         getSystemService(NotificationManager::class.java).notify(PERMISSION_NOTIFICATION_ID, notif)
     }
 
-    /**
-     * Show an individual notification for biometric-required permissions.
-     * Tapping opens PermissionBroker as before.
-     */
     private fun showBiometricPermissionNotification(prompt: PermissionPrompt) {
         val channelId = "permission_prompts"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -602,16 +477,11 @@ class AgentService : LifecycleService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .build()
 
-        // Use a separate notification ID for biometric prompts so they don't collide with summary.
         getSystemService(NotificationManager::class.java)
             .notify(prompt.id.hashCode(), notif)
     }
 
     private fun buildNotification(): Notification {
-        return buildForegroundNotification("", null)
-    }
-
-    private fun buildForegroundNotification(activeMode: String, expiresAt: Long?): Notification {
         val channelId = "agent_service"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -623,9 +493,9 @@ class AgentService : LifecycleService() {
             manager.createNotificationChannel(channel)
         }
 
-        val builder = NotificationCompat.Builder(this, channelId)
+        return NotificationCompat.Builder(this, channelId)
             .setContentTitle("me.things Agent Service")
-            .setContentText(foregroundText(activeMode, expiresAt))
+            .setContentText("Running")
             .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -639,119 +509,7 @@ class AgentService : LifecycleService() {
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
             )
-
-        when (activeMode) {
-            SshdManager.AUTH_MODE_PIN -> builder.addAction(
-                android.R.drawable.ic_delete,
-                "Stop PIN",
-                PendingIntent.getService(
-                    this,
-                    1001,
-                    Intent(this, AgentService::class.java).apply { action = ACTION_SSH_PIN_STOP },
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-            )
-            SshdManager.AUTH_MODE_NOTIFICATION -> builder.addAction(
-                android.R.drawable.ic_delete,
-                "Stop",
-                PendingIntent.getService(
-                    this,
-                    1002,
-                    Intent(this, AgentService::class.java).apply { action = ACTION_SSH_NOAUTH_STOP },
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-            )
-            else -> {}
-        }
-
-        return builder.build()
-    }
-
-    private fun showSshAuthAlert(activeMode: String, expiresAt: Long?) {
-        val channelId = "ssh_auth_alerts"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "SSH Auth Alerts",
-                NotificationManager.IMPORTANCE_HIGH
-            )
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
-        }
-
-        val stopAction = when (activeMode) {
-            SshdManager.AUTH_MODE_PIN -> NotificationCompat.Action(
-                android.R.drawable.ic_delete,
-                "Stop PIN",
-                PendingIntent.getService(
-                    this,
-                    2001,
-                    Intent(this, AgentService::class.java).apply { action = ACTION_SSH_PIN_STOP },
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-            )
-            SshdManager.AUTH_MODE_NOTIFICATION -> NotificationCompat.Action(
-                android.R.drawable.ic_delete,
-                "Stop",
-                PendingIntent.getService(
-                    this,
-                    2002,
-                    Intent(this, AgentService::class.java).apply { action = ACTION_SSH_NOAUTH_STOP },
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-            )
-            else -> null
-        }
-
-        val title = when (activeMode) {
-            SshdManager.AUTH_MODE_PIN -> "SSHD: PIN auth enabled"
-            SshdManager.AUTH_MODE_NOTIFICATION -> "SSHD: Notification auth enabled"
-            else -> "SSHD auth enabled"
-        }
-        val text = foregroundText(activeMode, expiresAt)
-
-        val openIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
-        val openPi = PendingIntent.getActivity(
-            this,
-            2003,
-            openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notif = NotificationCompat.Builder(this, channelId)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setSmallIcon(R.drawable.ic_notification)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(openPi)
-            .setTimeoutAfter(30000)
-            .also { b -> if (stopAction != null) b.addAction(stopAction) }
             .build()
-
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(82001, notif)
-    }
-
-    private fun foregroundText(activeMode: String, expiresAt: Long?): String {
-        if (activeMode.isBlank()) return "Running local Python service"
-        val remaining = formatRemaining(expiresAt)
-        return when (activeMode) {
-            SshdManager.AUTH_MODE_PIN -> "SSHD: PIN auth active" + if (remaining.isNotBlank()) " (expires in $remaining)" else ""
-            SshdManager.AUTH_MODE_NOTIFICATION -> "SSHD: Notification auth active" + if (remaining.isNotBlank()) " (expires in $remaining)" else ""
-            else -> "SSHD: auth active"
-        }
-    }
-
-    private fun formatRemaining(expiresAt: Long?): String {
-        if (expiresAt == null) return ""
-        val sec = ((expiresAt - System.currentTimeMillis()) / 1000L).coerceAtLeast(0)
-        val m = sec / 60
-        val s = sec % 60
-        return if (m > 0) "${m}m ${s}s" else "${s}s"
     }
 
     companion object {
@@ -761,11 +519,9 @@ class AgentService : LifecycleService() {
         private const val TASK_COMPLETE_CHANNEL_ID = "task_completion"
         private const val ACTION_PERMISSION_NOTIFICATION_DISMISSED =
             "jp.espresso3389.methings.action.PERMISSION_NOTIFICATION_DISMISSED"
-        const val ACTION_START_PYTHON = "jp.espresso3389.methings.action.START_PYTHON"
-        const val ACTION_RESTART_PYTHON = "jp.espresso3389.methings.action.RESTART_PYTHON"
-        const val ACTION_STOP_PYTHON = "jp.espresso3389.methings.action.STOP_PYTHON"
-        const val ACTION_SSH_PIN_STOP = "jp.espresso3389.methings.action.SSH_PIN_STOP"
-        const val ACTION_SSH_NOAUTH_STOP = "jp.espresso3389.methings.action.SSH_NOAUTH_STOP"
+        const val ACTION_START_WORKER = "jp.espresso3389.methings.action.START_WORKER"
+        const val ACTION_RESTART_WORKER = "jp.espresso3389.methings.action.RESTART_WORKER"
+        const val ACTION_STOP_WORKER = "jp.espresso3389.methings.action.STOP_WORKER"
         const val ACTION_STOP_SERVICE = "jp.espresso3389.methings.action.STOP_SERVICE"
     }
 }

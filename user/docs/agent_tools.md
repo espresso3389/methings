@@ -1,6 +1,6 @@
 # Agent Tools Reference
 
-This document covers agent-side tool conventions and Python runtime helpers
+This document covers agent-side tool conventions and runtime helpers
 that are **not** part of the HTTP API (see `openapi/` for the full API spec).
 
 ## device_api Tool
@@ -25,9 +25,9 @@ See `openapi/openapi.yaml` for the complete endpoint reference.
 
 See [permissions.md](permissions.md) for scopes, identity model, and USB special cases.
 
-## Agent Filesystem Tools (Python Runtime)
+## Agent Filesystem Tools
 
-These are Python runtime functions, not HTTP endpoints.
+These are agent runtime functions, not HTTP endpoints.
 
 ### read_file
 

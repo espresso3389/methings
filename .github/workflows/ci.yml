@@ -38,9 +38,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
       - name: Install system deps
         run: |
           sudo apt-get update
@@ -61,10 +58,6 @@ jobs:
             unzip \
             zip \
             zlib1g-dev
-      - name: Install uv
-        run: |
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install Gradle
         run: |
           curl -fsSL -o /tmp/gradle-8.2.1-bin.zip https://services.gradle.org/distributions/gradle-8.2.1-bin.zip
@@ -81,32 +74,6 @@ jobs:
         run: |
           ./scripts/build_libusb_android.sh
           ./scripts/build_libuvc_android.sh
-      - name: Restore Python-for-Android dist cache
-        id: p4a-dist-cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.local/share/python-for-android/dists/methings_ci
-          key: ${{ runner.os }}-p4a-dist-methings_ci-arm64-v8a-api34-v1-${{ hashFiles('scripts/build_p4a.sh', '.github/workflows/ci.yml') }}
-      - name: Build Python-for-Android runtime
-        env:
-          SDK_DIR: ${{ env.ANDROID_SDK_ROOT }}
-          NDK_DIR: ${{ env.ANDROID_SDK_ROOT }}/ndk/29.0.14206865
-          ARCH: arm64-v8a
-          DIST_NAME: methings_ci
-          ANDROID_API: 34
-          REQUIREMENTS: python3,fastapi==0.99.1,starlette==0.27.0,pydantic==1.10.13,typing-extensions,anyio==3.7.1,sniffio,uvicorn==0.23.2,click,h11,requests,charset-normalizer,idna,urllib3,certifi
-        run: |
-          set -euo pipefail
-          DIST_ROOT="$HOME/.local/share/python-for-android/dists/$DIST_NAME"
-          PY_BUNDLE_STDLIB="$DIST_ROOT/_python_bundle__${ARCH}/_python_bundle/stdlib.zip"
-          if [[ "${{ steps.p4a-dist-cache.outputs.cache-hit }}" == "true" && -f "$PY_BUNDLE_STDLIB" ]]; then
-            echo "Using cached python-for-android dist: $DIST_ROOT"
-            ./scripts/sync_p4a_dist.sh
-          else
-            echo "No reusable python-for-android dist cache found; building runtime"
-            ./scripts/build_p4a.sh
-          fi
       - name: Build Debug APK
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4"
@@ -177,49 +144,6 @@ jobs:
             app/android/app/build/outputs/apk/release/*.apk
             app/android/app/build/outputs/apk/release/output-metadata.json
 
-  smoke-test:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.10', '3.11']
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r server/requirements-ci.txt
-      - name: Start server
-        run: |
-          python server/app.py &
-          echo $! > server.pid
-          sleep 2
-      - name: Smoke test
-        run: |
-          python scripts/smoke_test.py
-      - name: Stop server
-        if: always()
-        run: |
-          if [ -f server.pid ]; then kill $(cat server.pid) || true; fi
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Install lint tools
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install ruff
-      - name: Lint
-        run: |
-          ruff check server scripts
-
   emulator-test:
     runs-on: ubuntu-latest
     needs: android-apk-build
@@ -271,10 +195,6 @@ jobs:
             grep -Eq '"(status|error)"[[:space:]]*:' app_update_check.json || { echo "::error::Unexpected /app/update/check payload"; cat app_update_check.json; exit 1; }
             echo "app/update/check endpoint reachable"
             echo "::endgroup::"
-            echo "::group::Python exec test"
-            curl -sf --retry 5 --retry-delay 5 --retry-all-errors -X POST http://127.0.0.1:33389/shell/exec -H "Content-Type: application/json" -d "{\"cmd\":\"python\",\"args\":\"-c \\\"import sys; print(sys.version_info[:2])\\\"\",\"cwd\":\"/\"}" -o shell_result.json && cat shell_result.json && grep -q '"code"' shell_result.json || { echo "::error::Python exec failed or returned unexpected response"; cat shell_result.json 2>/dev/null; exit 1; }
-            echo ""
-            echo "::endgroup::"
             adb logcat -d > logcat.txt 2>&1 || true
 
       - name: Upload logcat
@@ -284,84 +204,13 @@ jobs:
           name: emulator-logcat
           path: |
             logcat.txt
-            shell_result.json
-          retention-days: 7
-
-  emulator-agent-test:
-    runs-on: ubuntu-latest
-    needs: android-apk-build
-    timeout-minutes: 20
-    env:
-      CI_AGENT_API_KEY: ${{ secrets.CI_AGENT_API_KEY }}
-      CI_AGENT_VENDOR: ${{ vars.CI_AGENT_VENDOR }}
-      CI_AGENT_BASE_URL: ${{ vars.CI_AGENT_BASE_URL }}
-      CI_AGENT_MODEL: ${{ vars.CI_AGENT_MODEL }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-      - name: Download debug APK
-        uses: actions/download-artifact@v4
-        with:
-          name: app-debug-apk
-          path: apk
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Skip when API key is not configured
-        if: env.CI_AGENT_API_KEY == ''
-        run: |
-          echo "CI_AGENT_API_KEY is not configured; skipping emulator agent smoke test."
-
-      - name: Run emulator agent smoke test
-        if: env.CI_AGENT_API_KEY != ''
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          force-avd-creation: true
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot-save
-          disable-animations: true
-          script: |
-            echo "::group::Install APK"
-            adb install apk/app-debug.apk
-            echo "::endgroup::"
-            echo "::group::Launch activity"
-            adb shell am start -W -n jp.espresso3389.methings/.ui.MainActivity
-            echo "::endgroup::"
-            echo "::group::Wait for local API"
-            adb forward tcp:33389 tcp:33389
-            curl -sf --retry 20 --retry-delay 2 --retry-all-errors http://127.0.0.1:33389/health
-            echo ""
-            echo "::endgroup::"
-            echo "::group::Agent smoke test (real provider key)"
-            python3 scripts/ci_agent_smoke_test.py --base-url "http://127.0.0.1:33389" --vendor "${CI_AGENT_VENDOR:-openai}" --provider-base-url "${CI_AGENT_BASE_URL:-https://api.openai.com/v1}" --model "${CI_AGENT_MODEL:-gpt-4o-mini}" --api-key "${CI_AGENT_API_KEY}" --session-id "ci-agent-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" --timeout-sec 240
-            echo "::endgroup::"
-            adb logcat -d > agent-logcat.txt 2>&1 || true
-
-      - name: Upload agent test logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: emulator-agent-logcat
-          path: |
-            agent-logcat.txt
           retention-days: 7
 
   github-release:
     runs-on: ubuntu-latest
     needs:
       - android-apk-build
-      - smoke-test
-      - lint
       - emulator-test
-      - emulator-agent-test
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write

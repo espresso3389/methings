@@ -11,8 +11,8 @@ from typing import Any, Dict, Optional
 
 class DeviceApiTool:
     _ACTIONS: Dict[str, Dict[str, Any]] = {
-        "python.status": {"method": "GET", "path": "/python/status", "permission": False},
-        "python.restart": {"method": "POST", "path": "/python/restart", "permission": True},
+        "termux.status": {"method": "GET", "path": "/termux/status", "permission": False},
+        "termux.restart": {"method": "POST", "path": "/termux/restart", "permission": True},
         "screen.status": {"method": "GET", "path": "/screen/status", "permission": False},
         "screen.keep_on": {"method": "POST", "path": "/screen/keep_on", "permission": True},
         "sshd.status": {"method": "GET", "path": "/sshd/status", "permission": False},

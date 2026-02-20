@@ -2,6 +2,8 @@
 
 This file contains starter prompts for me.things so it can use local APIs, filesystem, and command-line tools consistently.
 
+The agent has a built-in default system prompt. The prompts below can be used to customize behavior.
+
 ## 1) Recommended System Prompt
 Use this as `system_prompt` in `POST /brain/config`.
 
@@ -37,7 +39,7 @@ Send this as first user chat.
 Initialize yourself for this device.
 1) Check python version.
 2) Check pip is available.
-3) Create /user/python/apps/brain_scratch/ and write a tiny hello script.
+3) Create /user/apps/brain_scratch/ and write a tiny hello script.
 4) Run the script and report result.
 Use minimal actions.
 ```
@@ -53,7 +55,7 @@ Do not install anything.
 ## 4) Filesystem Workflow Prompt
 
 ```text
-Create a new project at /user/python/apps/todo_bot.
+Create a new project at /user/apps/todo_bot.
 Write:
 - main.py
 - requirements.txt
@@ -64,7 +66,7 @@ If dependencies are missing, propose install actions but do not execute installs
 ## 5) CLI Tooling Prompt
 
 ```text
-Prepare a clean Python environment workflow for this project.
+Prepare a clean environment workflow for this project.
 Prefer venv + pip.
 Generate exact commands as shell_exec actions and verify each step.
 ```
@@ -72,7 +74,7 @@ Generate exact commands as shell_exec actions and verify each step.
 ## 6) Event-Driven Automation Prompt
 
 ```text
-When you receive event name "wifi_connected", append a timestamped line to /user/python/apps/brain_scratch/events.log.
+When you receive event name "wifi_connected", append a timestamped line to /user/apps/brain_scratch/events.log.
 If the file path does not exist, create it first.
 Then respond with a one-line status summary.
 ```

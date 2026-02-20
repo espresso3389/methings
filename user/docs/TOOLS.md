@@ -382,7 +382,7 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 - `$sys/docs/openapi/paths/ui.yaml` — viewer control, settings navigation
 
 Conceptual guides (under `$sys/docs/`):
-- `$sys/docs/agent_tools.md` — agent tool conventions, Python runtime helpers, chat shortcuts
+- `$sys/docs/agent_tools.md` — agent tool conventions, filesystem helpers, chat shortcuts
 - `$sys/docs/permissions.md` — permission scopes, identity model, USB special cases
 - `$sys/docs/viewer.md` — viewer usage guide, Marp presentations, autonomous presentation examples
 - `$sys/docs/me_me.md` — me.me architecture, security model, event forwarding

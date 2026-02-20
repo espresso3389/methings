@@ -49,11 +49,10 @@ import jp.espresso3389.methings.device.UsbPermissionResultReceiver
 import jp.espresso3389.methings.device.UsbPermissionWaiter
 import jp.espresso3389.methings.device.WebViewBrowserManager
 import jp.espresso3389.methings.service.AgentService
-import jp.espresso3389.methings.service.PythonRuntimeManager
+import jp.espresso3389.methings.service.TermuxWorkerManager
 import jp.espresso3389.methings.service.LocalHttpServer
 import jp.espresso3389.methings.ui.WebAppBridge
 import jp.espresso3389.methings.perm.DevicePermissionPolicy
-import org.kivy.android.PythonActivity
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CountDownLatch
@@ -139,9 +138,9 @@ class MainActivity : AppCompatActivity() {
             val escaped = jsString(txt)
             evalJs("window.onMeSyncQrScanResult && window.onMeSyncQrScanResult({ok:true,text:'$escaped'})")
         }
-    private val pythonHealthReceiver = object : BroadcastReceiver() {
+    private val workerHealthReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val status = intent?.getStringExtra(PythonRuntimeManager.EXTRA_STATUS) ?: return
+            val status = intent?.getStringExtra(TermuxWorkerManager.EXTRA_STATUS) ?: return
             publishStatusToWeb(status)
         }
     }
@@ -274,10 +273,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Compatibility shim: provide a non-Kivy Activity handle for p4a code paths
-        // that look up `org.kivy.android.PythonActivity.mActivity`.
-        PythonActivity.mActivity = this
 
         startForegroundService(Intent(this, AgentService::class.java))
         ensureStartupPermissions()
@@ -1016,8 +1011,8 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) {}
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
-                pythonHealthReceiver,
-                IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH),
+                workerHealthReceiver,
+                IntentFilter(TermuxWorkerManager.ACTION_WORKER_HEALTH),
                 Context.RECEIVER_NOT_EXPORTED
             )
             registerReceiver(
@@ -1066,7 +1061,7 @@ class MainActivity : AppCompatActivity() {
                 Context.RECEIVER_NOT_EXPORTED
             )
         } else {
-            registerReceiver(pythonHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_PYTHON_HEALTH))
+            registerReceiver(workerHealthReceiver, IntentFilter(TermuxWorkerManager.ACTION_WORKER_HEALTH))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
             registerReceiver(uiReloadReceiver, IntentFilter(LocalHttpServer.ACTION_UI_RELOAD))
             registerReceiver(uiChatCacheClearReceiver, IntentFilter(LocalHttpServer.ACTION_UI_CHAT_CACHE_CLEAR))
@@ -1081,7 +1076,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         if (isImmersive) exitImmersiveMode()
-        unregisterReceiver(pythonHealthReceiver)
+        unregisterReceiver(workerHealthReceiver)
         unregisterReceiver(permissionPromptReceiver)
         unregisterReceiver(uiReloadReceiver)
         unregisterReceiver(uiChatCacheClearReceiver)
@@ -1124,7 +1119,7 @@ class MainActivity : AppCompatActivity() {
         val payload = status.replace("'", "\\'")
         webView.post {
             webView.evaluateJavascript(
-                "window.onPythonStatus && window.onPythonStatus('${payload}')",
+                "window.onWorkerStatus && window.onWorkerStatus('${payload}')",
                 null
             )
         }
@@ -1356,7 +1351,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Special-case: for USB tools, complete the Android OS USB permission dialog before
-        // approving the in-app tool request, so the Python agent can auto-resume reliably.
+        // approving the in-app tool request, so the agent can auto-resume reliably.
         if (tool == "device.usb") {
             val (name, vid, pid) = extractUsbHint(detail)
             val dev = findUsbDeviceByHint(name, vid, pid)
@@ -1398,13 +1393,13 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun startPythonWorker() {
+    private fun startWorker() {
         val intent = Intent(this, AgentService::class.java)
-        intent.action = AgentService.ACTION_START_PYTHON
+        intent.action = AgentService.ACTION_START_WORKER
         startForegroundService(intent)
         webView.post {
             webView.evaluateJavascript(
-                "window.onPythonRestartRequested && window.onPythonRestartRequested()",
+                "window.onWorkerRestartRequested && window.onWorkerRestartRequested()",
                 null
             )
         }
@@ -1413,11 +1408,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun restartService() {
         val intent = Intent(this, AgentService::class.java)
-        intent.action = AgentService.ACTION_RESTART_PYTHON
+        intent.action = AgentService.ACTION_RESTART_WORKER
         startForegroundService(intent)
         webView.post {
             webView.evaluateJavascript(
-                "window.onPythonRestartRequested && window.onPythonRestartRequested()",
+                "window.onWorkerRestartRequested && window.onWorkerRestartRequested()",
                 null
             )
         }

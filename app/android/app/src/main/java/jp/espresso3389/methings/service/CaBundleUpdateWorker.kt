@@ -10,7 +10,6 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
 import androidx.work.WorkerParameters
-import java.io.File
 import java.util.concurrent.TimeUnit
 
 class CaBundleUpdateWorker(
@@ -19,8 +18,7 @@ class CaBundleUpdateWorker(
 ) : Worker(appContext, params) {
     override fun doWork(): Result {
         val mgr = CaBundleManager(applicationContext)
-        // Seed from the installed pyenv certifi bundle as a fallback baseline.
-        mgr.ensureSeededFromPyenv(File(applicationContext.filesDir, "pyenv"))
+        mgr.ensureSeeded()
 
         val res = mgr.updateIfDue(force = inputData.getBoolean(KEY_FORCE, false))
         return when (res.status) {

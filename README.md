@@ -17,7 +17,7 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 | **Sensors** | Accelerometer, gyroscope, magnetometer, and more via real-time WebSocket streams |
 | **Location** | GPS, fused, network, passive providers |
 | **Vision / ML** | On-device TensorFlow Lite inference on camera frames |
-| **Shell** | On-device command execution, Python eval |
+| **Shell** | On-device command execution via Termux Linux environment |
 | **SSH** | Built-in SSH server (Dropbear) with PIN/key/biometric auth; SSH client for remote exec and SCP |
 | **Browser** | Agent-controllable WebView with screenshot, JS injection, tap/scroll simulation |
 | **Cloud** | API broker with automatic secret injection from encrypted vault |
@@ -27,33 +27,36 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 
 ## Architecture
 
-Kotlin owns the always-up control plane; Python is a spawned worker that can crash safely.
+The app owns the entire control plane and built-in agent runtime. Termux is optional — it provides a general-purpose Linux environment for agentic shell tasks.
 
 ```
 Android App (Foreground Service)
- +-- Kotlin Control Plane (always up)
+ +-- Control Plane (always up)
  |    +-- Local HTTP API (127.0.0.1:33389)
  |    +-- WebView UI
  |    +-- Permission Broker (consent + audit)
  |    +-- Credential Vault (Android Keystore AES-GCM)
  |    +-- me.me Engine (BLE + WiFi + WebRTC P2P + relay transport)
- |    +-- SSH Server (Dropbear)
- |    +-- Python Runtime Manager
+ |    +-- SSH Server (via Termux OpenSSH)
  |
- +-- Python Worker (spawned on demand)
-      +-- FastAPI Server (127.0.0.1:8776)
-      +-- Agent Runtime (BrainRuntime)
-      +-- Tool Router (device APIs, filesystem, shell, cloud)
-      +-- Storage (SQLite)
+ +-- Agent Runtime (built-in)
+ |    +-- LlmClient (OpenAI + Anthropic SSE streaming)
+ |    +-- Tool Router (device APIs, filesystem, shell, cloud)
+ |    +-- AgentStorage (SQLite)
+ |
+ +-- Termux (optional, on-demand)
+      +-- Linux shell environment
+      +-- Package management (apt, pip)
+      +-- SSH server (OpenSSH)
 ```
 
-Every device capability is exposed as an HTTP endpoint on `127.0.0.1:33389`. The on-device agent (or any local client) calls these endpoints to interact with hardware. All sensitive operations require user consent through the permission broker.
+Every device capability is exposed as an HTTP endpoint on `127.0.0.1:33389`. The built-in agent (or any local client) calls these endpoints to interact with hardware. All sensitive operations require user consent through the permission broker.
 
 ## Key Design Principles
 
 - **Outcome-first agents** -- the agent delivers the requested artifact or state change, not an explanation
 - **User consent required** -- every device/resource access goes through a permission broker with optional biometric enforcement
-- **Crash isolation** -- Python worker can die without taking down the app; Kotlin restarts it on demand
+- **Crash isolation** -- Termux can die without taking down the app or the agent; restarted on demand
 - **Offline by default** -- everything runs locally except explicit cloud API calls
 - **Audit trail** -- all tool invocations and permission decisions are logged
 
@@ -86,24 +89,24 @@ Flow: App opens CustomTabs → gateway sign-in page → OAuth provider → callb
 
 ## Tech Stack
 
-**Android / Kotlin:**
-Gradle, Android SDK 34, Kotlin, NanoHTTPD, Room, CameraX, TFLite, AndroidX Credentials, Firebase Cloud Messaging, Stream WebRTC Android
+**Android:**
+Gradle, Android SDK 34, NanoHTTPD, Room, CameraX, TFLite, AndroidX Credentials, Firebase Cloud Messaging, Stream WebRTC Android
 
-**Python (on-device):**
-CPython 3.11+ (Python-for-Android), FastAPI, Uvicorn, Pydantic
+**On-device (optional, via Termux):**
+Linux shell, package management, OpenSSH
 
 **Native (NDK):**
-Dropbear SSH, libusb, libuvc, custom C launchers
+libusb, libuvc, custom C launchers
 
 ## Project Structure
 
 ```
-app/                    Android project (Kotlin + native)
-server/                 Python local service & agent runtime
+app/                    Android project (app + native)
+server/                 On-device server code and tools
 user/                   User-modifiable defaults, docs, OpenAPI spec
-scripts/                Build scripts (P4A, Dropbear, libusb, libuvc)
+scripts/                Build scripts (native libs, utilities)
 docs/                   Design and debugging docs
-third_party/            Git submodules (dropbear, libusb, libuvc)
+third_party/            Git submodules (libusb, libuvc)
 ```
 
 ## Building
@@ -112,7 +115,7 @@ third_party/            Git submodules (dropbear, libusb, libuvc)
 
 - Android SDK (API 34+)
 - Android NDK 29.0.14206865
-- Python 3.11+ (host, for build scripts)
+- Host tools for build scripts
 
 ### Steps
 
@@ -121,12 +124,7 @@ third_party/            Git submodules (dropbear, libusb, libuvc)
    git submodule update --init --recursive
    ```
 
-2. Build the Python-for-Android runtime:
-   ```
-   scripts/build_p4a.sh
-   ```
-
-3. Set up local build config:
+2. Set up local build config:
    ```
    mkdir .local_config
    ```
@@ -143,7 +141,7 @@ third_party/            Git submodules (dropbear, libusb, libuvc)
 
    The `.local_config/` directory is gitignored. See [Local Build Config](#local-build-config) below for details.
 
-4. Build the APK (native libs are compiled automatically):
+3. Build the APK (native libs are compiled automatically):
    ```
    cd app/android
    ./gradlew assembleDebug
@@ -152,9 +150,8 @@ third_party/            Git submodules (dropbear, libusb, libuvc)
 The build process automatically handles:
 - Copying `google-services.json` from `.local_config/` (or decoding from env var on CI)
 - Loading build variables from `.local_config/local.env` (env vars take precedence)
-- Syncing Python server code and user defaults into assets
-- Compiling native libraries (Dropbear, libusb, libuvc)
-- Building Python facade wheels for Android bindings
+- Syncing server code and user defaults into assets
+- Compiling native libraries (libusb, libuvc)
 
 ### Output
 

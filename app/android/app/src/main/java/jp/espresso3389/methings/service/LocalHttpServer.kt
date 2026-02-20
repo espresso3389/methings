@@ -44,8 +44,6 @@ import org.json.JSONObject
 import jp.espresso3389.methings.perm.PermissionStoreFacade
 import jp.espresso3389.methings.BuildConfig
 import jp.espresso3389.methings.perm.CredentialStore
-import jp.espresso3389.methings.perm.SshKeyStore
-import jp.espresso3389.methings.perm.SshKeyPolicy
 import jp.espresso3389.methings.perm.InstallIdentity
 import jp.espresso3389.methings.perm.PermissionPrefs
 import jp.espresso3389.methings.device.BleManager
@@ -92,6 +90,7 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import jp.espresso3389.methings.device.AndroidPermissionWaiter
 import jp.espresso3389.methings.device.UsbPermissionWaiter
+import jp.espresso3389.methings.service.agent.*
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -101,18 +100,14 @@ import org.json.JSONArray
 class LocalHttpServer(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
-    private val runtimeManager: PythonRuntimeManager,
-    private val sshdManager: SshdManager,
-    private val sshPinManager: SshPinManager,
-    private val sshNoAuthModeManager: SshNoAuthModeManager
+    private val runtimeManager: TermuxWorkerManager,
+    private val termuxManager: TermuxManager
 ) : NanoWSD(HOST, PORT) {
     private val uiRoot = File(context.filesDir, "user/www")
     private val permissionStore = PermissionStoreFacade(context)
     private val permissionPrefs = PermissionPrefs(context)
     private val installIdentity = InstallIdentity(context)
     private val credentialStore = CredentialStore(context)
-    private val sshKeyStore = SshKeyStore(context)
-    private val sshKeyPolicy = SshKeyPolicy(context)
     private val deviceGrantStore = jp.espresso3389.methings.perm.DeviceGrantStoreFacade(context)
     private val agentTasks = java.util.concurrent.ConcurrentHashMap<String, AgentTask>()
     private val lastPermissionPromptAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -147,6 +142,83 @@ class LocalHttpServer(
     private val workJobManager = WorkJobManager(context)
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
+
+    // --- Native Agent Runtime ---
+    private val agentStorage by lazy { AgentStorage(context) }
+    private val agentJournalStore by lazy { JournalStore(File(context.filesDir, "user/journal")) }
+    private val agentConfigManager by lazy { AgentConfigManager(context) }
+    private val agentLlmClient by lazy { LlmClient() }
+    private val agentDeviceBridge by lazy {
+        DeviceToolBridge(identity = { agentRuntime?.let { "default" } ?: "default" })
+    }
+    private val agentToolExecutor by lazy {
+        ToolExecutor(
+            userDir = File(context.filesDir, "user"),
+            sysDir = File(context.filesDir, "system"),
+            journalStore = agentJournalStore,
+            deviceBridge = agentDeviceBridge,
+            shellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
+            sessionIdProvider = { "default" },
+        )
+    }
+    @Volatile private var agentRuntime: AgentRuntime? = null
+    private fun getOrCreateAgentRuntime(): AgentRuntime {
+        agentRuntime?.let { return it }
+        synchronized(this) {
+            agentRuntime?.let { return it }
+            val runtime = AgentRuntime(
+                userDir = File(context.filesDir, "user"),
+                sysDir = File(context.filesDir, "system"),
+                storage = agentStorage,
+                journalStore = agentJournalStore,
+                toolExecutor = agentToolExecutor,
+                llmClient = agentLlmClient,
+                configManager = agentConfigManager,
+                emitLog = { name, payload -> broadcastBrainEvent(name, payload) },
+            )
+            runtime.onEvent = { name, payload -> broadcastBrainEvent(name, payload) }
+            agentRuntime = runtime
+            // One-time: migrate chat history from legacy DB
+            try { agentStorage.migrateLegacyDbIfNeeded() } catch (_: Exception) {}
+            return runtime
+        }
+    }
+    private fun shellExecViaTermux(cmd: String, args: String, cwd: String): JSONObject {
+        // Delegate to Termux via the existing /shell/exec endpoint (loopback)
+        return try {
+            val body = JSONObject().put("cmd", cmd).put("args", args).put("cwd", cwd)
+            val url = java.net.URL("http://127.0.0.1:$PORT/shell/exec")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 2000
+            conn.readTimeout = 300_000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            conn.disconnect()
+            try { JSONObject(responseBody) } catch (_: Exception) { JSONObject().put("status", "error").put("raw", responseBody) }
+        } catch (ex: Exception) {
+            JSONObject().put("status", "error").put("error", "shell_unavailable").put("detail", ex.message ?: "")
+        }
+    }
+    // SSE event broadcasting for brain events
+    private val brainSseClients = CopyOnWriteArrayList<java.io.PipedOutputStream>()
+    private fun broadcastBrainEvent(name: String, payload: JSONObject) {
+        val data = payload.toString()
+        val sseMsg = "event: $name\ndata: $data\n\n"
+        val bytes = sseMsg.toByteArray(Charsets.UTF_8)
+        for (client in brainSseClients) {
+            try {
+                client.write(bytes)
+                client.flush()
+            } catch (_: Exception) {
+                brainSseClients.remove(client)
+            }
+        }
+    }
+
     private val meSyncImportProgressLock = Any()
     @Volatile private var meSyncImportProgress = MeSyncImportProgress()
     private val meMePrefs = context.getSharedPreferences(ME_ME_PREFS, Context.MODE_PRIVATE)
@@ -204,8 +276,6 @@ class LocalHttpServer(
         onConnectionStateChanged = { peerId, state -> handleMeMeP2pStateChange(peerId, state) },
         logger = { msg, ex -> if (ex != null) Log.w(TAG, msg, ex) else Log.d(TAG, msg) }
     )
-
-    @Volatile private var authKeysLastMtime: Long = 0L
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
@@ -335,7 +405,7 @@ class LocalHttpServer(
         return when (seg) {
             "/health" -> routeHealth(session, uri, postBody)
             "/debug" -> routeDebug(session, uri, postBody)
-            "/python" -> routePython(session, uri, postBody)
+            "/python", "/termux" -> routeTermux(session, uri, postBody)
             "/service" -> routeService(session, uri, postBody)
             "/app" -> routeApp(session, uri, postBody)
             "/work" -> routeWork(session, uri, postBody)
@@ -363,8 +433,6 @@ class LocalHttpServer(
             "/media" -> routeMedia(session, uri, postBody)
             "/audio" -> routeAudio(session, uri, postBody)
             "/video" -> routeVideo(session, uri, postBody)
-            "/sshd" -> routeSshd(session, uri, postBody)
-            "/ssh" -> routeSsh(session, uri, postBody)
             "/stt" -> routeStt(session, uri, postBody)
             "/location" -> routeLocation(session, uri, postBody)
             "/network" -> routeNetwork(session, uri, postBody)
@@ -406,7 +474,7 @@ class LocalHttpServer(
                 JSONObject()
                     .put("status", "ok")
                     .put("service", "local")
-                    .put("python", runtimeManager.getStatus())
+                    .put("termux", runtimeManager.getStatus())
             )
             else -> notFound()
         }
@@ -438,26 +506,6 @@ class LocalHttpServer(
         }
     }
 
-    private fun routePython(session: IHTTPSession, uri: String, postBody: String?): Response {
-        return when {
-            uri == "/python/status" -> jsonResponse(
-                JSONObject().put("status", runtimeManager.getStatus())
-            )
-            uri == "/python/start" -> {
-                runtimeManager.startWorker()
-                jsonResponse(JSONObject().put("status", "starting"))
-            }
-            uri == "/python/stop" -> {
-                runtimeManager.requestShutdown()
-                jsonResponse(JSONObject().put("status", "stopping"))
-            }
-            uri == "/python/restart" -> {
-                runtimeManager.restartSoft()
-                jsonResponse(JSONObject().put("status", "starting"))
-            }
-            else -> notFound()
-        }
-    }
 
     private fun routeService(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
@@ -794,17 +842,6 @@ class LocalHttpServer(
             }
             uri == "/me/sync/prepare_export" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val uiInitiated = payload.optBoolean("ui_initiated", false)
-                if (shouldRequestPermissionForTempMeSyncSshd() && !uiInitiated) {
-                    val ok = ensureDevicePermission(
-                        session,
-                        payload,
-                        tool = "device.me_sync",
-                        capability = "me_sync.export_temp_sshd",
-                        detail = "Temporarily enable SSHD for me.sync export"
-                    )
-                    if (!ok.first) return ok.second!!
-                }
                 handleMeSyncPrepareExport(payload)
             }
             uri == "/me/sync/v3/ticket/create" && session.method == Method.POST -> {
@@ -1047,7 +1084,6 @@ class LocalHttpServer(
                 }
                 val remember = permissionPrefs.rememberApprovals()
                 val scope = when {
-                    tool == "ssh_keys" -> "once"
                     remember && requestedScope.trim() == "once" -> "persistent"
                     else -> requestedScope
                 }
@@ -1060,11 +1096,7 @@ class LocalHttpServer(
                         capability = capability
                     )
                     if (pending != null) {
-                        val forceBio = when (tool) {
-                            "ssh_keys" -> sshKeyPolicy.isBiometricRequired()
-                            "ssh_pin" -> true
-                            else -> false
-                        }
+                        val forceBio = false
                         sendPermissionPrompt(pending.id, tool, pending.detail, forceBio)
                         return jsonResponse(
                             JSONObject()
@@ -1130,11 +1162,7 @@ class LocalHttpServer(
                 // - Always prompt: the client can't complete without user action, and agent flows
                 //   otherwise look like "silent" failures.
                 // - Some tools additionally require biometric or Android runtime permissions.
-                val forceBio = when (tool) {
-                    "ssh_keys" -> sshKeyPolicy.isBiometricRequired()
-                    "ssh_pin" -> true
-                    else -> false
-                }
+                val forceBio = false
                 sendPermissionPrompt(req.id, tool, detail, forceBio)
                 jsonResponse(
                     JSONObject()
@@ -1251,7 +1279,7 @@ class LocalHttpServer(
                         Thread {
                             dismissRemotePermission(updated.id, updated.status)
                         }.apply { isDaemon = true }.start()
-                        // Also notify the Python agent runtime so it can resume automatically.
+                        // Also notify the agent runtime so it can resume automatically.
                         // Run this off-thread so /permissions/{id}/approve responds immediately even if
                         // the worker is slow or temporarily blocked.
                         Thread {
@@ -1368,73 +1396,130 @@ class LocalHttpServer(
     }
 
     private fun routeBrain(session: IHTTPSession, uri: String, postBody: String?): Response {
+        val runtime = getOrCreateAgentRuntime()
         return when {
+            // --- SSE event stream (native) ---
             uri == "/brain/events" && session.method == Method.GET -> {
-                if (runtimeManager.getStatus() != "ok") {
-                    runtimeManager.startWorker()
-                    waitForPythonHealth(5000)
-                }
-                proxyGetStreamFromWorker("/brain/events", session.queryParameterString)
-                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+                serveBrainSse()
             }
-            (
-                uri == "/brain/status" ||
-                    uri == "/brain/messages" ||
-                    uri == "/brain/sessions" ||
-                    uri == "/brain/journal/config" ||
-                    uri == "/brain/journal/current" ||
-                    uri == "/brain/journal/list"
-                ) && session.method == Method.GET -> {
-                if (runtimeManager.getStatus() != "ok") {
-                    runtimeManager.startWorker()
-                    waitForPythonHealth(5000)
-                }
-                val proxied = proxyWorkerRequest(
-                    path = uri,
-                    method = "GET",
-                    body = null,
-                    query = session.queryParameterString
-                )
-                proxied ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+            // --- GET endpoints (native) ---
+            uri == "/brain/status" && session.method == Method.GET -> {
+                jsonResponse(runtime.status())
             }
-            (
-                uri == "/brain/start" ||
-                    uri == "/brain/stop" ||
-                    uri == "/brain/interrupt" ||
-                    uri == "/brain/retry" ||
-                    uri == "/brain/inbox/chat" ||
-                    uri == "/brain/inbox/event" ||
-                    uri == "/brain/session/delete" ||
-                    uri == "/brain/session/rename" ||
-                    uri == "/brain/debug/comment" ||
-                    uri == "/brain/journal/current" ||
-                    uri == "/brain/journal/append"
-                ) && session.method == Method.POST -> {
-                if (runtimeManager.getStatus() != "ok") {
-                    runtimeManager.startWorker()
-                    waitForPythonHealth(5000)
-                }
-                if (uri == "/brain/debug/comment") {
-                    val ip = (session.remoteIpAddress ?: "").trim()
-                    if (ip.isNotEmpty() && ip != "127.0.0.1" && ip != "::1") {
-                        return jsonError(Response.Status.FORBIDDEN, "debug_local_only")
+            uri == "/brain/messages" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val sessionId = (params["session_id"] ?: "default").trim()
+                val limit = (params["limit"] ?: "200").toIntOrNull() ?: 200
+                val msgs = runtime.listMessagesForSession(sessionId, limit)
+                val arr = JSONArray()
+                for (m in msgs) {
+                    val obj = JSONObject(m)
+                    // Parse meta from string to object for the UI
+                    val metaStr = obj.optString("meta", "")
+                    if (metaStr.isNotEmpty()) {
+                        try { obj.put("meta", JSONObject(metaStr)) } catch (_: Exception) {}
                     }
+                    arr.put(obj)
                 }
-                val body = (postBody ?: "").ifBlank { "{}" }
-                val proxied = proxyWorkerRequest(
-                    path = uri,
-                    method = "POST",
-                    body = body
-                )
-                if (proxied == null) {
-                    return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-                }
-                if (uri == "/brain/inbox/chat" && proxied.status == Response.Status.BAD_REQUEST) {
-                    // Help diagnose UI issues; keep it short and avoid logging secrets.
-                    Log.w(TAG, "brain/inbox/chat 400 body.len=${body.length} body.head=${body.take(120)}")
-                }
-                proxied
+                jsonResponse(JSONObject().put("messages", arr))
             }
+            uri == "/brain/sessions" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val limit = (params["limit"] ?: "50").toIntOrNull() ?: 50
+                val sessions = runtime.listSessions(limit)
+                val arr = JSONArray()
+                for (s in sessions) {
+                    arr.put(JSONObject(s))
+                }
+                jsonResponse(JSONObject().put("sessions", arr))
+            }
+            uri == "/brain/journal/config" && session.method == Method.GET -> {
+                jsonResponse(agentJournalStore.config())
+            }
+            uri == "/brain/journal/current" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val sessionId = (params["session_id"] ?: "default").trim()
+                jsonResponse(agentJournalStore.getCurrent(sessionId))
+            }
+            uri == "/brain/journal/list" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val sessionId = (params["session_id"] ?: "default").trim()
+                val limit = (params["limit"] ?: "50").toIntOrNull() ?: 50
+                jsonResponse(agentJournalStore.listEntries(sessionId, limit))
+            }
+            // --- POST endpoints (native) ---
+            uri == "/brain/start" && session.method == Method.POST -> {
+                jsonResponse(runtime.start())
+            }
+            uri == "/brain/stop" && session.method == Method.POST -> {
+                jsonResponse(runtime.stop())
+            }
+            uri == "/brain/interrupt" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrDefault(JSONObject())
+                jsonResponse(runtime.interrupt(
+                    itemId = body.optString("item_id", ""),
+                    sessionId = body.optString("session_id", ""),
+                    clearQueue = body.optBoolean("clear_queue", false),
+                ))
+            }
+            uri == "/brain/inbox/chat" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val text = body.optString("text", "").trim()
+                if (text.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "missing_text")
+                val meta = body.optJSONObject("meta") ?: JSONObject()
+                jsonResponse(runtime.enqueueChat(text, meta))
+            }
+            uri == "/brain/inbox/event" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                jsonResponse(runtime.enqueueEvent(
+                    name = body.optString("name", ""),
+                    payload = body.optJSONObject("payload") ?: JSONObject(),
+                    priority = body.optString("priority", "normal"),
+                    interruptPolicy = body.optString("interrupt_policy", "turn_end"),
+                    coalesceKey = body.optString("coalesce_key", ""),
+                    coalesceWindowMs = body.optLong("coalesce_window_ms", 0),
+                ))
+            }
+            uri == "/brain/session/delete" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val sessionId = body.optString("session_id", "").trim()
+                if (sessionId.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "missing_session_id")
+                val deleted = agentStorage.deleteChatSession(sessionId)
+                jsonResponse(JSONObject().put("status", "ok").put("deleted", deleted))
+            }
+            uri == "/brain/session/rename" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val oldId = body.optString("old_id", "").trim()
+                val newId = body.optString("new_id", "").trim()
+                if (oldId.isEmpty() || newId.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "missing_ids")
+                val renamed = agentStorage.renameChatSession(oldId, newId)
+                agentJournalStore.renameSession(oldId, newId)
+                jsonResponse(JSONObject().put("status", "ok").put("renamed", renamed))
+            }
+            uri == "/brain/journal/current" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val sessionId = body.optString("session_id", "default").trim()
+                val text = body.optString("text", "")
+                jsonResponse(agentJournalStore.setCurrent(sessionId, text))
+            }
+            uri == "/brain/journal/append" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val sessionId = body.optString("session_id", "default").trim()
+                jsonResponse(agentJournalStore.append(
+                    sessionId,
+                    kind = body.optString("kind", "note"),
+                    title = body.optString("title", ""),
+                    text = body.optString("text", ""),
+                    meta = body.optJSONObject("meta"),
+                ))
+            }
+            // --- Config routes (unchanged) ---
             uri == "/brain/config" && session.method == Method.GET -> handleBrainConfigGet()
             uri == "/brain/config" && session.method == Method.POST -> {
                 val body = postBody ?: ""
@@ -1443,7 +1528,6 @@ class LocalHttpServer(
             uri == "/brain/agent/bootstrap" && session.method == Method.POST -> {
                 handleBrainAgentBootstrap()
             }
-            // Chat-mode streaming (direct cloud) has been removed. Use agent mode instead.
             uri == "/brain/chat" && session.method == Method.POST -> {
                 jsonError(Response.Status.GONE, "chat_mode_removed")
             }
@@ -1461,6 +1545,23 @@ class LocalHttpServer(
         }
     }
 
+    private fun serveBrainSse(): Response {
+        val pipedOut = java.io.PipedOutputStream()
+        val pipedIn = java.io.PipedInputStream(pipedOut, 8192)
+        brainSseClients.add(pipedOut)
+        // Send initial status event
+        try {
+            val runtime = agentRuntime
+            val initData = runtime?.status() ?: JSONObject().put("running", false)
+            pipedOut.write("event: brain_status\ndata: ${initData}\n\n".toByteArray(Charsets.UTF_8))
+            pipedOut.flush()
+        } catch (_: Exception) {}
+        val response = newChunkedResponse(Response.Status.OK, "text/event-stream", pipedIn)
+        response.addHeader("Cache-Control", "no-cache")
+        response.addHeader("Connection", "keep-alive")
+        return response
+    }
+
     private fun routeShell(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
             (uri == "/shell/exec" || uri == "/shell/exec/") -> {
@@ -1474,6 +1575,25 @@ class LocalHttpServer(
             }
             else -> notFound()
         }
+    }
+
+    private fun handleShellExec(payload: JSONObject): Response {
+        val cmd = payload.optString("cmd")
+        val args = payload.optString("args", "")
+        val cwd = payload.optString("cwd", "")
+        if (cmd != "python" && cmd != "pip" && cmd != "curl") {
+            return jsonError(Response.Status.FORBIDDEN, "command_not_allowed")
+        }
+
+        if (runtimeManager.getStatus() != "ok") {
+            runtimeManager.startWorker()
+            waitForTermuxHealth(5000)
+        }
+        val proxied = proxyShellExecToWorker(cmd, args, cwd)
+        if (proxied != null) {
+            return proxied
+        }
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
     }
 
     private fun routeWeb(session: IHTTPSession, uri: String, postBody: String?): Response {
@@ -1512,16 +1632,10 @@ class LocalHttpServer(
                 return handlePipInstall(session, payload)
             }
             (uri == "/pip/status" || uri == "/pip/status/") -> {
-                val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
                 return jsonResponse(
                     JSONObject()
                         .put("status", "ok")
                         .put("abi", android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: "")
-                        .put("python_home", File(context.filesDir, "pyenv").absolutePath)
-                        .put("wheelhouse_root", wheelhouse?.root?.absolutePath ?: "")
-                        .put("wheelhouse_bundled", wheelhouse?.bundled?.absolutePath ?: "")
-                        .put("wheelhouse_user", wheelhouse?.user?.absolutePath ?: "")
-                        .put("pip_find_links", wheelhouse?.findLinksEnvValue() ?: "")
                 )
             }
             else -> notFound()
@@ -2270,244 +2384,112 @@ class LocalHttpServer(
         }
     }
 
-    private fun routeSshd(session: IHTTPSession, uri: String, postBody: String?): Response {
+    private fun routeTermux(session: IHTTPSession, uri: String, postBody: String?): Response {
+        // Accept both /termux/* (canonical) and /python/* (legacy alias)
+        val path = if (uri.startsWith("/python")) uri.replaceFirst("/python", "/termux") else uri
         return when {
-            uri == "/sshd/status" -> {
-                val status = sshdManager.status()
+            path == "/termux/worker/start" || path == "/termux/start" -> {
+                runtimeManager.startWorker()
+                jsonResponse(JSONObject().put("status", "starting"))
+            }
+            path == "/termux/worker/stop" || path == "/termux/stop" -> {
+                runtimeManager.requestShutdown()
+                jsonResponse(JSONObject().put("status", "stopping"))
+            }
+            path == "/termux/worker/restart" || path == "/termux/restart" -> {
+                runtimeManager.restartSoft()
+                jsonResponse(JSONObject().put("status", "starting"))
+            }
+            path == "/termux/status" -> {
                 jsonResponse(
                     JSONObject()
-                        .put("enabled", status.enabled)
-                        .put("running", status.running)
-                        .put("port", status.port)
-                        .put("noauth_enabled", status.noauthEnabled)
-                        .put("auth_mode", sshdManager.getAuthMode())
-                        .put("host", sshdManager.getHostIp())
-                        .put("client_key_fingerprint", status.clientKeyFingerprint)
-                        .put("client_key_public", status.clientKeyPublic)
+                        .put("installed", termuxManager.isTermuxInstalled())
+                        .put("ready", termuxManager.isTermuxReady())
+                        .put("run_command_permitted", termuxManager.hasRunCommandPermission())
+                        .put("sshd_running", termuxManager.isSshdRunning())
+                        .put("sshd_port", TermuxManager.TERMUX_SSHD_PORT)
+                        .put("worker_status", runtimeManager.getStatus())
+                        .put("releases_url", TermuxManager.TERMUX_RELEASES_URL)
+                        .put("bootstrap_command", "curl -so ~/b.sh http://127.0.0.1:$PORT/termux/bootstrap.sh && bash ~/b.sh")
+                        .put("can_request_installs", termuxManager.canInstallPackages())
                 )
             }
-            uri == "/sshd/keys" -> {
-                // If the authorized_keys file was edited externally (e.g., via SSH), the DB-backed
-                // key list can get out of sync. Import any valid keys from the file so the UI
-                // reflects reality and future syncs won't accidentally drop them.
+            uri == "/termux/bootstrap.sh" && session.method == Method.GET -> {
+                val script = termuxManager.getBootstrapScript()
+                newFixedLengthResponse(Response.Status.OK, "text/plain", script)
+            }
+            uri == "/termux/server.tar.gz" && session.method == Method.GET -> {
                 try {
-                    importAuthorizedKeysFromFile()
-                } catch (_: Exception) {
+                    val serverDir = File(context.filesDir, "server")
+                    if (!serverDir.exists()) return jsonError(Response.Status.NOT_FOUND, "server_dir_missing")
+                    val tmpFile = File(context.cacheDir, "server.tar.gz")
+                    val proc = ProcessBuilder("tar", "czf", tmpFile.absolutePath, "-C", serverDir.absolutePath, ".")
+                        .redirectErrorStream(true).start()
+                    proc.waitFor(30, TimeUnit.SECONDS)
+                    if (!tmpFile.exists()) return jsonError(Response.Status.INTERNAL_ERROR, "tar_failed")
+                    val inputStream = java.io.FileInputStream(tmpFile)
+                    newFixedLengthResponse(Response.Status.OK, "application/gzip", inputStream, tmpFile.length())
+                } catch (ex: Exception) {
+                    jsonError(Response.Status.INTERNAL_ERROR, ex.message ?: "tar_failed")
                 }
-                runHousekeepingOnce()
-                val arr = org.json.JSONArray()
-                sshKeyStore.listAll().forEach { key ->
-                    arr.put(
-                        JSONObject()
-                            .put("fingerprint", key.fingerprint)
-                            .put("label", key.label ?: "")
-                            .put("expires_at", key.expiresAt ?: JSONObject.NULL)
-                            .put("created_at", key.createdAt)
-                    )
-                }
-                jsonResponse(JSONObject().put("items", arr))
             }
-            uri == "/sshd/keys/policy" -> {
-                jsonResponse(
-                    JSONObject()
-                        .put("require_biometric", sshKeyPolicy.isBiometricRequired())
-                )
-            }
-            uri == "/sshd/keys/policy" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val requireBio = payload.optBoolean("require_biometric", sshKeyPolicy.isBiometricRequired())
-                sshKeyPolicy.setBiometricRequired(requireBio)
-                jsonResponse(JSONObject().put("require_biometric", sshKeyPolicy.isBiometricRequired()))
-            }
-            uri == "/sshd/keys/add" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val key = payload.optString("key", "")
-                val label = payload.optString("label", "")
-                val expiresAt = if (payload.has("expires_at")) payload.optLong("expires_at", 0L) else null
-                val permissionId = payload.optString("permission_id", "")
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
-                }
-                if (key.isBlank()) {
-                    return badRequest("key_required")
-                }
-                val parsed = parseSshPublicKey(key) ?: return badRequest("invalid_public_key")
-                val finalLabel = sanitizeSshKeyLabel(label).takeIf { it != null }
-                    ?: sanitizeSshKeyLabel(parsed.comment ?: "")
-                // Store canonical key WITHOUT comment so fingerprinting and de-duplication remain stable
-                // even when labels/comments are edited.
-                val entity = sshKeyStore.upsert(parsed.canonicalNoComment(), finalLabel, expiresAt)
-                syncAuthorizedKeys()
-                sshdManager.restartIfRunning()
-                jsonResponse(
-                    JSONObject()
-                        .put("fingerprint", entity.fingerprint)
-                        .put("status", "ok")
-                )
-            }
-            uri == "/sshd/keys/delete" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                var fingerprint = payload.optString("fingerprint", "").trim()
-                val keyRaw = payload.optString("key", "")
-                val permissionId = payload.optString("permission_id", "")
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
-                }
-                if (fingerprint.isBlank() && keyRaw.isNotBlank()) {
-                    val parsed = parseSshPublicKey(keyRaw)
-                    if (parsed != null) {
-                        val keyEntity = sshKeyStore.findByPublicKey(parsed.canonicalNoComment())
-                        if (keyEntity != null) {
-                            fingerprint = keyEntity.fingerprint
-                        }
-                    }
-                }
-                if (fingerprint.isBlank()) {
-                    return badRequest("fingerprint_or_key_required")
-                }
-                sshKeyStore.delete(fingerprint)
-                syncAuthorizedKeys()
-                sshdManager.restartIfRunning()
+            uri == "/termux/launch" && session.method == Method.POST -> {
+                termuxManager.launchTermux()
                 jsonResponse(JSONObject().put("status", "ok"))
             }
-            uri == "/sshd/pin/status" -> {
-                val state = sshPinManager.status()
-                if (state.expired) {
-                    sshPinManager.stopPin()
-                    sshdManager.exitPinMode()
-                } else if (!state.active && sshdManager.getAuthMode() == "pin") {
-                    sshdManager.exitPinMode()
-                }
-                jsonResponse(
-                    JSONObject()
-                        .put("active", state.active)
-                        .put("pin", state.pin ?: "")
-                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
-                )
-            }
-            uri == "/sshd/pin/start" && session.method == Method.POST -> {
+            uri == "/termux/run" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val permissionId = payload.optString("permission_id", "")
-                val seconds = payload.optInt("seconds", 10)
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
+                val command = payload.optString("command", "").trim()
+                if (command.isBlank()) return badRequest("command_required")
+                val background = payload.optBoolean("background", true)
+                termuxManager.runCommand(command, background)
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/termux/update" && session.method == Method.POST -> {
+                termuxManager.stopWorker()
+                Thread.sleep(1000)
+                termuxManager.updateServerCode()
+                Thread.sleep(2000)
+                termuxManager.startWorker()
+                runtimeManager.startWorker()
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/termux/sshd/start" && session.method == Method.POST -> {
+                termuxManager.startSshd()
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/termux/sshd/stop" && session.method == Method.POST -> {
+                termuxManager.stopSshd()
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
+            uri == "/termux/install/check" && session.method == Method.GET -> {
+                try {
+                    jsonResponse(termuxManager.checkTermuxRelease())
+                } catch (ex: Throwable) {
+                    Log.w(TAG, "Termux install check failed", ex)
+                    jsonError(
+                        Response.Status.INTERNAL_ERROR,
+                        "termux_install_check_failed",
+                        JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+                    )
                 }
-                Log.i(TAG, "PIN auth start requested")
-                sshdManager.enterPinMode()
-                val state = sshPinManager.startPin(seconds)
-                Log.i(TAG, "PIN auth generated pin=${state.pin}")
-                jsonResponse(
-                    JSONObject()
-                        .put("active", state.active)
-                        .put("pin", state.pin ?: "")
-                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
-                )
             }
-            uri == "/sshd/pin/stop" && session.method == Method.POST -> {
-                Log.i(TAG, "PIN auth stop requested")
-                sshPinManager.stopPin()
-                sshdManager.exitPinMode()
-                jsonResponse(JSONObject().put("active", false))
-            }
-            uri == "/sshd/noauth/status" -> {
-                val state = sshNoAuthModeManager.status()
-                if (state.expired) {
-                    sshNoAuthModeManager.stop()
-                    sshdManager.exitNotificationMode()
-                } else if (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_NOTIFICATION) {
-                    sshdManager.exitNotificationMode()
+            uri == "/termux/install" && session.method == Method.POST -> {
+                try {
+                    jsonResponse(termuxManager.downloadAndInstallTermux())
+                } catch (ex: Throwable) {
+                    Log.w(TAG, "Termux install failed", ex)
+                    jsonError(
+                        Response.Status.INTERNAL_ERROR,
+                        "termux_install_failed",
+                        JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
+                    )
                 }
-                jsonResponse(
-                    JSONObject()
-                        .put("active", state.active)
-                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
-                )
-            }
-            uri == "/sshd/noauth/start" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val permissionId = payload.optString("permission_id", "")
-                val seconds = payload.optInt("seconds", 30)
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
-                }
-                Log.i(TAG, "Notification auth start requested")
-                sshdManager.enterNotificationMode()
-                val state = sshNoAuthModeManager.start(seconds)
-                jsonResponse(
-                    JSONObject()
-                        .put("active", state.active)
-                        .put("expires_at", state.expiresAt ?: JSONObject.NULL)
-                )
-            }
-            uri == "/sshd/noauth/stop" && session.method == Method.POST -> {
-                Log.i(TAG, "Notification auth stop requested")
-                sshNoAuthModeManager.stop()
-                sshdManager.exitNotificationMode()
-                jsonResponse(JSONObject().put("active", false))
-            }
-            uri == "/sshd/config" && session.method == Method.POST -> {
-                val body = postBody ?: ""
-                val payload = JSONObject(body.ifBlank { "{}" })
-                val enabled = payload.optBoolean("enabled", sshdManager.isEnabled())
-                val port = if (payload.has("port")) payload.optInt("port", sshdManager.getPort()) else null
-                val authMode = payload.optString("auth_mode", "")
-                val noauthEnabled = if (payload.has("noauth_enabled")) payload.optBoolean("noauth_enabled") else null
-                if (authMode.isNotBlank()) {
-                    sshdManager.setAuthMode(authMode)
-                }
-                val status = sshdManager.updateConfig(enabled, port, noauthEnabled)
-                jsonResponse(
-                    JSONObject()
-                        .put("enabled", status.enabled)
-                        .put("running", status.running)
-                        .put("port", status.port)
-                        .put("noauth_enabled", status.noauthEnabled)
-                )
             }
             else -> notFound()
         }
     }
 
-    private fun routeSsh(session: IHTTPSession, uri: String, postBody: String?): Response {
-        return when {
-            uri == "/ssh/exec" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.ssh", capability = "ssh.exec", detail = "Run one-shot SSH command")
-                if (!ok.first) return ok.second!!
-                return handleSshExec(payload)
-            }
-            uri == "/ssh/scp" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val ok = ensureDevicePermission(session, payload, tool = "device.ssh", capability = "ssh.scp", detail = "Transfer files with SCP")
-                if (!ok.first) return ok.second!!
-                return handleSshScp(payload)
-            }
-            uri == "/ssh/ws/contract" && session.method == Method.GET -> {
-                return jsonResponse(
-                    JSONObject()
-                        .put("status", "ok")
-                        .put("ws_path", "/ws/ssh/interactive")
-                        .put("query", JSONObject()
-                            .put("host", "required hostname or IP")
-                            .put("user", "optional user")
-                            .put("port", "optional port (default 22)")
-                            .put("permission_id", "optional approved permission id")
-                            .put("identity", "optional stable identity for permission reuse"))
-                        .put("client_messages", org.json.JSONArray()
-                            .put(JSONObject().put("type", "stdin").put("data", "utf-8 text"))
-                            .put(JSONObject().put("type", "stdin").put("data_b64", "base64 bytes"))
-                            .put(JSONObject().put("type", "signal").put("name", "interrupt|terminate")))
-                        .put("server_messages", org.json.JSONArray()
-                            .put(JSONObject().put("type", "hello").put("session_id", "uuid"))
-                            .put(JSONObject().put("type", "stdout").put("data_b64", "base64 bytes"))
-                            .put(JSONObject().put("type", "stderr").put("data_b64", "base64 bytes"))
-                            .put(JSONObject().put("type", "exit").put("code", 0))
-                            .put(JSONObject().put("type", "error").put("code", "reason")))
-                )
-            }
-            else -> notFound()
-        }
-    }
 
     private fun routeStt(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
@@ -4680,150 +4662,6 @@ class LocalHttpServer(
             }
         }
 
-        if (uri == "/ws/ssh/interactive") {
-            val params = handshake.parameters
-            val host = (params["host"]?.firstOrNull() ?: "").trim()
-            val user = (params["user"]?.firstOrNull() ?: "").trim()
-            val port = (params["port"]?.firstOrNull() ?: "22").trim().toIntOrNull()?.coerceIn(1, 65535) ?: 22
-            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
-            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
-            val sessionId = "sshws-" + UUID.randomUUID().toString()
-
-            return object : NanoWSD.WebSocket(handshake) {
-                private var proc: Process? = null
-                private val closed = AtomicBoolean(false)
-
-                override fun onOpen() {
-                    if (host.isBlank()) {
-                        runCatching {
-                            send(JSONObject().put("type", "error").put("code", "host_required").toString())
-                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "host_required", false)
-                        }
-                        return
-                    }
-                    val permission = ensureDevicePermissionForWs(
-                        session = handshake,
-                        permissionId = permissionId,
-                        identityFromQuery = identityQ,
-                        tool = "device.ssh",
-                        capability = "ssh.interactive",
-                        detail = "Open interactive SSH websocket"
-                    )
-                    if (permission != null) {
-                        runCatching {
-                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
-                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
-                        }
-                        return
-                    }
-
-                    val dbclient = findDbclientBinary()
-                    if (dbclient == null) {
-                        runCatching {
-                            send(JSONObject().put("type", "error").put("code", "ssh_client_missing").toString())
-                            close(NanoWSD.WebSocketFrame.CloseCode.InternalServerError, "ssh_client_missing", false)
-                        }
-                        return
-                    }
-
-                    val args = mutableListOf(dbclient.absolutePath, "-y", "-t")
-                    if (port != 22) {
-                        args.add("-p")
-                        args.add(port.toString())
-                    }
-                    args.add(sshTarget(user, host))
-
-                    try {
-                        proc = buildSshProcess(args).start()
-                    } catch (ex: Exception) {
-                        Log.e(TAG, "Failed to start interactive ssh websocket", ex)
-                        runCatching {
-                            send(JSONObject().put("type", "error").put("code", "ssh_start_failed").put("detail", ex.message ?: "").toString())
-                            close(NanoWSD.WebSocketFrame.CloseCode.InternalServerError, "ssh_start_failed", false)
-                        }
-                        return
-                    }
-
-                    runCatching {
-                        send(
-                            JSONObject()
-                                .put("type", "hello")
-                                .put("session_id", sessionId)
-                                .put("target", sshTarget(user, host))
-                                .put("port", port)
-                                .toString()
-                        )
-                    }
-
-                    val running = proc ?: return
-                    startSshWsPump(running.inputStream, "stdout", this, closed)
-                    startSshWsPump(running.errorStream, "stderr", this, closed)
-                    Thread {
-                        val code = runCatching { running.waitFor() }.getOrElse { -1 }
-                        if (closed.compareAndSet(false, true)) {
-                            runCatching {
-                                send(JSONObject().put("type", "exit").put("code", code).toString())
-                                close(NanoWSD.WebSocketFrame.CloseCode.NormalClosure, "done", false)
-                            }
-                        }
-                    }.start()
-                }
-
-                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
-                    closeProcess()
-                }
-
-                override fun onMessage(message: NanoWSD.WebSocketFrame?) {
-                    val txt = runCatching { message?.textPayload ?: "" }.getOrDefault("")
-                    if (txt.isBlank()) return
-                    val payload = runCatching { JSONObject(txt) }.getOrNull() ?: return
-                    val p = proc ?: return
-                    when (payload.optString("type", "").trim()) {
-                        "stdin" -> {
-                            val dataB64 = payload.optString("data_b64", "").trim()
-                            val bytes = if (dataB64.isNotBlank()) {
-                                runCatching { Base64.decode(dataB64, Base64.DEFAULT) }.getOrNull()
-                            } else {
-                                payload.optString("data", "").toByteArray(StandardCharsets.UTF_8)
-                            } ?: return
-                            runCatching {
-                                p.outputStream.write(bytes)
-                                p.outputStream.flush()
-                            }
-                        }
-                        "signal" -> {
-                            when (payload.optString("name", "").trim().lowercase(Locale.US)) {
-                                "interrupt" -> runCatching { p.outputStream.write(byteArrayOf(3)); p.outputStream.flush() }
-                                "terminate" -> closeProcess()
-                            }
-                        }
-                    }
-                }
-
-                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
-
-                override fun onException(exception: java.io.IOException?) {
-                    closeProcess()
-                }
-
-                private fun closeProcess() {
-                    if (!closed.compareAndSet(false, true)) return
-                    val p = proc
-                    proc = null
-                    if (p != null) {
-                        runCatching { p.outputStream.close() }
-                        runCatching { p.destroy() }
-                        try {
-                            if (!p.waitFor(600, TimeUnit.MILLISECONDS)) {
-                                p.destroyForcibly()
-                            }
-                        } catch (_: Exception) {
-                        }
-                    }
-                }
-            }
-        }
-
         return object : NanoWSD.WebSocket(handshake) {
             override fun onOpen() {
                 runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "unknown_ws_path", false) }
@@ -5361,327 +5199,6 @@ class LocalHttpServer(
         }
     }
 
-    private fun handleSshExec(payload: JSONObject): Response {
-        val host = payload.optString("host", "").trim()
-        if (host.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "host_required")
-        val user = payload.optString("user", "").trim()
-        val port = payload.optInt("port", 22).coerceIn(1, 65535)
-        val noTimeout = payload.optBoolean("no_timeout", false)
-        val timeoutS = if (noTimeout) null else payload.optDouble("timeout_s", 30.0).coerceIn(2.0, 300.0)
-        val maxOutputBytes = payload.optInt("max_output_bytes", 64 * 1024).coerceIn(4 * 1024, 512 * 1024)
-        val pty = payload.optBoolean("pty", false)
-        val acceptNewHostKey = payload.optBoolean("accept_new_host_key", true)
-
-        val argv = payload.optJSONArray("argv")
-        val remoteArgs = mutableListOf<String>()
-        if (argv != null) {
-            for (i in 0 until argv.length()) {
-                val v = argv.optString(i, "").trim()
-                if (v.isNotBlank()) remoteArgs.add(v)
-            }
-        } else {
-            val command = payload.optString("command", "").trim()
-            if (command.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "command_required")
-            // dbclient appends remote argv without shell quoting. If we pass ["sh","-lc","echo foo"],
-            // "echo" becomes the -c script and "foo" becomes $0. Pass one fully-quoted command string instead.
-            remoteArgs.add("sh -lc ${shellSingleQuote(command)}")
-        }
-        if (remoteArgs.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "command_required")
-
-        val dbclient = findDbclientBinary() ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "ssh_client_missing")
-        val args = mutableListOf(dbclient.absolutePath)
-        if (acceptNewHostKey) args.add("-y")
-        if (pty) args.add("-t")
-        if (port != 22) {
-            args.add("-p")
-            args.add(port.toString())
-        }
-        args.add(sshTarget(user, host))
-        args.addAll(remoteArgs)
-
-        val result = runProcessCapture(args, timeoutS, maxOutputBytes)
-        val out = JSONObject()
-            .put("status", if (result.timedOut) "timeout" else "ok")
-            .put("target", sshTarget(user, host))
-            .put("port", port)
-            .put("argv", org.json.JSONArray(args))
-            .put("exit_code", result.exitCode ?: JSONObject.NULL)
-            .put("timed_out", result.timedOut)
-            .put("stdout", result.stdout)
-            .put("stderr", result.stderr)
-            .put("truncated", result.truncated)
-        return if (result.timedOut) {
-            newFixedLengthResponse(Response.Status.REQUEST_TIMEOUT, "application/json", out.toString())
-        } else {
-            jsonResponse(out)
-        }
-    }
-
-    private fun handleSshScp(payload: JSONObject): Response {
-        val direction = payload.optString("direction", "").trim().lowercase(Locale.US)
-        if (direction != "upload" && direction != "download") {
-            return jsonError(Response.Status.BAD_REQUEST, "direction_required")
-        }
-        val host = payload.optString("host", "").trim()
-        if (host.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "host_required")
-        val user = payload.optString("user", "").trim()
-        val port = payload.optInt("port", 22).coerceIn(1, 65535)
-        val remotePath = payload.optString("remote_path", "").trim()
-        if (remotePath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "remote_path_required")
-        val localPath = payload.optString("local_path", "").trim()
-        if (localPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "local_path_required")
-        val recursive = payload.optBoolean("recursive", false)
-        val noTimeout = payload.optBoolean("no_timeout", false)
-        val timeoutS = if (noTimeout) null else payload.optDouble("timeout_s", 90.0).coerceIn(2.0, 600.0)
-        val maxOutputBytes = payload.optInt("max_output_bytes", 64 * 1024).coerceIn(4 * 1024, 512 * 1024)
-
-        val localRoot = File(context.filesDir, "user").canonicalFile
-        val localFile = resolveUserPath(localRoot, localPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-        if (direction == "upload" && !localFile.exists()) {
-            return jsonError(Response.Status.NOT_FOUND, "local_path_not_found")
-        }
-        if (direction == "upload" && localFile.isDirectory && !recursive) {
-            return jsonError(Response.Status.BAD_REQUEST, "recursive_required_for_directory")
-        }
-        if (direction == "download") {
-            runCatching { localFile.parentFile?.mkdirs() }
-        }
-
-        val scp = findScpBinary() ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "scp_client_missing")
-        val dbclientWrapper = ensureDbclientWrapper() ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "ssh_wrapper_missing")
-
-        val args = mutableListOf(scp.absolutePath, "-S", dbclientWrapper.absolutePath, "-y")
-        if (port != 22) {
-            args.add("-P")
-            args.add(port.toString())
-        }
-        if (recursive) args.add("-r")
-
-        val remote = "${sshTarget(user, host)}:$remotePath"
-        when (direction) {
-            "upload" -> {
-                args.add(localFile.absolutePath)
-                args.add(remote)
-            }
-            "download" -> {
-                args.add(remote)
-                args.add(localFile.absolutePath)
-            }
-        }
-
-        val result = runProcessCapture(args, timeoutS, maxOutputBytes)
-        val out = JSONObject()
-            .put("status", if (result.timedOut) "timeout" else "ok")
-            .put("direction", direction)
-            .put("target", sshTarget(user, host))
-            .put("port", port)
-            .put("local_path", localPath)
-            .put("remote_path", remotePath)
-            .put("exit_code", result.exitCode ?: JSONObject.NULL)
-            .put("timed_out", result.timedOut)
-            .put("stdout", result.stdout)
-            .put("stderr", result.stderr)
-            .put("truncated", result.truncated)
-        return if (result.timedOut) {
-            newFixedLengthResponse(Response.Status.REQUEST_TIMEOUT, "application/json", out.toString())
-        } else {
-            jsonResponse(out)
-        }
-    }
-
-    private fun findDbclientBinary(): File? {
-        val lib = File(context.applicationInfo.nativeLibraryDir, "libdbclient.so")
-        return if (lib.exists()) lib else null
-    }
-
-    private fun findScpBinary(): File? {
-        val lib = File(context.applicationInfo.nativeLibraryDir, "libscp.so")
-        return if (lib.exists()) lib else null
-    }
-
-    private fun ensureDbclientWrapper(): File? {
-        val wrapper = File(File(context.filesDir, "bin"), "methings-dbclient")
-        return try {
-            if (!wrapper.exists() || wrapper.length() == 0L) {
-                wrapper.parentFile?.mkdirs()
-                wrapper.writeText(
-                    "#!/system/bin/sh\n" +
-                        "exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" -y \"${'$'}@\"\n"
-                )
-            }
-            wrapper.setExecutable(true, true)
-            wrapper.setReadable(true, true)
-            wrapper.setWritable(true, true)
-            wrapper
-        } catch (ex: Exception) {
-            Log.w(TAG, "Failed to ensure dbclient wrapper", ex)
-            null
-        }
-    }
-
-    private fun sshTarget(user: String, host: String): String {
-        return if (user.isBlank()) host else "$user@$host"
-    }
-
-    private fun shellSingleQuote(v: String): String {
-        return "'" + v.replace("'", "'\"'\"'") + "'"
-    }
-
-    private fun buildSshProcess(argv: List<String>): ProcessBuilder {
-        val pb = ProcessBuilder(argv)
-        val userHome = File(context.filesDir, "user")
-        val nativeLibDir = context.applicationInfo.nativeLibraryDir
-        val binDir = File(context.filesDir, "bin")
-        pb.directory(userHome)
-        pb.environment()["HOME"] = userHome.absolutePath
-        pb.environment()["USER"] = "methings"
-        pb.environment()["METHINGS_NATIVELIB"] = nativeLibDir
-        pb.environment()["METHINGS_BINDIR"] = binDir.absolutePath
-        val existingPath = pb.environment()["PATH"] ?: "/usr/bin:/bin"
-        pb.environment()["PATH"] = "${binDir.absolutePath}:$nativeLibDir:$existingPath"
-        return pb
-    }
-
-    private data class ProcessCaptureResult(
-        val exitCode: Int?,
-        val timedOut: Boolean,
-        val stdout: String,
-        val stderr: String,
-        val truncated: Boolean
-    )
-
-    private fun runProcessCapture(argv: List<String>, timeoutS: Double?, maxOutputBytes: Int): ProcessCaptureResult {
-        return try {
-            val proc = buildSshProcess(argv).start()
-            val stdoutBuf = ByteArrayOutputStream()
-            val stderrBuf = ByteArrayOutputStream()
-            val stdoutState = AtomicBoolean(false)
-            val stderrState = AtomicBoolean(false)
-            val stdoutThread = Thread {
-                copyLimited(proc.inputStream, stdoutBuf, maxOutputBytes, stdoutState)
-            }
-            val stderrThread = Thread {
-                copyLimited(proc.errorStream, stderrBuf, maxOutputBytes, stderrState)
-            }
-            stdoutThread.start()
-            stderrThread.start()
-
-            val finished = if (timeoutS == null) {
-                proc.waitFor()
-                true
-            } else {
-                proc.waitFor((timeoutS * 1000.0).toLong(), TimeUnit.MILLISECONDS)
-            }
-            if (!finished) {
-                runCatching { proc.destroy() }
-                if (!proc.waitFor(300, TimeUnit.MILLISECONDS)) {
-                    runCatching { proc.destroyForcibly() }
-                }
-            }
-
-            runCatching { stdoutThread.join(600) }
-            runCatching { stderrThread.join(600) }
-            ProcessCaptureResult(
-                exitCode = if (finished) runCatching { proc.exitValue() }.getOrNull() else null,
-                timedOut = !finished,
-                stdout = stdoutBuf.toString(StandardCharsets.UTF_8.name()),
-                stderr = stderrBuf.toString(StandardCharsets.UTF_8.name()),
-                truncated = stdoutState.get() || stderrState.get()
-            )
-        } catch (ex: Exception) {
-            ProcessCaptureResult(
-                exitCode = -1,
-                timedOut = false,
-                stdout = "",
-                stderr = ex.message ?: "process_failed",
-                truncated = false
-            )
-        }
-    }
-
-    private fun copyLimited(
-        input: java.io.InputStream,
-        out: ByteArrayOutputStream,
-        maxBytes: Int,
-        truncated: AtomicBoolean
-    ) {
-        val buf = ByteArray(8192)
-        var total = 0
-        while (true) {
-            val n = try {
-                input.read(buf)
-            } catch (_: Exception) {
-                -1
-            }
-            if (n <= 0) break
-            val remaining = maxBytes - total
-            if (remaining <= 0) {
-                truncated.set(true)
-                continue
-            }
-            if (n <= remaining) {
-                out.write(buf, 0, n)
-                total += n
-            } else {
-                out.write(buf, 0, remaining)
-                total += remaining
-                truncated.set(true)
-            }
-        }
-    }
-
-    private fun startSshWsPump(
-        input: java.io.InputStream,
-        streamType: String,
-        ws: NanoWSD.WebSocket,
-        closed: AtomicBoolean
-    ) {
-        Thread {
-            val buf = ByteArray(4096)
-            while (!closed.get()) {
-                val n = try {
-                    input.read(buf)
-                } catch (_: Exception) {
-                    -1
-                }
-                if (n <= 0) break
-                val chunk = ByteArray(n)
-                java.lang.System.arraycopy(buf, 0, chunk, 0, n)
-                val b64 = Base64.encodeToString(chunk, Base64.NO_WRAP)
-                runCatching {
-                    ws.send(
-                        JSONObject()
-                            .put("type", streamType)
-                            .put("data_b64", b64)
-                            .toString()
-                    )
-                }
-            }
-        }.start()
-    }
-
-    private fun handleShellExec(payload: JSONObject): Response {
-        val cmd = payload.optString("cmd")
-        val args = payload.optString("args", "")
-        val cwd = payload.optString("cwd", "")
-        if (cmd != "python" && cmd != "pip" && cmd != "curl") {
-            return jsonError(Response.Status.FORBIDDEN, "command_not_allowed")
-        }
-
-        // Always proxy to the embedded Python worker.
-        // Executing the CLI binary directly (ProcessBuilder + libmethingspy.so) can crash when
-        // Android/JNI integration modules (pyjnius) are imported without a proper JVM context.
-        if (runtimeManager.getStatus() != "ok") {
-            runtimeManager.startWorker()
-            waitForPythonHealth(5000)
-        }
-        val proxied = proxyShellExecToWorker(cmd, args, cwd)
-        if (proxied != null) {
-            return proxied
-        }
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-    }
-
     private fun ensurePipPermission(
         session: IHTTPSession,
         payload: JSONObject,
@@ -5892,8 +5409,6 @@ class LocalHttpServer(
     }
 
     private fun handlePipDownload(session: IHTTPSession, payload: JSONObject): Response {
-        val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
-            ?: return jsonError(Response.Status.INTERNAL_ERROR, "wheelhouse_unavailable")
 
         val pkgsJson = payload.optJSONArray("packages")
         val pkgs = mutableListOf<String>()
@@ -5916,7 +5431,7 @@ class LocalHttpServer(
         val extraIndexUrls = payload.optJSONArray("extra_index_urls")
         val trustedHosts = payload.optJSONArray("trusted_hosts")
 
-        val detail = "pip download (to wheelhouse): " + pkgs.joinToString(" ").take(180)
+        val detail = "pip download: " + pkgs.joinToString(" ").take(180)
         val perm = ensurePipPermission(session, payload, capability = "pip.download", detail = detail)
         if (!perm.first) return perm.second!!
 
@@ -5925,7 +5440,7 @@ class LocalHttpServer(
             "--disable-pip-version-check",
             "--no-input",
             "--dest",
-            wheelhouse.user.absolutePath
+            File(context.filesDir, "pip_downloads").also { it.mkdirs() }.absolutePath
         )
         if (!withDeps) {
             args.add("--no-deps")
@@ -5960,16 +5475,14 @@ class LocalHttpServer(
 
         if (runtimeManager.getStatus() != "ok") {
             runtimeManager.startWorker()
-            waitForPythonHealth(5000)
+            waitForTermuxHealth(5000)
         }
         val proxied = proxyShellExecToWorker("pip", args.joinToString(" "), "")
         if (proxied != null) return proxied
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
     }
 
     private fun handlePipInstall(session: IHTTPSession, payload: JSONObject): Response {
-        val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
-            ?: return jsonError(Response.Status.INTERNAL_ERROR, "wheelhouse_unavailable")
 
         val pkgsJson = payload.optJSONArray("packages")
         val pkgs = mutableListOf<String>()
@@ -6008,7 +5521,6 @@ class LocalHttpServer(
         if (!allowNetwork) {
             args.add("--no-index")
         }
-        args.addAll(wheelhouse.findLinksArgs())
         if (onlyBinary) {
             args.add("--only-binary=:all:")
             args.add("--prefer-binary")
@@ -6045,11 +5557,11 @@ class LocalHttpServer(
 
         if (runtimeManager.getStatus() != "ok") {
             runtimeManager.startWorker()
-            waitForPythonHealth(5000)
+            waitForTermuxHealth(5000)
         }
         val proxied = proxyShellExecToWorker("pip", args.joinToString(" "), "")
         if (proxied != null) return proxied
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
     }
 
     private fun handleWebSearch(session: IHTTPSession, payload: JSONObject): Response {
@@ -6922,21 +6434,6 @@ class LocalHttpServer(
         }
     }
 
-    private fun resolvePythonBinary(): File? {
-        // Prefer native lib (has correct SELinux context for execution)
-        val nativeDir = context.applicationInfo.nativeLibraryDir
-        val nativePython = File(nativeDir, "libmethingspy.so")
-        if (nativePython.exists()) {
-            return nativePython
-        }
-        // Wrapper script in bin/
-        val binPython = File(context.filesDir, "bin/python3")
-        if (binPython.exists() && binPython.canExecute()) {
-            return binPython
-        }
-        return null
-    }
-
     private fun proxyShellExecToWorker(cmd: String, args: String, cwd: String): Response? {
         val payload = JSONObject()
             .put("cmd", cmd)
@@ -7007,31 +6504,6 @@ class LocalHttpServer(
     private fun buildSystemPrompt(): String {
         val memory = readMemory().trim()
         return BRAIN_SYSTEM_PROMPT + if (memory.isEmpty()) "(empty)" else memory
-    }
-
-    private fun buildWorkerSystemPrompt(): String {
-        // Passed to the Python worker brain (tool-calling runtime).
-        //
-        // Keep this short. Detailed operational rules live in user-root docs so we can evolve them
-        // without bloating the system prompt.
-        return listOf(
-            "You are a senior Android device programming professional (systems-level engineer). ",
-            "You are expected to already know Android/USB/BLE/Camera/GPS basics and practical debugging techniques. ",
-            "You are \"methings\" running on an Android device. ",
-            "Your goal is to produce the user's requested outcome (artifact/state change), not to narrate steps. ",
-            "You MUST use function tools for any real action (no pretending). ",
-            "If you can satisfy a request by writing code/scripts, do it and execute them via tools. ",
-            "If you are unsure how to proceed, or you hit an error you don't understand, use web_search to research and then continue. ",
-            "If a needed device capability is not exposed by tools, say so and propose the smallest code change to add it. ",
-            "Do not delegate implementable steps back to the user (implementation/builds/api calls/log inspection); do them yourself when possible. ",
-            "User-root docs (`AGENTS.md`, `TOOLS.md`) are auto-injected into your context and reloaded if they change on disk; do not repeatedly read them via filesystem tools unless the user explicitly asks. ",
-            "Prefer consulting the provided user-root docs under `docs/` and `examples/` (camera/usb/vision) before guessing tool names. ",
-            "For files: use filesystem tools under the user root (not shell `ls`/`cat`). ",
-            "For execution: use run_python/run_pip/run_curl only. ",
-            "For cloud calls: prefer the configured Brain provider (Settings -> Brain). If Brain is not configured or has no API key, ask the user to configure it, then retry. ",
-            "Device/resource access requires explicit user approval; if the user request implies consent, trigger the tool call immediately to surface the permission prompt (no pre-negotiation). If permission_required, ask the user to approve in the app UI and then retry automatically (approvals are remembered for the session). ",
-            "Keep responses concise: do the work first, then summarize and include relevant tool output snippets."
-        ).joinToString("")
     }
 
     private fun handleBrainConfigGet(): Response {
@@ -7117,53 +6589,18 @@ class LocalHttpServer(
         if (baseUrl.isEmpty() || model.isEmpty() || apiKey.isEmpty()) {
             return jsonError(Response.Status.BAD_REQUEST, "brain_not_configured")
         }
-        if (vendor == "anthropic") {
-            return jsonError(Response.Status.BAD_REQUEST, "agent_vendor_not_supported")
-        }
+        // NOTE: Anthropic is now supported natively — no vendor rejection.
 
-        if (runtimeManager.getStatus() != "ok") {
-            runtimeManager.startWorker()
-            waitForPythonHealth(5000)
-        }
-
-        val credentialBody = JSONObject().put("value", apiKey).toString()
-        val setCred = proxyWorkerRequest("/vault/credentials/openai_api_key", "POST", credentialBody)
-            ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-        if (setCred.status != Response.Status.OK) {
-            return jsonError(Response.Status.INTERNAL_ERROR, "worker_credential_set_failed")
-        }
-
-        val providerUrl = if (vendor == "openai") {
-            if (baseUrl.endsWith("/responses")) baseUrl else "$baseUrl/responses"
-        } else {
-            if (baseUrl.endsWith("/chat/completions")) baseUrl else "$baseUrl/chat/completions"
-        }
-        val cfgBody = JSONObject()
-            .put("enabled", true)
-            .put("auto_start", true)
-            .put("tool_policy", "required")
-            .put("provider_url", providerUrl)
-            .put("model", model)
-            .put("api_key_credential", "openai_api_key")
-            .put("system_prompt", buildWorkerSystemPrompt())
-            .toString()
-        val setCfg = proxyWorkerRequest("/brain/config", "POST", cfgBody)
-            ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-        if (setCfg.status != Response.Status.OK) {
-            return jsonError(Response.Status.INTERNAL_ERROR, "worker_config_set_failed")
-        }
-
-        val startResp = proxyWorkerRequest("/brain/start", "POST", "{}")
-            ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-        if (startResp.status != Response.Status.OK) {
-            return jsonError(Response.Status.INTERNAL_ERROR, "worker_start_failed")
-        }
+        val providerUrl = agentConfigManager.resolveProviderUrl(vendor, baseUrl)
+        val runtime = getOrCreateAgentRuntime()
+        val result = runtime.start()
 
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
                 .put("provider_url", providerUrl)
                 .put("model", model)
+                .put("native", true)
         )
     }
 
@@ -7451,7 +6888,7 @@ class LocalHttpServer(
         }
     }
 
-    private fun waitForPythonHealth(timeoutMs: Long) {
+    private fun waitForTermuxHealth(timeoutMs: Long) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             try {
@@ -7920,84 +7357,10 @@ class LocalHttpServer(
         return true
     }
 
-    private data class ParsedSshPublicKey(
-        val type: String,
-        val b64: String,
-        val comment: String?
-    ) {
-        fun canonicalNoComment(): String = "$type $b64"
-    }
-
-    private fun sanitizeSshKeyLabel(raw: String): String? {
-        val s = raw.trim().replace(Regex("\\s+"), " ")
-        if (s.isBlank()) return null
-        return s.take(120)
-    }
-
-    private fun parseSshPublicKey(raw: String): ParsedSshPublicKey? {
-        val line = raw.trim()
-            .replace("\r", " ")
-            .replace("\n", " ")
-            .trim()
-        if (line.isBlank()) return null
-        val parts = line.split(Regex("\\s+"), limit = 3)
-        if (parts.size < 2) return null
-        val type = parts[0].trim()
-        val b64 = parts[1].trim()
-        val comment = parts.getOrNull(2)?.trim()?.ifBlank { null }
-
-        val t = type.lowercase(Locale.US)
-        val allowed = setOf(
-            "ssh-ed25519",
-            "ssh-rsa",
-            "ecdsa-sha2-nistp256",
-            "ecdsa-sha2-nistp384",
-            "ecdsa-sha2-nistp521",
-            "sk-ssh-ed25519@openssh.com",
-            "sk-ecdsa-sha2-nistp256@openssh.com"
-        )
-        if (!allowed.contains(t)) return null
-
-        try {
-            val decoded = Base64.decode(b64, Base64.DEFAULT)
-            if (decoded.isEmpty()) return null
-        } catch (_: Exception) {
-            return null
-        }
-        return ParsedSshPublicKey(type = type, b64 = b64, comment = comment)
-    }
-
-    private fun syncAuthorizedKeys() {
-        val userHome = File(context.filesDir, "user")
-        val sshDir = File(userHome, ".ssh")
-        sshDir.mkdirs()
-        val authFile = File(sshDir, "authorized_keys")
-        val now = System.currentTimeMillis()
-        val active = sshKeyStore.listActive(now)
-        val lines = active.mapNotNull { row ->
-            val key = row.key.trim()
-            if (key.isBlank()) return@mapNotNull null
-            val label = sanitizeSshKeyLabel(row.label ?: "")
-            if (label != null) "$key $label" else key
-        }
-        authFile.writeText(lines.joinToString("\n") + if (lines.isNotEmpty()) "\n" else "")
-        authKeysLastMtime = authFile.lastModified()
-    }
-
     private fun runHousekeepingOnce() {
         runCatching {
-            val now = System.currentTimeMillis()
-            val pruned = sshKeyStore.pruneExpired(now)
-            if (pruned > 0) {
-                Log.i(TAG, "Housekeeping pruned expired SSH keys: $pruned")
-            }
             cleanupExpiredMeSyncTransfers()
             cleanupExpiredMeSyncV3Tickets()
-            detectExternalAuthorizedKeysEdit()
-            syncAuthorizedKeys()
-            if (pruned > 0) {
-                sshdManager.restartIfRunning()
-            }
         }.onFailure {
             Log.w(TAG, "Housekeeping failed", it)
         }
@@ -8216,23 +7579,6 @@ class LocalHttpServer(
         }
     }
 
-    private fun importAuthorizedKeysFromFile() {
-        val userHome = File(context.filesDir, "user")
-        val authFile = File(File(userHome, ".ssh"), "authorized_keys")
-        if (!authFile.exists()) return
-        val text = runCatching { authFile.readText() }.getOrNull() ?: return
-        val lines = text.split("\n")
-        for (raw in lines) {
-            val line = raw.trim()
-            if (line.isBlank()) continue
-            if (line.startsWith("#")) continue
-            val parsed = parseAuthorizedKeysLine(line) ?: continue
-            val label = sanitizeSshKeyLabel(parsed.comment ?: "")
-            // Merge into DB without clobbering existing metadata.
-            sshKeyStore.upsertMerge(parsed.canonicalNoComment(), label, expiresAt = null)
-        }
-    }
-
     private fun maybeUpdateMeMeConnectionNameFromDiscovery(deviceId: String, discoveredName: String) {
         val did = deviceId.trim()
         val name = discoveredName.trim()
@@ -8280,64 +7626,6 @@ class LocalHttpServer(
             runCatching { handleMeMeConnect(payload) }
                 .onFailure { Log.w(TAG, "me.me auto-connect attempt failed for $did", it) }
         }
-    }
-
-    /**
-     * Detect if authorized_keys was edited externally (e.g. via SSH).
-     * If the file's mtime changed since we last wrote it, import any new keys,
-     * re-sync the file, and restart dropbear so the changes take effect.
-     */
-    private fun detectExternalAuthorizedKeysEdit() {
-        val authFile = File(File(context.filesDir, "user/.ssh"), "authorized_keys")
-        if (!authFile.exists()) return
-        val mtime = authFile.lastModified()
-        if (authKeysLastMtime != 0L && mtime != authKeysLastMtime) {
-            Log.i(TAG, "authorized_keys changed externally (mtime $authKeysLastMtime -> $mtime); importing")
-            importAuthorizedKeysFromFile()
-            syncAuthorizedKeys()
-            sshdManager.restartIfRunning()
-        }
-        authKeysLastMtime = mtime
-    }
-
-    private fun parseAuthorizedKeysLine(raw: String): ParsedSshPublicKey? {
-        // authorized_keys can contain options before the key type:
-        //   from="1.2.3.4" ssh-ed25519 AAAA... comment
-        // We only import keys (ignore options). Prefer the first token that matches a key type.
-        val line = raw.trim().replace("\r", " ").replace("\n", " ").trim()
-        if (line.isBlank()) return null
-        val toks = line.split(Regex("\\s+"))
-        if (toks.size < 2) return null
-
-        val allowed = setOf(
-            "ssh-ed25519",
-            "ssh-rsa",
-            "ecdsa-sha2-nistp256",
-            "ecdsa-sha2-nistp384",
-            "ecdsa-sha2-nistp521",
-            "sk-ssh-ed25519@openssh.com",
-            "sk-ecdsa-sha2-nistp256@openssh.com"
-        )
-        var idx = -1
-        for (i in 0 until toks.size - 1) {
-            val t = toks[i].trim()
-            if (allowed.contains(t.lowercase(Locale.US))) {
-                idx = i
-                break
-            }
-        }
-        if (idx < 0 || idx + 1 >= toks.size) return null
-        val type = toks[idx].trim()
-        val b64 = toks[idx + 1].trim()
-        val comment = if (idx + 2 < toks.size) toks.subList(idx + 2, toks.size).joinToString(" ").trim().ifBlank { null } else null
-
-        try {
-            val decoded = Base64.decode(b64, Base64.DEFAULT)
-            if (decoded.isEmpty()) return null
-        } catch (_: Exception) {
-            return null
-        }
-        return ParsedSshPublicKey(type = type, b64 = b64, comment = comment)
     }
 
     private fun handleMeSyncStatus(): Response {
@@ -11872,8 +11160,7 @@ class LocalHttpServer(
         } else 0
         val protectedDb = File(File(context.filesDir, "protected"), "app.db")
         val credentials = runCatching { credentialStore.list().size }.getOrElse { 0 }
-        val sshKeys = runCatching { sshKeyStore.listAll().size }.getOrElse { 0 }
-        val hasAny = userFileCount > 0 || protectedDb.exists() || credentials > 0 || sshKeys > 0
+        val hasAny = userFileCount > 0 || protectedDb.exists() || credentials > 0
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
@@ -11881,7 +11168,6 @@ class LocalHttpServer(
                 .put("user_file_count", userFileCount)
                 .put("has_protected_db", protectedDb.exists())
                 .put("credential_count", credentials)
-                .put("ssh_key_count", sshKeys)
         )
     }
 
@@ -11955,7 +11241,7 @@ class LocalHttpServer(
                 .put("tid", ticketId)
                 .put("t", transfer.id)
                 .put("n", sessionNonce)
-            val hostIp = sshdManager.getHostIp().trim()
+            val hostIp = ((network.wifiStatus()["ip_address"] as? String) ?: "").trim()
             if (hostIp.isNotBlank() && meSyncLanServerStarted) {
                 ticketPayload.put("h", hostIp)
                 ticketPayload.put("tk", transfer.token)
@@ -12226,9 +11512,7 @@ class LocalHttpServer(
     }
 
     private fun shouldRequestPermissionForTempMeSyncSshd(): Boolean {
-        val st = sshdManager.status()
-        // Ask permission only when me.sync would temporarily start SSHD by itself.
-        return !st.enabled && !st.running
+        return false
     }
 
     private fun handleMeSyncDownload(session: IHTTPSession): Response {
@@ -12270,7 +11554,6 @@ class LocalHttpServer(
         val trFile = tr.file
         if (trFile == null || !trFile.exists() || !trFile.isFile) {
             meSyncTransfers.remove(id)
-            cleanupMeSyncTempSshKey(tr.tempSshKeyFingerprint)
             return jsonError(Response.Status.NOT_FOUND, "package_not_found")
         }
         markMeSyncTransferStart(tr)
@@ -12305,27 +11588,6 @@ class LocalHttpServer(
             val maxBytes = payload.optLong("max_bytes", ME_SYNC_IMPORT_MAX_BYTES_DEFAULT)
                 .coerceIn(ME_SYNC_IMPORT_MAX_BYTES_MIN, ME_SYNC_IMPORT_MAX_BYTES_LIMIT)
             var downloadError: Exception? = null
-            if (source.hasSshSource()) {
-                try {
-                    updateMeSyncImportProgress(
-                        state = "running",
-                        phase = "downloading",
-                        message = "Downloading package (scp)...",
-                        source = sourceHint
-                    )
-                    downloadMeSyncPackageViaScp(source, inFile, maxBytes)
-                    updateMeSyncImportProgress(
-                        state = "running",
-                        phase = "downloading",
-                        message = "Package downloaded.",
-                        source = sourceHint,
-                        bytesDownloaded = inFile.length()
-                    )
-                } catch (ex: Exception) {
-                    downloadError = ex
-                    runCatching { inFile.delete() }
-                }
-            }
             if (!inFile.exists() || inFile.length() == 0L) {
                 val httpUrl = source.httpUrl
                 if (httpUrl.isBlank()) {
@@ -12396,9 +11658,9 @@ class LocalHttpServer(
                 )
             }
             val restarted = if (restartApp) restartAppIfPossible() else false
-            var restartedPython = false
+            var restartedWorker = false
             if (!restarted) {
-                restartedPython = runCatching { runtimeManager.restartSoft() }.getOrDefault(false)
+                restartedWorker = runCatching { runtimeManager.restartSoft() }.getOrDefault(false)
             }
             jsonResponse(
                 JSONObject()
@@ -12406,7 +11668,7 @@ class LocalHttpServer(
                     .put("wiped", true)
                     .put("restart_requested", restartApp)
                     .put("restarted_app", restarted)
-                    .put("restarted_python", restartedPython)
+                    .put("restarted_worker", restartedWorker)
                     .put("preserved_session_id", if (preserveSessionId.isNotBlank()) preserveSessionId else JSONObject.NULL)
             )
         } catch (ex: Exception) {
@@ -12428,8 +11690,6 @@ class LocalHttpServer(
             return MeSyncImportSource(httpUrl = txt)
         }
         val obj = parseMeSyncPayloadObject(txt) ?: return MeSyncImportSource()
-        val compactSsh = obj.optJSONObject("s")
-        val ssh = obj.optJSONObject("ssh")
         val httpUrl = obj.optString("u", "").trim()
             .ifBlank { obj.optString("url", "").trim() }
             .ifBlank { obj.optString("download_url", "").trim() }
@@ -12445,33 +11705,8 @@ class LocalHttpServer(
             }
             .takeIf { it.startsWith("http://") || it.startsWith("https://") }
             ?: ""
-        val sshHost = (
-            compactSsh?.optString("h", "") ?: ssh?.optString("host", "") ?: obj.optString("ssh_host", "")
-        ).trim()
-        val sshPort = (
-            when {
-                compactSsh?.has("p") == true -> compactSsh.optInt("p", 22)
-                ssh?.has("port") == true -> ssh.optInt("port", 22)
-                else -> obj.optInt("ssh_port", 22)
-            }
-        )
-            .coerceIn(1, 65535)
-        val sshUser = (
-            compactSsh?.optString("u", "") ?: ssh?.optString("user", "") ?: obj.optString("ssh_user", "")
-        ).trim().ifBlank { "methings" }
-        val sshRemotePath = (
-            compactSsh?.optString("r", "") ?: ssh?.optString("remote_path", "") ?: obj.optString("ssh_remote_path", "")
-        ).trim()
-        val sshPrivateKeyB64 = (
-            compactSsh?.optString("k", "") ?: ssh?.optString("private_key_b64", "") ?: obj.optString("ssh_private_key_b64", "")
-        ).trim()
         return MeSyncImportSource(
-            httpUrl = httpUrl,
-            sshHost = sshHost,
-            sshPort = sshPort,
-            sshUser = sshUser,
-            sshRemotePath = sshRemotePath,
-            sshPrivateKeyB64 = sshPrivateKeyB64
+            httpUrl = httpUrl
         )
     }
 
@@ -12520,7 +11755,7 @@ class LocalHttpServer(
         val id = "ms_" + System.currentTimeMillis() + "_" + Random.nextInt(1000, 9999)
         val token = randomToken(24)
         val expiresAt = System.currentTimeMillis() + ttlMs.coerceAtLeast(5_000L)
-        val hostIp = sshdManager.getHostIp().trim()
+        val hostIp = ((network.wifiStatus()["ip_address"] as? String) ?: "").trim()
         val query = "id=" + URLEncoder.encode(id, "UTF-8") +
             "&token=" + URLEncoder.encode(token, "UTF-8")
         val localUrl = "http://127.0.0.1:$PORT/me/sync/download?$query"
@@ -12564,12 +11799,6 @@ class LocalHttpServer(
             meSyncUri = meSyncUri,
             qrDataUrl = qrDataUrl,
             transport = transport,
-            sshHost = "",
-            sshPort = 22,
-            sshUser = "",
-            sshRemotePath = "",
-            tempSshKeyFingerprint = "",
-            requiresTempSshd = false,
             streamingHttp = true
         )
     }
@@ -12615,71 +11844,6 @@ class LocalHttpServer(
             .put("note", "Share the QR/URI with target device. URI format: me.things:me.sync:<base64url>.")
     }
 
-    private fun createMeSyncSshAccess(transferId: String, expiresAt: Long): MeSyncSshAccess? {
-        val initial = sshdManager.status()
-        val requiresTempSshd = !initial.enabled
-        if (!initial.running) {
-            val started = runCatching { sshdManager.start() }.getOrElse { false }
-            if (!started) return null
-        }
-        val status = sshdManager.status()
-        if (!status.running) return null
-        val host = sshdManager.getHostIp().trim()
-        if (host.isBlank()) {
-            if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
-            return null
-        }
-        val dropbearKey = findDropbearkeyBinary() ?: run {
-            if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
-            return null
-        }
-
-        val tmpRoot = File(context.cacheDir, "me_sync_ssh")
-        tmpRoot.mkdirs()
-        val keyFile = File(tmpRoot, "${transferId}_key")
-        if (keyFile.exists()) runCatching { keyFile.delete() }
-        return try {
-            val gen = runProcessCapture(
-                listOf(dropbearKey.absolutePath, "-t", "ed25519", "-f", keyFile.absolutePath),
-                timeoutS = 8.0,
-                maxOutputBytes = 8192
-            )
-            if (gen.timedOut || gen.exitCode != 0 || !keyFile.exists()) {
-                if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
-                return null
-            }
-
-            val info = readDropbearKeyInfo(dropbearKey, keyFile) ?: run {
-                if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
-                return null
-            }
-            val privateKeyBytes = runCatching { keyFile.readBytes() }.getOrNull() ?: run {
-                if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
-                return null
-            }
-            val privateKeyB64 = Base64.encodeToString(privateKeyBytes, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)
-
-            val keyEntity = sshKeyStore.upsertMerge(info.publicKey, "me.sync:$transferId", expiresAt)
-            runCatching { syncAuthorizedKeys() }
-            runCatching { sshdManager.restartIfRunning() }
-
-            MeSyncSshAccess(
-                host = host,
-                port = status.port,
-                user = "methings",
-                remotePath = File(context.cacheDir, "me_sync/$transferId.zip").absolutePath,
-                privateKeyB64 = privateKeyB64,
-                fingerprint = keyEntity.fingerprint,
-                requiresTempSshd = requiresTempSshd
-            )
-        } catch (_: Exception) {
-            if (requiresTempSshd) stopTemporaryMeSyncSshdIfIdle()
-            null
-        } finally {
-            runCatching { keyFile.delete() }
-        }
-    }
-
     private fun makeQrDataUrl(text: String): String {
         val size = 640
         val matrix = QRCodeWriter().encode(text, BarcodeFormat.QR_CODE, size, size)
@@ -12708,17 +11872,6 @@ class LocalHttpServer(
         }
         root.put("credentials", creds)
 
-        val sshKeys = org.json.JSONArray()
-        sshKeyStore.listAll().forEach { key ->
-            sshKeys.put(
-                JSONObject()
-                    .put("key", key.key)
-                    .put("label", key.label ?: JSONObject.NULL)
-                    .put("expires_at", key.expiresAt ?: JSONObject.NULL)
-                    .put("created_at", key.createdAt)
-            )
-        }
-        root.put("ssh_keys", sshKeys)
         root.put(
             "permission_prefs",
             JSONObject()
@@ -12842,7 +11995,7 @@ class LocalHttpServer(
 
                 if (importedState != null) {
                     if (wipeExisting && !importedProtectedDb.exists()) {
-                        clearCredentialAndSshStores()
+                        clearCredentialStore()
                     }
                     importRoomState(importedState)
                 }
@@ -12856,7 +12009,6 @@ class LocalHttpServer(
             }
 
             reportProgress("restarting_runtime", "Restarting local runtime...", force = true)
-            runCatching { syncAuthorizedKeys() }
             runCatching { runtimeManager.restartSoft() }
             runCatching {
                 context.sendBroadcast(
@@ -12880,7 +12032,7 @@ class LocalHttpServer(
                 .put("status", "ok")
                 .put("imported", true)
                 .put("wipe_existing", wipeExisting)
-                .put("restarted_python", true)
+                .put("restarted_worker", true)
                 .put("active_session_id", if (importedActiveSessionId.isNotBlank()) importedActiveSessionId else JSONObject.NULL)
         } finally {
             runCatching { pkgFile.delete() }
@@ -12932,17 +12084,6 @@ class LocalHttpServer(
                 val value = item.optString("value", "")
                 if (name.isBlank()) continue
                 credentialStore.set(name, value)
-            }
-        }
-        val keys = state.optJSONArray("ssh_keys")
-        if (keys != null) {
-            for (i in 0 until keys.length()) {
-                val item = keys.optJSONObject(i) ?: continue
-                val key = item.optString("key", "").trim()
-                if (key.isBlank()) continue
-                val label = item.optString("label", "").trim().ifBlank { null }
-                val expiresAt = if (item.has("expires_at") && !item.isNull("expires_at")) item.optLong("expires_at") else null
-                sshKeyStore.upsertMerge(key, label, expiresAt)
             }
         }
         val prefs = state.optJSONObject("permission_prefs")
@@ -13037,11 +12178,6 @@ class LocalHttpServer(
         runCatching {
             credentialStore.list().forEach { row ->
                 credentialStore.delete(row.name)
-            }
-        }
-        runCatching {
-            sshKeyStore.listAll().forEach { row ->
-                sshKeyStore.delete(row.fingerprint)
             }
         }
     }
@@ -13167,123 +12303,6 @@ class LocalHttpServer(
         }
     }
 
-    private fun downloadMeSyncPackageViaScp(source: MeSyncImportSource, destFile: File, maxBytes: Long) {
-        if (!source.hasSshSource()) throw IllegalStateException("ssh_source_required")
-        val scp = findScpBinary() ?: throw IllegalStateException("scp_client_missing")
-        val privateKey = try {
-            Base64.decode(normalizeBase64UrlNoPadding(source.sshPrivateKeyB64), Base64.URL_SAFE or Base64.NO_WRAP)
-        } catch (_: Exception) {
-            throw IllegalStateException("invalid_ssh_private_key")
-        }
-        if (privateKey.isEmpty()) throw IllegalStateException("invalid_ssh_private_key")
-
-        val tmpDir = File(context.cacheDir, "me_sync_scp")
-        tmpDir.mkdirs()
-        val keyFile = File(tmpDir, "import_${System.currentTimeMillis()}_${Random.nextInt(1000, 9999)}.key")
-        val wrapper = File(tmpDir, keyFile.name + ".sh")
-        keyFile.writeBytes(privateKey)
-        keyFile.setReadable(true, true)
-        keyFile.setWritable(true, true)
-        keyFile.setExecutable(false, false)
-        wrapper.writeText(
-            "#!/system/bin/sh\n" +
-                "exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" -y -i ${shellSingleQuote(keyFile.absolutePath)} \"${'$'}@\"\n"
-        )
-        wrapper.setExecutable(true, true)
-        wrapper.setReadable(true, true)
-        wrapper.setWritable(true, true)
-
-        try {
-            val args = mutableListOf(
-                scp.absolutePath,
-                "-S",
-                wrapper.absolutePath
-            )
-            if (source.sshPort != 22) {
-                args.add("-P")
-                args.add(source.sshPort.toString())
-            }
-            args.add("${sshTarget(source.sshUser, source.sshHost)}:${source.sshRemotePath}")
-            args.add(destFile.absolutePath)
-            val result = runProcessCapture(args, timeoutS = 180.0, maxOutputBytes = 128 * 1024)
-            if (result.timedOut) throw IllegalStateException("scp_timeout")
-            if (result.exitCode != 0 || !destFile.exists() || destFile.length() <= 0L) {
-                throw IllegalStateException("scp_failed:${result.stderr.ifBlank { result.stdout }.take(240)}")
-            }
-            if (destFile.length() > maxBytes) throw IllegalStateException("package_too_large")
-        } finally {
-            runCatching { keyFile.delete() }
-            runCatching { wrapper.delete() }
-        }
-    }
-
-    private fun findDropbearkeyBinary(): File? {
-        val native = File(context.applicationInfo.nativeLibraryDir, "libdropbearkey.so")
-        if (native.exists()) return native
-        val fallback = File(File(context.filesDir, "bin"), "dropbearkey")
-        return if (fallback.exists()) fallback else null
-    }
-
-    private data class DropbearKeyInfo(
-        val fingerprint: String,
-        val publicKey: String
-    )
-
-    private fun readDropbearKeyInfo(dropbearKey: File, keyFile: File): DropbearKeyInfo? {
-        val result = runProcessCapture(
-            listOf(dropbearKey.absolutePath, "-y", "-f", keyFile.absolutePath),
-            timeoutS = 6.0,
-            maxOutputBytes = 16 * 1024
-        )
-        if (result.timedOut || result.exitCode != 0) return null
-        var fingerprint = ""
-        var publicKey = ""
-        result.stdout.lineSequence().forEach { line ->
-            val t = line.trim()
-            if (t.startsWith("Fingerprint:")) {
-                fingerprint = t.removePrefix("Fingerprint:").trim()
-            } else if (t.startsWith("ssh-")) {
-                publicKey = t
-            }
-        }
-        if (publicKey.isBlank()) return null
-        return DropbearKeyInfo(fingerprint = fingerprint, publicKey = publicKey)
-    }
-
-    private fun putZipBytes(zos: ZipOutputStream, path: String, bytes: ByteArray) {
-        val entry = ZipEntry(path)
-        entry.time = System.currentTimeMillis()
-        zos.putNextEntry(entry)
-        zos.write(bytes)
-        zos.closeEntry()
-    }
-
-    private fun putZipFile(zos: ZipOutputStream, path: String, file: File) {
-        val entry = ZipEntry(path)
-        entry.time = file.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
-        zos.putNextEntry(entry)
-        FileInputStream(file).use { inp -> inp.copyTo(zos, 8192) }
-        zos.closeEntry()
-    }
-
-    private fun zipDirectory(zos: ZipOutputStream, root: File, prefix: String, excludeRelPath: ((String) -> Boolean)? = null) {
-        val rootCanonical = root.canonicalFile
-        rootCanonical.walkTopDown().forEach { f ->
-            val rel = f.relativeTo(rootCanonical).path.replace(File.separatorChar, '/')
-            if (rel.isBlank()) return@forEach
-            if (excludeRelPath?.invoke(rel) == true) return@forEach
-            val entryPath = prefix + rel
-            if (f.isDirectory) {
-                val e = ZipEntry(entryPath.trimEnd('/') + "/")
-                e.time = f.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
-                zos.putNextEntry(e)
-                zos.closeEntry()
-            } else if (f.isFile) {
-                putZipFile(zos, entryPath, f)
-            }
-        }
-    }
-
     private fun unzipInto(zipFile: File, outDir: File) {
         unzipInto(zipFile, outDir, null)
     }
@@ -13393,15 +12412,10 @@ class LocalHttpServer(
         }
     }
 
-    private fun clearCredentialAndSshStores() {
+    private fun clearCredentialStore() {
         runCatching {
             credentialStore.list().forEach { row ->
                 credentialStore.delete(row.name)
-            }
-        }
-        runCatching {
-            sshKeyStore.listAll().forEach { row ->
-                sshKeyStore.delete(row.fingerprint)
             }
         }
     }
@@ -13457,10 +12471,6 @@ class LocalHttpServer(
 
     private fun releaseMeSyncTransfer(transfer: MeSyncTransfer) {
         runCatching { transfer.file?.delete() }
-        cleanupMeSyncTempSshKey(transfer.tempSshKeyFingerprint)
-        if (transfer.requiresTempSshd) {
-            stopTemporaryMeSyncSshdIfIdle()
-        }
     }
 
     private fun markMeSyncTransferStart(transfer: MeSyncTransfer) {
@@ -13564,9 +12574,7 @@ class LocalHttpServer(
         if (includeUser) {
             val userRoot = File(context.filesDir, "user")
             if (userRoot.exists() && userRoot.isDirectory) {
-                zipDirectory(zos, userRoot, "user/") { rel ->
-                    !includeIdentity && (rel == ".ssh/id_dropbear" || rel == ".ssh/id_dropbear.pub")
-                }
+                zipDirectory(zos, userRoot, "user/")
             }
         }
 
@@ -13574,21 +12582,37 @@ class LocalHttpServer(
         putZipBytes(zos, "room/state.json", roomState.toString(2).toByteArray(StandardCharsets.UTF_8))
     }
 
-    private fun cleanupMeSyncTempSshKey(fingerprint: String?) {
-        val fp = fingerprint?.trim().orEmpty()
-        if (fp.isBlank()) return
-        runCatching {
-            sshKeyStore.delete(fp)
-            syncAuthorizedKeys()
-            sshdManager.restartIfRunning()
-        }
+    private fun putZipBytes(zos: ZipOutputStream, path: String, bytes: ByteArray) {
+        val entry = ZipEntry(path)
+        entry.time = System.currentTimeMillis()
+        zos.putNextEntry(entry)
+        zos.write(bytes)
+        zos.closeEntry()
     }
 
-    private fun stopTemporaryMeSyncSshdIfIdle() {
-        if (sshdManager.isEnabled()) return
-        val hasPendingTempExports = meSyncTransfers.values.any { it.requiresTempSshd }
-        if (!hasPendingTempExports) {
-            runCatching { sshdManager.stop() }
+    private fun putZipFile(zos: ZipOutputStream, path: String, file: File) {
+        val entry = ZipEntry(path)
+        entry.time = file.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+        zos.putNextEntry(entry)
+        FileInputStream(file).use { inp -> inp.copyTo(zos, 8192) }
+        zos.closeEntry()
+    }
+
+    private fun zipDirectory(zos: ZipOutputStream, root: File, prefix: String, excludeRelPath: ((String) -> Boolean)? = null) {
+        val rootCanonical = root.canonicalFile
+        rootCanonical.walkTopDown().forEach { f ->
+            val rel = f.relativeTo(rootCanonical).path.replace(File.separatorChar, '/')
+            if (rel.isBlank()) return@forEach
+            if (excludeRelPath?.invoke(rel) == true) return@forEach
+            val entryPath = prefix + rel
+            if (f.isDirectory) {
+                val e = ZipEntry(entryPath.trimEnd('/') + "/")
+                e.time = f.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+                zos.putNextEntry(e)
+                zos.closeEntry()
+            } else if (f.isFile) {
+                putZipFile(zos, entryPath, f)
+            }
         }
     }
 
@@ -13647,12 +12671,6 @@ class LocalHttpServer(
         val meSyncUri: String,
         val qrDataUrl: String,
         val transport: String,
-        val sshHost: String,
-        val sshPort: Int,
-        val sshUser: String,
-        val sshRemotePath: String,
-        val tempSshKeyFingerprint: String,
-        val requiresTempSshd: Boolean,
         val streamingHttp: Boolean = false,
         @Volatile var downloadCount: Int = 0,
         @Volatile var transmitting: Boolean = false,
@@ -13859,16 +12877,9 @@ class LocalHttpServer(
     )
 
     private data class MeSyncImportSource(
-        val httpUrl: String = "",
-        val sshHost: String = "",
-        val sshPort: Int = 22,
-        val sshUser: String = "methings",
-        val sshRemotePath: String = "",
-        val sshPrivateKeyB64: String = ""
+        val httpUrl: String = ""
     ) {
-        fun hasSshSource(): Boolean =
-            sshHost.isNotBlank() && sshRemotePath.isNotBlank() && sshPrivateKeyB64.isNotBlank()
-        fun hasAnySource(): Boolean = httpUrl.isNotBlank() || hasSshSource()
+        fun hasAnySource(): Boolean = httpUrl.isNotBlank()
     }
 
     private data class MeSyncV3Ticket(
@@ -13887,16 +12898,6 @@ class LocalHttpServer(
         val ticketId: String,
         val transferId: String,
         val sessionNonce: String
-    )
-
-    private data class MeSyncSshAccess(
-        val host: String,
-        val port: Int,
-        val user: String,
-        val remotePath: String,
-        val privateKeyB64: String,
-        val fingerprint: String,
-        val requiresTempSshd: Boolean
     )
 
     private fun autoApprovePermission(
@@ -14107,28 +13108,22 @@ class LocalHttpServer(
     }
 
     private fun notifyBrainPermissionResolved(req: jp.espresso3389.methings.perm.PermissionStore.PermissionRequest) {
-        // Best-effort: notify the Python brain runtime that a permission was approved/denied so it
+        // Best-effort: notify the native agent runtime that a permission was approved/denied so it
         // can resume without requiring the user to manually say "continue".
-        //
-        // Avoid starting Python just for this; if the worker isn't running yet, ignore.
         try {
-            if (runtimeManager.getStatus() != "ok") return
-            val body = JSONObject()
-                .put("name", "permission.resolved")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("permission_id", req.id)
-                        .put("status", req.status)
-                        .put("tool", req.tool)
-                        .put("detail", req.detail)
-                        .put("identity", req.identity)
-                        // For agent-originated requests, identity is the chat session_id.
-                        .put("session_id", req.identity)
-                        .put("capability", req.capability)
-                )
-                .toString()
-            proxyWorkerRequest("/brain/inbox/event", "POST", body)
+            val runtime = agentRuntime ?: return
+            if (!runtime.isRunning()) return
+            runtime.enqueueEvent(
+                name = "permission.resolved",
+                payload = JSONObject()
+                    .put("permission_id", req.id)
+                    .put("status", req.status)
+                    .put("tool", req.tool)
+                    .put("detail", req.detail)
+                    .put("identity", req.identity)
+                    .put("session_id", req.identity)
+                    .put("capability", req.capability),
+            )
         } catch (_: Exception) {
         }
     }
@@ -14142,15 +13137,16 @@ class LocalHttpServer(
         coalesceWindowMs: Long? = null
     ) {
         try {
-            if (runtimeManager.getStatus() != "ok") return
-            val body = JSONObject()
-                .put("name", name.trim().ifBlank { "unnamed_event" })
-                .put("payload", payload)
-                .put("priority", priority.trim().ifBlank { "normal" })
-                .put("interrupt_policy", interruptPolicy.trim().ifBlank { "turn_end" })
-            if (!coalesceKey.isNullOrBlank()) body.put("coalesce_key", coalesceKey.trim())
-            if ((coalesceWindowMs ?: 0L) > 0L) body.put("coalesce_window_ms", coalesceWindowMs!!.coerceIn(0L, 86_400_000L))
-            proxyWorkerRequest("/brain/inbox/event", "POST", body.toString())
+            val runtime = agentRuntime ?: return
+            if (!runtime.isRunning()) return
+            runtime.enqueueEvent(
+                name = name.trim().ifBlank { "unnamed_event" },
+                payload = payload,
+                priority = priority.trim().ifBlank { "normal" },
+                interruptPolicy = interruptPolicy.trim().ifBlank { "turn_end" },
+                coalesceKey = coalesceKey?.trim() ?: "",
+                coalesceWindowMs = coalesceWindowMs?.coerceIn(0L, 86_400_000L) ?: 0L,
+            )
         } catch (_: Exception) {
         }
     }
@@ -14158,23 +13154,19 @@ class LocalHttpServer(
     private fun notifyBrainPermissionAutoApproved(req: jp.espresso3389.methings.perm.PermissionStore.PermissionRequest) {
         // Best-effort: add a chat-visible reference entry when dangerous auto-approval is active.
         try {
-            if (runtimeManager.getStatus() != "ok") return
-            val sid = req.identity.trim()
-            val body = JSONObject()
-                .put("name", "permission.auto_approved")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("permission_id", req.id)
-                        .put("status", req.status)
-                        .put("tool", req.tool)
-                        .put("detail", req.detail)
-                        .put("identity", req.identity)
-                        .put("session_id", sid)
-                        .put("capability", req.capability)
-                )
-                .toString()
-            proxyWorkerRequest("/brain/inbox/event", "POST", body)
+            val runtime = agentRuntime ?: return
+            if (!runtime.isRunning()) return
+            runtime.enqueueEvent(
+                name = "permission.auto_approved",
+                payload = JSONObject()
+                    .put("permission_id", req.id)
+                    .put("status", req.status)
+                    .put("tool", req.tool)
+                    .put("detail", req.detail)
+                    .put("identity", req.identity)
+                    .put("session_id", req.identity.trim())
+                    .put("capability", req.capability),
+            )
         } catch (_: Exception) {
         }
     }
@@ -14470,7 +13462,7 @@ Policies:
             "audio_record_config",
             "video_record_config",
             "screen_record_config",
-            SshdManager.PREFS,
+
         )
         private val SETTINGS_SECTIONS = listOf(
             "brain" to "Brain",
@@ -14479,7 +13471,6 @@ Policies:
             "task_notifications" to "Task Notifications",
             "audio_recording" to "Audio Recording",
             "video_recording" to "Video Recording",
-            "sshd" to "SSHD",
             "agent_service" to "Agent Service",
             "user_interface" to "User Interface",
             "reset_restore" to "Reset & Restore",

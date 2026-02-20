@@ -4,16 +4,16 @@ This document collects practical debugging tips for me.things app/agent behavior
 
 ## Quick Mental Model
 
-- Kotlin control plane: `127.0.0.1:33389`
-- Python worker: `127.0.0.1:8776`
-- Many `/brain/*` endpoints are served by Kotlin and proxied to the worker.
+- App server + built-in agent runtime: `127.0.0.1:33389`
+- Termux worker (optional, general-purpose Linux environment for shell tasks): `127.0.0.1:8776`
+- All `/brain/*` endpoints are handled by the built-in `AgentRuntime` — no external process proxy.
 
 The agent loop records:
 - user messages
 - assistant messages
 - tool/action records (including `shell_exec` output)
 
-All of that is persisted in `files/protected/app.db` on-device.
+Chat messages are persisted in `files/agent/agent.db` on-device (SQLite). Legacy messages from `files/protected/app.db` (if present) are migrated on first agent startup.
 
 ## Port-Forward (From Host)
 
@@ -191,7 +191,7 @@ curl -sS 'http://127.0.0.1:43389/brain/messages?session_id=<session_id>&limit=20
 
 Notes:
 - `role` can be `user`, `assistant`, or `tool`.
-- Tool outputs (including Python errors) appear as `role=tool` messages.
+- Tool outputs (including shell errors) appear as `role=tool` messages.
 
 ## Journal (Agent Continuity Notes)
 
@@ -280,14 +280,17 @@ adb -s <serial> shell run-as jp.espresso3389.methings ls -la files/user
 ```
 
 Important files:
-- `files/protected/app.db`: audit + chat history + settings (local debug database)
+- `files/agent/agent.db`: chat history + settings + audit log (agent database)
+- `files/protected/app.db`: legacy chat history + permissions (read-only reference; migrated to `agent.db` on first agent start)
+- `files/user/journal/<session_id>/`: per-session journal (CURRENT.md + entries.jsonl)
 - `files/system/docs/AGENTS.md`, `files/system/docs/TOOLS.md`: system agent docs (read-only, always current with app version)
 - `files/user/AGENTS.md`, `files/user/TOOLS.md`: user-editable agent rules/preferences (seeded on first install, never force-overwritten after v3 migration)
 
 ## Common Failure Patterns
 
-### Python `shell_exec` errors
-- Python errors are returned in the tool call `output` and also stored in chat tool messages.
+### Shell tool errors (requires Termux)
+- If Termux is not installed, shell tools (`run_python`, `run_pip`, `run_curl`) return `shell_unavailable`.
+- Shell errors are returned in the tool call output and stored in chat messages.
 - `python -` (stdin mode) is not supported in `shell_exec` (no interactive stdin). Use:
   - `python -c "..."`, or
   - write a script file under user root and run it.
@@ -296,8 +299,12 @@ Important files:
 - Usually indicates the stored API key is wrong/not saved.
 - The runtime surfaces a short error into the chat timeline so the UI is not stuck "processing".
 
+### LLM API errors
+- `LlmApiException` is logged with HTTP status and response body.
+- Check logcat for `LlmClient` tag for SSE parsing errors.
+
 ## logcat Grep
 
 ```bash
-adb -s <serial> logcat -d | rg -n 'BrainRuntime|brain/inbox/chat|/shell/exec|/web/search|permission_required|401'
+adb -s <serial> logcat -d | rg -n 'AgentRuntime|LlmClient|ToolExecutor|brain/inbox/chat|/shell/exec|/web/search|permission_required|401'
 ```

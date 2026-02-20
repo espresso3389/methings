@@ -56,7 +56,7 @@ Returns JSON-friendly tensor outputs (lists). This is intended for small outputs
 
 ## device_api Actions
 
-Python agent tool `device_api` supports:
+Agent tool `device_api` supports:
 
 - `vision.model.load`, `vision.model.unload`
 - `vision.frame.put`, `vision.frame.get`, `vision.frame.delete`, `vision.frame.save`

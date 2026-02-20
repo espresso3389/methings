@@ -17,8 +17,8 @@ tags:
     description: Screen keep-on control.
   - name: Location
     description: Device GPS / location provider access.
-  - name: Python
-    description: Python runtime management.
+  - name: Termux
+    description: Termux worker management.
   - name: Shell
     description: On-device shell command execution.
   - name: SSHD
@@ -99,13 +99,13 @@ paths:
   /location/get:
     $ref: './paths/location.yaml#/locationGet'
 
-  # ── Python ──
-  /python/status:
-    $ref: './paths/python.yaml#/pythonStatus'
-  /python/restart:
-    $ref: './paths/python.yaml#/pythonRestart'
-  /python/eval:
-    $ref: './paths/python.yaml#/pythonEval'
+  # ── Termux ──
+  /termux/status:
+    $ref: './paths/termux.yaml#/termuxStatus'
+  /termux/restart:
+    $ref: './paths/termux.yaml#/termuxRestart'
+  /termux/eval:
+    $ref: './paths/termux.yaml#/termuxEval'
 
   # ── Shell ──
   /shell/exec:
