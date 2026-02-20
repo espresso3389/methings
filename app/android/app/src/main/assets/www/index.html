@@ -1213,6 +1213,33 @@
         transition: border-color var(--transition);
       }
       .field select { appearance: auto; }
+      .password-wrap { position: relative; }
+      .password-wrap input { padding-right: 40px; }
+      .password-toggle {
+        position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+        background: none; border: none; padding: 4px; cursor: pointer;
+        width: 28px; height: 28px;
+        opacity: 0.45; transition: opacity var(--transition);
+      }
+      .password-toggle:hover, .password-toggle:active { opacity: 0.8; }
+      .password-toggle::before {
+        content: "";
+        display: block; width: 20px; height: 20px;
+        background: currentColor;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E") center/contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E") center/contain no-repeat;
+        color: var(--ink-muted);
+      }
+      .password-toggle::after {
+        content: ""; position: absolute;
+        left: 50%; top: 50%;
+        width: 2px; height: 26px;
+        background: var(--ink-muted);
+        transform: translate(-50%, -50%) rotate(45deg);
+        border-radius: 1px;
+        transition: opacity var(--transition);
+      }
+      .password-toggle.visible::after { opacity: 0; }
       .field select:focus,
       .field input:focus { border-color: var(--border-focus); }
       .field input::placeholder { color: var(--ink-muted); }
@@ -1874,7 +1901,11 @@
           </div>
           <div class="field">
             <label>API Key</label>
-            <input type="text" id="brainApiKey" placeholder="tap to unlock" autocomplete="off" autocapitalize="none" spellcheck="false" readonly />
+            <input type="text" id="brainKeyUsername" autocomplete="username" tabindex="-1" readonly aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;opacity:0" />
+            <div class="password-wrap">
+              <input type="password" id="brainApiKey" placeholder="tap to unlock" autocomplete="current-password" autocapitalize="none" spellcheck="false" readonly />
+              <button type="button" class="password-toggle" data-target="brainApiKey" tabindex="-1" aria-label="Toggle visibility"></button>
+            </div>
             <div class="muted" id="brainKeyStatus" style="margin-top:4px;"></div>
           </div>
           <div class="btn-group">
@@ -1893,7 +1924,11 @@
           </div>
           <div class="field">
             <label>Brave Search API Key</label>
-            <input type="text" id="braveSearchApiKey" placeholder="tap to unlock" autocomplete="off" autocapitalize="none" spellcheck="false" readonly />
+            <input type="text" id="braveSearchKeyUsername" autocomplete="username" tabindex="-1" readonly aria-hidden="true" value="brave_search" style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;opacity:0" />
+            <div class="password-wrap">
+              <input type="password" id="braveSearchApiKey" placeholder="tap to unlock" autocomplete="current-password" autocapitalize="none" spellcheck="false" readonly />
+              <button type="button" class="password-toggle" data-target="braveSearchApiKey" tabindex="-1" aria-label="Toggle visibility"></button>
+            </div>
             <div class="muted" id="braveSearchKeyStatus" style="margin-top:4px;">Status unknown.</div>
           </div>
           <div class="btn-group">
@@ -3143,6 +3178,17 @@
       // ==============================
       // Secret Fields (Biometric-on-demand)
       // ==============================
+      // Password visibility toggle (eye icon).
+      document.querySelectorAll(".password-toggle").forEach(function(btn) {
+        btn.addEventListener("click", function() {
+          var input = $(btn.dataset.target);
+          if (!input) return;
+          var showing = input.type !== "password";
+          input.type = showing ? "password" : "text";
+          btn.classList.toggle("visible", !showing);
+        });
+      });
+
       const SECRET_PLACEHOLDER = "tap to unlock";
       function isBridgeUnlocked() {
         return getSettingsUnlockRemainingMs() > 0;
@@ -3154,6 +3200,8 @@
         el.readOnly = true;
         el.value = "";
         el.placeholder = SECRET_PLACEHOLDER;
+        el.type = "password";
+        try { var t = el.parentElement.querySelector(".password-toggle"); if (t) t.classList.remove("visible"); } catch (_) {}
       }
       function markSecretOriginal(el) {
         if (!el) return;
@@ -3171,6 +3219,58 @@
           vendor: String(state.vendor || ""),
           base_url: String(state.base_url || "").trim(),
         };
+      }
+      function syncBrainKeyUsername() {
+        try {
+          const el = $("brainKeyUsername");
+          if (!el) return;
+          const state = readBrainUiState ? readBrainUiState() : null;
+          const vendor = String((state && state.vendor) || "").trim();
+          const model = String((state && state.model) || "").trim();
+          el.value = vendor && model ? vendor + "/" + model : vendor || "";
+          el.dataset.lastSynced = el.value;
+        } catch (_) {}
+      }
+      function applyAutofillBrainUsername(raw) {
+        // Parse "vendor/model" from password-manager autofill and apply to UI.
+        const s = String(raw || "").trim();
+        if (!s) return;
+        const slash = s.indexOf("/");
+        const vendor = slash >= 0 ? s.substring(0, slash).trim() : s;
+        const model = slash >= 0 ? s.substring(slash + 1).trim() : "";
+        if (!vendor) return;
+
+        // Known provider?
+        const preset = getProviderPreset(vendor);
+        if (vendor === "openrouter") {
+          brainProviderSelect.value = "openrouter";
+          initOpenRouterUI(model.includes("/") ? model.split("/")[0] : "", model);
+          syncBrainCustomFields();
+        } else if (preset) {
+          brainProviderSelect.value = vendor;
+          renderBrainModelOptions(vendor, model);
+          if (model && !preset.models.some(function(m) { return m.id === model; })) {
+            $("brainModelId").value = model;
+          }
+          syncBrainCustomFields();
+        } else {
+          // Unknown vendor -> treat as custom
+          brainProviderSelect.value = "custom";
+          $("brainBaseUrl").value = "";
+          $("brainModelId").value = model;
+          syncBrainCustomFields();
+        }
+
+        // Mark the API key field as autofilled (unlocked, dirty).
+        const keyEl = $("brainApiKey");
+        if (keyEl && keyEl.value) {
+          keyEl.dataset.secretLocked = "0";
+          keyEl.readOnly = false;
+          keyEl.placeholder = "";
+          markSecretOriginal({ dataset: {}, value: "" }); // fake empty original so it's dirty
+          keyEl.dataset.secretOriginal = "";
+        }
+        try { updateBrainSaveEnabled(); } catch (_) {}
       }
       async function unlockBrainKeyField() {
         const el = $("brainApiKey");
@@ -3191,6 +3291,7 @@
         el.placeholder = "";
         el.value = String(v || "");
         markSecretOriginal(el);
+        try { syncBrainKeyUsername(); } catch (_) {}
         try { el.focus(); } catch (_) {}
         return true;
       }
@@ -7281,6 +7382,7 @@
           initOpenRouterUI(savedVendor, savedModel);
           syncBrainCustomFields();
           try { lockSecretField($("brainApiKey")); } catch (_) {}
+          try { syncBrainKeyUsername(); } catch (_) {}
           try { updateBrainSaveEnabled(); } catch (_) {}
           return;
         }
@@ -7308,15 +7410,18 @@
         // Switching providers changes which API key slot will be used. Keep the key field locked
         // until the user taps it and authenticates.
         try { lockSecretField($("brainApiKey")); } catch (_) {}
+        try { syncBrainKeyUsername(); } catch (_) {}
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
       brainModelSelect.addEventListener("change", () => {
         syncBrainCustomFields();
+        try { syncBrainKeyUsername(); } catch (_) {}
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
       $("brainOrVendor").addEventListener("change", () => {
         const vendor = String($("brainOrVendor").value || "").trim();
         if (_orModelsLoaded) renderOrModelOptions(_orModelsLoaded, vendor, "");
+        try { syncBrainKeyUsername(); } catch (_) {}
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
 
@@ -7398,6 +7503,7 @@
           syncBrainCustomFields();
           brainInitial = { vendor: data.vendor || "", base_url: data.base_url || "", model: data.model || "" };
           try { lockSecretField($("brainApiKey")); } catch (_) {}
+          try { syncBrainKeyUsername(); } catch (_) {}
           updateBrainSaveEnabled();
         } catch (_) {}
       }
@@ -7469,6 +7575,29 @@
       });
 
       loadBrainConfig();
+
+      // Autofill detection: when a password manager fills brainKeyUsername,
+      // apply the vendor/model back to the UI dropdowns.
+      try {
+        var _brainAutofillLast = "";
+        function checkBrainAutofill() {
+          var el = $("brainKeyUsername");
+          if (!el) return;
+          var v = String(el.value || "").trim();
+          var synced = String(el.dataset.lastSynced || "").trim();
+          if (v && v !== synced && v !== _brainAutofillLast) {
+            _brainAutofillLast = v;
+            applyAutofillBrainUsername(v);
+          }
+        }
+        $("brainKeyUsername").addEventListener("input", checkBrainAutofill);
+        $("brainKeyUsername").addEventListener("change", checkBrainAutofill);
+        // Android autofill may not fire input/change; poll briefly after page load.
+        var _brainAutofillPoll = setInterval(checkBrainAutofill, 300);
+        setTimeout(function() { clearInterval(_brainAutofillPoll); }, 5000);
+        // Also check when the API key field value appears (autofill filled both).
+        $("brainApiKey").addEventListener("change", checkBrainAutofill);
+      } catch (_) {}
 
       // Secret field unlock triggers (tap-to-unlock).
       try {

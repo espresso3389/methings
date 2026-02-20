@@ -157,6 +157,13 @@
     },
     {
       "ecosystem": "android-gradle",
+      "name": "io.github.dokar3:quickjs-kt",
+      "version": "1.0.0-alpha13",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
       "name": "org.java-websocket:Java-WebSocket",
       "version": "1.5.7",
       "source_path": "app/android/app/build.gradle.kts",
