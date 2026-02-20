@@ -5,6 +5,8 @@ import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.nio.file.Files
 
 class ToolExecutor(
@@ -36,9 +38,10 @@ class ToolExecutor(
                 "journal_set_current" -> executeJournalSetCurrent(args)
                 "journal_append" -> executeJournalAppend(args)
                 "journal_list" -> executeJournalList(args)
+                "run_js" -> executeRunJs(args)
                 "run_python" -> executeShellExec("python", args)
                 "run_pip" -> executeShellExec("pip", args)
-                "run_curl" -> executeShellExec("curl", args)
+                "run_curl" -> executeRunCurl(args)
                 "shell_exec" -> {
                     val cmd = args.optString("cmd", "")
                     executeShellExec(cmd, args)
@@ -235,6 +238,75 @@ class ToolExecutor(
         val sid = args.optString("session_id", "").ifEmpty { sessionIdProvider() }
         val limit = try { args.optInt("limit", 50) } catch (_: Exception) { 50 }
         return journalStore.listEntries(sid, limit)
+    }
+
+    private fun executeRunJs(args: JSONObject): JSONObject {
+        val code = args.optString("code", "")
+        if (code.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_code")
+        val timeoutMs = args.optLong("timeout_ms", 30_000).coerceIn(1_000, 120_000)
+        val engine = JsEngine()
+        return engine.execute(code, timeoutMs).toJson()
+    }
+
+    private fun executeRunCurl(args: JSONObject): JSONObject {
+        // Native HTTP implementation — no Termux needed
+        val url = args.optString("url", "")
+        if (url.isEmpty()) {
+            // Legacy fallback: if "args" field is present, delegate to shell curl
+            if (args.has("args")) return executeShellExec("curl", args)
+            return JSONObject().put("status", "error").put("error", "missing_url")
+        }
+
+        val method = args.optString("method", "GET").uppercase()
+        val headers = args.optJSONObject("headers")
+        val body = args.optString("body", "")
+        val timeoutMs = args.optInt("timeout_ms", 30_000).coerceIn(1_000, 120_000)
+
+        return try {
+            val conn = URL(url).openConnection() as HttpURLConnection
+            conn.requestMethod = method
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
+            conn.instanceFollowRedirects = true
+
+            if (headers != null) {
+                val keys = headers.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    conn.setRequestProperty(key, headers.optString(key, ""))
+                }
+            }
+
+            if (body.isNotEmpty() && method in setOf("POST", "PUT", "PATCH")) {
+                conn.doOutput = true
+                conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            }
+
+            val httpStatus = conn.responseCode
+            val respHeaders = JSONObject()
+            conn.headerFields?.forEach { (key, values) ->
+                if (key != null && values != null) {
+                    respHeaders.put(key, values.joinToString(", "))
+                }
+            }
+
+            val respBody = try {
+                val stream = if (httpStatus in 200..399) conn.inputStream else conn.errorStream
+                stream?.bufferedReader()?.use { it.readText() } ?: ""
+            } catch (_: Exception) { "" }
+
+            conn.disconnect()
+
+            JSONObject()
+                .put("status", "ok")
+                .put("http_status", httpStatus)
+                .put("headers", respHeaders)
+                .put("body", respBody)
+        } catch (e: Exception) {
+            JSONObject()
+                .put("status", "error")
+                .put("error", e.message ?: "request_failed")
+        }
     }
 
     private fun executeShellExec(cmd: String, args: JSONObject): JSONObject {

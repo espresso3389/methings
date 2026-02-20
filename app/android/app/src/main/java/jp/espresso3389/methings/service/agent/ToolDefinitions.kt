@@ -63,20 +63,28 @@ object ToolDefinitions {
             put("limit", prop("integer"))
         }.withRequired())
 
-        tools.put(functionTool("run_python", "Run Python locally (equivalent to: python <args>) within the user directory.") {
+        tools.put(functionTool("run_js", "Execute JavaScript code using the built-in QuickJS engine. Always available without Termux. Use for data processing, calculations, string manipulation, JSON parsing, and general programming tasks. No network or filesystem access from JS — use other tools for that.") {
+            put("code", prop("string"))
+            put("timeout_ms", prop("integer"))
+        }.withRequired("code"))
+
+        tools.put(functionTool("run_python", "Run Python locally (equivalent to: python <args>) within the user directory. Requires Termux.") {
             put("args", prop("string"))
             put("cwd", prop("string"))
         }.withRequired("args", "cwd"))
 
-        tools.put(functionTool("run_pip", "Run pip locally (equivalent to: pip <args>) within the user directory.") {
+        tools.put(functionTool("run_pip", "Run pip locally (equivalent to: pip <args>) within the user directory. Requires Termux.") {
             put("args", prop("string"))
             put("cwd", prop("string"))
         }.withRequired("args", "cwd"))
 
-        tools.put(functionTool("run_curl", "Run curl locally (equivalent to: curl <args>) within the user directory.") {
-            put("args", prop("string"))
-            put("cwd", prop("string"))
-        }.withRequired("args", "cwd"))
+        tools.put(functionTool("run_curl", "Make an HTTP request. Works natively without Termux. Parameters: url (required), method (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), headers (JSON object), body (string), timeout_ms (default 30000).") {
+            put("url", prop("string"))
+            put("method", prop("string"))
+            put("headers", JSONObject().put("type", "object").put("additionalProperties", true))
+            put("body", prop("string"))
+            put("timeout_ms", prop("integer"))
+        }.withRequired("url"))
 
         tools.put(functionTool("web_search", "Search the web (permission-gated). Provider defaults to auto (Brave if configured, else DuckDuckGo Instant Answer).") {
             put("query", prop("string"))

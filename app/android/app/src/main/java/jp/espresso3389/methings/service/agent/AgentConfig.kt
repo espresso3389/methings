@@ -80,7 +80,8 @@ data class AgentConfig(
             "Prefer device_api for device controls exposed by the Kotlin control plane. " +
             "When you create an HTML app/page under user files and want the user to open it, include a line `html_path: <relative_path>.html` in your response. " +
             "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. " +
-            "For execution, use run_python/run_pip/run_curl. " +
+            "For code execution, prefer run_js (built-in QuickJS engine, always available) for data processing, calculations, and general programming. " +
+            "run_python/run_pip require Termux; run_curl works natively without Termux. " +
             "For cloud calls: prefer the configured Brain provider (Settings -> Brain). If Brain is not configured or has no API key, ask the user to configure it, then retry. " +
             "User-root docs (`AGENTS.md`, `TOOLS.md`) are auto-injected into your context and reloaded if they change on disk; do not repeatedly read them via filesystem tools unless the user explicitly asks. " +
             "Prefer consulting the provided user-root docs under `docs/` and `examples/` (camera/usb/vision) before guessing tool names. " +

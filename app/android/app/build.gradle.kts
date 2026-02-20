@@ -310,4 +310,6 @@ dependencies {
     // WebRTC DataChannel (me.me P2P transport)
     implementation("io.getstream:stream-webrtc-android:1.3.7")
     implementation("org.java-websocket:Java-WebSocket:1.5.7")
+    // In-process JavaScript engine for agent run_js tool (no Termux dependency)
+    implementation("io.github.dokar3:quickjs-kt:1.0.3")
 }
