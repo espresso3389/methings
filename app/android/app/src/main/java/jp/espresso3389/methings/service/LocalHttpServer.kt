@@ -145,11 +145,19 @@ class LocalHttpServer(
 
     // --- Scheduler ---
     private val schedulerStore by lazy { SchedulerStore(context) }
+    private val schedulerDeviceBridge by lazy {
+        DeviceToolBridge(identity = { "scheduler" })
+    }
     private val schedulerEngine by lazy {
         SchedulerEngine(
             store = schedulerStore,
             userDir = File(context.filesDir, "user"),
-            executeRunJs = { code, timeoutMs -> JsEngine().execute(code, timeoutMs) },
+            executeRunJs = { code, timeoutMs ->
+                JsEngine().execute(code, timeoutMs) { action, payloadJson ->
+                    val payload = try { JSONObject(payloadJson) } catch (_: Exception) { JSONObject() }
+                    schedulerDeviceBridge.execute(action, payload, "scheduler").toString()
+                }
+            },
             executeShellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
         )
     }

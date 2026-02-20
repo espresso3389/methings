@@ -28,7 +28,19 @@ data class JsResult(
 
 class JsEngine {
 
-    fun execute(code: String, timeoutMs: Long = 30_000): JsResult {
+    /**
+     * Execute JavaScript code in a QuickJS sandbox.
+     *
+     * @param deviceApiCallback optional callback for `device_api(action, payloadJson)` calls.
+     *   When provided, a global `device_api(action, payload)` function is registered in the JS
+     *   environment. The callback receives the action string and a JSON-encoded payload string,
+     *   and must return a JSON-encoded response string.
+     */
+    fun execute(
+        code: String,
+        timeoutMs: Long = 30_000,
+        deviceApiCallback: ((action: String, payloadJson: String) -> String)? = null,
+    ): JsResult {
         val consoleBuffer = StringBuilder()
 
         val executor = Executors.newSingleThreadExecutor()
@@ -56,6 +68,25 @@ class JsEngine {
                             function("info") { args ->
                                 consoleBuffer.appendLine("[INFO] " + args.joinToString(" ") { stringify(it) })
                             }
+                        }
+
+                        // Register device_api bridge when callback is provided
+                        if (deviceApiCallback != null) {
+                            js.define("__bridge") {
+                                function("deviceApi") { args ->
+                                    val action = args.getOrNull(0)?.toString() ?: ""
+                                    val payloadJson = args.getOrNull(1)?.toString() ?: "{}"
+                                    deviceApiCallback(action, payloadJson)
+                                }
+                            }
+                            js.evaluate<Any?>("""
+                                globalThis.device_api = function(action, payload) {
+                                    var json = (typeof payload === 'object' && payload !== null)
+                                        ? JSON.stringify(payload) : (payload || '{}');
+                                    var raw = __bridge.deviceApi(action, json);
+                                    try { return JSON.parse(raw); } catch(e) { return raw; }
+                                };
+                            """.trimIndent())
                         }
 
                         val rawResult = js.evaluate<Any?>(code)
