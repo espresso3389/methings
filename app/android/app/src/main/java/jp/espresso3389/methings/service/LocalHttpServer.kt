@@ -90,6 +90,7 @@ import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import jp.espresso3389.methings.device.AndroidPermissionWaiter
 import jp.espresso3389.methings.device.UsbPermissionWaiter
+import jp.espresso3389.methings.service.agent.*
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -141,6 +142,83 @@ class LocalHttpServer(
     private val workJobManager = WorkJobManager(context)
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
+
+    // --- Native Kotlin Agent Runtime (replaces Python/Termux brain) ---
+    private val agentStorage by lazy { AgentStorage(context) }
+    private val agentJournalStore by lazy { JournalStore(File(context.filesDir, "user/journal")) }
+    private val agentConfigManager by lazy { AgentConfigManager(context) }
+    private val agentLlmClient by lazy { LlmClient() }
+    private val agentDeviceBridge by lazy {
+        DeviceToolBridge(identity = { agentRuntime?.let { "default" } ?: "default" })
+    }
+    private val agentToolExecutor by lazy {
+        ToolExecutor(
+            userDir = File(context.filesDir, "user"),
+            sysDir = File(context.filesDir, "system"),
+            journalStore = agentJournalStore,
+            deviceBridge = agentDeviceBridge,
+            shellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
+            sessionIdProvider = { "default" },
+        )
+    }
+    @Volatile private var agentRuntime: AgentRuntime? = null
+    private fun getOrCreateAgentRuntime(): AgentRuntime {
+        agentRuntime?.let { return it }
+        synchronized(this) {
+            agentRuntime?.let { return it }
+            val runtime = AgentRuntime(
+                userDir = File(context.filesDir, "user"),
+                sysDir = File(context.filesDir, "system"),
+                storage = agentStorage,
+                journalStore = agentJournalStore,
+                toolExecutor = agentToolExecutor,
+                llmClient = agentLlmClient,
+                configManager = agentConfigManager,
+                emitLog = { name, payload -> broadcastBrainEvent(name, payload) },
+            )
+            runtime.onEvent = { name, payload -> broadcastBrainEvent(name, payload) }
+            agentRuntime = runtime
+            // One-time: migrate chat history from old Python DB
+            try { agentStorage.migrateFromPythonDbIfNeeded() } catch (_: Exception) {}
+            return runtime
+        }
+    }
+    private fun shellExecViaTermux(cmd: String, args: String, cwd: String): JSONObject {
+        // Delegate to Termux via the existing /shell/exec endpoint (loopback)
+        return try {
+            val body = JSONObject().put("cmd", cmd).put("args", args).put("cwd", cwd)
+            val url = java.net.URL("http://127.0.0.1:$PORT/shell/exec")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 2000
+            conn.readTimeout = 300_000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            conn.disconnect()
+            try { JSONObject(responseBody) } catch (_: Exception) { JSONObject().put("status", "error").put("raw", responseBody) }
+        } catch (ex: Exception) {
+            JSONObject().put("status", "error").put("error", "shell_unavailable").put("detail", ex.message ?: "")
+        }
+    }
+    // SSE event broadcasting for brain events
+    private val brainSseClients = CopyOnWriteArrayList<java.io.PipedOutputStream>()
+    private fun broadcastBrainEvent(name: String, payload: JSONObject) {
+        val data = JSONObject().put("type", name).put("data", payload).toString()
+        val sseMsg = "data: $data\n\n"
+        val bytes = sseMsg.toByteArray(Charsets.UTF_8)
+        for (client in brainSseClients) {
+            try {
+                client.write(bytes)
+                client.flush()
+            } catch (_: Exception) {
+                brainSseClients.remove(client)
+            }
+        }
+    }
+
     private val meSyncImportProgressLock = Any()
     @Volatile private var meSyncImportProgress = MeSyncImportProgress()
     private val meMePrefs = context.getSharedPreferences(ME_ME_PREFS, Context.MODE_PRIVATE)
@@ -327,7 +405,7 @@ class LocalHttpServer(
         return when (seg) {
             "/health" -> routeHealth(session, uri, postBody)
             "/debug" -> routeDebug(session, uri, postBody)
-            "/python" -> routePython(session, uri, postBody)
+            "/python", "/termux" -> routeTermux(session, uri, postBody)
             "/service" -> routeService(session, uri, postBody)
             "/app" -> routeApp(session, uri, postBody)
             "/work" -> routeWork(session, uri, postBody)
@@ -355,7 +433,6 @@ class LocalHttpServer(
             "/media" -> routeMedia(session, uri, postBody)
             "/audio" -> routeAudio(session, uri, postBody)
             "/video" -> routeVideo(session, uri, postBody)
-            "/termux" -> routeTermux(session, uri, postBody)
             "/stt" -> routeStt(session, uri, postBody)
             "/location" -> routeLocation(session, uri, postBody)
             "/network" -> routeNetwork(session, uri, postBody)
@@ -429,26 +506,6 @@ class LocalHttpServer(
         }
     }
 
-    private fun routePython(session: IHTTPSession, uri: String, postBody: String?): Response {
-        return when {
-            uri == "/python/status" -> jsonResponse(
-                JSONObject().put("status", runtimeManager.getStatus())
-            )
-            uri == "/python/start" -> {
-                runtimeManager.startWorker()
-                jsonResponse(JSONObject().put("status", "starting"))
-            }
-            uri == "/python/stop" -> {
-                runtimeManager.requestShutdown()
-                jsonResponse(JSONObject().put("status", "stopping"))
-            }
-            uri == "/python/restart" -> {
-                runtimeManager.restartSoft()
-                jsonResponse(JSONObject().put("status", "starting"))
-            }
-            else -> notFound()
-        }
-    }
 
     private fun routeService(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
@@ -1339,73 +1396,124 @@ class LocalHttpServer(
     }
 
     private fun routeBrain(session: IHTTPSession, uri: String, postBody: String?): Response {
+        val runtime = getOrCreateAgentRuntime()
         return when {
+            // --- SSE event stream (native, no Python proxy) ---
             uri == "/brain/events" && session.method == Method.GET -> {
-                if (runtimeManager.getStatus() != "ok") {
-                    runtimeManager.startWorker()
-                    waitForPythonHealth(5000)
-                }
-                proxyGetStreamFromWorker("/brain/events", session.queryParameterString)
-                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+                serveBrainSse()
             }
-            (
-                uri == "/brain/status" ||
-                    uri == "/brain/messages" ||
-                    uri == "/brain/sessions" ||
-                    uri == "/brain/journal/config" ||
-                    uri == "/brain/journal/current" ||
-                    uri == "/brain/journal/list"
-                ) && session.method == Method.GET -> {
-                if (runtimeManager.getStatus() != "ok") {
-                    runtimeManager.startWorker()
-                    waitForPythonHealth(5000)
-                }
-                val proxied = proxyWorkerRequest(
-                    path = uri,
-                    method = "GET",
-                    body = null,
-                    query = session.queryParameterString
-                )
-                proxied ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
+            // --- GET endpoints (native) ---
+            uri == "/brain/status" && session.method == Method.GET -> {
+                jsonResponse(runtime.status())
             }
-            (
-                uri == "/brain/start" ||
-                    uri == "/brain/stop" ||
-                    uri == "/brain/interrupt" ||
-                    uri == "/brain/retry" ||
-                    uri == "/brain/inbox/chat" ||
-                    uri == "/brain/inbox/event" ||
-                    uri == "/brain/session/delete" ||
-                    uri == "/brain/session/rename" ||
-                    uri == "/brain/debug/comment" ||
-                    uri == "/brain/journal/current" ||
-                    uri == "/brain/journal/append"
-                ) && session.method == Method.POST -> {
-                if (runtimeManager.getStatus() != "ok") {
-                    runtimeManager.startWorker()
-                    waitForPythonHealth(5000)
+            uri == "/brain/messages" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val sessionId = (params["session_id"] ?: "default").trim()
+                val limit = (params["limit"] ?: "200").toIntOrNull() ?: 200
+                val msgs = runtime.listMessagesForSession(sessionId, limit)
+                val arr = JSONArray()
+                for (m in msgs) {
+                    arr.put(JSONObject(m))
                 }
-                if (uri == "/brain/debug/comment") {
-                    val ip = (session.remoteIpAddress ?: "").trim()
-                    if (ip.isNotEmpty() && ip != "127.0.0.1" && ip != "::1") {
-                        return jsonError(Response.Status.FORBIDDEN, "debug_local_only")
-                    }
-                }
-                val body = (postBody ?: "").ifBlank { "{}" }
-                val proxied = proxyWorkerRequest(
-                    path = uri,
-                    method = "POST",
-                    body = body
-                )
-                if (proxied == null) {
-                    return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-                }
-                if (uri == "/brain/inbox/chat" && proxied.status == Response.Status.BAD_REQUEST) {
-                    // Help diagnose UI issues; keep it short and avoid logging secrets.
-                    Log.w(TAG, "brain/inbox/chat 400 body.len=${body.length} body.head=${body.take(120)}")
-                }
-                proxied
+                jsonResponse(JSONObject().put("messages", arr))
             }
+            uri == "/brain/sessions" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val limit = (params["limit"] ?: "50").toIntOrNull() ?: 50
+                val sessions = runtime.listSessions(limit)
+                val arr = JSONArray()
+                for (s in sessions) {
+                    arr.put(JSONObject(s))
+                }
+                jsonResponse(JSONObject().put("sessions", arr))
+            }
+            uri == "/brain/journal/config" && session.method == Method.GET -> {
+                jsonResponse(agentJournalStore.config())
+            }
+            uri == "/brain/journal/current" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val sessionId = (params["session_id"] ?: "default").trim()
+                jsonResponse(agentJournalStore.getCurrent(sessionId))
+            }
+            uri == "/brain/journal/list" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val sessionId = (params["session_id"] ?: "default").trim()
+                val limit = (params["limit"] ?: "50").toIntOrNull() ?: 50
+                jsonResponse(agentJournalStore.listEntries(sessionId, limit))
+            }
+            // --- POST endpoints (native) ---
+            uri == "/brain/start" && session.method == Method.POST -> {
+                jsonResponse(runtime.start())
+            }
+            uri == "/brain/stop" && session.method == Method.POST -> {
+                jsonResponse(runtime.stop())
+            }
+            uri == "/brain/interrupt" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrDefault(JSONObject())
+                jsonResponse(runtime.interrupt(
+                    itemId = body.optString("item_id", ""),
+                    sessionId = body.optString("session_id", ""),
+                    clearQueue = body.optBoolean("clear_queue", false),
+                ))
+            }
+            uri == "/brain/inbox/chat" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val text = body.optString("text", "").trim()
+                if (text.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "missing_text")
+                val meta = body.optJSONObject("meta") ?: JSONObject()
+                jsonResponse(runtime.enqueueChat(text, meta))
+            }
+            uri == "/brain/inbox/event" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                jsonResponse(runtime.enqueueEvent(
+                    name = body.optString("name", ""),
+                    payload = body.optJSONObject("payload") ?: JSONObject(),
+                    priority = body.optString("priority", "normal"),
+                    interruptPolicy = body.optString("interrupt_policy", "turn_end"),
+                    coalesceKey = body.optString("coalesce_key", ""),
+                    coalesceWindowMs = body.optLong("coalesce_window_ms", 0),
+                ))
+            }
+            uri == "/brain/session/delete" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val sessionId = body.optString("session_id", "").trim()
+                if (sessionId.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "missing_session_id")
+                val deleted = agentStorage.deleteChatSession(sessionId)
+                jsonResponse(JSONObject().put("status", "ok").put("deleted", deleted))
+            }
+            uri == "/brain/session/rename" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val oldId = body.optString("old_id", "").trim()
+                val newId = body.optString("new_id", "").trim()
+                if (oldId.isEmpty() || newId.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "missing_ids")
+                val renamed = agentStorage.renameChatSession(oldId, newId)
+                agentJournalStore.renameSession(oldId, newId)
+                jsonResponse(JSONObject().put("status", "ok").put("renamed", renamed))
+            }
+            uri == "/brain/journal/current" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val sessionId = body.optString("session_id", "default").trim()
+                val text = body.optString("text", "")
+                jsonResponse(agentJournalStore.setCurrent(sessionId, text))
+            }
+            uri == "/brain/journal/append" && session.method == Method.POST -> {
+                val body = runCatching { JSONObject(postBody ?: "{}") }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val sessionId = body.optString("session_id", "default").trim()
+                jsonResponse(agentJournalStore.append(
+                    sessionId,
+                    kind = body.optString("kind", "note"),
+                    title = body.optString("title", ""),
+                    text = body.optString("text", ""),
+                    meta = body.optJSONObject("meta"),
+                ))
+            }
+            // --- Config routes (unchanged) ---
             uri == "/brain/config" && session.method == Method.GET -> handleBrainConfigGet()
             uri == "/brain/config" && session.method == Method.POST -> {
                 val body = postBody ?: ""
@@ -1414,7 +1522,6 @@ class LocalHttpServer(
             uri == "/brain/agent/bootstrap" && session.method == Method.POST -> {
                 handleBrainAgentBootstrap()
             }
-            // Chat-mode streaming (direct cloud) has been removed. Use agent mode instead.
             uri == "/brain/chat" && session.method == Method.POST -> {
                 jsonError(Response.Status.GONE, "chat_mode_removed")
             }
@@ -1430,6 +1537,23 @@ class LocalHttpServer(
             }
             else -> notFound()
         }
+    }
+
+    private fun serveBrainSse(): Response {
+        val pipedOut = java.io.PipedOutputStream()
+        val pipedIn = java.io.PipedInputStream(pipedOut, 8192)
+        brainSseClients.add(pipedOut)
+        // Send initial status event
+        try {
+            val runtime = agentRuntime
+            val initData = JSONObject().put("type", "brain_status").put("data", runtime?.status() ?: JSONObject().put("running", false))
+            pipedOut.write("data: ${initData}\n\n".toByteArray(Charsets.UTF_8))
+            pipedOut.flush()
+        } catch (_: Exception) {}
+        val response = newChunkedResponse(Response.Status.OK, "text/event-stream", pipedIn)
+        response.addHeader("Cache-Control", "no-cache")
+        response.addHeader("Connection", "keep-alive")
+        return response
     }
 
     private fun routeShell(session: IHTTPSession, uri: String, postBody: String?): Response {
@@ -2255,8 +2379,22 @@ class LocalHttpServer(
     }
 
     private fun routeTermux(session: IHTTPSession, uri: String, postBody: String?): Response {
+        // Accept both /termux/* (canonical) and /python/* (legacy alias)
+        val path = if (uri.startsWith("/python")) uri.replaceFirst("/python", "/termux") else uri
         return when {
-            uri == "/termux/status" -> {
+            path == "/termux/worker/start" || path == "/termux/start" -> {
+                runtimeManager.startWorker()
+                jsonResponse(JSONObject().put("status", "starting"))
+            }
+            path == "/termux/worker/stop" || path == "/termux/stop" -> {
+                runtimeManager.requestShutdown()
+                jsonResponse(JSONObject().put("status", "stopping"))
+            }
+            path == "/termux/worker/restart" || path == "/termux/restart" -> {
+                runtimeManager.restartSoft()
+                jsonResponse(JSONObject().put("status", "starting"))
+            }
+            path == "/termux/status" -> {
                 jsonResponse(
                     JSONObject()
                         .put("installed", termuxManager.isTermuxInstalled())
@@ -6486,53 +6624,18 @@ class LocalHttpServer(
         if (baseUrl.isEmpty() || model.isEmpty() || apiKey.isEmpty()) {
             return jsonError(Response.Status.BAD_REQUEST, "brain_not_configured")
         }
-        if (vendor == "anthropic") {
-            return jsonError(Response.Status.BAD_REQUEST, "agent_vendor_not_supported")
-        }
+        // NOTE: Anthropic is now supported natively — no vendor rejection.
 
-        if (runtimeManager.getStatus() != "ok") {
-            runtimeManager.startWorker()
-            waitForPythonHealth(5000)
-        }
-
-        val credentialBody = JSONObject().put("value", apiKey).toString()
-        val setCred = proxyWorkerRequest("/vault/credentials/openai_api_key", "POST", credentialBody)
-            ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-        if (setCred.status != Response.Status.OK) {
-            return jsonError(Response.Status.INTERNAL_ERROR, "worker_credential_set_failed")
-        }
-
-        val providerUrl = if (vendor == "openai") {
-            if (baseUrl.endsWith("/responses")) baseUrl else "$baseUrl/responses"
-        } else {
-            if (baseUrl.endsWith("/chat/completions")) baseUrl else "$baseUrl/chat/completions"
-        }
-        val cfgBody = JSONObject()
-            .put("enabled", true)
-            .put("auto_start", true)
-            .put("tool_policy", "required")
-            .put("provider_url", providerUrl)
-            .put("model", model)
-            .put("api_key_credential", "openai_api_key")
-            .put("system_prompt", buildWorkerSystemPrompt())
-            .toString()
-        val setCfg = proxyWorkerRequest("/brain/config", "POST", cfgBody)
-            ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-        if (setCfg.status != Response.Status.OK) {
-            return jsonError(Response.Status.INTERNAL_ERROR, "worker_config_set_failed")
-        }
-
-        val startResp = proxyWorkerRequest("/brain/start", "POST", "{}")
-            ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "python_unavailable")
-        if (startResp.status != Response.Status.OK) {
-            return jsonError(Response.Status.INTERNAL_ERROR, "worker_start_failed")
-        }
+        val providerUrl = agentConfigManager.resolveProviderUrl(vendor, baseUrl)
+        val runtime = getOrCreateAgentRuntime()
+        val result = runtime.start()
 
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
                 .put("provider_url", providerUrl)
                 .put("model", model)
+                .put("native", true)
         )
     }
 
@@ -13040,28 +13143,22 @@ class LocalHttpServer(
     }
 
     private fun notifyBrainPermissionResolved(req: jp.espresso3389.methings.perm.PermissionStore.PermissionRequest) {
-        // Best-effort: notify the Python brain runtime that a permission was approved/denied so it
+        // Best-effort: notify the native agent runtime that a permission was approved/denied so it
         // can resume without requiring the user to manually say "continue".
-        //
-        // Avoid starting Python just for this; if the worker isn't running yet, ignore.
         try {
-            if (runtimeManager.getStatus() != "ok") return
-            val body = JSONObject()
-                .put("name", "permission.resolved")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("permission_id", req.id)
-                        .put("status", req.status)
-                        .put("tool", req.tool)
-                        .put("detail", req.detail)
-                        .put("identity", req.identity)
-                        // For agent-originated requests, identity is the chat session_id.
-                        .put("session_id", req.identity)
-                        .put("capability", req.capability)
-                )
-                .toString()
-            proxyWorkerRequest("/brain/inbox/event", "POST", body)
+            val runtime = agentRuntime ?: return
+            if (!runtime.isRunning()) return
+            runtime.enqueueEvent(
+                name = "permission.resolved",
+                payload = JSONObject()
+                    .put("permission_id", req.id)
+                    .put("status", req.status)
+                    .put("tool", req.tool)
+                    .put("detail", req.detail)
+                    .put("identity", req.identity)
+                    .put("session_id", req.identity)
+                    .put("capability", req.capability),
+            )
         } catch (_: Exception) {
         }
     }
@@ -13075,15 +13172,16 @@ class LocalHttpServer(
         coalesceWindowMs: Long? = null
     ) {
         try {
-            if (runtimeManager.getStatus() != "ok") return
-            val body = JSONObject()
-                .put("name", name.trim().ifBlank { "unnamed_event" })
-                .put("payload", payload)
-                .put("priority", priority.trim().ifBlank { "normal" })
-                .put("interrupt_policy", interruptPolicy.trim().ifBlank { "turn_end" })
-            if (!coalesceKey.isNullOrBlank()) body.put("coalesce_key", coalesceKey.trim())
-            if ((coalesceWindowMs ?: 0L) > 0L) body.put("coalesce_window_ms", coalesceWindowMs!!.coerceIn(0L, 86_400_000L))
-            proxyWorkerRequest("/brain/inbox/event", "POST", body.toString())
+            val runtime = agentRuntime ?: return
+            if (!runtime.isRunning()) return
+            runtime.enqueueEvent(
+                name = name.trim().ifBlank { "unnamed_event" },
+                payload = payload,
+                priority = priority.trim().ifBlank { "normal" },
+                interruptPolicy = interruptPolicy.trim().ifBlank { "turn_end" },
+                coalesceKey = coalesceKey?.trim() ?: "",
+                coalesceWindowMs = coalesceWindowMs?.coerceIn(0L, 86_400_000L) ?: 0L,
+            )
         } catch (_: Exception) {
         }
     }
@@ -13091,23 +13189,19 @@ class LocalHttpServer(
     private fun notifyBrainPermissionAutoApproved(req: jp.espresso3389.methings.perm.PermissionStore.PermissionRequest) {
         // Best-effort: add a chat-visible reference entry when dangerous auto-approval is active.
         try {
-            if (runtimeManager.getStatus() != "ok") return
-            val sid = req.identity.trim()
-            val body = JSONObject()
-                .put("name", "permission.auto_approved")
-                .put(
-                    "payload",
-                    JSONObject()
-                        .put("permission_id", req.id)
-                        .put("status", req.status)
-                        .put("tool", req.tool)
-                        .put("detail", req.detail)
-                        .put("identity", req.identity)
-                        .put("session_id", sid)
-                        .put("capability", req.capability)
-                )
-                .toString()
-            proxyWorkerRequest("/brain/inbox/event", "POST", body)
+            val runtime = agentRuntime ?: return
+            if (!runtime.isRunning()) return
+            runtime.enqueueEvent(
+                name = "permission.auto_approved",
+                payload = JSONObject()
+                    .put("permission_id", req.id)
+                    .put("status", req.status)
+                    .put("tool", req.tool)
+                    .put("detail", req.detail)
+                    .put("identity", req.identity)
+                    .put("session_id", req.identity.trim())
+                    .put("capability", req.capability),
+            )
         } catch (_: Exception) {
         }
     }

@@ -2,6 +2,8 @@
 
 This file contains starter prompts for me.things so it can use local APIs, filesystem, and command-line tools consistently.
 
+The agent has a built-in default system prompt (see `AgentConfig.kt`). The prompts below can be used to customize behavior.
+
 ## 1) Recommended System Prompt
 Use this as `system_prompt` in `POST /brain/config`.
 

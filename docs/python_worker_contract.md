@@ -1,45 +1,34 @@
-# Python Worker Contract
+# Termux Worker Contract (Optional)
 
-The Python server is a **worker**. Kotlin owns the always‑on control plane, permissions, SSHD, UI hosting, and credential vault. The Python worker is started on demand and can crash without taking down the app.
+The AI agent runs natively in the app process. Termux is **optional** and provides a general-purpose Linux environment for agentic shell tasks.
 
-## Responsibilities (Python)
-- Agent execution logic and tool orchestration.
-- Running user/agent code in isolated child processes (future).
-- Compute-heavy or Python‑native features (e.g., indexing, transforms, SDK calls).
-- Expose worker endpoints **only** for tasks/agents (not UI or system control).
+The app owns the entire control plane: agent runtime, UI hosting, permissions, SSHD control, credential vault, and all `/brain/*` routes.
 
-## Not Responsibilities (Python)
-- No UI hosting (served by Kotlin).
+## Responsibilities (Termux — when installed)
+- Provide a Linux environment for shell command execution on behalf of the agent.
+- Host SSH server (OpenSSH via Termux).
+- Run user/agent scripts and package management (`pip install`, etc.).
+
+## Not Responsibilities (Termux)
+- No agent execution or tool orchestration (handled by the built-in AgentRuntime).
+- No UI hosting (served by the app).
 - No permissions or access control decisions.
-- No SSHD management.
+- No SSHD management decisions (the app controls start/stop).
 - No credential storage or key management.
-- No always‑on lifecycle guarantees.
+- No always-on lifecycle guarantees.
 
-## Allowed Endpoints (Worker)
-These are handled by the Python worker when it is running:
-- `POST /agent/run`
-- `GET /agent/tasks`
-- `GET /agent/tasks/{id}`
-- `GET /logs/stream` (optional if log streaming is done by Kotlin)
+## Shell Exec Endpoint (Worker)
+When the Termux worker is running (`127.0.0.1:8776`):
+- `POST /shell/exec` — execute allowed commands (`python`, `pip`, `curl`)
 
-## Disallowed / Deprecated Endpoints
-These should remain in Kotlin (or be removed from Python):
-- `/ui/*`
-- `/permissions/*`
-- `/ssh/*`
-- `/vault/*`
-- `/python/*` (Kotlin control plane owns worker lifecycle)
-
-## Data Access Rules
-- Sensitive data (credentials) must be accessed **through Kotlin APIs**, not directly from Python.
-- Python may receive only the minimum necessary inputs per request.
-- Long‑running jobs should report progress back to Kotlin via status endpoints or logs.
+The agent's ToolExecutor delegates shell commands to this endpoint via HTTP loopback.
 
 ## Lifecycle
-- Kotlin starts the worker when a task requires it.
-- Kotlin may restart the worker as an emergency action.
-- The UI only exposes an “Emergency restart” control.
+- Worker is **not** auto-started at boot.
+- The app starts the worker on-demand when the agent invokes a shell tool.
+- Worker can crash without affecting core agent functionality — only shell tool calls will fail.
+- `TermuxWorkerManager.ensureWorkerForShell()` starts the worker if not already running.
 
-## Future Notes
-- Add a child‑process model so user/agent code runs in separate Python processes.
-- Define a strict per‑tool allowlist enforced by Kotlin.
+## Data Access Rules
+- Sensitive data (credentials) must be accessed **through app APIs**, not directly from Termux processes.
+- Termux receives only the minimum necessary inputs per request.

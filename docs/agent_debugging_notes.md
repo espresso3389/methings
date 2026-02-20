@@ -1,33 +1,33 @@
 # Agent/App Debugging Notes (methings)
 
-This document is a grab-bag of issues we've hit while running the embedded
-Python worker + agent on Android, and the quickest ways to reproduce / debug
-them.
+This document is a grab-bag of issues we've hit while running the agent on
+Android, and the quickest ways to reproduce / debug them.
 
 ## Local Control Plane Basics
 
-The Android app exposes a loopback-only HTTP API (via Kotlin) and forwards some
-operations to the embedded Python worker.
+The Android app exposes a loopback-only HTTP API. The agent runs
+in-process (`AgentRuntime`). Shell tools (`run_python`/`run_pip`/`run_curl`)
+are delegated to Termux when installed.
 
 Useful endpoints (via `adb forward`):
 
 - `GET /health`
-- `POST /shell/exec` with `{cmd:"python"|"pip"|"curl", args:"...", cwd:"..."}`
+- `POST /shell/exec` with `{cmd:"python"|"pip"|"curl", args:"...", cwd:"..."}` (requires Termux)
 - `GET /brain/sessions`, `GET /brain/messages`
 - `POST /brain/debug/comment` (local-only) to inject debug/system notes into a session timeline
 
-## Common Python Errors
+## Common Shell Errors (Termux)
 
 ### `error: [Errno 2] No such file or directory: '/data/.../files/user/-'`
 
-Cause: `python -` (stdin mode) isn't supported by the on-device worker.
+Cause: `python -` (stdin mode) isn't supported by the on-device shell.
 
 Fix: use `python -c "..."` or run a script file under the user dir.
 
 ### `error: unexpected character after line continuation character (<string>, line 1)`
 
 Cause: passing code to `python -c` that contains literal backslash sequences
-like `\\n` (two characters) in places Python interprets as line continuations.
+like `\\n` (two characters) in places the interpreter treats as line continuations.
 
 Fix:
 
@@ -63,7 +63,7 @@ must be used to obtain permission and file descriptors.
 Status:
 
 - `pyusb` is installed and can load the bundled `libusb` library.
-- Full USB device access requires bridging from Kotlin (USBManager) to libusb
+- Full USB device access requires bridging from the app (USBManager) to libusb
   (typically via fd handoff / wrap APIs). Until then, `get_backend()` may be
   `None` even though the library exists.
 

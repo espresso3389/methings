@@ -143,6 +143,21 @@ class TermuxWorkerManager(private val context: Context) {
         context.sendBroadcast(intent)
     }
 
+    /**
+     * Returns true if the worker is only needed for shell tools (run_python, run_pip, run_curl).
+     * The AI agent now runs natively in Kotlin; Termux is only needed for Python/shell execution.
+     */
+    fun isNeededForShellOnly(): Boolean = true
+
+    /**
+     * Start worker on-demand for shell execution only. Does not auto-start at boot.
+     * Returns true if worker is already running or was successfully started.
+     */
+    fun ensureWorkerForShell(): Boolean {
+        if (getStatus() == "ok" && isWorkerResponding()) return true
+        return startWorker()
+    }
+
     companion object {
         private const val TAG = "TermuxWorkerManager"
         const val ACTION_WORKER_HEALTH = "jp.espresso3389.methings.WORKER_HEALTH"

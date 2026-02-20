@@ -1,9 +1,9 @@
 # AGENTS.md
 
 ## Project Goal
-Build an Android 14+ app that provides a Python development environment with:
+Build an Android 14+ app that provides an agentic device environment with:
 - Chromium/WebView-based GUI for IDE/agentic coding
-- Cloud AI providers (Claude, OpenAI, Kimi, etc.)
+- Cloud AI providers (Claude, OpenAI, Kimi, etc.) via built-in agent runtime
 - Local HTTP service on device
 - Explicit, user-granted access to local device resources
 - Extensible agent framework
@@ -11,7 +11,8 @@ Build an Android 14+ app that provides a Python development environment with:
 ## Target Platform
 - Android 14+
 - WebView for UI rendering
-- Termux for Python runtime and SSH (external app, bootstrapped by methings)
+- Built-in agent runtime (zero-setup, no external dependencies for core functionality)
+- Termux optional — provides general-purpose Linux environment for agentic shell tasks and SSH
 - Background service required
 
 ## Core Tenets
@@ -25,22 +26,25 @@ Build an Android 14+ app that provides a Python development environment with:
 - Tool-driven: if the user asks to do something, the agent should use tools and/or write+run code to actually do it (no pretending).
 - Minimal questions: only ask the user when consent is required or when a requested capability is not available yet.
 
-## Suggested Architecture
-- Android app (Kotlin), minimal native wrapper
+## Architecture
+- Android app, minimal native wrapper
   - WebView/Chromium UI (custom shell)
   - Permission broker (runtime prompts + audit log)
 - Local service layer (on-device)
-  - Local HTTP server for UI + control APIs
-  - Termux-managed Python worker (started on-demand via RUN_COMMAND intent)
+  - Local HTTP server for UI + control APIs (`127.0.0.1:33389`)
+  - Built-in agent runtime (`AgentRuntime` in `service.agent` package)
   - Background service for agent tasks
-- Agent orchestration
-  - Cloud provider adapters (OpenAI/Claude/Kimi/etc.)
-  - Tool invocation router (with gating + allowlist)
-  - Session context and state storage
+- Agent orchestration (built-in)
+  - `LlmClient`: SSE streaming to OpenAI Responses API and Anthropic Messages API
+  - `ToolExecutor`: tool dispatch (filesystem, device API, journal, memory, shell, web search, cloud requests)
+  - `DeviceToolBridge`: calls device handlers via HTTP loopback
+  - `AgentStorage`: chat persistence in SQLite (`agent/agent.db`)
+  - `JournalStore`: JSONL session journal (`user/journal/`)
+- Optional Termux (general-purpose Linux environment for agentic shell tasks)
 
 ## File Layout (planned)
 - app/                # Android project
-- server/             # Local Python service + agent router
+- server/             # On-device server code and tools
 - docs/               # Specs and design docs
 - scripts/            # Build and bootstrap utilities
 - AGENTS.md           # This file
@@ -59,9 +63,9 @@ Build an Android 14+ app that provides a Python development environment with:
 - Add concise comments only when logic is non-obvious.
 - Keep security prompts minimal but explicit.
 - No silent elevation or background actions.
-- API docs policy: the canonical API reference is the OpenAPI 3.1.0 spec under `user/docs/openapi/`. When adding or changing endpoints, update the relevant `paths/*.yaml` file and `openapi.yaml`. Agent-side tool conventions (Python runtime helpers, chat shortcuts) are in `user/docs/agent_tools.md`.
+- API docs policy: the canonical API reference is the OpenAPI 3.1.0 spec under `user/docs/openapi/`. When adding or changing endpoints, update the relevant `paths/*.yaml` file and `openapi.yaml`. Agent-side tool conventions (runtime helpers, chat shortcuts) are in `user/docs/agent_tools.md`.
 - API scope policy: the OpenAPI spec is agent-facing only. Include user/agent-invokable APIs (for example BLE device-operation APIs), but exclude internal plumbing/debug-only endpoints (for example me.me/me.sync internal transport wiring); document those in `docs/DEBUGGING.md` instead.
-- On-device Python tooling: managed by Termux (pkg + pip). Host-side app development must use uv.
+- On-device shell tooling (optional): managed by Termux (pkg + pip). Host-side app development must use uv.
 - WSL usage is allowed but only when the user explicitly opts in for that session.
 
 ## Security & Permissions
@@ -72,14 +76,15 @@ Build an Android 14+ app that provides a Python development environment with:
 - Credential keys live in Android Keystore and are removed on app uninstall; vault data is not intended to be backed up.
 
 ## Background Execution
-- Background service runs local HTTP service.
-- Python worker runs in Termux, started on-demand via RUN_COMMAND intent, and can be stopped independently.
+- Background service runs local HTTP service and built-in agent runtime.
+- Agent runs in-process — no Termux required for core agent functionality.
+- Termux is started on-demand when the agent invokes shell tools or SSH.
 - SSH (OpenSSH via Termux) is controlled via `/termux/sshd/start` and `/termux/sshd/stop` endpoints.
 
 ## Testing
 - Unit tests for permission broker and tool router.
-- Integration tests for WebView <-> local service <-> Python worker.
-- Manual test checklist for Termux + permission prompts.
+- Integration tests for WebView <-> local service <-> agent runtime.
+- Manual test checklist for agent functionality with and without Termux.
 
 ## Device Provisioning (OAuth Sign-In)
 - Users sign in via Google or GitHub through the gateway's server-side OAuth flow (opened in CustomTabs from the app)
@@ -95,7 +100,7 @@ Build an Android 14+ app that provides a Python development environment with:
   - `app/android/app/src/main/java/jp/espresso3389/methings/ui/WebAppBridge.kt` — `openInBrowser()` JS bridge method
 
 ## Current UI (2026-02)
-- Minimal control panel in WebView (Termux status, agent worker, Wi-Fi IP, Reset UI).
+- Minimal control panel in WebView (agent status, Termux status, Wi-Fi IP, Reset UI).
 - UI assets are served from `files/user/www` and can be reset from the UI or via `POST /ui/reset`.
 - No chat/terminal/shell UI at the moment (to be reconsidered later).
 

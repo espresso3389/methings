@@ -8858,7 +8858,7 @@
 
       async function refreshPython() {
         try {
-          const res = await fetch(API + "/python/status");
+          const res = await fetch(API + "/termux/status");
           if (!res.ok) throw 0;
           const data = await res.json();
           setStatus(pythonStatus, data.status || "offline");
@@ -9293,7 +9293,7 @@
         if (typeof AndroidBridge !== "undefined" && AndroidBridge.restartPythonWorker) {
           AndroidBridge.restartPythonWorker();
         } else {
-          await fetch(API + "/python/restart", { method: "POST" });
+          await fetch(API + "/termux/restart", { method: "POST" });
         }
         pythonDetail.textContent = "Restart requested";
         setStatus(pythonStatus, "starting");
