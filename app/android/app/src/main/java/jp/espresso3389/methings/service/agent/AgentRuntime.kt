@@ -8,6 +8,12 @@ import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 
+data class ExtractedMedia(
+    val base64: String,
+    val mimeType: String,
+    val mediaType: String,  // "image" or "audio"
+)
+
 class AgentRuntime(
     private val userDir: File,
     private val sysDir: File,
@@ -347,6 +353,7 @@ class AgentRuntime(
         }
 
         val providerKind = llmClient.detectProviderKind(providerUrl, vendor)
+        Log.i(TAG, "Provider: kind=$providerKind, vendor=$vendor, url=$providerUrl, model=$model")
         val headers = llmClient.buildHeaders(providerKind, apiKey)
 
         val dialogueLimit = config.intWithProfile("dialogue_window_user_assistant", 40, 10, 120)
@@ -379,6 +386,16 @@ class AgentRuntime(
             ProviderKind.GOOGLE_GEMINI -> ToolDefinitions.geminiTools(ToolDefinitions.deviceApiActionNames())
         }
 
+        // Determine which media types the provider supports natively
+        val supportedMediaTypes: Set<String> = when (providerKind) {
+            ProviderKind.GOOGLE_GEMINI -> setOf("image", "audio")
+            ProviderKind.ANTHROPIC, ProviderKind.OPENAI_RESPONSES -> setOf("image")
+            ProviderKind.OPENAI_CHAT -> if (!providerUrl.contains("generativelanguage.googleapis.com")) setOf("image") else emptySet()
+        }
+
+        // Expose supported media types to ToolExecutor so analyze_image/analyze_audio can guard early
+        toolExecutor.supportedMediaTypes = supportedMediaTypes
+
         // Gemini uses a different URL format: {base}/models/{model}:streamGenerateContent?key={apiKey}&alt=sse
         val effectiveProviderUrl = if (providerKind == ProviderKind.GOOGLE_GEMINI) {
             val base = providerUrl.trimEnd('/')
@@ -387,10 +404,10 @@ class AgentRuntime(
             providerUrl
         }
 
-        val systemPrompt = buildSystemPrompt(config)
+        val systemPrompt = buildSystemPrompt(config, supportedMediaTypes)
         val journalBlob = buildJournalBlob(journalCurrent, sessionId, persistentMemory)
 
-        var pendingInput = buildInitialInput(providerKind, filteredDialogue, journalBlob, curText, item)
+        var pendingInput = buildInitialInput(providerKind, filteredDialogue, journalBlob, curText, item, supportedMediaTypes)
         var forcedRounds = 0
 
         for (roundIdx in 0 until maxRounds) {
@@ -403,6 +420,11 @@ class AgentRuntime(
             })
 
             val body = buildRequestBody(providerKind, model, tools, pendingInput, systemPrompt, toolRequiredUnsatisfied)
+
+            // Debug: log request structure (content types, not full data) for troubleshooting
+            if (providerKind == ProviderKind.GOOGLE_GEMINI) {
+                logGeminiRequestStructure(body)
+            }
 
             // Make API call with retries
             var payload: JSONObject? = null
@@ -604,17 +626,22 @@ class AgentRuntime(
                     }
                 }
 
-                // Extract image from tool result BEFORE truncation
-                val imageData = extractImageFromToolResult(result)
+                // Extract media from tool result BEFORE truncation (only if provider supports the media type)
+                val mediaData = extractMediaFromToolResult(result, supportedMediaTypes)
+                if (mediaData != null) {
+                    Log.i(TAG, "Tool '$name' produced ${mediaData.mediaType}: ${mediaData.mimeType}, ${mediaData.base64.length} chars b64, sending as multimodal")
+                } else if (supportedMediaTypes.isNotEmpty()) {
+                    Log.d(TAG, "Tool '$name' result has no extractable media (supported=$supportedMediaTypes)")
+                }
 
                 val truncated = ToolExecutor.truncateToolOutput(result,
                     config.intWithProfile("max_tool_output_chars", 12000, 2000, 100000),
                     config.intWithProfile("max_tool_output_list_items", 80, 10, 500))
 
-                // Strip redundant base64 data from text when image is sent separately
-                val textResult = if (imageData != null) ToolExecutor.stripImageData(truncated) else truncated
+                // Strip redundant base64 data from text when media is sent separately
+                val textResult = if (mediaData != null) ToolExecutor.stripMediaData(truncated) else truncated
 
-                appendToolResult(providerKind, pendingInput, callId, textResult, name, imageData)
+                appendToolResult(providerKind, pendingInput, callId, textResult, name, mediaData)
             }
 
             // Nudge to stop
@@ -829,42 +856,81 @@ class AgentRuntime(
         return Pair(messageTexts, calls)
     }
 
-    // --- Image / Multimodal Helpers ---
+    // --- Media / Multimodal Helpers ---
 
-    /** Extract image from tool result — checks rel_path/path fields for image extensions. */
-    private fun extractImageFromToolResult(result: JSONObject): Pair<String, String>? {
-        // Check direct data_b64 with a known image path
-        val path = result.optString("rel_path", result.optString("path", ""))
-        if (path.isNotEmpty() && ImageEncoder.isImagePath(path)) {
-            // Try to read and encode the file
-            val file = File(userDir, path)
-            if (file.exists()) {
-                return ImageEncoder.encodeImageFile(file)
-            }
-        }
-        // Check nested result object (device_api responses like camera.capture, webview.screenshot)
-        val nested = result.optJSONObject("result")
-        if (nested != null) {
-            val nestedPath = nested.optString("rel_path", nested.optString("path", ""))
-            if (nestedPath.isNotEmpty() && ImageEncoder.isImagePath(nestedPath)) {
-                val file = File(userDir, nestedPath)
-                if (file.exists()) {
-                    return ImageEncoder.encodeImageFile(file)
+    /** Extract media from tool result.
+     *  1. Check for explicit _media marker (from analyze_image/analyze_audio).
+     *  2. Auto-detect from rel_path/path fields (image and audio extensions).
+     *  Only returns media whose type is in [supportedTypes]. */
+    private fun extractMediaFromToolResult(result: JSONObject, supportedTypes: Set<String>): ExtractedMedia? {
+        if (supportedTypes.isEmpty()) return null
+        return try {
+            // 1. Check for explicit _media marker (from analyze_image/analyze_audio)
+            val media = result.optJSONObject("_media")
+            if (media != null) {
+                val type = media.optString("type", "")
+                val b64 = media.optString("base64", "")
+                val mime = media.optString("mime_type", "")
+                if (type in supportedTypes && b64.isNotEmpty() && mime.isNotEmpty()) {
+                    Log.i(TAG, "extractMedia: found _media marker type=$type, mime=$mime")
+                    return ExtractedMedia(b64, mime, type)
+                } else if (type.isNotEmpty() && type !in supportedTypes) {
+                    Log.i(TAG, "extractMedia: _media type=$type not supported by current provider (supported=$supportedTypes)")
                 }
             }
+
+            // 2. Auto-detect from rel_path/path fields
+            val pathsToCheck = mutableListOf<String>()
+            val directPath = result.optString("rel_path", result.optString("path", ""))
+            if (directPath.isNotEmpty()) pathsToCheck.add(directPath)
+            val nested = result.optJSONObject("result")
+            if (nested != null) {
+                val nestedPath = nested.optString("rel_path", nested.optString("path", ""))
+                if (nestedPath.isNotEmpty()) pathsToCheck.add(nestedPath)
+            }
+
+            for (path in pathsToCheck) {
+                // Check images
+                if ("image" in supportedTypes && MediaEncoder.isImagePath(path)) {
+                    val file = File(userDir, path)
+                    Log.d(TAG, "extractMedia: found image path='$path', exists=${file.exists()}")
+                    if (file.exists()) {
+                        val encoded = MediaEncoder.encodeImage(file)
+                        if (encoded != null) {
+                            Log.i(TAG, "extractMedia: encoded image from '$path' (${encoded.base64.length} chars base64)")
+                            return ExtractedMedia(encoded.base64, encoded.mimeType, "image")
+                        }
+                    }
+                }
+                // Check audio
+                if ("audio" in supportedTypes && MediaEncoder.isAudioPath(path)) {
+                    val file = File(userDir, path)
+                    Log.d(TAG, "extractMedia: found audio path='$path', exists=${file.exists()}")
+                    if (file.exists()) {
+                        val encoded = MediaEncoder.encodeAudio(file)
+                        if (encoded != null) {
+                            Log.i(TAG, "extractMedia: encoded audio from '$path' (${encoded.base64.length} chars base64)")
+                            return ExtractedMedia(encoded.base64, encoded.mimeType, "audio")
+                        }
+                    }
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "extractMedia: failed", e)
+            null
         }
-        return null
     }
 
-    /** Extract image rel_paths from user text (lines like "rel_path: photos/img.jpg"). */
-    private fun extractUserImagePaths(text: String): Pair<String, List<String>> {
+    /** Extract media rel_paths from user text (lines like "rel_path: photos/img.jpg"). */
+    private fun extractUserMediaPaths(text: String): Pair<String, List<String>> {
         val paths = mutableListOf<String>()
         val cleanedLines = mutableListOf<String>()
         for (line in text.lines()) {
             val trimmed = line.trim()
             if (trimmed.startsWith("rel_path:")) {
                 val p = trimmed.substringAfter("rel_path:").trim()
-                if (p.isNotEmpty() && ImageEncoder.isImagePath(p)) {
+                if (p.isNotEmpty() && MediaEncoder.isMediaPath(p)) {
                     paths.add(p)
                     continue  // Remove this line from text sent to LLM
                 }
@@ -874,12 +940,12 @@ class AgentRuntime(
         return Pair(cleanedLines.joinToString("\n"), paths)
     }
 
-    /** Build multimodal content array with text + image blocks for the current user message. */
+    /** Build multimodal content array with text + media blocks for the current user message. */
     private fun buildMultimodalUserContent(
-        kind: ProviderKind, text: String, imagePairs: List<Pair<String, String>>
+        kind: ProviderKind, text: String, mediaParts: List<ExtractedMedia>
     ): Any {
-        if (imagePairs.isEmpty()) {
-            // No images — return plain text for providers that support it
+        if (mediaParts.isEmpty()) {
+            // No media — return plain text for providers that support it
             return when (kind) {
                 ProviderKind.OPENAI_RESPONSES -> {
                     JSONArray().put(JSONObject().put("type", "input_text").put("text", text))
@@ -890,41 +956,50 @@ class AgentRuntime(
                 else -> text  // OPENAI_CHAT and ANTHROPIC accept plain strings
             }
         }
-        // Has images — build multimodal content
+        // Has media — build multimodal content
         return when (kind) {
             ProviderKind.OPENAI_RESPONSES -> {
                 val arr = JSONArray()
                 arr.put(JSONObject().put("type", "input_text").put("text", text))
-                for ((b64, mime) in imagePairs) {
-                    arr.put(JSONObject().apply {
-                        put("type", "input_image")
-                        put("image_url", "data:$mime;base64,$b64")
-                    })
+                for (m in mediaParts) {
+                    if (m.mediaType == "image") {
+                        arr.put(JSONObject().apply {
+                            put("type", "input_image")
+                            put("image_url", "data:${m.mimeType};base64,${m.base64}")
+                        })
+                    }
+                    // OpenAI Responses doesn't support inline audio — skip
                 }
                 arr
             }
             ProviderKind.OPENAI_CHAT -> {
                 val arr = JSONArray()
                 arr.put(JSONObject().put("type", "text").put("text", text))
-                for ((b64, mime) in imagePairs) {
-                    arr.put(JSONObject().apply {
-                        put("type", "image_url")
-                        put("image_url", JSONObject().put("url", "data:$mime;base64,$b64"))
-                    })
+                for (m in mediaParts) {
+                    if (m.mediaType == "image") {
+                        arr.put(JSONObject().apply {
+                            put("type", "image_url")
+                            put("image_url", JSONObject().put("url", "data:${m.mimeType};base64,${m.base64}"))
+                        })
+                    }
+                    // OpenAI Chat doesn't support inline audio — skip
                 }
                 arr
             }
             ProviderKind.ANTHROPIC -> {
                 val arr = JSONArray()
-                for ((b64, mime) in imagePairs) {
-                    arr.put(JSONObject().apply {
-                        put("type", "image")
-                        put("source", JSONObject().apply {
-                            put("type", "base64")
-                            put("media_type", mime)
-                            put("data", b64)
+                for (m in mediaParts) {
+                    if (m.mediaType == "image") {
+                        arr.put(JSONObject().apply {
+                            put("type", "image")
+                            put("source", JSONObject().apply {
+                                put("type", "base64")
+                                put("media_type", m.mimeType)
+                                put("data", m.base64)
+                            })
                         })
-                    })
+                    }
+                    // Anthropic doesn't support inline audio — skip
                 }
                 arr.put(JSONObject().put("type", "text").put("text", text))
                 arr
@@ -932,11 +1007,12 @@ class AgentRuntime(
             ProviderKind.GOOGLE_GEMINI -> {
                 val arr = JSONArray()
                 arr.put(JSONObject().put("text", text))
-                for ((b64, mime) in imagePairs) {
+                for (m in mediaParts) {
+                    // Gemini supports both image and audio via inline_data
                     arr.put(JSONObject().apply {
                         put("inline_data", JSONObject().apply {
-                            put("mime_type", mime)
-                            put("data", b64)
+                            put("mime_type", m.mimeType)
+                            put("data", m.base64)
                         })
                     })
                 }
@@ -947,17 +1023,36 @@ class AgentRuntime(
 
     private fun buildInitialInput(
         kind: ProviderKind, dialogue: List<JSONObject>,
-        journalBlob: String, curText: String, item: JSONObject
+        journalBlob: String, curText: String, item: JSONObject,
+        supportedMedia: Set<String> = emptySet()
     ): JSONArray {
         val input = JSONArray()
 
-        // Extract images from current user message
-        val (cleanedText, imagePaths) = extractUserImagePaths(curText)
-        val userImagePairs = mutableListOf<Pair<String, String>>()
-        for (p in imagePaths) {
-            val file = File(userDir, p)
-            val encoded = ImageEncoder.encodeImageFile(file)
-            if (encoded != null) userImagePairs.add(encoded)
+        // Extract media from current user message (only if provider supports it)
+        val (cleanedText, mediaPaths) = extractUserMediaPaths(curText)
+        val userMedia = mutableListOf<ExtractedMedia>()
+        if (supportedMedia.isNotEmpty() && mediaPaths.isNotEmpty()) {
+            Log.i(TAG, "buildInitialInput: found ${mediaPaths.size} user media path(s): $mediaPaths")
+            for (p in mediaPaths) {
+                val file = File(userDir, p)
+                if (MediaEncoder.isImagePath(p) && "image" in supportedMedia) {
+                    val encoded = MediaEncoder.encodeImage(file)
+                    if (encoded != null) {
+                        userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "image"))
+                        Log.i(TAG, "buildInitialInput: encoded user image '$p' (${encoded.base64.length} chars b64)")
+                    } else {
+                        Log.w(TAG, "buildInitialInput: failed to encode user image '$p' (file exists=${file.exists()})")
+                    }
+                } else if (MediaEncoder.isAudioPath(p) && "audio" in supportedMedia) {
+                    val encoded = MediaEncoder.encodeAudio(file)
+                    if (encoded != null) {
+                        userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "audio"))
+                        Log.i(TAG, "buildInitialInput: encoded user audio '$p' (${encoded.base64.length} chars b64)")
+                    } else {
+                        Log.w(TAG, "buildInitialInput: failed to encode user audio '$p' (file exists=${file.exists()})")
+                    }
+                }
+            }
         }
         val finalUserText = "$journalBlob\n\n$cleanedText"
 
@@ -975,8 +1070,8 @@ class AgentRuntime(
                 // Journal blob
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", journalBlob))))
-                // Current user message (with images if present)
-                val content = buildMultimodalUserContent(kind, cleanedText, userImagePairs)
+                // Current user message (with media if present)
+                val content = buildMultimodalUserContent(kind, cleanedText, userMedia)
                 input.put(JSONObject().put("role", "user").put("content", content))
             }
             ProviderKind.OPENAI_CHAT -> {
@@ -987,7 +1082,7 @@ class AgentRuntime(
                         input.put(JSONObject().put("role", role).put("content", text))
                     }
                 }
-                val content = buildMultimodalUserContent(kind, finalUserText, userImagePairs)
+                val content = buildMultimodalUserContent(kind, finalUserText, userMedia)
                 input.put(JSONObject().put("role", "user").put("content", content))
             }
             ProviderKind.ANTHROPIC -> {
@@ -998,7 +1093,7 @@ class AgentRuntime(
                         input.put(JSONObject().put("role", role).put("content", text))
                     }
                 }
-                val content = buildMultimodalUserContent(kind, finalUserText, userImagePairs)
+                val content = buildMultimodalUserContent(kind, finalUserText, userMedia)
                 input.put(JSONObject().put("role", "user").put("content", content))
             }
             ProviderKind.GOOGLE_GEMINI -> {
@@ -1011,8 +1106,8 @@ class AgentRuntime(
                             .put("parts", JSONArray().put(JSONObject().put("text", text))))
                     }
                 }
-                // Current user message with journal + images
-                val parts = buildMultimodalUserContent(kind, finalUserText, userImagePairs)
+                // Current user message with journal + media
+                val parts = buildMultimodalUserContent(kind, finalUserText, userMedia)
                 input.put(JSONObject().put("role", "user").put("parts", parts))
             }
         }
@@ -1022,7 +1117,7 @@ class AgentRuntime(
     private fun appendToolResult(
         kind: ProviderKind, input: JSONArray, callId: String,
         result: JSONObject, toolName: String = "",
-        imageData: Pair<String, String>? = null
+        mediaData: ExtractedMedia? = null
     ) {
         when (kind) {
             ProviderKind.OPENAI_RESPONSES -> {
@@ -1031,27 +1126,27 @@ class AgentRuntime(
                     put("call_id", callId)
                     put("output", result.toString())
                 })
-                // Responses API: send image as a separate user input_image block
-                if (imageData != null) {
+                // Responses API: send image as a separate user input_image block (audio not supported)
+                if (mediaData != null && mediaData.mediaType == "image") {
                     input.put(JSONObject().apply {
                         put("role", "user")
                         put("content", JSONArray().apply {
                             put(JSONObject().apply {
                                 put("type", "input_image")
-                                put("image_url", "data:${imageData.second};base64,${imageData.first}")
+                                put("image_url", "data:${mediaData.mimeType};base64,${mediaData.base64}")
                             })
                         })
                     })
                 }
             }
             ProviderKind.OPENAI_CHAT -> {
-                if (imageData != null) {
-                    // Multimodal tool result: content is an array of text + image_url
+                if (mediaData != null && mediaData.mediaType == "image") {
+                    // Multimodal tool result: content is an array of text + image_url (audio not supported)
                     val contentArr = JSONArray()
                     contentArr.put(JSONObject().put("type", "text").put("text", result.toString()))
                     contentArr.put(JSONObject().apply {
                         put("type", "image_url")
-                        put("image_url", JSONObject().put("url", "data:${imageData.second};base64,${imageData.first}"))
+                        put("image_url", JSONObject().put("url", "data:${mediaData.mimeType};base64,${mediaData.base64}"))
                     })
                     input.put(JSONObject().apply {
                         put("role", "tool")
@@ -1072,13 +1167,14 @@ class AgentRuntime(
                     put("type", "text")
                     put("text", result.toString())
                 })
-                if (imageData != null) {
+                // Anthropic supports images but not audio
+                if (mediaData != null && mediaData.mediaType == "image") {
                     contentBlocks.put(JSONObject().apply {
                         put("type", "image")
                         put("source", JSONObject().apply {
                             put("type", "base64")
-                            put("media_type", imageData.second)
-                            put("data", imageData.first)
+                            put("media_type", mediaData.mimeType)
+                            put("data", mediaData.base64)
                         })
                     })
                 }
@@ -1103,7 +1199,7 @@ class AgentRuntime(
                 })
             }
             ProviderKind.GOOGLE_GEMINI -> {
-                // Gemini: functionResponse part + optional inline_data
+                // Gemini: functionResponse part + optional inline_data (supports both image and audio)
                 val parts = JSONArray()
                 parts.put(JSONObject().apply {
                     put("functionResponse", JSONObject().apply {
@@ -1111,11 +1207,11 @@ class AgentRuntime(
                         put("response", result)
                     })
                 })
-                if (imageData != null) {
+                if (mediaData != null) {
                     parts.put(JSONObject().apply {
                         put("inline_data", JSONObject().apply {
-                            put("mime_type", imageData.second)
-                            put("data", imageData.first)
+                            put("mime_type", mediaData.mimeType)
+                            put("data", mediaData.base64)
                         })
                     })
                 }
@@ -1186,12 +1282,22 @@ class AgentRuntime(
 
     // --- Context Helpers ---
 
-    private fun buildSystemPrompt(config: AgentConfig): String {
+    private fun buildSystemPrompt(config: AgentConfig, supportedMediaTypes: Set<String> = emptySet()): String {
         val base = config.systemPrompt.ifEmpty { AgentConfig.DEFAULT_SYSTEM_PROMPT }
         val policyBlob = userRootPolicyBlob()
         val prompt = if (policyBlob.isNotEmpty()) "$base\n\n$policyBlob" else base
+
+        // Append provider media capability info so the agent knows what's available
+        val mediaInfo = if (supportedMediaTypes.isNotEmpty()) {
+            val types = supportedMediaTypes.sorted().joinToString(", ")
+            val suffix = if ("audio" !in supportedMediaTypes) " Audio analysis requires switching to a Gemini model." else ""
+            "\nCurrent provider supports: $types.$suffix"
+        } else {
+            "\nCurrent provider does not support multimodal media input."
+        }
+
         // Language instruction MUST come last, after policy docs, so it's not drowned out.
-        return "$prompt\n\nIMPORTANT: Always respond in the same language the user writes in."
+        return "$prompt$mediaInfo\n\nIMPORTANT: Always respond in the same language the user writes in."
     }
 
     private fun buildJournalBlob(journalCurrent: String, sessionId: String, persistentMemory: String): String {
@@ -1329,7 +1435,42 @@ class AgentRuntime(
             "memory_get" -> "Reading memory"
             "memory_set" -> "Writing memory"
             "sleep" -> "Sleeping"
+            "analyze_image" -> "Analyzing image ${args.optString("path", "").substringAfterLast('/')}"
+            "analyze_audio" -> "Analyzing audio ${args.optString("path", "").substringAfterLast('/')}"
             else -> name
+        }
+    }
+
+    /** Log Gemini request structure for debugging (without dumping full base64 data). */
+    private fun logGeminiRequestStructure(body: JSONObject) {
+        try {
+            val contents = body.optJSONArray("contents") ?: return
+            val sb = StringBuilder("Gemini request: ${contents.length()} content(s)\n")
+            for (i in 0 until contents.length()) {
+                val content = contents.optJSONObject(i) ?: continue
+                val role = content.optString("role", "?")
+                val parts = content.optJSONArray("parts")
+                val partTypes = mutableListOf<String>()
+                if (parts != null) {
+                    for (pi in 0 until parts.length()) {
+                        val part = parts.optJSONObject(pi) ?: continue
+                        when {
+                            part.has("text") -> partTypes.add("text(${part.optString("text", "").take(30)}...)")
+                            part.has("inline_data") -> {
+                                val id = part.optJSONObject("inline_data")
+                                partTypes.add("inline_data(${id?.optString("mime_type", "?")})")
+                            }
+                            part.has("functionCall") -> partTypes.add("functionCall(${part.optJSONObject("functionCall")?.optString("name", "?")})")
+                            part.has("functionResponse") -> partTypes.add("functionResponse(${part.optJSONObject("functionResponse")?.optString("name", "?")})")
+                            else -> partTypes.add("unknown")
+                        }
+                    }
+                }
+                sb.append("  [$i] role=$role parts=[${partTypes.joinToString(", ")}]\n")
+            }
+            Log.d(TAG, sb.toString().trimEnd())
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to log Gemini request structure", e)
         }
     }
 

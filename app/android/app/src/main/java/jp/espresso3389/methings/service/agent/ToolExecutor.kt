@@ -19,6 +19,10 @@ class ToolExecutor(
     private val jsRuntime: JsRuntime,
     private val nativeShell: NativeShellExecutor? = null,
 ) {
+    /** Media types the current provider supports natively (e.g. "image", "audio").
+     *  Set by AgentRuntime before the tool execution loop each turn. */
+    @Volatile var supportedMediaTypes: Set<String> = emptySet()
+
     fun executeFunctionTool(
         toolName: String,
         args: JSONObject,
@@ -54,6 +58,8 @@ class ToolExecutor(
                 "web_search" -> executeWebSearch(args)
                 "cloud_request" -> executeCloudRequest(args)
                 "sleep" -> executeSleep(args)
+                "analyze_image" -> executeAnalyzeMedia(args, "image")
+                "analyze_audio" -> executeAnalyzeMedia(args, "audio")
                 else -> JSONObject().put("status", "error").put("error", "unknown_tool").put("tool", toolName)
             }
         } catch (ex: InterruptedException) {
@@ -570,6 +576,85 @@ class ToolExecutor(
         return JSONObject().put("status", "ok").put("slept", seconds)
     }
 
+    private fun executeAnalyzeMedia(args: JSONObject, mediaType: String): JSONObject {
+        // Guard: fail early if the current provider doesn't support this media type
+        if (mediaType !in supportedMediaTypes) {
+            val detail = if (mediaType == "audio") {
+                "The current provider does not support audio input. Use a Gemini model for audio analysis."
+            } else {
+                "The current provider does not support $mediaType input."
+            }
+            return JSONObject()
+                .put("status", "error")
+                .put("error", "media_not_supported")
+                .put("media_type", mediaType)
+                .put("supported_types", JSONArray(supportedMediaTypes.toList()))
+                .put("detail", detail)
+        }
+
+        val path = args.optString("path", "")
+        val dataB64 = args.optString("data_b64", "")
+        val mimeTypeOverride = args.optString("mime_type", "")
+        val prompt = args.optString("prompt", "")
+
+        if (path.isEmpty() && dataB64.isEmpty()) {
+            return JSONObject().put("status", "error").put("error", "missing_path_or_data")
+                .put("detail", "Provide either 'path' (file path) or 'data_b64' (base64 data)")
+        }
+
+        // If base64 data is provided directly
+        if (dataB64.isNotEmpty()) {
+            val mime = mimeTypeOverride.ifEmpty {
+                if (mediaType == "image") "image/jpeg" else "audio/mp4"
+            }
+            val result = JSONObject().put("status", "ok")
+                .put("_media", JSONObject().apply {
+                    put("type", mediaType)
+                    put("base64", dataB64)
+                    put("mime_type", mime)
+                })
+                .put("source", "data_b64")
+            if (prompt.isNotEmpty()) result.put("prompt", prompt)
+            return result
+        }
+
+        // Resolve file path
+        val target = resolveSecure(userDir, path) ?: return pathError("path_outside_base")
+        if (!target.exists()) return JSONObject().put("status", "error").put("error", "not_found").put("path", path)
+        if (!target.isFile) return JSONObject().put("status", "error").put("error", "not_a_file").put("path", path)
+
+        val encoded = if (mediaType == "image") {
+            MediaEncoder.encodeImage(target)
+        } else {
+            MediaEncoder.encodeAudio(target)
+        }
+
+        if (encoded == null) {
+            return JSONObject().put("status", "error")
+                .put("error", "encode_failed")
+                .put("detail", "Could not encode $mediaType file: ${target.name}")
+                .put("path", path)
+        }
+
+        val result = JSONObject().put("status", "ok")
+            .put("_media", JSONObject().apply {
+                put("type", encoded.mediaType)
+                put("base64", encoded.base64)
+                put("mime_type", encoded.mimeType)
+            })
+            .put("file", target.name)
+            .put("path", path)
+        // Merge metadata (width/height for images, duration_ms/size for audio)
+        val meta = encoded.metadata
+        val metaKeys = meta.keys()
+        while (metaKeys.hasNext()) {
+            val key = metaKeys.next()
+            result.put(key, meta.get(key))
+        }
+        if (prompt.isNotEmpty()) result.put("prompt", prompt)
+        return result
+    }
+
     private fun resolveSecure(baseDir: File, relativePath: String): File? {
         val resolved = File(baseDir, relativePath).canonicalFile
         return if (resolved.absolutePath.startsWith(baseDir.canonicalPath)) resolved else null
@@ -589,10 +674,15 @@ class ToolExecutor(
     companion object {
         private const val TAG = "ToolExecutor"
 
-        /** Strip base64 image data fields when image is sent as a separate multimodal block. */
-        fun stripImageData(result: JSONObject): JSONObject {
+        /** Strip base64 media data fields when media is sent as a separate multimodal block. */
+        fun stripMediaData(result: JSONObject): JSONObject {
             val out = JSONObject(result.toString())
             var stripped = false
+            // Strip _media marker (from analyze_image/analyze_audio)
+            if (out.has("_media")) {
+                out.remove("_media")
+                stripped = true
+            }
             for (key in listOf("data_b64", "body_base64")) {
                 if (out.has(key)) {
                     out.remove(key)
@@ -611,7 +701,7 @@ class ToolExecutor(
                     }
                 }
             }
-            if (stripped) out.put("image_sent_separately", true)
+            if (stripped) out.put("media_sent_separately", true)
             return out
         }
 

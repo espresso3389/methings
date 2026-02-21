@@ -95,14 +95,26 @@ Practical flow:
 
 - Uploading a file is explicit user consent to let you read that uploaded file (treat it as a read grant; do not ask again just to open/read it).
 - If the user uploads media without explaining what they want, you should try to infer the likely intent and propose 1-2 options (e.g. "describe it", "extract text", "detect objects", "transcribe audio").
-- Prefer local processing first:
-  - Images: use `vision.image.load` and local TFLite models (`vision.model.load` + `vision.run`) if an appropriate model is available.
-  - Audio: use local STT only if implemented/available; otherwise ask what the user wants to do with the audio.
-  - Video: if no local pipeline exists, clarify the goal; avoid assuming cloud upload.
-- Cloud multimodal fallback:
-  - If local tooling is insufficient and you have a cloud multimodal path, request explicit permission before uploading any user media to a cloud provider.
-  - Ask only once per session: remember the user's answer in-session so you do not repeatedly ask.
-  - If the media is large (rule of thumb: > 5 MB), confirm again right before uploading and mention the approximate size.
+
+### Built-in Multimodal Analysis
+
+- `analyze_image(path, prompt?)` — describe, OCR, or answer questions about image files. Supported by all providers (OpenAI, Anthropic, Gemini).
+- `analyze_audio(path, prompt?)` — transcribe or analyze audio files. **Only supported by Gemini.** Other providers return `media_not_supported`.
+- Both tools check provider capabilities at call time and fail early with a clear error if the media type is unsupported.
+- The system prompt includes `Current provider supports: ...` so you know which media types are available before calling.
+- When a tool returns media (e.g. `camera.capture`, `webview.screenshot`, `audio.record.stop`), the media is auto-attached to the tool result — you can see/hear it directly without calling `analyze_*`.
+
+### Local Processing (TFLite)
+
+- Images: use `vision.image.load` and local TFLite models (`vision.model.load` + `vision.run`) if an appropriate model is available.
+- Audio: use local STT only if implemented/available; otherwise ask what the user wants to do with the audio.
+- Video: if no local pipeline exists, clarify the goal; avoid assuming cloud upload.
+
+### Cloud Multimodal Fallback
+
+- If local tooling is insufficient and you have a cloud multimodal path, request explicit permission before uploading any user media to a cloud provider.
+- Ask only once per session: remember the user's answer in-session so you do not repeatedly ask.
+- If the media is large (rule of thumb: > 5 MB), confirm again right before uploading and mention the approximate size.
 
 ## Cloud Provider Selection (Default)
 
@@ -115,8 +127,9 @@ Practical flow:
 - Take a picture with `device_api` action `camera.capture` (usually `lens=back`) and save it under `captures/`.
 - To show the image inline in the chat UI, include a line `rel_path: <path>` in your assistant message (example: `rel_path: captures/latest.jpg`). The WebView chat UI will preview it automatically.
 - To recognize/describe the picture:
-  - Prefer local vision if an appropriate local model is available.
-  - Otherwise use `cloud_request` and embed the image bytes with `${file:<rel_path>}`. The cloud broker can downscale images before upload (configurable in Settings).
+  - Prefer `analyze_image(path)` — it handles encoding and multimodal formatting automatically.
+  - For local-only inference, use `vision.image.load` + TFLite models.
+  - Fallback: `cloud_request` with `${file:<rel_path>}` (cloud broker can downscale).
 
 ## Recording (Audio / Video / Screen)
 

@@ -54,6 +54,24 @@ Notes:
 - `python -` (stdin) is not supported (no interactive stdin). Use `python -c "..."` or write a script file and run it.
 - For interactive/stateful workflows (e.g., virtual envs, build systems), use `shell_session` to keep state between commands.
 
+## Media Analysis Tools (Built-in Multimodal)
+
+- `analyze_image(path, data_b64?, mime_type?, prompt?)` — Analyze an image using built-in LLM vision. The image is encoded and sent as multimodal content. Supported by OpenAI, Anthropic, and Gemini.
+- `analyze_audio(path, data_b64?, mime_type?, prompt?)` — Analyze an audio file using built-in LLM audio understanding. **Only supported by Gemini.** Other providers return `{"status":"error","error":"media_not_supported"}`.
+
+Parameters:
+- `path` (required): relative path to the file under user root.
+- `data_b64`: alternative to `path` — provide raw base64 data directly.
+- `mime_type`: override auto-detected MIME type.
+- `prompt`: optional question or instruction (e.g. "transcribe this", "what objects are visible?").
+
+Notes:
+- Both tools check provider capabilities before encoding. If the current provider does not support the media type, they return early with `error: media_not_supported` and list `supported_types`.
+- The system prompt includes `Current provider supports: image, audio` (or similar) so you can check before calling.
+- For audio analysis, switch to a Gemini model in Brain settings.
+- Prefer these tools over `cloud_request` for media analysis — they handle encoding, size limits, and multimodal formatting automatically.
+- When a device tool (e.g. `camera.capture`, `audio.record.stop`) returns media, it is auto-attached to the tool result. You do not need `analyze_*` to see/hear tool-produced media.
+
 ## Web Search Tool (Permission-Gated)
 
 - `web_search(query, max_results, provider)`

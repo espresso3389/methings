@@ -18,6 +18,8 @@ class LlmClient {
         val u = url.trim().lowercase(Locale.US)
         return when {
             v == "anthropic" || u.contains("anthropic.com") -> ProviderKind.ANTHROPIC
+            // When vendor is "gemini", always use native Gemini (URL is cleaned by resolveProviderUrl).
+            // Also detect googleapis.com URLs that aren't using the /openai/ compat layer.
             v == "gemini" || (u.contains("generativelanguage.googleapis.com") && !u.contains("/openai/"))
                 -> ProviderKind.GOOGLE_GEMINI
             u.endsWith("/responses") || u.contains("/responses?") -> ProviderKind.OPENAI_RESPONSES

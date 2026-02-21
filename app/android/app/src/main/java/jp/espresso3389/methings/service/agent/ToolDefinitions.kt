@@ -156,6 +156,20 @@ object ToolDefinitions {
             put("seconds", prop("number"))
         }.withRequired("seconds"))
 
+        tools.put(functionTool("analyze_image", "Analyze an image file using built-in vision. The image is sent directly to the LLM as multimodal content. Use this to describe, OCR, or answer questions about images. Supported by all providers (OpenAI, Anthropic, Gemini). Returns an error if the current provider does not support image input.") {
+            put("path", prop("string"))
+            put("data_b64", prop("string"))
+            put("mime_type", prop("string"))
+            put("prompt", prop("string"))
+        }.withRequired("path"))
+
+        tools.put(functionTool("analyze_audio", "Analyze an audio file using built-in multimodal audio understanding. The audio is sent directly to the LLM. Use this to transcribe speech, identify sounds, or answer questions about audio. Only supported by Gemini; returns an error with other providers. Check the system prompt for current provider capabilities.") {
+            put("path", prop("string"))
+            put("data_b64", prop("string"))
+            put("mime_type", prop("string"))
+            put("prompt", prop("string"))
+        }.withRequired("path"))
+
         return tools
     }
 
@@ -192,10 +206,23 @@ object ToolDefinitions {
         val responseTools = responsesTools(deviceApiActions)
         for (i in 0 until responseTools.length()) {
             val tool = responseTools.getJSONObject(i)
+            // Gemini doesn't support additionalProperties in schemas — strip it
+            val params = JSONObject(tool.getJSONObject("parameters").toString())
+            params.remove("additionalProperties")
+            // Also strip from nested property objects
+            val props = params.optJSONObject("properties")
+            if (props != null) {
+                val keys = props.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    val prop = props.optJSONObject(key)
+                    if (prop != null) prop.remove("additionalProperties")
+                }
+            }
             declarations.put(JSONObject().apply {
                 put("name", tool.getString("name"))
                 put("description", tool.getString("description"))
-                put("parameters", tool.getJSONObject("parameters"))
+                put("parameters", params)
             })
         }
         // Gemini expects: [{"function_declarations": [...]}]

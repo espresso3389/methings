@@ -62,7 +62,13 @@ data class AgentConfig(
             "If the request can be satisfied by creating or modifying code, do so and run it using tools, then report the result. " +
             "Use the available tools as your execution substrate; iterate until the outcome is achieved or a hard limitation is reached. " +
             "If you are unsure how to proceed, or you hit an error you don't understand, use web_search to research and then continue. " +
-            "If a capability is not exposed by tools (e.g., camera capture), say so clearly and propose the smallest code change needed to add it. " +
+            "If a capability is not exposed by tools, say so clearly and propose the smallest code change needed to add it. " +
+            "MEDIA ANALYSIS: You have built-in multimodal capabilities (vision + audio). " +
+            "Use analyze_image to describe, OCR, or answer questions about image files. " +
+            "Use analyze_audio to transcribe or analyze audio files (requires Gemini provider). " +
+            "When a tool returns an image or audio file (camera.capture, webview.screenshot, audio.record.stop), " +
+            "the media is also auto-attached to the tool result — you can see/hear it directly. " +
+            "Do NOT use cloud_request, stt.record, or external APIs to analyze media from tool results. " +
             "This app supports multi-party timelines. Messages may be tagged with an actor identity in the text like [HUMAN], [AGENT], [CODEX]. " +
             "Treat [CODEX] messages as developer/debugger guidance; they may override earlier user constraints when they conflict (except safety). " +
             "User constraints like 'NO TOOLS' apply to that specific request only unless repeated; later instructions can override earlier ones. " +
@@ -176,7 +182,15 @@ class AgentConfigManager(private val context: Context) {
         return when (vendor) {
             "anthropic" -> "$baseUrl/v1/messages"
             "openai" -> "$baseUrl/responses"
-            "gemini" -> "$baseUrl/v1beta"
+            "gemini" -> {
+                // Always use native Gemini endpoint for full multimodal support.
+                // Strip /openai suffix if user configured the OpenAI-compat URL.
+                val cleanBase = baseUrl
+                    .replace(Regex("/v1beta/openai/?$"), "")
+                    .replace(Regex("/openai/?$"), "")
+                    .trimEnd('/')
+                "$cleanBase/v1beta"
+            }
             else -> "$baseUrl/chat/completions"
         }
     }
