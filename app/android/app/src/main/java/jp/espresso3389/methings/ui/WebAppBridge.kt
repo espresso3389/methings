@@ -402,6 +402,15 @@ class WebAppBridge(private val activity: MainActivity) {
         handler.post { activity.showBrowserPanel(url, fullscreen = fullscreen) }
     }
 
+    /** Persist a UI-generated message to the agent chat DB so it survives app restart. */
+    @JavascriptInterface
+    fun saveChatMessage(sessionId: String, role: String, text: String, metaJson: String) {
+        try {
+            val storage = jp.espresso3389.methings.service.agent.AgentStorage(activity)
+            storage.addChatMessage(sessionId, role, text, metaJson)
+        } catch (_: Exception) {}
+    }
+
     /** Open current webview URL in external/in-app browser per user preference. */
     @JavascriptInterface
     fun openWebviewUrlInBrowser() {

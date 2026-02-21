@@ -376,6 +376,15 @@ class AgentRuntime(
             ProviderKind.OPENAI_RESPONSES -> ToolDefinitions.responsesTools(ToolDefinitions.deviceApiActionNames())
             ProviderKind.OPENAI_CHAT -> ToolDefinitions.chatTools(ToolDefinitions.deviceApiActionNames())
             ProviderKind.ANTHROPIC -> ToolDefinitions.anthropicTools(ToolDefinitions.deviceApiActionNames())
+            ProviderKind.GOOGLE_GEMINI -> ToolDefinitions.geminiTools(ToolDefinitions.deviceApiActionNames())
+        }
+
+        // Gemini uses a different URL format: {base}/models/{model}:streamGenerateContent?key={apiKey}&alt=sse
+        val effectiveProviderUrl = if (providerKind == ProviderKind.GOOGLE_GEMINI) {
+            val base = providerUrl.trimEnd('/')
+            "$base/models/$model:streamGenerateContent?key=$apiKey&alt=sse"
+        } else {
+            providerUrl
         }
 
         val systemPrompt = buildSystemPrompt(config)
@@ -401,7 +410,7 @@ class AgentRuntime(
             for (attempt in 0..maxRetries) {
                 try {
                     payload = llmClient.streamingPost(
-                        providerUrl, headers, body, providerKind,
+                        effectiveProviderUrl, headers, body, providerKind,
                         connectTimeoutMs, readTimeoutMs,
                         interruptCheck = { interruptFlag }
                     )
@@ -417,7 +426,7 @@ class AgentRuntime(
                             val body2 = JSONObject(body.toString())
                             body2.remove("tool_choice")
                             payload = llmClient.streamingPost(
-                                providerUrl, headers, body2, providerKind,
+                                effectiveProviderUrl, headers, body2, providerKind,
                                 connectTimeoutMs, readTimeoutMs,
                                 interruptCheck = { interruptFlag }
                             )
@@ -523,6 +532,24 @@ class AgentRuntime(
                 pendingInput.put(JSONObject().put("role", "assistant").put("content", contentArr))
             }
 
+            // Gemini: echo back model message with functionCall parts
+            if (providerKind == ProviderKind.GOOGLE_GEMINI) {
+                val parts = JSONArray()
+                for (t in messageTexts) {
+                    parts.put(JSONObject().put("text", t))
+                }
+                for (ci in 0 until calls.length()) {
+                    val c = calls.getJSONObject(ci)
+                    parts.put(JSONObject().apply {
+                        put("functionCall", JSONObject().apply {
+                            put("name", c.optString("name", ""))
+                            put("args", c.opt("arguments") ?: JSONObject())
+                        })
+                    })
+                }
+                pendingInput.put(JSONObject().put("role", "model").put("parts", parts))
+            }
+
             for (i in 0 until calls.length().coerceAtMost(maxActions)) {
                 checkInterrupt()
                 val call = calls.getJSONObject(i)
@@ -577,11 +604,17 @@ class AgentRuntime(
                     }
                 }
 
+                // Extract image from tool result BEFORE truncation
+                val imageData = extractImageFromToolResult(result)
+
                 val truncated = ToolExecutor.truncateToolOutput(result,
                     config.intWithProfile("max_tool_output_chars", 12000, 2000, 100000),
                     config.intWithProfile("max_tool_output_list_items", 80, 10, 500))
 
-                appendToolResult(providerKind, pendingInput, callId, truncated)
+                // Strip redundant base64 data from text when image is sent separately
+                val textResult = if (imageData != null) ToolExecutor.stripImageData(truncated) else truncated
+
+                appendToolResult(providerKind, pendingInput, callId, textResult, name, imageData)
             }
 
             // Nudge to stop
@@ -597,12 +630,12 @@ class AgentRuntime(
             finalBody.put("tool_choice", "none")
 
             val finalPayload = try {
-                llmClient.streamingPost(providerUrl, headers, finalBody, providerKind, connectTimeoutMs, readTimeoutMs,
+                llmClient.streamingPost(effectiveProviderUrl, headers, finalBody, providerKind, connectTimeoutMs, readTimeoutMs,
                     interruptCheck = { interruptFlag })
             } catch (_: Exception) {
                 val body2 = JSONObject(finalBody.toString())
                 body2.remove("tool_choice")
-                llmClient.streamingPost(providerUrl, headers, body2, providerKind, connectTimeoutMs, readTimeoutMs,
+                llmClient.streamingPost(effectiveProviderUrl, headers, body2, providerKind, connectTimeoutMs, readTimeoutMs,
                     interruptCheck = { interruptFlag })
             }
 
@@ -660,6 +693,15 @@ class AgentRuntime(
                 put("messages", input)
                 if (requireTool) put("tool_choice", JSONObject().put("type", "any"))
             }
+            ProviderKind.GOOGLE_GEMINI -> JSONObject().apply {
+                put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
+                put("contents", input)
+                put("tools", tools)
+                if (requireTool) {
+                    put("tool_config", JSONObject().put("function_calling_config",
+                        JSONObject().put("mode", "ANY")))
+                }
+            }
         }
     }
 
@@ -668,6 +710,7 @@ class AgentRuntime(
             ProviderKind.OPENAI_RESPONSES -> parseOpenAiResponsesResponse(payload)
             ProviderKind.OPENAI_CHAT -> parseOpenAiChatResponse(payload)
             ProviderKind.ANTHROPIC -> parseAnthropicResponse(payload)
+            ProviderKind.GOOGLE_GEMINI -> parseGeminiResponse(payload)
         }
     }
 
@@ -762,11 +805,162 @@ class AgentRuntime(
         return Pair(messageTexts, calls)
     }
 
+    private fun parseGeminiResponse(payload: JSONObject): Pair<List<String>, JSONArray> {
+        val contentArr = payload.optJSONArray("content") ?: JSONArray()
+        val messageTexts = mutableListOf<String>()
+        val calls = JSONArray()
+
+        for (i in 0 until contentArr.length()) {
+            val block = contentArr.optJSONObject(i) ?: continue
+            when (block.optString("type")) {
+                "text" -> {
+                    val t = block.optString("text", "").trim()
+                    if (t.isNotEmpty()) messageTexts.add(t)
+                }
+                "function_call" -> {
+                    calls.put(JSONObject().apply {
+                        put("name", block.optString("name", ""))
+                        put("call_id", block.optString("call_id", ""))
+                        put("arguments", block.optJSONObject("arguments") ?: JSONObject())
+                    })
+                }
+            }
+        }
+        return Pair(messageTexts, calls)
+    }
+
+    // --- Image / Multimodal Helpers ---
+
+    /** Extract image from tool result — checks rel_path/path fields for image extensions. */
+    private fun extractImageFromToolResult(result: JSONObject): Pair<String, String>? {
+        // Check direct data_b64 with a known image path
+        val path = result.optString("rel_path", result.optString("path", ""))
+        if (path.isNotEmpty() && ImageEncoder.isImagePath(path)) {
+            // Try to read and encode the file
+            val file = File(userDir, path)
+            if (file.exists()) {
+                return ImageEncoder.encodeImageFile(file)
+            }
+        }
+        // Check nested result object (device_api responses like camera.capture, webview.screenshot)
+        val nested = result.optJSONObject("result")
+        if (nested != null) {
+            val nestedPath = nested.optString("rel_path", nested.optString("path", ""))
+            if (nestedPath.isNotEmpty() && ImageEncoder.isImagePath(nestedPath)) {
+                val file = File(userDir, nestedPath)
+                if (file.exists()) {
+                    return ImageEncoder.encodeImageFile(file)
+                }
+            }
+        }
+        return null
+    }
+
+    /** Extract image rel_paths from user text (lines like "rel_path: photos/img.jpg"). */
+    private fun extractUserImagePaths(text: String): Pair<String, List<String>> {
+        val paths = mutableListOf<String>()
+        val cleanedLines = mutableListOf<String>()
+        for (line in text.lines()) {
+            val trimmed = line.trim()
+            if (trimmed.startsWith("rel_path:")) {
+                val p = trimmed.substringAfter("rel_path:").trim()
+                if (p.isNotEmpty() && ImageEncoder.isImagePath(p)) {
+                    paths.add(p)
+                    continue  // Remove this line from text sent to LLM
+                }
+            }
+            cleanedLines.add(line)
+        }
+        return Pair(cleanedLines.joinToString("\n"), paths)
+    }
+
+    /** Build multimodal content array with text + image blocks for the current user message. */
+    private fun buildMultimodalUserContent(
+        kind: ProviderKind, text: String, imagePairs: List<Pair<String, String>>
+    ): Any {
+        if (imagePairs.isEmpty()) {
+            // No images — return plain text for providers that support it
+            return when (kind) {
+                ProviderKind.OPENAI_RESPONSES -> {
+                    JSONArray().put(JSONObject().put("type", "input_text").put("text", text))
+                }
+                ProviderKind.GOOGLE_GEMINI -> {
+                    JSONArray().put(JSONObject().put("text", text))
+                }
+                else -> text  // OPENAI_CHAT and ANTHROPIC accept plain strings
+            }
+        }
+        // Has images — build multimodal content
+        return when (kind) {
+            ProviderKind.OPENAI_RESPONSES -> {
+                val arr = JSONArray()
+                arr.put(JSONObject().put("type", "input_text").put("text", text))
+                for ((b64, mime) in imagePairs) {
+                    arr.put(JSONObject().apply {
+                        put("type", "input_image")
+                        put("image_url", "data:$mime;base64,$b64")
+                    })
+                }
+                arr
+            }
+            ProviderKind.OPENAI_CHAT -> {
+                val arr = JSONArray()
+                arr.put(JSONObject().put("type", "text").put("text", text))
+                for ((b64, mime) in imagePairs) {
+                    arr.put(JSONObject().apply {
+                        put("type", "image_url")
+                        put("image_url", JSONObject().put("url", "data:$mime;base64,$b64"))
+                    })
+                }
+                arr
+            }
+            ProviderKind.ANTHROPIC -> {
+                val arr = JSONArray()
+                for ((b64, mime) in imagePairs) {
+                    arr.put(JSONObject().apply {
+                        put("type", "image")
+                        put("source", JSONObject().apply {
+                            put("type", "base64")
+                            put("media_type", mime)
+                            put("data", b64)
+                        })
+                    })
+                }
+                arr.put(JSONObject().put("type", "text").put("text", text))
+                arr
+            }
+            ProviderKind.GOOGLE_GEMINI -> {
+                val arr = JSONArray()
+                arr.put(JSONObject().put("text", text))
+                for ((b64, mime) in imagePairs) {
+                    arr.put(JSONObject().apply {
+                        put("inline_data", JSONObject().apply {
+                            put("mime_type", mime)
+                            put("data", b64)
+                        })
+                    })
+                }
+                arr
+            }
+        }
+    }
+
     private fun buildInitialInput(
         kind: ProviderKind, dialogue: List<JSONObject>,
         journalBlob: String, curText: String, item: JSONObject
     ): JSONArray {
         val input = JSONArray()
+
+        // Extract images from current user message
+        val (cleanedText, imagePaths) = extractUserImagePaths(curText)
+        val userImagePairs = mutableListOf<Pair<String, String>>()
+        for (p in imagePaths) {
+            val file = File(userDir, p)
+            val encoded = ImageEncoder.encodeImageFile(file)
+            if (encoded != null) userImagePairs.add(encoded)
+        }
+        val finalUserText = "$journalBlob\n\n$cleanedText"
+
         when (kind) {
             ProviderKind.OPENAI_RESPONSES -> {
                 for (msg in dialogue) {
@@ -781,9 +975,9 @@ class AgentRuntime(
                 // Journal blob
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", journalBlob))))
-                // Current user message
-                input.put(JSONObject().put("role", "user")
-                    .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", curText))))
+                // Current user message (with images if present)
+                val content = buildMultimodalUserContent(kind, cleanedText, userImagePairs)
+                input.put(JSONObject().put("role", "user").put("content", content))
             }
             ProviderKind.OPENAI_CHAT -> {
                 for (msg in dialogue) {
@@ -793,7 +987,8 @@ class AgentRuntime(
                         input.put(JSONObject().put("role", role).put("content", text))
                     }
                 }
-                input.put(JSONObject().put("role", "user").put("content", "$journalBlob\n\n$curText"))
+                val content = buildMultimodalUserContent(kind, finalUserText, userImagePairs)
+                input.put(JSONObject().put("role", "user").put("content", content))
             }
             ProviderKind.ANTHROPIC -> {
                 for (msg in dialogue) {
@@ -803,13 +998,32 @@ class AgentRuntime(
                         input.put(JSONObject().put("role", role).put("content", text))
                     }
                 }
-                input.put(JSONObject().put("role", "user").put("content", "$journalBlob\n\n$curText"))
+                val content = buildMultimodalUserContent(kind, finalUserText, userImagePairs)
+                input.put(JSONObject().put("role", "user").put("content", content))
+            }
+            ProviderKind.GOOGLE_GEMINI -> {
+                for (msg in dialogue) {
+                    val role = msg.optString("role")
+                    val text = msg.optString("text", "")
+                    if (role in setOf("user", "assistant") && text.isNotBlank()) {
+                        val geminiRole = if (role == "assistant") "model" else "user"
+                        input.put(JSONObject().put("role", geminiRole)
+                            .put("parts", JSONArray().put(JSONObject().put("text", text))))
+                    }
+                }
+                // Current user message with journal + images
+                val parts = buildMultimodalUserContent(kind, finalUserText, userImagePairs)
+                input.put(JSONObject().put("role", "user").put("parts", parts))
             }
         }
         return input
     }
 
-    private fun appendToolResult(kind: ProviderKind, input: JSONArray, callId: String, result: JSONObject) {
+    private fun appendToolResult(
+        kind: ProviderKind, input: JSONArray, callId: String,
+        result: JSONObject, toolName: String = "",
+        imageData: Pair<String, String>? = null
+    ) {
         when (kind) {
             ProviderKind.OPENAI_RESPONSES -> {
                 input.put(JSONObject().apply {
@@ -817,19 +1031,61 @@ class AgentRuntime(
                     put("call_id", callId)
                     put("output", result.toString())
                 })
+                // Responses API: send image as a separate user input_image block
+                if (imageData != null) {
+                    input.put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("type", "input_image")
+                                put("image_url", "data:${imageData.second};base64,${imageData.first}")
+                            })
+                        })
+                    })
+                }
             }
             ProviderKind.OPENAI_CHAT -> {
-                input.put(JSONObject().apply {
-                    put("role", "tool")
-                    put("tool_call_id", callId)
-                    put("content", result.toString())
-                })
+                if (imageData != null) {
+                    // Multimodal tool result: content is an array of text + image_url
+                    val contentArr = JSONArray()
+                    contentArr.put(JSONObject().put("type", "text").put("text", result.toString()))
+                    contentArr.put(JSONObject().apply {
+                        put("type", "image_url")
+                        put("image_url", JSONObject().put("url", "data:${imageData.second};base64,${imageData.first}"))
+                    })
+                    input.put(JSONObject().apply {
+                        put("role", "tool")
+                        put("tool_call_id", callId)
+                        put("content", contentArr)
+                    })
+                } else {
+                    input.put(JSONObject().apply {
+                        put("role", "tool")
+                        put("tool_call_id", callId)
+                        put("content", result.toString())
+                    })
+                }
             }
             ProviderKind.ANTHROPIC -> {
+                val contentBlocks = JSONArray()
+                contentBlocks.put(JSONObject().apply {
+                    put("type", "text")
+                    put("text", result.toString())
+                })
+                if (imageData != null) {
+                    contentBlocks.put(JSONObject().apply {
+                        put("type", "image")
+                        put("source", JSONObject().apply {
+                            put("type", "base64")
+                            put("media_type", imageData.second)
+                            put("data", imageData.first)
+                        })
+                    })
+                }
                 val block = JSONObject().apply {
                     put("type", "tool_result")
                     put("tool_use_id", callId)
-                    put("content", result.toString())
+                    put("content", contentBlocks)
                 }
                 // Anthropic requires alternating user/assistant — merge tool_result
                 // blocks into a single user message
@@ -845,6 +1101,39 @@ class AgentRuntime(
                     put("role", "user")
                     put("content", JSONArray().put(block))
                 })
+            }
+            ProviderKind.GOOGLE_GEMINI -> {
+                // Gemini: functionResponse part + optional inline_data
+                val parts = JSONArray()
+                parts.put(JSONObject().apply {
+                    put("functionResponse", JSONObject().apply {
+                        put("name", toolName)
+                        put("response", result)
+                    })
+                })
+                if (imageData != null) {
+                    parts.put(JSONObject().apply {
+                        put("inline_data", JSONObject().apply {
+                            put("mime_type", imageData.second)
+                            put("data", imageData.first)
+                        })
+                    })
+                }
+                // Gemini: merge into last user message if present, otherwise create new
+                val lastIdx = input.length() - 1
+                if (lastIdx >= 0) {
+                    val last = input.optJSONObject(lastIdx)
+                    if (last != null && last.optString("role") == "user") {
+                        val existingParts = last.optJSONArray("parts")
+                        if (existingParts != null) {
+                            for (pi in 0 until parts.length()) {
+                                existingParts.put(parts.get(pi))
+                            }
+                            return
+                        }
+                    }
+                }
+                input.put(JSONObject().put("role", "user").put("parts", parts))
             }
         }
     }
@@ -874,6 +1163,22 @@ class AgentRuntime(
                 }
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "text").put("text", nudge))))
+            }
+            ProviderKind.GOOGLE_GEMINI -> {
+                // Merge nudge into last user message to maintain user/model alternation
+                val lastIdx = input.length() - 1
+                if (lastIdx >= 0) {
+                    val last = input.optJSONObject(lastIdx)
+                    if (last != null && last.optString("role") == "user") {
+                        val parts = last.optJSONArray("parts")
+                        if (parts != null) {
+                            parts.put(JSONObject().put("text", nudge))
+                            return input
+                        }
+                    }
+                }
+                input.put(JSONObject().put("role", "user")
+                    .put("parts", JSONArray().put(JSONObject().put("text", nudge))))
             }
         }
         return input

@@ -589,6 +589,32 @@ class ToolExecutor(
     companion object {
         private const val TAG = "ToolExecutor"
 
+        /** Strip base64 image data fields when image is sent as a separate multimodal block. */
+        fun stripImageData(result: JSONObject): JSONObject {
+            val out = JSONObject(result.toString())
+            var stripped = false
+            for (key in listOf("data_b64", "body_base64")) {
+                if (out.has(key)) {
+                    out.remove(key)
+                    out.put("${key}_stripped", true)
+                    stripped = true
+                }
+            }
+            // Also strip from nested "result" object (e.g. device_api responses)
+            val nested = out.optJSONObject("result")
+            if (nested != null) {
+                for (key in listOf("data_b64", "body_base64")) {
+                    if (nested.has(key)) {
+                        nested.remove(key)
+                        nested.put("${key}_stripped", true)
+                        stripped = true
+                    }
+                }
+            }
+            if (stripped) out.put("image_sent_separately", true)
+            return out
+        }
+
         fun truncateToolOutput(result: JSONObject, maxChars: Int = 12000, maxListItems: Int = 80): JSONObject {
             val raw = result.toString()
             if (raw.length <= maxChars) return result

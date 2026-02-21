@@ -5070,9 +5070,17 @@
       window.uiBrowserNavigated = function(url, title) {
         if (!url) return;
         const content = "browser_url: " + url;
-        conversation.push({ role: "assistant", content: content, meta: {}, ts: Date.now() });
+        const meta = { actor: "system", source: "browser_navigation" };
+        const ts = Date.now();
+        conversation.push({ role: "assistant", content: content, meta: meta, ts: ts });
         saveConversation();
-        addMsg("assistant", content, { _ts: Date.now() });
+        addMsg("assistant", content, { _ts: ts });
+        // Persist to agent DB so the card survives app restart
+        try {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.saveChatMessage) {
+            AndroidBridge.saveChatMessage(chatSessionId || "default", "assistant", content, JSON.stringify(meta));
+          }
+        } catch (_) {}
       };
 
       // Deterministic back policy for Android back gesture/button:

@@ -176,6 +176,7 @@ class AgentConfigManager(private val context: Context) {
         return when (vendor) {
             "anthropic" -> "$baseUrl/v1/messages"
             "openai" -> "$baseUrl/responses"
+            "gemini" -> "$baseUrl/v1beta"
             else -> "$baseUrl/chat/completions"
         }
     }

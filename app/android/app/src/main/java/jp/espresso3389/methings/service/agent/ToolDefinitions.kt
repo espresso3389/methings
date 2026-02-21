@@ -186,6 +186,24 @@ object ToolDefinitions {
         return tools
     }
 
+    /** Gemini format: wraps tools in a single object with function_declarations array */
+    fun geminiTools(deviceApiActions: List<String>): JSONArray {
+        val declarations = JSONArray()
+        val responseTools = responsesTools(deviceApiActions)
+        for (i in 0 until responseTools.length()) {
+            val tool = responseTools.getJSONObject(i)
+            declarations.put(JSONObject().apply {
+                put("name", tool.getString("name"))
+                put("description", tool.getString("description"))
+                put("parameters", tool.getJSONObject("parameters"))
+            })
+        }
+        // Gemini expects: [{"function_declarations": [...]}]
+        val wrapper = JSONArray()
+        wrapper.put(JSONObject().put("function_declarations", declarations))
+        return wrapper
+    }
+
     fun anthropicTools(deviceApiActions: List<String>): JSONArray {
         val tools = JSONArray()
         val responseTools = responsesTools(deviceApiActions)

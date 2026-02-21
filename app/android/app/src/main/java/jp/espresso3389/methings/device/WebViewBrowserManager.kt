@@ -51,18 +51,13 @@ object WebViewBrowserManager {
         val latch = CountDownLatch(1)
         pageLoadLatch = latch
 
-        val wv = webView
-        if (wv != null) {
-            // Panel already open — just load the new URL.
-            handler.post { wv.loadUrl(trimmedUrl) }
-        } else {
-            // Ask MainActivity to show the embedded browser panel.
-            val intent = Intent(ACTION_BROWSER_SHOW).apply {
-                setPackage(context.packageName)
-                putExtra(EXTRA_URL, trimmedUrl)
-            }
-            context.sendBroadcast(intent)
+        // Always go through broadcast so MainActivity can track agent navigation
+        // and show a card in the chat timeline.
+        val intent = Intent(ACTION_BROWSER_SHOW).apply {
+            setPackage(context.packageName)
+            putExtra(EXTRA_URL, trimmedUrl)
         }
+        context.sendBroadcast(intent)
 
         val loaded = latch.await(timeoutS, TimeUnit.SECONDS)
         pageLoadLatch = null

@@ -9,7 +9,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
-enum class ProviderKind { ANTHROPIC, OPENAI_RESPONSES, OPENAI_CHAT }
+enum class ProviderKind { ANTHROPIC, OPENAI_RESPONSES, OPENAI_CHAT, GOOGLE_GEMINI }
 
 class LlmClient {
 
@@ -18,6 +18,8 @@ class LlmClient {
         val u = url.trim().lowercase(Locale.US)
         return when {
             v == "anthropic" || u.contains("anthropic.com") -> ProviderKind.ANTHROPIC
+            v == "gemini" || (u.contains("generativelanguage.googleapis.com") && !u.contains("/openai/"))
+                -> ProviderKind.GOOGLE_GEMINI
             u.endsWith("/responses") || u.contains("/responses?") -> ProviderKind.OPENAI_RESPONSES
             else -> ProviderKind.OPENAI_CHAT
         }
@@ -32,6 +34,9 @@ class LlmClient {
             }
             ProviderKind.OPENAI_RESPONSES, ProviderKind.OPENAI_CHAT -> {
                 headers["Authorization"] = "Bearer $apiKey"
+            }
+            ProviderKind.GOOGLE_GEMINI -> {
+                // Gemini uses API key as URL query param, not in headers
             }
         }
         return headers
@@ -55,8 +60,8 @@ class LlmClient {
         interruptCheck: () -> Boolean = { false },
     ): JSONObject {
         val streamBody = JSONObject(body.toString())
-        streamBody.put("stream", true)
-        if (kind == ProviderKind.ANTHROPIC) {
+        if (kind != ProviderKind.GOOGLE_GEMINI) {
+            // Gemini uses alt=sse in URL, not a body param
             streamBody.put("stream", true)
         }
 
@@ -94,6 +99,7 @@ class LlmClient {
                 ProviderKind.OPENAI_RESPONSES -> parseOpenAiResponsesSse(conn, interruptCheck)
                 ProviderKind.OPENAI_CHAT -> parseOpenAiChatSse(conn, interruptCheck)
                 ProviderKind.ANTHROPIC -> parseAnthropicSse(conn, interruptCheck)
+                ProviderKind.GOOGLE_GEMINI -> parseGeminiSse(conn, interruptCheck)
             }
         } finally {
             conn.disconnect()
@@ -344,6 +350,76 @@ class LlmClient {
             put("model", model)
             put("stop_reason", stopReason ?: "end_turn")
             put("usage", JSONObject().put("input_tokens", inputTokens).put("output_tokens", outputTokens))
+        }
+    }
+
+    private fun parseGeminiSse(conn: HttpURLConnection, interruptCheck: () -> Boolean): JSONObject {
+        // Gemini SSE: each data chunk is a full JSON object with candidates array
+        val textParts = StringBuilder()
+        val functionCalls = JSONArray()
+        var finishReason = ""
+
+        val reader = BufferedReader(InputStreamReader(conn.inputStream, Charsets.UTF_8))
+        try {
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                if (interruptCheck()) throw InterruptedException("interrupted during streaming")
+                val l = line?.trim() ?: continue
+                if (!l.startsWith("data:")) continue
+                val dataStr = l.substring(5).trim()
+                if (dataStr.isEmpty() || dataStr == "[DONE]") continue
+
+                val chunk = try { JSONObject(dataStr) } catch (_: Exception) { continue }
+                val candidates = chunk.optJSONArray("candidates") ?: continue
+
+                for (ci in 0 until candidates.length()) {
+                    val candidate = candidates.optJSONObject(ci) ?: continue
+                    val fr = candidate.optString("finishReason", "")
+                    if (fr.isNotEmpty()) finishReason = fr
+
+                    val content = candidate.optJSONObject("content") ?: continue
+                    val parts = content.optJSONArray("parts") ?: continue
+
+                    for (pi in 0 until parts.length()) {
+                        val part = parts.optJSONObject(pi) ?: continue
+                        val text = part.optString("text", "")
+                        if (text.isNotEmpty()) textParts.append(text)
+
+                        val fc = part.optJSONObject("functionCall")
+                        if (fc != null) {
+                            functionCalls.put(JSONObject().apply {
+                                put("name", fc.optString("name", ""))
+                                put("call_id", "gemini_call_${System.nanoTime()}")
+                                put("arguments", fc.optJSONObject("args") ?: JSONObject())
+                            })
+                        }
+                    }
+                }
+            }
+        } finally {
+            reader.close()
+        }
+
+        // Build a normalized response
+        val contentArr = JSONArray()
+        val fullText = textParts.toString().trim()
+        if (fullText.isNotEmpty()) {
+            contentArr.put(JSONObject().put("type", "text").put("text", fullText))
+        }
+        for (i in 0 until functionCalls.length()) {
+            val fc = functionCalls.getJSONObject(i)
+            contentArr.put(JSONObject().apply {
+                put("type", "function_call")
+                put("name", fc.optString("name", ""))
+                put("call_id", fc.optString("call_id", ""))
+                put("arguments", fc.optJSONObject("arguments") ?: JSONObject())
+            })
+        }
+
+        return JSONObject().apply {
+            put("type", "gemini_response")
+            put("content", contentArr)
+            put("finish_reason", finishReason.ifEmpty { "STOP" })
         }
     }
 
