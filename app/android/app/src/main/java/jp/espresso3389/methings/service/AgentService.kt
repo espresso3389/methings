@@ -92,6 +92,7 @@ class AgentService : LifecycleService() {
             it.startServer()
         }
         sshdManager.startIfEnabled()
+        if (sshdManager.isEnabled()) localServer?.syncAuthorizedKeys()
         registerPermissionPromptReceiver()
         startForegroundCompat(buildNotification())
         tickExecutor.scheduleAtFixedRate({ tickBrainWorkNotification() }, 3, 6, TimeUnit.SECONDS)

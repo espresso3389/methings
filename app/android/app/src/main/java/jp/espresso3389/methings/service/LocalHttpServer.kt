@@ -7517,6 +7517,7 @@ class LocalHttpServer(
                 val port = if (payload.has("port")) payload.optInt("port", sshdManager.getPort()) else null
                 val authMode = payload.optString("auth_mode", "").ifBlank { null }
                 val status = sshdManager.updateConfig(enabled, port, authMode)
+                if (authMode != null) syncAuthorizedKeys()
                 jsonResponse(
                     JSONObject()
                         .put("enabled", status.enabled)
@@ -7556,6 +7557,7 @@ class LocalHttpServer(
                 val finalLabel = sanitizeSshKeyLabel(label).takeIf { it != null }
                     ?: sanitizeSshKeyLabel(parsed.comment ?: "")
                 val entity = sshKeyStore.upsert(parsed.canonicalNoComment(), finalLabel, expiresAt)
+                syncAuthorizedKeys()
                 jsonResponse(
                     JSONObject()
                         .put("fingerprint", entity.fingerprint)
@@ -7583,6 +7585,7 @@ class LocalHttpServer(
                     return badRequest("fingerprint_or_key_required")
                 }
                 sshKeyStore.delete(fingerprint)
+                syncAuthorizedKeys()
                 jsonResponse(JSONObject().put("status", "ok"))
             }
             uri == "/sshd/keys/policy" && session.method == Method.GET -> {
@@ -7602,8 +7605,10 @@ class LocalHttpServer(
                 if (state.expired) {
                     sshPinManager.stopPin()
                     sshdManager.exitPinMode()
+                    syncAuthorizedKeys()
                 } else if (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_PIN) {
                     sshdManager.exitPinMode()
+                    syncAuthorizedKeys()
                 }
                 jsonResponse(
                     JSONObject()
@@ -7619,8 +7624,9 @@ class LocalHttpServer(
                 if (!isPermissionApproved(permissionId, consume = true)) {
                     return forbidden("permission_required")
                 }
-                sshdManager.enterPinMode()
                 val state = sshPinManager.startPin(seconds)
+                sshdManager.enterPinMode()
+                syncAuthorizedKeys()
                 jsonResponse(
                     JSONObject()
                         .put("active", state.active)
@@ -7631,6 +7637,7 @@ class LocalHttpServer(
             uri == "/sshd/pin/stop" && session.method == Method.POST -> {
                 sshPinManager.stopPin()
                 sshdManager.exitPinMode()
+                syncAuthorizedKeys()
                 jsonResponse(JSONObject().put("active", false))
             }
             uri == "/sshd/pin/verify" && session.method == Method.GET -> {
@@ -7644,8 +7651,10 @@ class LocalHttpServer(
                 if (state.expired) {
                     sshNoAuthManager.stop()
                     sshdManager.exitNotificationMode()
+                    syncAuthorizedKeys()
                 } else if (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_NOTIFICATION) {
                     sshdManager.exitNotificationMode()
+                    syncAuthorizedKeys()
                 }
                 jsonResponse(
                     JSONObject()
@@ -7660,8 +7669,9 @@ class LocalHttpServer(
                 if (!isPermissionApproved(permissionId, consume = true)) {
                     return forbidden("permission_required")
                 }
-                sshdManager.enterNotificationMode()
                 val state = sshNoAuthManager.start(seconds)
+                sshdManager.enterNotificationMode()
+                syncAuthorizedKeys()
                 jsonResponse(
                     JSONObject()
                         .put("active", state.active)
@@ -7671,7 +7681,20 @@ class LocalHttpServer(
             uri == "/sshd/noauth/stop" && session.method == Method.POST -> {
                 sshNoAuthManager.stop()
                 sshdManager.exitNotificationMode()
+                syncAuthorizedKeys()
                 jsonResponse(JSONObject().put("active", false))
+            }
+            uri == "/sshd/noauth/wait" && session.method == Method.GET -> {
+                // Called by methings-notif-check ForceCommand script after key auth.
+                // Blocks until the user taps Allow/Deny on the notification.
+                if (!sshNoAuthManager.isActive()) {
+                    return jsonResponse(JSONObject().put("approved", false).put("reason", "inactive"))
+                }
+                val requestId = session.parms["id"]
+                    ?: System.currentTimeMillis().toString()
+                val user = session.parms["user"] ?: ""
+                val approved = sshNoAuthManager.waitForApproval(requestId, user, 30_000L)
+                jsonResponse(JSONObject().put("approved", approved))
             }
             uri == "/sshd/auth/keys" && session.method == Method.GET -> {
                 // THE BRIDGE endpoint — called by AuthorizedKeysCommand script in Termux.
@@ -7683,8 +7706,18 @@ class LocalHttpServer(
     }
 
     /**
-     * AuthorizedKeysCommand bridge: returns authorized_keys lines to stdout.
-     * The script calls: curl http://127.0.0.1:33389/sshd/auth/keys?user=X&fp=Y&type=Z&key=W
+     * Push current DB keys to Termux's authorized_keys file.
+     * Called after key add/delete and auth mode changes.
+     */
+    fun syncAuthorizedKeys() {
+        sshKeyStore.pruneExpired()
+        val keys = sshKeyStore.listActive().map { it.key }
+        sshdManager.writeAuthorizedKeys(keys)
+    }
+
+    /**
+     * AuthorizedKeysCommand bridge (legacy — no longer called by sshd after
+     * switch to AuthorizedKeysFile, but kept for debugging).
      */
     private fun handleAuthKeysQuery(session: IHTTPSession): Response {
         val user = session.parms["user"] ?: ""
@@ -7695,24 +7728,30 @@ class LocalHttpServer(
 
         val authMode = sshdManager.getAuthMode()
 
-        return when (authMode) {
-            SshdManager.AUTH_MODE_PUBLIC_KEY -> {
-                // Return DB keys that match the offered key (or all active keys if no key offered)
-                sshKeyStore.pruneExpired()
-                val now = System.currentTimeMillis()
-                val active = sshKeyStore.listActive(now)
-                val lines = active.mapNotNull { row ->
-                    val key = row.key.trim()
-                    if (key.isBlank()) return@mapNotNull null
-                    key
-                }
-                newFixedLengthResponse(
-                    Response.Status.OK,
-                    "text/plain",
-                    lines.joinToString("\n") + if (lines.isNotEmpty()) "\n" else ""
-                )
+        // Helper: return DB keys (used by public_key mode and as fallback)
+        fun respondWithDbKeys(): Response {
+            sshKeyStore.pruneExpired()
+            val now = System.currentTimeMillis()
+            val active = sshKeyStore.listActive(now)
+            val lines = active.mapNotNull { row ->
+                val key = row.key.trim()
+                if (key.isBlank()) return@mapNotNull null
+                key
             }
+            return newFixedLengthResponse(
+                Response.Status.OK,
+                "text/plain",
+                lines.joinToString("\n") + if (lines.isNotEmpty()) "\n" else ""
+            )
+        }
+
+        return when (authMode) {
+            SshdManager.AUTH_MODE_PUBLIC_KEY -> respondWithDbKeys()
             SshdManager.AUTH_MODE_PIN -> {
+                // When PIN is not active, fall back to public_key behavior
+                if (!sshPinManager.status().active) {
+                    return respondWithDbKeys()
+                }
                 // Accept any offered key but wrap with command= to force PIN check
                 if (offeredKey.isBlank()) {
                     return newFixedLengthResponse(Response.Status.OK, "text/plain", "")
@@ -7721,11 +7760,12 @@ class LocalHttpServer(
                 newFixedLengthResponse(Response.Status.OK, "text/plain", line + "\n")
             }
             SshdManager.AUTH_MODE_NOTIFICATION -> {
+                // When notification mode is not active, fall back to public_key behavior
+                if (!sshNoAuthManager.isActive()) {
+                    return respondWithDbKeys()
+                }
                 // Block until user approves via notification
                 if (offeredKey.isBlank()) {
-                    return newFixedLengthResponse(Response.Status.OK, "text/plain", "")
-                }
-                if (!sshNoAuthManager.isActive()) {
                     return newFixedLengthResponse(Response.Status.OK, "text/plain", "")
                 }
                 val requestId = fp.ifBlank { offeredKey.hashCode().toString() }

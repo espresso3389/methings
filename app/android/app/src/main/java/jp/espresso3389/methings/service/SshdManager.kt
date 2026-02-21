@@ -169,26 +169,21 @@ class SshdManager(
     }
 
     /**
-     * Deploy AuthorizedKeysCommand scripts and patch sshd_config in Termux.
+     * Deploy helper scripts and patch sshd_config in Termux.
+     *
+     * Uses AuthorizedKeysFile (not AuthorizedKeysCommand) because Termux's
+     * OpenSSH 10.x sshd-auth rejects AuthorizedKeysCommand scripts that are
+     * not owned by root.
+     *
+     * Auth modes work via command= prefixes in the authorized_keys file:
+     * - public_key: plain keys (no command=)
+     * - pin: keys with command="methings-pin-check"
+     * - notification: keys with command="methings-notif-check"
      */
     private fun configureSshd() {
         val port = getPort()
 
-        // Deploy scripts and patch sshd_config in a single command
         val cmd = """
-            cat > ${'$'}PREFIX/bin/methings-auth-keys << 'SCRIPT_EOF'
-            #!/data/data/com.termux/files/usr/bin/bash
-            export PATH="/data/data/com.termux/files/usr/bin:${'$'}PATH"
-            # AuthorizedKeysCommand — queries the app for authorized keys.
-            # Args: %u=username %f=fingerprint %t=key-type %k=base64-key
-            curl -sfG --max-time 35 \
-              --data-urlencode "user=${'$'}1" \
-              --data-urlencode "fp=${'$'}2" \
-              --data-urlencode "type=${'$'}3" \
-              --data-urlencode "key=${'$'}4" \
-              "http://127.0.0.1:33389/sshd/auth/keys" 2>/dev/null
-            SCRIPT_EOF
-            chmod 755 ${'$'}PREFIX/bin/methings-auth-keys && \
             cat > ${'$'}PREFIX/bin/methings-pin-check << 'SCRIPT_EOF'
             #!/data/data/com.termux/files/usr/bin/bash
             export PATH="/data/data/com.termux/files/usr/bin:${'$'}PATH"
@@ -206,8 +201,26 @@ class SshdManager(
             exit 1
             SCRIPT_EOF
             chmod 755 ${'$'}PREFIX/bin/methings-pin-check && \
+            cat > ${'$'}PREFIX/bin/methings-notif-check << 'SCRIPT_EOF'
+            #!/data/data/com.termux/files/usr/bin/bash
+            export PATH="/data/data/com.termux/files/usr/bin:${'$'}PATH"
+            if [ -n "${'$'}SSH_ORIGINAL_COMMAND" ]; then
+              echo "Notification auth only supports interactive sessions."
+              exit 1
+            fi
+            echo "Waiting for approval on device..."
+            result=${'$'}(curl -sf --max-time 35 "http://127.0.0.1:33389/sshd/noauth/wait" 2>/dev/null)
+            if echo "${'$'}result" | grep -q '"approved":true'; then
+              exec bash -l
+            fi
+            echo "Connection denied."
+            exit 1
+            SCRIPT_EOF
+            chmod 755 ${'$'}PREFIX/bin/methings-notif-check && \
+            mkdir -p ${'$'}HOME/.ssh && \
+            touch ${'$'}HOME/.ssh/methings_keys && \
+            chmod 600 ${'$'}HOME/.ssh/methings_keys && \
             SSHD_CONFIG="${'$'}PREFIX/etc/ssh/sshd_config" && \
-            PREFIX_BIN="${'$'}PREFIX/bin" && \
             sed -i '/^# methings-auth-start/,/^# methings-auth-end/d' "${'$'}SSHD_CONFIG" 2>/dev/null; \
             sed -i '/^AuthorizedKeysCommand /d; /^AuthorizedKeysCommandUser /d' "${'$'}SSHD_CONFIG" 2>/dev/null; \
             sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' "${'$'}SSHD_CONFIG" 2>/dev/null; \
@@ -215,13 +228,37 @@ class SshdManager(
             grep -q '^Port ' "${'$'}SSHD_CONFIG" && sed -i 's/^Port .*/Port $port/' "${'$'}SSHD_CONFIG" || echo "Port $port" >> "${'$'}SSHD_CONFIG"; \
             echo '' >> "${'$'}SSHD_CONFIG" && \
             echo '# methings-auth-start' >> "${'$'}SSHD_CONFIG" && \
-            echo "AuthorizedKeysCommand ${'$'}PREFIX_BIN/methings-auth-keys %u %f %t %k" >> "${'$'}SSHD_CONFIG" && \
-            echo "AuthorizedKeysCommandUser ${'$'}(whoami)" >> "${'$'}SSHD_CONFIG" && \
-            echo 'AuthorizedKeysFile none' >> "${'$'}SSHD_CONFIG" && \
+            echo 'AuthorizedKeysFile .ssh/methings_keys' >> "${'$'}SSHD_CONFIG" && \
             echo '# methings-auth-end' >> "${'$'}SSHD_CONFIG"
         """.trimIndent()
 
         termuxManager.runCommand(cmd)
+    }
+
+    /**
+     * Write the authorized_keys file in Termux based on current auth mode.
+     * Called when keys change or auth mode changes.
+     *
+     * @param keys list of public key strings from the DB
+     */
+    fun writeAuthorizedKeys(keys: List<String>) {
+        val authMode = getAuthMode()
+        val lines = keys.filter { it.isNotBlank() }.map { key ->
+            when (authMode) {
+                AUTH_MODE_PIN -> "command=\"/data/data/com.termux/files/usr/bin/methings-pin-check\",restrict,pty $key"
+                AUTH_MODE_NOTIFICATION -> "command=\"/data/data/com.termux/files/usr/bin/methings-notif-check\",restrict,pty $key"
+                else -> key
+            }
+        }
+        val content = lines.joinToString("\\n")
+        // Write via Termux since we can't access its filesystem directly
+        val cmd = if (content.isBlank()) {
+            "> \$HOME/.ssh/methings_keys"
+        } else {
+            "printf '%b\\n' '$content' > \$HOME/.ssh/methings_keys"
+        }
+        termuxManager.runCommand(cmd)
+        Log.i(TAG, "Wrote ${lines.size} keys to methings_keys (mode=$authMode)")
     }
 
     data class SshdStatus(
