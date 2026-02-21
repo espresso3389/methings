@@ -148,20 +148,41 @@ class LocalHttpServer(
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
 
+    // --- Shared JsRuntime ---
+    private val agentJsRuntime by lazy {
+        JsRuntime(
+            userDir = File(context.filesDir, "user"),
+            sysDir = File(context.filesDir, "system"),
+            port = PORT,
+            deviceApiCallback = { action, payloadJson ->
+                val payload = try { JSONObject(payloadJson) } catch (_: Exception) { JSONObject() }
+                agentDeviceBridge.execute(action, payload, "js_runtime").toString()
+            },
+        )
+    }
+
     // --- Scheduler ---
     private val schedulerStore by lazy { SchedulerStore(context) }
     private val schedulerDeviceBridge by lazy {
         DeviceToolBridge(identity = { "scheduler" })
+    }
+    private val schedulerJsRuntime by lazy {
+        JsRuntime(
+            userDir = File(context.filesDir, "user"),
+            sysDir = File(context.filesDir, "system"),
+            port = PORT,
+            deviceApiCallback = { action, payloadJson ->
+                val payload = try { JSONObject(payloadJson) } catch (_: Exception) { JSONObject() }
+                schedulerDeviceBridge.execute(action, payload, "scheduler").toString()
+            },
+        )
     }
     private val schedulerEngine by lazy {
         SchedulerEngine(
             store = schedulerStore,
             userDir = File(context.filesDir, "user"),
             executeRunJs = { code, timeoutMs ->
-                JsEngine().execute(code, timeoutMs) { action, payloadJson ->
-                    val payload = try { JSONObject(payloadJson) } catch (_: Exception) { JSONObject() }
-                    schedulerDeviceBridge.execute(action, payload, "scheduler").toString()
-                }
+                schedulerJsRuntime.executeBlocking(code, timeoutMs)
             },
             executeShellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
         )
@@ -183,6 +204,7 @@ class LocalHttpServer(
             deviceBridge = agentDeviceBridge,
             shellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
             sessionIdProvider = { "default" },
+            jsRuntime = agentJsRuntime,
         )
     }
     @Volatile private var agentRuntime: AgentRuntime? = null
@@ -388,6 +410,14 @@ class LocalHttpServer(
         }
         try {
             schedulerEngine.stop()
+        } catch (_: Exception) {
+        }
+        try {
+            agentJsRuntime.close()
+        } catch (_: Exception) {
+        }
+        try {
+            schedulerJsRuntime.close()
         } catch (_: Exception) {
         }
         try {

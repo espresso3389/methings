@@ -31,7 +31,7 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 
 ### Built-in (always available, no Termux)
 
-- `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine. Use for data processing, calculations, string manipulation, JSON parsing, and general programming. No network or filesystem access from JS — use other tools for that. Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`.
+- `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine with **async/await support**. Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`. Top-level `await` is supported. Full API reference: `$sys/docs/run_js.md`.
 - `run_curl(url, method?, headers?, body?, timeout_ms?)` — Make HTTP requests natively. Parameters: `url` (required), `method` (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), `headers` (JSON object), `body` (string), `timeout_ms` (default 30000). Returns `{status, http_status, headers, body}`.
 
 ### Termux-dependent (require Termux installed)
@@ -40,7 +40,7 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 - `run_pip(args, cwd)` — Run pip locally. Requires Termux.
 
 Notes:
-- Prefer `run_js` over `run_python` for tasks that don't need filesystem/network access from the script.
+- Prefer `run_js` over `run_python` — it supports fetch, WebSocket, file I/O, and timers natively.
 - `run_curl` now works natively without Termux. Legacy `run_curl(args, cwd)` form is still supported for backward compatibility.
 - `python -` (stdin) is not supported (no interactive stdin). Use `python -c "..."` or write a script file and run it.
 
@@ -187,7 +187,7 @@ Schedule types:
 - `periodic`: fires on pattern (minutely, hourly, daily, weekly:Mon..Sun, monthly:1..28). 1-minute resolution.
 - `one_time`: fires once at next tick, then auto-disables.
 
-Runtimes: `run_js` (built-in QuickJS, always available), `run_python` (requires Termux).
+Runtimes: `run_js` (built-in QuickJS with async/await support, always available), `run_python` (requires Termux).
 Limits: max 50 schedules, 200 log entries per schedule, 2000 global log entries.
 
 ### Intent (Android)
@@ -407,6 +407,9 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 - `$sys/docs/openapi/paths/cloud.yaml` — cloud broker + adapter mode
 - `$sys/docs/openapi/paths/files.yaml` — file upload/download/info
 - `$sys/docs/openapi/paths/ui.yaml` — viewer control, settings navigation
+
+Tool-specific references (under `$sys/docs/`):
+- `$sys/docs/run_js.md` — run_js async API: fetch, WebSocket, file I/O, timers, device_api
 
 Conceptual guides (under `$sys/docs/`):
 - `$sys/docs/agent_tools.md` — agent tool conventions, filesystem helpers, chat shortcuts

@@ -16,6 +16,7 @@ class ToolExecutor(
     private val deviceBridge: DeviceToolBridge,
     private val shellExec: ((cmd: String, args: String, cwd: String) -> JSONObject)?,
     private val sessionIdProvider: () -> String,
+    private val jsRuntime: JsRuntime,
 ) {
     fun executeFunctionTool(
         toolName: String,
@@ -244,8 +245,7 @@ class ToolExecutor(
         val code = args.optString("code", "")
         if (code.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_code")
         val timeoutMs = args.optLong("timeout_ms", 30_000).coerceIn(1_000, 120_000)
-        val engine = JsEngine()
-        return engine.execute(code, timeoutMs).toJson()
+        return jsRuntime.executeBlocking(code, timeoutMs).toJson()
     }
 
     private fun executeRunCurl(args: JSONObject): JSONObject {

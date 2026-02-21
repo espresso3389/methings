@@ -63,7 +63,7 @@ object ToolDefinitions {
             put("limit", prop("integer"))
         }.withRequired())
 
-        tools.put(functionTool("run_js", "Execute JavaScript code using the built-in QuickJS engine. Always available without Termux. Use for data processing, calculations, string manipulation, JSON parsing, and general programming tasks. No network or filesystem access from JS — use other tools for that.") {
+        tools.put(functionTool("run_js", "Execute JavaScript code using the built-in QuickJS engine with async/await support. Always available without Termux. Supports: `await fetch(url, options?)` for HTTP, `await connectWs(url)` for WebSocket, `await delay(ms)`, setTimeout/setInterval, `readFile`/`writeFile`/`readBinaryFile`/`writeBinaryFile` (Uint8Array), `listDir`/`mkdir`/`deleteFile`/`rmdir`, `await openFile(path, mode)` for RandomAccessFile handle (size/position/read/write/seek/truncate/close), and `device_api(action, payload)`. Top-level `await` supported. Full reference: `\$sys/docs/run_js.md`.") {
             put("code", prop("string"))
             put("timeout_ms", prop("integer"))
         }.withRequired("code"))
