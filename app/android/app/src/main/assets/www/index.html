@@ -4074,17 +4074,19 @@
           openBtn.setAttribute("aria-label", "Open");
           openBtn.innerHTML = ICON.externalLink;
           const open = () => {
-            try {
-              openHtmlViewer(pWithPage);
-              return;
-            } catch (_) {
-              if (typeof AndroidBridge !== "undefined") {
-                try { location.href = "methings://open_user_html?path=" + encodeURIComponent(p); } catch (_) {}
-                return;
-              }
-              try {
-                window.open(fileUrl(p), "_blank", "noopener,noreferrer");
-              } catch (_) {}
+            const url = fileUrl(pWithPage);
+            if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
+              AndroidBridge.openInWebview(url, true);
+            } else {
+              fetch("/webview/split", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ visible: true, fullscreen: true })
+              }).then(() => fetch("/webview/open", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ url: url, timeout_s: 30 })
+              })).catch(() => {});
             }
           };
           openBtn.addEventListener("click", (ev) => {
@@ -4450,7 +4452,16 @@
                     if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
                     if (ext === "html" || ext === "htm") {
                       const pWithPage = (p0Page >= 0) ? (p + "#page=" + p0Page) : p;
-                      try { openHtmlViewer(pWithPage); } catch (_) {}
+                      const url = fileUrl(pWithPage);
+                      if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
+                        AndroidBridge.openInWebview(url);
+                      } else {
+                        fetch("/webview/open", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ url: url, timeout_s: 30 })
+                        }).catch(() => {});
+                      }
                       return;
                     }
                     try { openTextViewer(p, content, ext, p0Page); } catch (_) {}

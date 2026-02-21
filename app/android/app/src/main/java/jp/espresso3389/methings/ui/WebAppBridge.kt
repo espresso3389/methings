@@ -396,6 +396,12 @@ class WebAppBridge(private val activity: MainActivity) {
         handler.post { activity.showBrowserPanel(url) }
     }
 
+    /** Open a URL in the embedded browser panel with fullscreen option. */
+    @JavascriptInterface
+    fun openInWebview(url: String, fullscreen: Boolean) {
+        handler.post { activity.showBrowserPanel(url, fullscreen = fullscreen) }
+    }
+
     /** Open current webview URL in external/in-app browser per user preference. */
     @JavascriptInterface
     fun openWebviewUrlInBrowser() {

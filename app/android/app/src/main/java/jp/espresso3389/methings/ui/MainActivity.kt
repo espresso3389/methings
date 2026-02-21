@@ -81,8 +81,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chatContainer: FrameLayout
     private lateinit var browserPosBtn: ImageButton
     private lateinit var browserFsBtn: ImageButton
+    private lateinit var browserSourceBtn: ImageButton
     private var browserInitialized = false
     private var browserFullscreen = false
+    private var browserSourceMode = false
+    private var browserSourceUrl = ""
     /** Set to true when the agent explicitly loads a URL; cleared after the card is shown. */
     private var browserAgentNavigation = false
     /** "end" = browser at bottom/right (default), "start" = browser at top/left */
@@ -635,9 +638,15 @@ class MainActivity : AppCompatActivity() {
             setBrowserFullscreen(!browserFullscreen)
         }
 
+        // View source toggle button (hidden by default, shown only for local file URLs)
+        browserSourceBtn = toolbarButton("View source", CodeBracketsDrawable(iconSize, 0xFFA1A1AA.toInt())) {
+            toggleBrowserSource()
+        }
+        browserSourceBtn.visibility = View.GONE
+
         // Open in browser button
         val openInBrowserBtn = toolbarButton("Open in browser", ExternalLinkDrawable(iconSize, 0xFFA1A1AA.toInt())) {
-            val url = WebViewBrowserManager.currentUrl
+            val url = if (browserSourceMode) browserSourceUrl else WebViewBrowserManager.currentUrl
             if (url.isNotBlank()) openUrlInBrowser(url)
         }
 
@@ -656,7 +665,8 @@ class MainActivity : AppCompatActivity() {
         }
         val groupGap = (12 * dp).toInt()
         toolbar.addView(titleColumn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        // Group 1: open in browser
+        // Group 1: view source, open in browser
+        toolbar.addView(browserSourceBtn, LinearLayout.LayoutParams(btnSize, btnSize).apply { marginStart = btnMargin })
         toolbar.addView(openInBrowserBtn, LinearLayout.LayoutParams(btnSize, btnSize).apply { marginStart = btnMargin })
         // Group 2: layout controls
         toolbar.addView(browserPosBtn, LinearLayout.LayoutParams(btnSize, btnSize).apply { marginStart = groupGap })
@@ -706,12 +716,19 @@ class MainActivity : AppCompatActivity() {
 
         browserWebView.webViewClient = object : WebViewClient() {
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                // Skip all UI/state updates while showing source view
+                if (browserSourceMode) return
                 WebViewBrowserManager.isLoading = true
                 WebViewBrowserManager.currentUrl = url ?: ""
                 browserUrlView.text = url ?: ""
+                // Show source toggle only for local file URLs
+                val u = url ?: ""
+                val isLocalFile = u.contains("/user/file?path=") || u.contains("/sys/file?path=")
+                browserSourceBtn.visibility = if (isLocalFile) View.VISIBLE else View.GONE
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                if (browserSourceMode) return
                 val pageUrl = url ?: ""
                 val pageTitle = view?.title ?: ""
                 WebViewBrowserManager.notifyPageLoaded(pageUrl, pageTitle)
@@ -738,6 +755,7 @@ class MainActivity : AppCompatActivity() {
 
         browserWebView.webChromeClient = object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
+                if (browserSourceMode) return
                 browserTitleView.text = title ?: ""
                 WebViewBrowserManager.currentTitle = title ?: ""
             }
@@ -813,6 +831,8 @@ class MainActivity : AppCompatActivity() {
         }
         setBrowserFullscreen(fullscreen)
         if (!url.isNullOrBlank()) {
+            browserSourceMode = false
+            browserSourceUrl = ""
             browserUrlView.text = url
             browserWebView.loadUrl(url)
         }
@@ -820,6 +840,8 @@ class MainActivity : AppCompatActivity() {
 
     fun hideBrowserPanel() {
         browserFullscreen = false
+        browserSourceMode = false
+        browserSourceUrl = ""
         chatContainer.visibility = View.VISIBLE
         browserPanel.visibility = View.GONE
         browserDivider.visibility = View.GONE
@@ -829,6 +851,56 @@ class MainActivity : AppCompatActivity() {
         WebViewBrowserManager.isLoading = false
         browserTitleView.text = ""
         browserUrlView.text = ""
+    }
+
+    private fun toggleBrowserSource() {
+        if (!browserInitialized) return
+        val dp = resources.displayMetrics.density
+        val iconSize = (14 * dp).toInt()
+        if (browserSourceMode) {
+            // Switch back to rendered view
+            browserSourceMode = false
+            browserSourceBtn.setImageDrawable(CodeBracketsDrawable(iconSize, 0xFFA1A1AA.toInt()))
+            browserSourceBtn.contentDescription = "View source"
+            if (browserSourceUrl.isNotBlank()) {
+                browserWebView.loadUrl(browserSourceUrl)
+            }
+            browserSourceUrl = ""
+        } else {
+            // Switch to source view — fetch source via JS and display as <pre>
+            browserSourceMode = true
+            browserSourceUrl = WebViewBrowserManager.currentUrl
+            browserSourceBtn.setImageDrawable(DocDrawable(iconSize, 0xFFA1A1AA.toInt()))
+            browserSourceBtn.contentDescription = "View rendered"
+            browserWebView.evaluateJavascript(
+                "(function(){try{return document.documentElement.outerHTML}catch(e){return '(error: '+e.message+')'}})()"
+            ) { raw ->
+                // raw is a JSON-encoded string from evaluateJavascript; parse properly
+                val src = try {
+                    org.json.JSONArray("[$raw]").optString(0, raw ?: "(empty)")
+                } catch (_: Exception) {
+                    raw?.removeSurrounding("\"") ?: "(empty)"
+                }
+                val escaped = src
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace("\"", "&quot;")
+                val html = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<style>
+body{background:#0e0e10;color:#d4d4d8;margin:0;padding:0}
+pre{margin:0}
+pre code.hljs{padding:12px;font-size:12px;line-height:1.5;background:#0e0e10}
+</style></head><body>
+<pre><code class="language-html">$escaped</code></pre>
+<script>document.querySelectorAll('pre code').forEach(el=>hljs.highlightElement(el));</script>
+</body></html>"""
+                browserWebView.loadDataWithBaseURL("https://cdnjs.cloudflare.com/", html, "text/html", "UTF-8", null)
+            }
+        }
     }
 
     /** Open a URL in external or in-app browser per user preference. */
@@ -1815,6 +1887,80 @@ class MainActivity : AppCompatActivity() {
             val arm = size * 0.22f
             canvas.drawLine(ax - arm, ay, ax, ay, paint)
             canvas.drawLine(ax, ay + arm, ax, ay, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(cf: ColorFilter?) { paint.colorFilter = cf }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = PixelFormat.TRANSLUCENT
+    }
+
+    /** Draws code brackets: < > */
+    private class CodeBracketsDrawable(private val size: Int, private val color: Int) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = this@CodeBracketsDrawable.color
+            style = Paint.Style.STROKE
+            strokeWidth = size / 7f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+
+        override fun getIntrinsicWidth() = size
+        override fun getIntrinsicHeight() = size
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val inset = size * 0.12f
+            val l = b.left + inset
+            val t = b.top + inset
+            val r = b.right - inset
+            val bo = b.bottom - inset
+            val cy = (t + bo) / 2f
+            val gap = size * 0.08f
+            // Left bracket <
+            canvas.drawLine(l + (r - l) * 0.38f - gap, t, l - gap, cy, paint)
+            canvas.drawLine(l - gap, cy, l + (r - l) * 0.38f - gap, bo, paint)
+            // Right bracket >
+            canvas.drawLine(r - (r - l) * 0.38f + gap, t, r + gap, cy, paint)
+            canvas.drawLine(r + gap, cy, r - (r - l) * 0.38f + gap, bo, paint)
+        }
+
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(cf: ColorFilter?) { paint.colorFilter = cf }
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity() = PixelFormat.TRANSLUCENT
+    }
+
+    /** Draws a document/page icon (rectangle with lines). Used for "view rendered" toggle state. */
+    private class DocDrawable(private val size: Int, private val color: Int) : Drawable() {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = this@DocDrawable.color
+            style = Paint.Style.STROKE
+            strokeWidth = size / 7f
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+        }
+
+        override fun getIntrinsicWidth() = size
+        override fun getIntrinsicHeight() = size
+
+        override fun draw(canvas: Canvas) {
+            val b = bounds
+            val inset = size * 0.12f
+            val l = b.left + inset
+            val t = b.top + inset
+            val r = b.right - inset
+            val bo = b.bottom - inset
+            val radius = size * 0.08f
+            // Rounded rectangle (document outline)
+            val rect = android.graphics.RectF(l, t, r, bo)
+            canvas.drawRoundRect(rect, radius, radius, paint)
+            // Two horizontal lines (text lines)
+            val lineInset = (r - l) * 0.22f
+            val lineY1 = t + (bo - t) * 0.38f
+            val lineY2 = t + (bo - t) * 0.62f
+            canvas.drawLine(l + lineInset, lineY1, r - lineInset, lineY1, paint)
+            canvas.drawLine(l + lineInset, lineY2, r - lineInset, lineY2, paint)
         }
 
         override fun setAlpha(alpha: Int) { paint.alpha = alpha }
