@@ -17,8 +17,8 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 | **Sensors** | Accelerometer, gyroscope, magnetometer, and more via real-time WebSocket streams |
 | **Location** | GPS, fused, network, passive providers |
 | **Vision / ML** | On-device TensorFlow Lite inference on camera frames |
-| **Code Execution** | Built-in QuickJS JavaScript engine (`run_js`), native HTTP client (`run_curl`), Python/pip via optional Termux |
-| **SSH** | Built-in SSH server (Dropbear) with PIN/key/biometric auth; SSH client for remote exec and SCP |
+| **Code Execution** | Built-in QuickJS JavaScript engine (`run_js` with async/await, fetch, WebSocket, file I/O), native HTTP client (`run_curl`), general shell (`run_shell`), persistent PTY sessions (`shell_session`), Termux filesystem access (`termux_fs`), Python/pip via optional Termux |
+| **SSH** | SSH server (via Termux OpenSSH) with PIN/key/no-auth modes; SSH client for remote exec and SCP |
 | **Browser** | Agent-controllable WebView with screenshot, JS injection, tap/scroll simulation |
 | **Cloud** | API broker with automatic secret injection from encrypted vault |
 | **me.me** | Encrypted device-to-device messaging over WiFi/BLE/WebRTC P2P/relay, file transfer, auto-discovery, device provisioning via OAuth sign-in |
@@ -41,13 +41,15 @@ Android App (Foreground Service)
  |
  +-- Agent Runtime (built-in)
  |    +-- LlmClient (OpenAI + Anthropic SSE streaming)
- |    +-- Tool Router (device APIs, filesystem, JS engine, native HTTP, cloud)
- |    +-- JsEngine (QuickJS — run_js, always available)
+ |    +-- Tool Router (device APIs, filesystem, JS engine, native HTTP, shell, cloud)
+ |    +-- JsRuntime (QuickJS — run_js with async/await, fetch, WebSocket, file I/O)
  |    +-- AgentStorage (SQLite)
+ |    +-- Scheduler (daemon/periodic/one_time code execution)
  |
  +-- Termux (optional, on-demand)
-      +-- Linux shell environment (run_python, run_pip)
-      +-- Package management (apt, pip)
+      +-- General shell (run_shell, shell_session, termux_fs)
+      +-- Python environment (run_python, run_pip)
+      +-- Worker HTTP server (127.0.0.1:8776)
       +-- SSH server (OpenSSH)
 ```
 
