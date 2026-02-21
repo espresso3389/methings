@@ -1763,21 +1763,60 @@ class LocalHttpServer(
     }
 
     private fun routeShell(session: IHTTPSession, uri: String, postBody: String?): Response {
+        if (session.method != Method.POST && session.method != Method.GET) {
+            return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
+        }
         return when {
-            (uri == "/shell/exec" || uri == "/shell/exec/") -> {
-                if (session.method != Method.POST) {
-                    return jsonError(Response.Status.METHOD_NOT_ALLOWED, "method_not_allowed")
-                }
+            (uri == "/shell/exec" || uri == "/shell/exec/") && session.method == Method.POST -> {
                 val body = postBody ?: ""
                 val payload = runCatching { JSONObject(body) }.getOrNull()
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 return handleShellExec(payload)
             }
+            // Session endpoints: /shell/session/start, /shell/session/<id>/<action>, /shell/session/list
+            uri.startsWith("/shell/session/") -> {
+                ensureWorkerRunning()
+                val subPath = uri.removePrefix("/shell")  // → /session/...
+                if (session.method == Method.GET) {
+                    return proxyWorkerRequest(subPath, "GET") ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                }
+                val body = postBody ?: "{}"
+                val timeoutMs = if (subPath.contains("/exec")) 305_000 else 10_000
+                return proxyWorkerRequest(subPath, "POST", body, readTimeoutMs = timeoutMs) ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+            }
+            // File system endpoints: /shell/fs/<action>
+            uri.startsWith("/shell/fs/") && session.method == Method.POST -> {
+                ensureWorkerRunning()
+                val subPath = uri.removePrefix("/shell")  // → /fs/...
+                val body = postBody ?: "{}"
+                return proxyWorkerRequest(subPath, "POST", body) ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+            }
             else -> notFound()
         }
     }
 
+    private fun ensureWorkerRunning() {
+        if (runtimeManager.getStatus() != "ok") {
+            runtimeManager.startWorker()
+            waitForTermuxHealth(5000)
+        }
+    }
+
     private fun handleShellExec(payload: JSONObject): Response {
+        // Support both legacy cmd+args format and new command format
+        val hasCommand = payload.has("command") && payload.optString("command", "").isNotEmpty()
+
+        if (hasCommand) {
+            // New format: proxy directly to worker /exec
+            ensureWorkerRunning()
+            val timeoutMs = payload.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
+            val readTimeout = (timeoutMs + 5_000).toInt()
+            val proxied = proxyWorkerRequest("/exec", "POST", payload.toString(), readTimeoutMs = readTimeout)
+            if (proxied != null) return proxied
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+        }
+
+        // Legacy format: cmd + args
         val cmd = payload.optString("cmd")
         val args = payload.optString("args", "")
         val cwd = payload.optString("cwd", "")
@@ -1785,10 +1824,7 @@ class LocalHttpServer(
             return jsonError(Response.Status.FORBIDDEN, "command_not_allowed")
         }
 
-        if (runtimeManager.getStatus() != "ok") {
-            runtimeManager.startWorker()
-            waitForTermuxHealth(5000)
-        }
+        ensureWorkerRunning()
         val proxied = proxyShellExecToWorker(cmd, args, cwd)
         if (proxied != null) {
             return proxied
@@ -6677,15 +6713,16 @@ class LocalHttpServer(
         path: String,
         method: String,
         body: String? = null,
-        query: String? = null
+        query: String? = null,
+        readTimeoutMs: Int = 5000,
     ): Response? {
         return try {
             val fullPath = if (!query.isNullOrBlank()) "$path?$query" else path
             val url = java.net.URL("http://127.0.0.1:8776$fullPath")
             val conn = url.openConnection() as java.net.HttpURLConnection
             conn.requestMethod = method
-            conn.connectTimeout = 1500
-            conn.readTimeout = 5000
+            conn.connectTimeout = 2000
+            conn.readTimeout = readTimeoutMs
             if (method == "POST") {
                 conn.doOutput = true
                 conn.setRequestProperty("Content-Type", "application/json")

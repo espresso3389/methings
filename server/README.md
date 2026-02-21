@@ -9,7 +9,9 @@ This document describes the current on-device APIs.
 ## Core Endpoints (`:33389`)
 - `GET /health`
 - `GET /ui/version`
-- `POST /shell/exec` (requires Termux)
+- `POST /shell/exec` (requires Termux — general shell commands)
+- `POST /shell/session/*` (requires Termux — PTY sessions)
+- `POST /shell/fs/*` (requires Termux — file access)
 - `GET /brain/status`
 - `GET /brain/config`
 - `POST /brain/config`
@@ -117,15 +119,25 @@ Lists chat sessions with message counts.
 ### `GET /brain/events`
 SSE stream of agent events (tool calls, responses, errors).
 
-## Shell Exec API
+## Shell API
+All shell endpoints require Termux to be installed. The worker auto-starts when needed.
+
+Note: `run_js` (QuickJS engine) and `run_curl` (native HTTP) are handled in-process by the app and do not use these endpoints or Termux.
+
 ### `POST /shell/exec`
-Requires Termux to be installed. Allowed `cmd` values:
-- `python`
-- `pip`
+Execute a one-shot shell command. Returns separate stdout/stderr.
 
-Note: `run_js` (QuickJS engine) and `run_curl` (native HTTP) are handled in-process by the app and do not use this endpoint or Termux.
+New format (general command):
+```json
+{
+  "command": "ls -la ~/methings",
+  "cwd": "/home",
+  "timeout_ms": 60000,
+  "env": {"MY_VAR": "value"}
+}
+```
 
-Example body:
+Legacy format (python/pip/curl only):
 ```json
 {
   "cmd": "python",
@@ -134,13 +146,35 @@ Example body:
 }
 ```
 
-Response shape:
+Response:
 ```json
 {
   "status": "ok",
-  "code": 0,
-  "output": "..."
+  "exit_code": 0,
+  "stdout": "...",
+  "stderr": "..."
 }
+```
+
+### Session Endpoints
+- `POST /shell/session/start` — Create PTY bash session. Body: `{cwd?, rows?, cols?, env?}`. Returns `{session_id, output}`.
+- `POST /shell/session/{id}/exec` — Send command. Body: `{command, timeout?}`. Returns `{output, alive}`.
+- `POST /shell/session/{id}/write` — Raw stdin write. Body: `{input}`.
+- `POST /shell/session/{id}/read` — Read buffered output. Returns `{output, alive}`.
+- `POST /shell/session/{id}/resize` — Resize terminal. Body: `{rows, cols}`.
+- `POST /shell/session/{id}/kill` — Terminate session.
+- `GET /shell/session/{id}/status` — Session status. Returns `{alive, exit_code, idle_seconds}`.
+- `GET /shell/session/list` — List active sessions.
+
+### File System Endpoints
+All paths validated to be under Termux `$HOME`.
+
+- `POST /shell/fs/read` — Read file. Body: `{path, max_bytes?, offset?}`.
+- `POST /shell/fs/write` — Write file. Body: `{path, content, encoding?}`.
+- `POST /shell/fs/list` — List directory. Body: `{path, show_hidden?}`.
+- `POST /shell/fs/stat` — File metadata. Body: `{path}`.
+- `POST /shell/fs/mkdir` — Create directory. Body: `{path, parents?}`.
+- `POST /shell/fs/delete` — Delete file/dir. Body: `{path, recursive?}`.
 ```
 
 ## Auth and Permissions

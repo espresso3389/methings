@@ -36,13 +36,20 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 
 ### Termux-dependent (require Termux installed)
 
+- `run_shell(command, cwd?, timeout_ms?, env?)` — Execute any shell command in Termux. Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s.
+- `shell_session(action, session_id?, command?, ...)` — Persistent PTY bash sessions. Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. Maintains state across commands.
+- `termux_fs(action, path, ...)` — Access Termux filesystem (outside app user root). Actions: `read`, `write`, `list`, `stat`, `mkdir`, `delete`.
 - `run_python(args, cwd)` — Run Python locally. Requires Termux.
 - `run_pip(args, cwd)` — Run pip locally. Requires Termux.
 
+Full reference for shell tools: `$sys/docs/termux_shell.md`.
+
 Notes:
 - Prefer `run_js` over `run_python` — it supports fetch, WebSocket, file I/O, and timers natively.
+- Prefer `run_shell` over `run_python` for general commands — it can run any program, not just Python.
 - `run_curl` now works natively without Termux. Legacy `run_curl(args, cwd)` form is still supported for backward compatibility.
 - `python -` (stdin) is not supported (no interactive stdin). Use `python -c "..."` or write a script file and run it.
+- For interactive/stateful workflows (e.g., virtual envs, build systems), use `shell_session` to keep state between commands.
 
 ## Web Search Tool (Permission-Gated)
 
@@ -377,7 +384,8 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 
 - `permission_required`: user needs to approve on device UI, then retry.
 - `path_outside_user_dir`: use paths under the user root only.
-- `command_not_allowed`: only `python|pip` are permitted in shell execution tools (use `run_js` and `run_curl` for JS/HTTP — they work natively).
+- `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without Termux).
+- `worker_unavailable`: Termux worker is not reachable on port 8776. Ensure Termux is installed and running.
 
 ## Package Name Gotchas
 
@@ -410,6 +418,7 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 
 Tool-specific references (under `$sys/docs/`):
 - `$sys/docs/run_js.md` — run_js async API: fetch, WebSocket, file I/O, timers, device_api
+- `$sys/docs/termux_shell.md` — run_shell, shell_session, termux_fs: Termux shell & file access
 
 Conceptual guides (under `$sys/docs/`):
 - `$sys/docs/agent_tools.md` — agent tool conventions, filesystem helpers, chat shortcuts

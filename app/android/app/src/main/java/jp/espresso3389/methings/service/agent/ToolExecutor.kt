@@ -42,6 +42,9 @@ class ToolExecutor(
                 "run_js" -> executeRunJs(args)
                 "run_python" -> executeShellExec("python", args)
                 "run_pip" -> executeShellExec("pip", args)
+                "run_shell" -> executeRunShell(args)
+                "shell_session" -> executeShellSession(args)
+                "termux_fs" -> executeTermuxFs(args)
                 "run_curl" -> executeRunCurl(args)
                 "shell_exec" -> {
                     val cmd = args.optString("cmd", "")
@@ -320,6 +323,149 @@ class ToolExecutor(
         val cmdArgs = args.optString("args", "")
         val cwd = args.optString("cwd", "")
         return exec(cmd, cmdArgs, cwd)
+    }
+
+    private fun executeRunShell(args: JSONObject): JSONObject {
+        val command = args.optString("command", "")
+        if (command.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_command")
+        val cwd = args.optString("cwd", "")
+        val timeoutMs = args.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
+        val env = args.optJSONObject("env")
+
+        val body = JSONObject().apply {
+            put("command", command)
+            if (cwd.isNotEmpty()) put("cwd", cwd)
+            put("timeout_ms", timeoutMs)
+            if (env != null) put("env", env)
+        }
+        return proxyWorkerPost("/exec", body)
+    }
+
+    private fun executeShellSession(args: JSONObject): JSONObject {
+        val action = args.optString("action", "")
+        if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
+
+        return when (action) {
+            "start" -> {
+                val body = JSONObject().apply {
+                    val cwd = args.optString("cwd", "")
+                    if (cwd.isNotEmpty()) put("cwd", cwd)
+                    if (args.has("rows")) put("rows", args.optInt("rows", 24))
+                    if (args.has("cols")) put("cols", args.optInt("cols", 80))
+                    val env = args.optJSONObject("env")
+                    if (env != null) put("env", env)
+                }
+                proxyWorkerPost("/session/start", body)
+            }
+            "exec" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                val command = args.optString("command", "")
+                if (command.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_command")
+                val body = JSONObject().put("command", command)
+                if (args.has("timeout")) body.put("timeout", args.optInt("timeout", 30))
+                proxyWorkerPost("/session/$sid/exec", body)
+            }
+            "write" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                val input = args.optString("input", "")
+                if (input.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_input")
+                proxyWorkerPost("/session/$sid/write", JSONObject().put("input", input))
+            }
+            "read" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                proxyWorkerPost("/session/$sid/read", JSONObject())
+            }
+            "resize" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                val body = JSONObject()
+                if (args.has("rows")) body.put("rows", args.optInt("rows", 24))
+                if (args.has("cols")) body.put("cols", args.optInt("cols", 80))
+                proxyWorkerPost("/session/$sid/resize", body)
+            }
+            "kill" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                proxyWorkerPost("/session/$sid/kill", JSONObject())
+            }
+            "list" -> proxyWorkerGet("/session/list")
+            else -> JSONObject().put("status", "error").put("error", "unknown_action").put("action", action)
+        }
+    }
+
+    private fun executeTermuxFs(args: JSONObject): JSONObject {
+        val action = args.optString("action", "")
+        if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
+        val path = args.optString("path", "")
+        if (path.isEmpty() && action != "list") return JSONObject().put("status", "error").put("error", "missing_path")
+
+        val body = JSONObject().apply {
+            put("path", path)
+            when (action) {
+                "read" -> {
+                    if (args.has("max_bytes")) put("max_bytes", args.optInt("max_bytes"))
+                    if (args.has("offset")) put("offset", args.optInt("offset"))
+                }
+                "write" -> {
+                    put("content", args.optString("content", ""))
+                    if (args.has("encoding")) put("encoding", args.optString("encoding"))
+                }
+                "list" -> {
+                    if (args.has("show_hidden")) put("show_hidden", args.optBoolean("show_hidden", false))
+                }
+                "mkdir" -> {
+                    if (args.has("parents")) put("parents", args.optBoolean("parents", true))
+                }
+                "delete" -> {
+                    if (args.has("recursive")) put("recursive", args.optBoolean("recursive", false))
+                }
+            }
+        }
+        return proxyWorkerPost("/fs/$action", body)
+    }
+
+    private fun proxyWorkerPost(path: String, body: JSONObject, readTimeoutMs: Int = 305_000): JSONObject {
+        return try {
+            val url = URL("http://127.0.0.1:8776$path")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "POST"
+            conn.connectTimeout = 2000
+            conn.readTimeout = readTimeoutMs
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json")
+            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            conn.disconnect()
+            try { JSONObject(responseBody) } catch (_: Exception) {
+                JSONObject().put("status", "error").put("raw", responseBody)
+            }
+        } catch (ex: Exception) {
+            JSONObject().put("status", "error").put("error", "worker_unavailable")
+                .put("detail", ex.message ?: "Cannot reach Termux worker on port 8776. Is Termux running?")
+        }
+    }
+
+    private fun proxyWorkerGet(path: String): JSONObject {
+        return try {
+            val url = URL("http://127.0.0.1:8776$path")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 2000
+            conn.readTimeout = 5000
+            val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            conn.disconnect()
+            try { JSONObject(responseBody) } catch (_: Exception) {
+                JSONObject().put("status", "error").put("raw", responseBody)
+            }
+        } catch (ex: Exception) {
+            JSONObject().put("status", "error").put("error", "worker_unavailable")
+                .put("detail", ex.message ?: "Cannot reach Termux worker on port 8776. Is Termux running?")
+        }
     }
 
     private fun executeWebSearch(args: JSONObject): JSONObject {

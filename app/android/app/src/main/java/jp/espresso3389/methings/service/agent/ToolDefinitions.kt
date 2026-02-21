@@ -78,6 +78,41 @@ object ToolDefinitions {
             put("cwd", prop("string"))
         }.withRequired("args", "cwd"))
 
+        tools.put(functionTool("run_shell", "Execute a shell command in Termux and return stdout/stderr. For long-running or interactive commands, use shell_session instead. Requires Termux.") {
+            put("command", prop("string"))
+            put("cwd", prop("string"))
+            put("timeout_ms", prop("integer"))
+            put("env", JSONObject().put("type", "object").put("additionalProperties", true))
+        }.withRequired("command"))
+
+        tools.put(functionTool("shell_session", "Manage persistent PTY bash sessions in Termux. Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions). Requires Termux.") {
+            put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
+                put("start"); put("exec"); put("write"); put("read"); put("resize"); put("kill"); put("list")
+            }))
+            put("session_id", prop("string"))
+            put("command", prop("string"))
+            put("input", prop("string"))
+            put("cwd", prop("string"))
+            put("rows", prop("integer"))
+            put("cols", prop("integer"))
+            put("timeout", prop("integer"))
+            put("env", JSONObject().put("type", "object").put("additionalProperties", true))
+        }.withRequired("action"))
+
+        tools.put(functionTool("termux_fs", "Access files in the Termux filesystem (outside the app's user root). Actions: read, write, list, stat, mkdir, delete. Requires Termux.") {
+            put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
+                put("read"); put("write"); put("list"); put("stat"); put("mkdir"); put("delete")
+            }))
+            put("path", prop("string"))
+            put("content", prop("string"))
+            put("encoding", prop("string"))
+            put("max_bytes", prop("integer"))
+            put("offset", prop("integer"))
+            put("show_hidden", prop("boolean"))
+            put("parents", prop("boolean"))
+            put("recursive", prop("boolean"))
+        }.withRequired("action", "path"))
+
         tools.put(functionTool("run_curl", "Make an HTTP request. Works natively without Termux. Parameters: url (required), method (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), headers (JSON object), body (string), timeout_ms (default 30000).") {
             put("url", prop("string"))
             put("method", prop("string"))
