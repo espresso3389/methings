@@ -1,7 +1,9 @@
 package jp.espresso3389.methings.ui
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.*
 import android.graphics.drawable.Drawable
 import android.net.Uri
@@ -11,6 +13,9 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.GeolocationPermissions
+import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -18,14 +23,26 @@ import android.webkit.WebViewClient
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.browser.customtabs.CustomTabColorSchemeParams
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.core.app.ActivityCompat
+import jp.espresso3389.methings.device.WebViewConsoleBuffer
+import java.util.concurrent.atomic.AtomicReference
 
 class AgentHtmlActivity : AppCompatActivity() {
     companion object {
         const val EXTRA_REL_PATH = "rel_path"
     }
+
+    private val pendingPermAction = AtomicReference<((Boolean) -> Unit)?>(null)
+    private val permLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            val ok = results.values.all { it }
+            val cb = pendingPermAction.getAndSet(null)
+            cb?.invoke(ok)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -105,12 +122,69 @@ class AgentHtmlActivity : AppCompatActivity() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.allowFileAccess = false
+        webView.settings.mediaPlaybackRequiresUserGesture = false
         webView.settings.cacheMode = android.webkit.WebSettings.LOAD_NO_CACHE
         webView.clearCache(true)
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 titleView.text = title ?: ""
+            }
+
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                val req = request ?: return
+                val wanted = req.resources?.toList() ?: emptyList()
+                val perms = ArrayList<String>()
+                if (wanted.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) perms.add(Manifest.permission.CAMERA)
+                if (wanted.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) perms.add(Manifest.permission.RECORD_AUDIO)
+                if (perms.isEmpty()) {
+                    req.deny()
+                    return
+                }
+                val missing = perms.filter { p ->
+                    ActivityCompat.checkSelfPermission(this@AgentHtmlActivity, p) != PackageManager.PERMISSION_GRANTED
+                }
+                if (missing.isEmpty()) {
+                    req.grant(req.resources)
+                    return
+                }
+                if (pendingPermAction.get() != null) {
+                    req.deny()
+                    return
+                }
+                pendingPermAction.set { ok ->
+                    if (ok) req.grant(req.resources) else req.deny()
+                }
+                permLauncher.launch(missing.toTypedArray())
+            }
+
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                val cb = callback ?: return
+                val perm = Manifest.permission.ACCESS_FINE_LOCATION
+                if (ActivityCompat.checkSelfPermission(this@AgentHtmlActivity, perm) == PackageManager.PERMISSION_GRANTED) {
+                    cb.invoke(origin, true, false)
+                    return
+                }
+                if (pendingPermAction.get() != null) {
+                    cb.invoke(origin, false, false)
+                    return
+                }
+                pendingPermAction.set { ok ->
+                    cb.invoke(origin, ok, false)
+                }
+                permLauncher.launch(arrayOf(perm))
+            }
+
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                WebViewConsoleBuffer.addFromConsoleMessage(message, "agent_html")
+                android.util.Log.d(
+                    "AgentHtml",
+                    "console: ${message.message()} @${message.lineNumber()} ${message.sourceId()}"
+                )
+                return true
             }
         }
         webView.webViewClient = object : WebViewClient() {

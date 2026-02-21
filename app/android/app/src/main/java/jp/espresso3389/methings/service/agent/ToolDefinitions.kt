@@ -392,6 +392,8 @@ object ToolDefinitions {
         "webview.back" to ActionSpec("POST", "/webview/back", false),
         "webview.forward" to ActionSpec("POST", "/webview/forward", false),
         "webview.split" to ActionSpec("POST", "/webview/split", false),
+        "webview.console" to ActionSpec("GET", "/webview/console", false),
+        "webview.console.clear" to ActionSpec("POST", "/webview/console/clear", false),
         "scheduler.status" to ActionSpec("GET", "/scheduler/status", false),
         "scheduler.list" to ActionSpec("GET", "/scheduler/schedules", false),
         "scheduler.create" to ActionSpec("POST", "/scheduler/create", true),

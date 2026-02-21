@@ -3007,6 +3007,19 @@ class LocalHttpServer(
                 if (position != null) result.put("position", position)
                 jsonResponse(result)
             }
+            (uri == "/webview/console" || uri == "/webview/console/") && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val since = params["since"]?.toLongOrNull() ?: 0L
+                val source = params["source"]?.ifBlank { null }
+                val limit = params["limit"]?.toIntOrNull()?.coerceIn(1, 500) ?: 100
+                val entries = jp.espresso3389.methings.device.WebViewConsoleBuffer.getEntries(since, source, limit)
+                val result = JSONObject().put("status", "ok").put("entries", entries)
+                jsonResponse(result)
+            }
+            (uri == "/webview/console/clear" || uri == "/webview/console/clear/") && session.method == Method.POST -> {
+                jp.espresso3389.methings.device.WebViewConsoleBuffer.clear()
+                jsonResponse(JSONObject().put("status", "ok"))
+            }
             else -> notFound()
         }
     }

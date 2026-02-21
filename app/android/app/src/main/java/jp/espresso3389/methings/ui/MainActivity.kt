@@ -27,6 +27,8 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import android.webkit.ConsoleMessage
+import android.webkit.GeolocationPermissions
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.ValueCallback
@@ -48,6 +50,7 @@ import jp.espresso3389.methings.device.AndroidPermissionWaiter
 import jp.espresso3389.methings.device.UsbPermissionResultReceiver
 import jp.espresso3389.methings.device.UsbPermissionWaiter
 import jp.espresso3389.methings.device.WebViewBrowserManager
+import jp.espresso3389.methings.device.WebViewConsoleBuffer
 import jp.espresso3389.methings.service.AgentService
 import jp.espresso3389.methings.service.TermuxWorkerManager
 import jp.espresso3389.methings.service.LocalHttpServer
@@ -108,6 +111,14 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
             val ok = results.values.all { it }
             val cb = pendingWebViewPermAction.getAndSet(null)
+            cb?.invoke(ok)
+        }
+
+    private val pendingBrowserPermAction = AtomicReference<((Boolean) -> Unit)?>(null)
+    private val browserPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            val ok = results.values.all { it }
+            val cb = pendingBrowserPermAction.getAndSet(null)
             cb?.invoke(ok)
         }
 
@@ -344,7 +355,8 @@ class MainActivity : AppCompatActivity() {
         webView.clearCache(true)
         webView.clearHistory()
         webView.webChromeClient = object : WebChromeClient() {
-            override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                WebViewConsoleBuffer.addFromConsoleMessage(message, "chat")
                 android.util.Log.d(
                     "MethingsWeb",
                     "console: ${message.message()} @${message.lineNumber()} ${message.sourceId()}"
@@ -413,6 +425,26 @@ class MainActivity : AppCompatActivity() {
                     if (ok) req.grant(req.resources) else req.deny()
                 }
                 webViewPermLauncher.launch(missing.toTypedArray())
+            }
+
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                val cb = callback ?: return
+                val perm = Manifest.permission.ACCESS_FINE_LOCATION
+                if (ActivityCompat.checkSelfPermission(this@MainActivity, perm) == PackageManager.PERMISSION_GRANTED) {
+                    cb.invoke(origin, true, false)
+                    return
+                }
+                if (pendingWebViewPermAction.get() != null) {
+                    cb.invoke(origin, false, false)
+                    return
+                }
+                pendingWebViewPermAction.set { ok ->
+                    cb.invoke(origin, ok, false)
+                }
+                webViewPermLauncher.launch(arrayOf(perm))
             }
         }
         webView.webViewClient = object : WebViewClient() {
@@ -663,6 +695,7 @@ class MainActivity : AppCompatActivity() {
         browserWebView.settings.apply {
             javaScriptEnabled = true
             domStorageEnabled = true
+            mediaPlaybackRequiresUserGesture = false
             setSupportZoom(true)
             builtInZoomControls = true
             displayZoomControls = false
@@ -707,6 +740,62 @@ class MainActivity : AppCompatActivity() {
             override fun onReceivedTitle(view: WebView?, title: String?) {
                 browserTitleView.text = title ?: ""
                 WebViewBrowserManager.currentTitle = title ?: ""
+            }
+
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                val req = request ?: return
+                val wanted = req.resources?.toList() ?: emptyList()
+                val perms = ArrayList<String>()
+                if (wanted.contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) perms.add(Manifest.permission.CAMERA)
+                if (wanted.contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) perms.add(Manifest.permission.RECORD_AUDIO)
+                if (perms.isEmpty()) {
+                    req.deny()
+                    return
+                }
+                val missing = perms.filter { p ->
+                    ActivityCompat.checkSelfPermission(this@MainActivity, p) != PackageManager.PERMISSION_GRANTED
+                }
+                if (missing.isEmpty()) {
+                    req.grant(req.resources)
+                    return
+                }
+                if (pendingBrowserPermAction.get() != null) {
+                    req.deny()
+                    return
+                }
+                pendingBrowserPermAction.set { ok ->
+                    if (ok) req.grant(req.resources) else req.deny()
+                }
+                browserPermLauncher.launch(missing.toTypedArray())
+            }
+
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                val cb = callback ?: return
+                val perm = Manifest.permission.ACCESS_FINE_LOCATION
+                if (ActivityCompat.checkSelfPermission(this@MainActivity, perm) == PackageManager.PERMISSION_GRANTED) {
+                    cb.invoke(origin, true, false)
+                    return
+                }
+                if (pendingBrowserPermAction.get() != null) {
+                    cb.invoke(origin, false, false)
+                    return
+                }
+                pendingBrowserPermAction.set { ok ->
+                    cb.invoke(origin, ok, false)
+                }
+                browserPermLauncher.launch(arrayOf(perm))
+            }
+
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                WebViewConsoleBuffer.addFromConsoleMessage(message, "browser")
+                android.util.Log.d(
+                    "MethingsBrowser",
+                    "console: ${message.message()} @${message.lineNumber()} ${message.sourceId()}"
+                )
+                return true
             }
         }
     }

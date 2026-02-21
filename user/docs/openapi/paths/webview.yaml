@@ -362,3 +362,94 @@ webviewSplit:
                   type: boolean
                 position:
                   type: string
+
+webviewConsole:
+  get:
+    operationId: getWebviewConsole
+    summary: Get WebView console output
+    description: >
+      Returns buffered JavaScript console messages from all WebViews
+      (chat, browser panel, agent HTML pages).  Up to 500 entries are
+      kept in a ring buffer.
+    tags: [WebView]
+    parameters:
+      - name: since
+        in: query
+        schema:
+          type: integer
+          format: int64
+          default: 0
+        description: Only return entries with timestamp >= this value (epoch ms).
+      - name: source
+        in: query
+        schema:
+          type: string
+          enum: [chat, browser, agent_html]
+        description: Filter by WebView source.
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 100
+          minimum: 1
+          maximum: 500
+        description: Max number of entries to return.
+    responses:
+      '200':
+        description: Console entries.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, entries]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                entries:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                      timestamp:
+                        type: integer
+                        format: int64
+                      level:
+                        type: string
+                        enum: [log, warn, error, debug, info]
+                      message:
+                        type: string
+                      line:
+                        type: integer
+                      source_id:
+                        type: string
+                      source:
+                        type: string
+                        enum: [chat, browser, agent_html]
+
+webviewConsoleClear:
+  post:
+    operationId: postWebviewConsoleClear
+    summary: Clear console buffer
+    description: Clears all buffered console messages.
+    tags: [WebView]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Buffer cleared.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok

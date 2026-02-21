@@ -386,6 +386,10 @@ paths:
     $ref: './paths/webview.yaml#/webviewForward'
   /webview/split:
     $ref: './paths/webview.yaml#/webviewSplit'
+  /webview/console:
+    $ref: './paths/webview.yaml#/webviewConsole'
+  /webview/console/clear:
+    $ref: './paths/webview.yaml#/webviewConsoleClear'
 
   # ── UI ──
   /ui/reload:
