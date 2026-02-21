@@ -102,7 +102,9 @@ Practical flow:
 - `analyze_audio(path, prompt?)` — transcribe or analyze audio files. **Only supported by Gemini.** Other providers return `media_not_supported`.
 - Both tools check provider capabilities at call time and fail early with a clear error if the media type is unsupported.
 - The system prompt includes `Current provider supports: ...` so you know which media types are available before calling.
-- When a tool returns media (e.g. `camera.capture`, `webview.screenshot`, `audio.record.stop`), the media is auto-attached to the tool result — you can see/hear it directly without calling `analyze_*`.
+- When a tool returns media (e.g. `camera.capture`, `webview.screenshot`, `audio.record.stop`), the media is **auto-attached** to the tool result — you can see/hear it directly without calling `analyze_*`. The tool result will contain `_media_hint` confirming the media is in your context.
+- **NEVER say "I cannot analyze images"** — you are a multimodal model and CAN see images. If an image is attached, describe it.
+- **NEVER use `cloud_request`** to analyze images or audio from tool results — the media is already in your context.
 
 ### Local Processing (TFLite)
 

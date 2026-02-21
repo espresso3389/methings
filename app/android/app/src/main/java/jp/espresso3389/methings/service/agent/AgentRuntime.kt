@@ -639,7 +639,15 @@ class AgentRuntime(
                     config.intWithProfile("max_tool_output_list_items", 80, 10, 500))
 
                 // Strip redundant base64 data from text when media is sent separately
-                val textResult = if (mediaData != null) ToolExecutor.stripMediaData(truncated) else truncated
+                val textResult = if (mediaData != null) {
+                    val stripped = ToolExecutor.stripMediaData(truncated)
+                    // Inject a hint so the agent knows the media is visible right now
+                    stripped.put("_media_hint",
+                        "A ${mediaData.mediaType} is attached to this tool result. " +
+                        "You can see/hear it directly — describe or analyze it now. " +
+                        "Do NOT say you cannot analyze it or call cloud_request.")
+                    stripped
+                } else truncated
 
                 appendToolResult(providerKind, pendingInput, callId, textResult, name, mediaData)
             }
