@@ -78,14 +78,14 @@ object ToolDefinitions {
             put("cwd", prop("string"))
         }.withRequired("args", "cwd"))
 
-        tools.put(functionTool("run_shell", "Execute a shell command in Termux and return stdout/stderr. For long-running or interactive commands, use shell_session instead. Requires Termux.") {
+        tools.put(functionTool("run_shell", "Execute a shell command. Uses Termux when available (full bash + packages); falls back to native Android shell (/system/bin/sh) otherwise. For long-running or interactive commands, use shell_session instead.") {
             put("command", prop("string"))
             put("cwd", prop("string"))
             put("timeout_ms", prop("integer"))
             put("env", JSONObject().put("type", "object").put("additionalProperties", true))
         }.withRequired("command"))
 
-        tools.put(functionTool("shell_session", "Manage persistent PTY bash sessions in Termux. Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions). Requires Termux.") {
+        tools.put(functionTool("shell_session", "Manage persistent shell sessions. Termux provides full PTY (ANSI, resize); native mode uses pipe-based sessions (no PTY). Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size, Termux only), kill (terminate), list (active sessions).") {
             put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
                 put("start"); put("exec"); put("write"); put("read"); put("resize"); put("kill"); put("list")
             }))

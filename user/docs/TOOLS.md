@@ -34,11 +34,14 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 - `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine with **async/await support**. Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`. Top-level `await` is supported. Full API reference: `$sys/docs/run_js.md`.
 - `run_curl(url, method?, headers?, body?, timeout_ms?)` — Make HTTP requests natively. Parameters: `url` (required), `method` (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), `headers` (JSON object), `body` (string), `timeout_ms` (default 30000). Returns `{status, http_status, headers, body}`.
 
-### Termux-dependent (require Termux installed)
+### Shell (works with or without Termux)
 
-- `run_shell(command, cwd?, timeout_ms?, env?)` — Execute any shell command in Termux. Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s.
-- `shell_session(action, session_id?, command?, ...)` — Persistent PTY bash sessions. Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. Maintains state across commands.
-- `termux_fs(action, path, ...)` — Access Termux filesystem (outside app user root). Actions: `read`, `write`, `list`, `stat`, `mkdir`, `delete`.
+- `run_shell(command, cwd?, timeout_ms?, env?)` — Execute a shell command. Uses Termux when available (full bash + packages); falls back to native Android shell (`/system/bin/sh`) otherwise. Returns `{status, exit_code, stdout, stderr, backend}`. Default timeout 60s, max 300s.
+- `shell_session(action, session_id?, command?, ...)` — Persistent shell sessions. Termux provides full PTY (ANSI, resize); native mode uses pipe-based sessions (no PTY). Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. Maintains state across commands.
+
+### Termux-only
+
+- `termux_fs(action, path, ...)` — Access Termux filesystem (outside app user root). Actions: `read`, `write`, `list`, `stat`, `mkdir`, `delete`. Requires Termux.
 - `run_python(args, cwd)` — Run Python locally. Requires Termux.
 - `run_pip(args, cwd)` — Run pip locally. Requires Termux.
 
@@ -385,7 +388,7 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 - `permission_required`: user needs to approve on device UI, then retry.
 - `path_outside_user_dir`: use paths under the user root only.
 - `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without Termux).
-- `worker_unavailable`: Termux worker is not reachable on port 8776. Ensure Termux is installed and running.
+- `worker_unavailable`: Termux worker is not reachable on port 8776. `run_shell` and `shell_session` will fall back to native shell automatically; other Termux tools require Termux to be installed and running.
 
 ## Package Name Gotchas
 

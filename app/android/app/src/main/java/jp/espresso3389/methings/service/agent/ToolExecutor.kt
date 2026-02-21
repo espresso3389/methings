@@ -17,6 +17,7 @@ class ToolExecutor(
     private val shellExec: ((cmd: String, args: String, cwd: String) -> JSONObject)?,
     private val sessionIdProvider: () -> String,
     private val jsRuntime: JsRuntime,
+    private val nativeShell: NativeShellExecutor? = null,
 ) {
     fun executeFunctionTool(
         toolName: String,
@@ -332,19 +333,81 @@ class ToolExecutor(
         val timeoutMs = args.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
         val env = args.optJSONObject("env")
 
+        // Try Termux worker first
         val body = JSONObject().apply {
             put("command", command)
             if (cwd.isNotEmpty()) put("cwd", cwd)
             put("timeout_ms", timeoutMs)
             if (env != null) put("env", env)
         }
-        return proxyWorkerPost("/exec", body)
+        val workerResult = proxyWorkerPost("/exec", body)
+        if (workerResult.optString("error") != "worker_unavailable") {
+            return workerResult
+        }
+
+        // Fall back to native shell
+        val native = nativeShell
+            ?: return workerResult // no native fallback available
+        return native.exec(command, cwd, timeoutMs, env)
     }
 
     private fun executeShellSession(args: JSONObject): JSONObject {
         val action = args.optString("action", "")
         if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
 
+        // Try Termux worker first; fall back to native sessions if unavailable
+        val workerResult = executeShellSessionViaWorker(action, args)
+        if (workerResult.optString("error") != "worker_unavailable") {
+            return workerResult
+        }
+
+        // Fall back to native pipe-based sessions
+        val native = nativeShell
+            ?: return workerResult // no native fallback available
+
+        return when (action) {
+            "start" -> {
+                val cwd = args.optString("cwd", "")
+                val env = args.optJSONObject("env")
+                native.sessionStart(cwd, env)
+            }
+            "exec" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                val command = args.optString("command", "")
+                if (command.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_command")
+                val timeout = args.optInt("timeout", 30)
+                native.sessionExec(sid, command, timeout)
+            }
+            "write" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                val input = args.optString("input", "")
+                if (input.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_input")
+                native.sessionWrite(sid, input)
+            }
+            "read" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                native.sessionRead(sid)
+            }
+            "resize" -> {
+                // Native sessions don't support PTY resize
+                JSONObject().put("status", "ok")
+                    .put("detail", "resize is not supported in native pipe-based sessions (no PTY)")
+                    .put("backend", "native")
+            }
+            "kill" -> {
+                val sid = args.optString("session_id", "")
+                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
+                native.sessionKill(sid)
+            }
+            "list" -> native.sessionList()
+            else -> JSONObject().put("status", "error").put("error", "unknown_action").put("action", action)
+        }
+    }
+
+    private fun executeShellSessionViaWorker(action: String, args: JSONObject): JSONObject {
         return when (action) {
             "start" -> {
                 val body = JSONObject().apply {
@@ -401,6 +464,15 @@ class ToolExecutor(
         if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
         val path = args.optString("path", "")
         if (path.isEmpty() && action != "list") return JSONObject().put("status", "error").put("error", "missing_path")
+
+        // Check worker availability first and return a helpful message
+        val pingResult = proxyWorkerGet("/health")
+        if (pingResult.optString("error") == "worker_unavailable") {
+            return JSONObject()
+                .put("status", "error")
+                .put("error", "termux_required")
+                .put("detail", "termux_fs requires Termux. Use read_file/write_file for app files, or run_shell with ls/cat for native shell.")
+        }
 
         val body = JSONObject().apply {
             put("path", path)

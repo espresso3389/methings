@@ -196,6 +196,9 @@ class LocalHttpServer(
     private val agentDeviceBridge by lazy {
         DeviceToolBridge(identity = { agentRuntime?.let { "default" } ?: "default" })
     }
+    private val nativeShellExecutor by lazy {
+        NativeShellExecutor(defaultCwd = File(context.filesDir, "user"))
+    }
     private val agentToolExecutor by lazy {
         ToolExecutor(
             userDir = File(context.filesDir, "user"),
@@ -205,6 +208,7 @@ class LocalHttpServer(
             shellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
             sessionIdProvider = { "default" },
             jsRuntime = agentJsRuntime,
+            nativeShell = nativeShellExecutor,
         )
     }
     @Volatile private var agentRuntime: AgentRuntime? = null
@@ -1807,13 +1811,19 @@ class LocalHttpServer(
         val hasCommand = payload.has("command") && payload.optString("command", "").isNotEmpty()
 
         if (hasCommand) {
-            // New format: proxy directly to worker /exec
+            // New format: try worker first, fall back to native shell
             ensureWorkerRunning()
             val timeoutMs = payload.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
             val readTimeout = (timeoutMs + 5_000).toInt()
             val proxied = proxyWorkerRequest("/exec", "POST", payload.toString(), readTimeoutMs = readTimeout)
             if (proxied != null) return proxied
-            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+
+            // Worker unavailable — use native shell fallback
+            val command = payload.optString("command", "")
+            val cwd = payload.optString("cwd", "")
+            val env = payload.optJSONObject("env")
+            val result = nativeShellExecutor.exec(command, cwd, timeoutMs, env)
+            return jsonResponse(result)
         }
 
         // Legacy format: cmd + args

@@ -1,6 +1,26 @@
-# Termux Shell & File Access Tools
+# Shell & File Access Tools
 
-These tools require Termux to be installed and the worker to be running. The worker starts automatically when needed.
+## Native Fallback
+
+`run_shell` and `shell_session` work **without Termux**. When the Termux worker is unreachable, they automatically fall back to native Android shell execution using `/system/bin/sh` via `ProcessBuilder`.
+
+**Native mode capabilities:**
+- Standard shell builtins and toybox/toolbox commands: `ls`, `cat`, `echo`, `mkdir`, `rm`, `cp`, `mv`, `grep`, `sed`, `awk`, `wc`, `sort`, `find`, `tar`, `gzip`, `ping`, `id`, `date`, `env`, `which`, `chmod`, `df`, `du`, `head`, `tail`, `tee`, `xargs`
+- Working directory defaults to the app's user directory
+- Environment variables and cwd persist within `shell_session` sessions
+
+**Native mode limitations:**
+- Only `sh` (not `bash`) — no bash-specific syntax (arrays, `[[ ]]`, process substitution)
+- No package manager (`apt`, `pkg`) — only what Android ships
+- No `python`, `pip`, `node`, `git`, `gcc`, or other development tools
+- `shell_session` uses pipes (no PTY) — no ANSI escape codes, no terminal resize
+- Response includes `"backend": "native"` so you can detect which mode was used
+
+**`termux_fs` remains Termux-only** — it accesses Termux's home directory which doesn't exist without Termux.
+
+---
+
+These tools use Termux when available (full bash, packages, PTY). The worker starts automatically when needed.
 
 ## `run_shell(command, cwd?, timeout_ms?, env?)`
 
