@@ -191,7 +191,7 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 
 ### STT (Speech-to-Text) — `$sys/docs/openapi/paths/stt.yaml`
 - `stt.status`: recognizer state.
-- `stt.record`: record and transcribe speech. Returns recognized text.
+- `stt.record`: record and transcribe speech. Returns recognized text (NO INPUT FILE SUPPORT).
 
 ### BLE (Bluetooth Low Energy) — `$sys/docs/openapi/paths/ble.yaml`
 - `ble.scan.start/stop`: scan for BLE peripherals. Returns discovered devices.
