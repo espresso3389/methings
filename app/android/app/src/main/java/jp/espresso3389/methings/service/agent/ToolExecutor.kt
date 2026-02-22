@@ -23,6 +23,12 @@ class ToolExecutor(
      *  Set by AgentRuntime before the tool execution loop each turn. */
     @Volatile var supportedMediaTypes: Set<String> = emptySet()
 
+    /** Image encoding settings from File Transfer prefs.
+     *  Set at construction and read by both ToolExecutor and AgentRuntime. */
+    @Volatile var imageResizeEnabled: Boolean = true
+    @Volatile var imageMaxDimPx: Int = MediaEncoder.MAX_DIMENSION
+    @Volatile var imageJpegQuality: Int = MediaEncoder.IMAGE_QUALITY
+
     fun executeFunctionTool(
         toolName: String,
         args: JSONObject,
@@ -605,7 +611,7 @@ class ToolExecutor(
         // If base64 data is provided directly
         if (dataB64.isNotEmpty()) {
             val mime = mimeTypeOverride.ifEmpty {
-                if (mediaType == "image") "image/jpeg" else "audio/mp4"
+                if (mediaType == "image") "image/webp" else "audio/mp4"
             }
             val result = JSONObject().put("status", "ok")
                 .put("_media", JSONObject().apply {
@@ -624,7 +630,8 @@ class ToolExecutor(
         if (!target.isFile) return JSONObject().put("status", "error").put("error", "not_a_file").put("path", path)
 
         val encoded = if (mediaType == "image") {
-            MediaEncoder.encodeImage(target)
+            val maxDim = if (imageResizeEnabled) imageMaxDimPx else Int.MAX_VALUE
+            MediaEncoder.encodeImage(target, maxDim, imageJpegQuality)
         } else {
             MediaEncoder.encodeAudio(target)
         }

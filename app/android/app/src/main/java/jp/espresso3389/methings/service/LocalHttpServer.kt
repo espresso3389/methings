@@ -209,7 +209,13 @@ class LocalHttpServer(
             sessionIdProvider = { "default" },
             jsRuntime = agentJsRuntime,
             nativeShell = nativeShellExecutor,
-        )
+        ).also { executor ->
+            // Apply File Transfer image settings
+            val ftPrefs = fileTransferPrefs
+            executor.imageResizeEnabled = ftPrefs.getBoolean("image_resize_enabled", true)
+            executor.imageMaxDimPx = ftPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096)
+            executor.imageJpegQuality = ftPrefs.getInt("image_resize_jpeg_quality", 70).coerceIn(30, 95)
+        }
     }
     @Volatile private var agentRuntime: AgentRuntime? = null
     private fun getOrCreateAgentRuntime(): AgentRuntime {
@@ -1950,6 +1956,10 @@ class LocalHttpServer(
                     .putInt("image_resize_max_dim_px", imgMaxDim)
                     .putInt("image_resize_jpeg_quality", imgJpegQ)
                     .apply()
+                // Propagate to agent tool executor
+                agentToolExecutor.imageResizeEnabled = imgEnabled
+                agentToolExecutor.imageMaxDimPx = imgMaxDim
+                agentToolExecutor.imageJpegQuality = imgJpegQ
                 return jsonResponse(
                     JSONObject()
                         .put("status", "ok")

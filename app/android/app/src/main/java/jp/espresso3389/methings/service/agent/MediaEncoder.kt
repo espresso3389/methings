@@ -11,12 +11,12 @@ import java.io.File
 
 object MediaEncoder {
     const val MAX_DIMENSION = 1568   // Anthropic's recommended max
-    const val JPEG_QUALITY = 70
+    const val IMAGE_QUALITY = 70
     private const val TAG = "MediaEncoder"
     private const val DEFAULT_MAX_AUDIO_BYTES = 15_000_000L // 15 MB
 
     private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "bmp", "webp")
-    private val AUDIO_EXTENSIONS = setOf("wav", "mp3", "m4a", "aac", "ogg", "flac", "opus", "amr", "3gp")
+    private val AUDIO_EXTENSIONS = setOf("wav", "mp3", "m4a", "aac", "ogg", "flac", "opus", "amr", "3gp", "webm")
 
     val AUDIO_MIME_MAP = mapOf(
         "wav" to "audio/wav",
@@ -28,6 +28,7 @@ object MediaEncoder {
         "opus" to "audio/opus",
         "amr" to "audio/amr",
         "3gp" to "audio/3gpp",
+        "webm" to "audio/webm",
     )
 
     data class MediaResult(
@@ -56,7 +57,7 @@ object MediaEncoder {
     fun encodeImage(
         file: File,
         maxDim: Int = MAX_DIMENSION,
-        quality: Int = JPEG_QUALITY,
+        quality: Int = IMAGE_QUALITY,
     ): MediaResult? {
         if (!file.exists() || !file.isFile) {
             Log.w(TAG, "encodeImage: file not found or not a file: ${file.absolutePath}")
@@ -112,16 +113,16 @@ object MediaEncoder {
                 return null
             }
 
-            // 5. Compress to JPEG and base64-encode
+            // 5. Compress to WebP (lossy) and base64-encode — smaller than JPEG at same quality
             try {
                 val baos = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)
+                bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, baos)
                 val bytes = baos.toByteArray()
                 val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                Log.i(TAG, "encodeImage: encoded ${file.name} (${origW}x${origH} -> ${bitmap.width}x${bitmap.height}, ${bytes.size} bytes)")
+                Log.i(TAG, "encodeImage: encoded ${file.name} (${origW}x${origH} -> ${bitmap.width}x${bitmap.height}, ${bytes.size} bytes webp)")
                 MediaResult(
                     base64 = b64,
-                    mimeType = "image/jpeg",
+                    mimeType = "image/webp",
                     mediaType = "image",
                     metadata = JSONObject().apply {
                         put("width", bitmap.width)

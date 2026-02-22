@@ -903,7 +903,8 @@ class AgentRuntime(
                     val file = File(userDir, path)
                     Log.d(TAG, "extractMedia: found image path='$path', exists=${file.exists()}")
                     if (file.exists()) {
-                        val encoded = MediaEncoder.encodeImage(file)
+                        val maxDim = if (toolExecutor.imageResizeEnabled) toolExecutor.imageMaxDimPx else Int.MAX_VALUE
+                        val encoded = MediaEncoder.encodeImage(file, maxDim, toolExecutor.imageJpegQuality)
                         if (encoded != null) {
                             Log.i(TAG, "extractMedia: encoded image from '$path' (${encoded.base64.length} chars base64)")
                             return ExtractedMedia(encoded.base64, encoded.mimeType, "image")
@@ -1044,7 +1045,8 @@ class AgentRuntime(
             for (p in mediaPaths) {
                 val file = File(userDir, p)
                 if (MediaEncoder.isImagePath(p) && "image" in supportedMedia) {
-                    val encoded = MediaEncoder.encodeImage(file)
+                    val maxDim = if (toolExecutor.imageResizeEnabled) toolExecutor.imageMaxDimPx else Int.MAX_VALUE
+                    val encoded = MediaEncoder.encodeImage(file, maxDim, toolExecutor.imageJpegQuality)
                     if (encoded != null) {
                         userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "image"))
                         Log.i(TAG, "buildInitialInput: encoded user image '$p' (${encoded.base64.length} chars b64)")
