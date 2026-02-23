@@ -2457,13 +2457,10 @@
         <!-- Account (Provisioning) -->
         <div class="stg-section">
           <div class="stg-section-title">Account</div>
-          <div class="setting-row" id="provisionStatusRow">
-            <div class="setting-label">Signed In As</div>
-            <div id="provisionIdentityDisplay" class="muted" style="margin-top:4px;">Not signed in</div>
-          </div>
-          <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-            <button class="btn primary" id="provisionSignInBtn">Sign In</button>
-            <button class="btn danger" id="provisionSignOutBtn" style="display:none;">Sign Out</button>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <div id="provisionIdentityDisplay" class="muted" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;">Not signed in</div>
+            <button class="btn primary" id="provisionSignInBtn" style="flex-shrink:0;">Sign In</button>
+            <button class="btn danger" id="provisionSignOutBtn" style="display:none; flex-shrink:0;">Sign Out</button>
           </div>
         </div>
 
@@ -6184,19 +6181,20 @@
           const res = await fetch("/me/me/status");
           if (!res.ok) return mentionDevices;
           const data = await res.json();
+          const selfId = data.self && data.self.device_id ? data.self.device_id : "";
           const map = new Map();
           // Online connections first
           if (Array.isArray(data.connections)) {
             data.connections.forEach(c => {
-              const id = c.device_id || c.peer_device_id;
-              if (id) map.set(id, { device_id: id, device_name: c.device_name || id, device_icon: c.device_icon || "", online: true });
+              const id = c.peer_device_id;
+              if (id && id !== selfId) map.set(id, { device_id: id, device_name: c.peer_device_name || id, device_icon: c.peer_device_icon || "", online: true });
             });
           }
           // Provisioned devices (offline unless already in connections)
           if (Array.isArray(data.provisioned_devices)) {
             data.provisioned_devices.forEach(d => {
               const id = d.device_id;
-              if (id && !map.has(id)) map.set(id, { device_id: id, device_name: d.device_name || id, device_icon: d.device_icon || "", online: false });
+              if (id && id !== selfId && !map.has(id)) map.set(id, { device_id: id, device_name: d.device_name || id, device_icon: d.device_icon || "", online: false });
             });
           }
           mentionDevices = Array.from(map.values());
@@ -9978,10 +9976,12 @@
             provisionIdentityDisplay.textContent = String(data.user_subject);
             provisionIdentityDisplay.style.color = "var(--accent)";
             provisionSignOutBtn.style.display = "";
+            provisionSignInBtn.style.display = "none";
           } else {
             provisionIdentityDisplay.textContent = "Not signed in";
             provisionIdentityDisplay.style.color = "";
             provisionSignOutBtn.style.display = "none";
+            provisionSignInBtn.style.display = "";
           }
         } catch (_) {}
       }
@@ -10237,14 +10237,26 @@
             return fallback;
           };
           const selfDeviceId = String(((data && data.self) || {}).device_id || "");
-          const connections = Array.isArray(data.connections) ? data.connections : [];
-          const pending = Array.isArray(data.pending_requests) ? data.pending_requests : [];
-          const discovered = Array.isArray(data.discovered) ? data.discovered : [];
-          // Collect all shown device IDs to avoid duplicating provisioned siblings
+          const allConnections = Array.isArray(data.connections) ? data.connections : [];
+          const allPending = Array.isArray(data.pending_requests) ? data.pending_requests : [];
+          const allDiscovered = Array.isArray(data.discovered) ? data.discovered : [];
+          // Dedup across all sections by device ID and filter out self
           const shownIds = new Set();
-          connections.forEach((c) => { const id = String(c.peer_device_id || "").trim(); if (id) shownIds.add(id); });
-          pending.forEach((p) => { const id = String(p.source_device_id || "").trim(); if (id) shownIds.add(id); });
-          discovered.forEach((d) => { const id = String(d.device_id || "").trim(); if (id) shownIds.add(id); });
+          const connections = allConnections.filter(c => {
+            const id = String(c.peer_device_id || "").trim();
+            if (!id || id === selfDeviceId || shownIds.has(id)) return false;
+            shownIds.add(id); return true;
+          });
+          const pending = allPending.filter(p => {
+            const id = String(p.source_device_id || "").trim();
+            if (!id || id === selfDeviceId || shownIds.has(id)) return false;
+            shownIds.add(id); return true;
+          });
+          const discovered = allDiscovered.filter(d => {
+            const id = String(d.device_id || "").trim();
+            if (!id || id === selfDeviceId || shownIds.has(id)) return false;
+            shownIds.add(id); return true;
+          });
           // Build provisioned siblings not already shown
           const provDevices = Array.isArray(provData.devices) ? provData.devices : [];
           const linkedSiblings = provDevices.filter((d) => {
