@@ -13,7 +13,9 @@ import org.webrtc.SessionDescription
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class MeMeP2pManager(
     private val context: Context,
@@ -44,6 +46,7 @@ class MeMeP2pManager(
     @Volatile private var signalingWs: SignalingWebSocket? = null
     @Volatile private var initialized = false
     private val peers = ConcurrentHashMap<String, P2pPeerState>()
+    private val dcOpenLatches = ConcurrentHashMap<String, CountDownLatch>()
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "MeMeP2p").apply { isDaemon = true }
     }
@@ -136,6 +139,28 @@ class MeMeP2pManager(
         }
     }
 
+    /**
+     * Try to establish a P2P connection and wait up to [timeoutMs] for the DataChannel to open.
+     * Returns true if connected within the timeout, false otherwise.
+     */
+    fun connectAndWait(peerDeviceId: String, timeoutMs: Long): Boolean {
+        if (!initialized) return false
+        if (isConnected(peerDeviceId)) return true
+        val latch = CountDownLatch(1)
+        dcOpenLatches[peerDeviceId] = latch
+        executor.execute {
+            runCatching { createOfferAndSend(peerDeviceId) }.onFailure {
+                logger("P2P: connectAndWait($peerDeviceId) offer failed", it)
+                latch.countDown()
+            }
+        }
+        return try {
+            latch.await(timeoutMs, TimeUnit.MILLISECONDS) && isConnected(peerDeviceId)
+        } finally {
+            dcOpenLatches.remove(peerDeviceId, latch)
+        }
+    }
+
     fun disconnectPeer(peerDeviceId: String) {
         val state = peers.remove(peerDeviceId) ?: return
         runCatching { state.dataChannel?.close() }
@@ -198,12 +223,12 @@ class MeMeP2pManager(
             }
             "offer" -> {
                 val from = msg.optString("from", "").trim()
-                val sdp = msg.optString("sdp", "").trim()
+                val sdp = ensureSdpTrailingNewline(msg.optString("sdp", ""))
                 if (from.isNotBlank() && sdp.isNotBlank()) handleRemoteOffer(from, sdp)
             }
             "answer" -> {
                 val from = msg.optString("from", "").trim()
-                val sdp = msg.optString("sdp", "").trim()
+                val sdp = ensureSdpTrailingNewline(msg.optString("sdp", ""))
                 if (from.isNotBlank() && sdp.isNotBlank()) handleRemoteAnswer(from, sdp)
             }
             "candidate" -> {
@@ -232,6 +257,13 @@ class MeMeP2pManager(
         }
     }
 
+    /** Ensure SDP ends with \r\n; WebRTC native parser requires trailing newline. */
+    private fun ensureSdpTrailingNewline(raw: String): String {
+        val s = raw.trim()
+        if (s.isEmpty()) return s
+        return if (s.endsWith("\r\n")) s else "$s\r\n"
+    }
+
     // -- PeerConnection creation --
 
     private fun getOrCreatePeerConnection(peerDeviceId: String): P2pPeerState {
@@ -256,6 +288,24 @@ class MeMeP2pManager(
     }
 
     private fun createOfferAndSend(peerDeviceId: String) {
+        // If a PeerConnection already exists in a non-stable state, don't re-offer.
+        peers[peerDeviceId]?.let { existing ->
+            val sigState = existing.peerConnection.signalingState()
+            if (sigState != PeerConnection.SignalingState.STABLE &&
+                sigState != PeerConnection.SignalingState.CLOSED
+            ) {
+                logger("P2P: skipping offer to $peerDeviceId (already negotiating, signalingState=$sigState)", null)
+                return
+            }
+            if (existing.dcState == "open") {
+                logger("P2P: skipping offer to $peerDeviceId (DataChannel already open)", null)
+                return
+            }
+            // Existing PC is stable or closed but DC not open — tear down and retry fresh.
+            runCatching { existing.dataChannel?.close() }
+            runCatching { existing.peerConnection.close() }
+            peers.remove(peerDeviceId)
+        }
         val state = getOrCreatePeerConnection(peerDeviceId)
         val pc = state.peerConnection
         val dcInit = DataChannel.Init().apply {
@@ -288,6 +338,23 @@ class MeMeP2pManager(
 
     private fun handleRemoteOffer(from: String, sdp: String) {
         logger("P2P: received offer from $from", null)
+        val existing = peers[from]
+        if (existing != null) {
+            val sigState = existing.peerConnection.signalingState()
+            if (sigState != PeerConnection.SignalingState.STABLE) {
+                // Glare: both sides sent offers simultaneously.
+                // "Polite" peer (lower device_id) yields and accepts the remote offer.
+                val isPolite = deviceId < from
+                if (!isPolite) {
+                    logger("P2P: ignoring offer from $from (impolite peer, signalingState=$sigState)", null)
+                    return
+                }
+                logger("P2P: glare with $from — polite peer yielding (signalingState=$sigState)", null)
+                runCatching { existing.dataChannel?.close() }
+                runCatching { existing.peerConnection.close() }
+                peers.remove(from)
+            }
+        }
         val state = getOrCreatePeerConnection(from)
         val pc = state.peerConnection
         pc.setRemoteDescription(
@@ -389,6 +456,7 @@ class MeMeP2pManager(
                 logger("P2P: DataChannel state $peerDeviceId -> $stateStr", null)
                 peers[peerDeviceId]?.dcState = stateStr
                 if (stateStr == "open") {
+                    dcOpenLatches.remove(peerDeviceId)?.countDown()
                     onConnectionStateChanged(peerDeviceId, "p2p_connected")
                 } else if (stateStr == "closed") {
                     onConnectionStateChanged(peerDeviceId, "p2p_disconnected")

@@ -311,6 +311,8 @@ class AgentRuntime(
                         put("text", prompt)
                         put("meta", JSONObject().put("session_id", sessionIdForItem(item)).put("actor", "system"))
                         put("created_at", System.currentTimeMillis())
+                        // me.me events with run_agent require actual tool calls (not text-only responses)
+                        if (name == "me.me.received") put("require_tools", true)
                     }
                     processChat(chatItem)
                 }
@@ -364,7 +366,7 @@ class AgentRuntime(
         val readTimeoutMs = (config.providerReadTimeoutS.coerceIn(5, 600) * 1000)
         val maxRetries = config.providerMaxRetries.coerceIn(0, 3)
         val toolPolicy = config.toolPolicy
-        val requireTool = toolPolicy == "required"
+        val requireTool = toolPolicy == "required" || item.optBoolean("require_tools", false)
         var toolRequiredUnsatisfied = requireTool
 
         // Build dialogue context
@@ -475,12 +477,13 @@ class AgentRuntime(
                         "You returned an empty response (no text, no tool calls). You MUST either respond with text or call tools.")
                     continue
                 }
-                if (toolRequiredUnsatisfied && forcedRounds < 1) {
+                if (toolRequiredUnsatisfied && forcedRounds < 2) {
                     forcedRounds++
                     pendingInput = appendUserNudge(providerKind, pendingInput,
                         "Tool policy is REQUIRED for this request. " +
-                        "You MUST call one or more tools to perform the action(s), " +
-                        "then summarize after tool outputs are provided.")
+                        "You MUST call one or more tools to perform the action(s) — do NOT " +
+                        "describe or narrate tool usage, actually call the tools. " +
+                        "Then summarize after tool outputs are provided.")
                     continue
                 }
                 // Final assistant message
