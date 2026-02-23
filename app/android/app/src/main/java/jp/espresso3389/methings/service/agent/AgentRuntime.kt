@@ -570,6 +570,9 @@ class AgentRuntime(
                             put("name", c.optString("name", ""))
                             put("args", c.opt("arguments") ?: JSONObject())
                         })
+                        // Gemini 3.x: echo back thoughtSignature at the part level
+                        val sig = c.optString("thoughtSignature", "")
+                        if (sig.isNotEmpty()) put("thoughtSignature", sig)
                     })
                 }
                 pendingInput.put(JSONObject().put("role", "model").put("parts", parts))
@@ -860,6 +863,8 @@ class AgentRuntime(
                         put("name", block.optString("name", ""))
                         put("call_id", block.optString("call_id", ""))
                         put("arguments", block.optJSONObject("arguments") ?: JSONObject())
+                        val sig = block.optString("thoughtSignature", "")
+                        if (sig.isNotEmpty()) put("thoughtSignature", sig)
                     })
                 }
             }

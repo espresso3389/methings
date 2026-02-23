@@ -393,6 +393,9 @@ class LlmClient {
                                 put("name", fc.optString("name", ""))
                                 put("call_id", "gemini_call_${System.nanoTime()}")
                                 put("arguments", fc.optJSONObject("args") ?: JSONObject())
+                                // Gemini 3.x: preserve thoughtSignature for echo-back
+                                val sig = part.optString("thoughtSignature", "")
+                                if (sig.isNotEmpty()) put("thoughtSignature", sig)
                             })
                         }
                     }
@@ -415,6 +418,8 @@ class LlmClient {
                 put("name", fc.optString("name", ""))
                 put("call_id", fc.optString("call_id", ""))
                 put("arguments", fc.optJSONObject("arguments") ?: JSONObject())
+                val sig = fc.optString("thoughtSignature", "")
+                if (sig.isNotEmpty()) put("thoughtSignature", sig)
             })
         }
 
