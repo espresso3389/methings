@@ -108,6 +108,14 @@ data class AgentConfig(
             "After sending, tell the user the request was forwarded and relay any response you receive."
 
         val BUILTIN_MODEL_PROFILES: Map<String, Map<String, Any>> = mapOf(
+            // gpt-5.2 must precede gpt-5 (substring match: "gpt-5.2-pro" contains "gpt-5")
+            "gpt-5.2" to mapOf(
+                "dialogue_window_user_assistant" to 72,
+                "dialogue_raw_fetch_limit" to 600,
+                "max_tool_rounds" to 22,
+                "max_actions" to 14,
+                "max_tool_output_chars" to 18000,
+            ),
             "gpt-5" to mapOf(
                 "dialogue_window_user_assistant" to 64,
                 "dialogue_raw_fetch_limit" to 520,
@@ -136,6 +144,21 @@ data class AgentConfig(
                 "max_tool_rounds" to 18,
                 "max_actions" to 10,
                 "max_tool_output_chars" to 14000,
+            ),
+            // claude-sonnet-4-6 must precede claude-sonnet-4 (substring match)
+            "claude-sonnet-4-6" to mapOf(
+                "dialogue_window_user_assistant" to 64,
+                "dialogue_raw_fetch_limit" to 520,
+                "max_tool_rounds" to 20,
+                "max_actions" to 12,
+                "max_tool_output_chars" to 16000,
+            ),
+            "claude-sonnet-4" to mapOf(
+                "dialogue_window_user_assistant" to 64,
+                "dialogue_raw_fetch_limit" to 520,
+                "max_tool_rounds" to 20,
+                "max_actions" to 12,
+                "max_tool_output_chars" to 16000,
             ),
         )
     }
