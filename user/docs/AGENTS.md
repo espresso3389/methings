@@ -118,6 +118,14 @@ Practical flow:
 - Ask only once per session: remember the user's answer in-session so you do not repeatedly ask.
 - If the media is large (rule of thumb: > 5 MB), confirm again right before uploading and mention the approximate size.
 
+## Cross-Device @Mentions
+
+- When the user types `@DeviceName` in a message, route the request to that device's agent.
+- Resolve the device name to a `device_id` using `device_api(action="me.me.status")`.
+- Forward using `device_api(action="me.me.message.send", payload={"peer_device_id": "<id>", "type": "request", "payload": {"text": "<message>"}})`.
+- The `type` MUST be `"request"` to trigger the remote agent.
+- After forwarding, report to the user that the request was sent and relay any response.
+
 ## Cloud Provider Selection (Default)
 
 - Prefer the configured Brain provider (Settings -> Brain). Do not ask the user "which cloud service" unless Brain is not configured.

@@ -681,10 +681,10 @@
         flex-shrink: 0;
       }
       .chat-left .icon-btn {
-        width: 42px;
-        height: 42px;
-        border-radius: var(--radius-md);
-        font-size: 18px;
+        width: 36px;
+        height: 36px;
+        border-radius: var(--radius-sm);
+        font-size: 16px;
       }
       .chat-left .icon-btn.primary {
         background: rgba(99,102,241,0.14);
@@ -696,17 +696,39 @@
         border-color: rgba(239,68,68,0.35);
         color: #fecaca;
       }
+      .mention-trigger {
+        align-self: center;
+        width: 28px;
+        height: 28px;
+        margin-right: -34px;
+        z-index: 2;
+        position: relative;
+        left: 6px;
+        border: none;
+        border-radius: 4px;
+        background: transparent;
+        color: var(--ink-muted);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        padding: 0;
+        transition: color var(--transition), background var(--transition);
+      }
+      .mention-trigger:hover { color: var(--accent-hover); background: var(--accent-soft); }
+      .mention-trigger:active { transform: scale(0.9); }
       .chat-input-area textarea {
         flex: 1;
         border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        padding: 10px 14px;
+        border-radius: var(--radius-sm);
+        padding: 7px 12px 7px 35px;
         font-family: inherit;
         font-size: 15px;
         resize: none;
         background: var(--surface);
         color: var(--ink);
-        min-height: 42px;
+        min-height: 36px;
         max-height: 120px;
         line-height: 1.4;
         outline: none;
@@ -714,24 +736,72 @@
       }
       .chat-input-area textarea::placeholder { color: var(--ink-muted); }
       .chat-input-area textarea:focus { border-color: var(--border-focus); }
-      .send-btn {
-        border: none;
-        border-radius: 50%;
-        width: 42px;
-        height: 42px;
-        background: var(--accent);
-        color: white;
-        font-size: 18px;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        transition: background var(--transition), opacity var(--transition);
+
+      /* @mention autocomplete dropdown */
+      .mention-dropdown {
+        display: none;
+        position: absolute;
+        bottom: 100%;
+        left: 0; right: 0;
+        max-height: 200px;
+        overflow-y: auto;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-lg);
+        z-index: 100;
+        margin-bottom: 4px;
       }
-      .send-btn:hover { background: var(--accent-hover); }
-      .send-btn:active { transform: scale(0.95); }
-      .send-btn:disabled { opacity: 0.35; cursor: default; }
+      .mention-dropdown.open { display: block; }
+      .mention-item {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        font-size: 14px;
+        color: var(--ink);
+        transition: background var(--transition);
+      }
+      .mention-item:hover, .mention-item.active {
+        background: var(--accent-soft);
+      }
+      .mention-item .mention-icon { font-size: 18px; flex-shrink: 0; }
+      .mention-item .mention-name { font-weight: 500; }
+      .mention-item .mention-id { color: var(--ink-muted); font-size: 12px; margin-left: auto; }
+
+      /* @mention tag in rendered messages and mirror overlay */
+      .mention-tag {
+        background: rgba(99,102,241,0.22);
+        color: var(--accent-hover);
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      /* Textarea mention mirror overlay — positioned over textarea via JS */
+      .mention-mirror {
+        position: absolute;
+        pointer-events: none;
+        overflow: hidden;
+        border: 1px solid transparent;
+        border-radius: var(--radius-sm);
+        padding: 7px 12px 7px 35px;
+        font-family: inherit;
+        font-size: 15px;
+        line-height: 1.4;
+        white-space: pre-wrap;
+        overflow-wrap: break-word;
+        word-break: break-word;
+        color: transparent;
+        z-index: 2;
+      }
+      .mention-mirror .mention-hl {
+        background: rgba(99,102,241,0.22);
+        border-radius: 6px;
+        color: transparent;
+      }
+
+      .send-btn { display: none; }
 
       .composer-attachments {
         display: none;
@@ -1812,7 +1882,8 @@
           Configure your AI provider in Settings,<br>then start chatting.
         </div>
       </div>
-      <div class="chat-input-area">
+      <div class="chat-input-area" style="position: relative;">
+        <div class="mention-dropdown" id="mentionDropdown"></div>
         <div class="composer-attachments" id="composerAttachments"></div>
         <div class="muted" id="recordingStatus" style="display:none;margin-top:-6px;margin-bottom:2px;">
           Recording...
@@ -1822,7 +1893,9 @@
             <button class="icon-btn primary" id="chatUploadBtn" title="Attach file(s)" aria-label="Attach file(s)"></button>
             <button class="icon-btn" id="chatRecordBtn" title="Record audio" aria-label="Record audio"></button>
           </div>
+          <button class="mention-trigger" id="mentionTriggerBtn" title="Mention device" aria-label="Mention device"><svg viewBox="0 0 32 32" width="16" height="16"><rect x="6" y="10" width="20" height="12" rx="3" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="12" cy="16" r="2" fill="currentColor"/><circle cx="20" cy="16" r="2" fill="currentColor"/><path d="M16 6v4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><circle cx="16" cy="4.5" r="1.5" fill="currentColor"/></svg></button>
           <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
+          <div class="mention-mirror" id="mentionMirror"></div>
           <button class="send-btn" id="chatSend" title="Send" aria-label="Send"></button>
         </div>
       </div>
@@ -4182,6 +4255,48 @@
         return card;
       }
 
+      function buildMentionRegex() {
+        // Build regex that matches known device names (longest first) or falls back to @word
+        const names = mentionDevices.map(d => d.device_name).filter(Boolean);
+        // Also include device_ids
+        mentionDevices.forEach(d => { if (d.device_id) names.push(d.device_id); });
+        // Sort longest first so "Pixel 10 Pro" matches before "Pixel"
+        names.sort((a, b) => b.length - a.length);
+        if (names.length) {
+          const escaped = names.map(n => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+          return new RegExp("@(" + escaped.join("|") + ")", "g");
+        }
+        return /@(\S+)/g;
+      }
+
+      function renderInlineMentions(el) {
+        const re = buildMentionRegex();
+        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+        for (const node of nodes) {
+          if (node.parentElement && node.parentElement.closest("code, pre, a, .mention-tag")) continue;
+          const text = node.nodeValue;
+          let match, lastIdx = 0;
+          const frag = document.createDocumentFragment();
+          let replaced = false;
+          re.lastIndex = 0;
+          while ((match = re.exec(text)) !== null) {
+            if (match.index > lastIdx) frag.appendChild(document.createTextNode(text.slice(lastIdx, match.index)));
+            const span = document.createElement("span");
+            span.className = "mention-tag";
+            span.textContent = match[0];
+            frag.appendChild(span);
+            lastIdx = re.lastIndex;
+            replaced = true;
+          }
+          if (replaced) {
+            if (lastIdx < text.length) frag.appendChild(document.createTextNode(text.slice(lastIdx)));
+            node.parentNode.replaceChild(frag, node);
+          }
+        }
+      }
+
       function renderInlineUrlCards(msgDiv, rawText) {
         const urls = extractUrlsFromText(rawText);
         if (!urls.length) return;
@@ -5714,6 +5829,7 @@
           try { renderInlineAttachments(div, content); } catch (_) {}
           try { renderInlineHtmlLinks(div, content); } catch (_) {}
           try { renderInlineUrlCards(div, content); } catch (_) {}
+          try { renderInlineMentions(div); } catch (_) {}
           // Retry affordance for agent failures.
           try {
             const err = m && m.error ? String(m.error) : "";
@@ -6051,12 +6167,251 @@
         chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + "px";
       }
       chatInput.addEventListener("input", autoResize);
+
+      /* ── @mention autocomplete ── */
+      let mentionDevices = [];
+      let mentionDevicesTTL = 0;
+      let mentionActive = false;
+      let mentionQuery = "";
+      let mentionStart = -1;
+      let mentionIdx = 0;
+
+      const mentionDropdown = document.getElementById("mentionDropdown");
+
+      async function fetchMentionDevices() {
+        if (Date.now() < mentionDevicesTTL && mentionDevices.length) return mentionDevices;
+        try {
+          const res = await fetch("/me/me/status");
+          if (!res.ok) return mentionDevices;
+          const data = await res.json();
+          const map = new Map();
+          // Online connections first
+          if (Array.isArray(data.connections)) {
+            data.connections.forEach(c => {
+              const id = c.device_id || c.peer_device_id;
+              if (id) map.set(id, { device_id: id, device_name: c.device_name || id, device_icon: c.device_icon || "", online: true });
+            });
+          }
+          // Provisioned devices (offline unless already in connections)
+          if (Array.isArray(data.provisioned_devices)) {
+            data.provisioned_devices.forEach(d => {
+              const id = d.device_id;
+              if (id && !map.has(id)) map.set(id, { device_id: id, device_name: d.device_name || id, device_icon: d.device_icon || "", online: false });
+            });
+          }
+          mentionDevices = Array.from(map.values());
+          mentionDevicesTTL = Date.now() + 10000;
+        } catch (_) {}
+        return mentionDevices;
+      }
+
+      function renderMentionDropdown(filtered) {
+        if (!filtered.length) { closeMentionDropdown(); return; }
+        // Sort: online first, then alphabetical
+        filtered.sort((a, b) => (b.online - a.online) || a.device_name.localeCompare(b.device_name));
+        mentionIdx = Math.min(mentionIdx, filtered.length - 1);
+        mentionDropdown.innerHTML = filtered.map((d, i) =>
+          `<div class="mention-item${i === mentionIdx ? " active" : ""}" data-idx="${i}">` +
+            `<span class="mention-icon">${d.device_icon || "\uD83D\uDCF1"}</span>` +
+            `<span class="mention-name">${escapeHtml(d.device_name)}</span>` +
+            `<span class="mention-id">${escapeHtml(d.device_id)}</span>` +
+          `</div>`
+        ).join("");
+        mentionDropdown.classList.add("open");
+        mentionActive = true;
+        // Click handlers
+        mentionDropdown.querySelectorAll(".mention-item").forEach(el => {
+          el.addEventListener("mousedown", function(ev) {
+            ev.preventDefault();
+            const idx = parseInt(this.dataset.idx, 10);
+            insertMention(filtered[idx]);
+          });
+        });
+      }
+
+      function closeMentionDropdown() {
+        mentionDropdown.classList.remove("open");
+        mentionDropdown.innerHTML = "";
+        mentionActive = false;
+        mentionQuery = "";
+        mentionStart = -1;
+        mentionIdx = 0;
+      }
+
+      const mentionMirror = document.getElementById("mentionMirror");
+
+      function syncMentionMirror() {
+        // Position the mirror exactly over the textarea
+        const r = chatInput.getBoundingClientRect();
+        const pr = chatInput.closest(".chat-input-area").getBoundingClientRect();
+        mentionMirror.style.left = (r.left - pr.left) + "px";
+        mentionMirror.style.top = (r.top - pr.top) + "px";
+        mentionMirror.style.width = r.width + "px";
+        mentionMirror.style.height = r.height + "px";
+
+        const text = chatInput.value;
+        if (!text) { mentionMirror.innerHTML = "\u00A0"; return; }
+        const re = buildMentionRegex();
+        const safe = escapeHtml(text);
+        const html = safe.replace(re, '<span class="mention-hl">$&</span>');
+        mentionMirror.innerHTML = html + "\n";
+        mentionMirror.scrollTop = chatInput.scrollTop;
+      }
+
+      function insertMention(device) {
+        const ta = chatInput;
+        const text = ta.value;
+        const before = text.slice(0, mentionStart);
+        const after = text.slice(ta.selectionStart);
+        const mention = "@" + device.device_name + " ";
+        ta.value = before + mention + after;
+        const newPos = mentionStart + mention.length;
+        ta.setSelectionRange(newPos, newPos);
+        closeMentionDropdown();
+        ta.focus();
+        autoResize();
+        syncMentionMirror();
+      }
+
+      chatInput.addEventListener("input", async function() {
+        syncMentionMirror();
+        const ta = chatInput;
+        const pos = ta.selectionStart;
+        const text = ta.value;
+        const before = text.slice(0, pos);
+        // Find the last @ that is at position 0 or preceded by whitespace
+        let atIdx = -1;
+        for (let i = before.length - 1; i >= 0; i--) {
+          if (before[i] === "@" && (i === 0 || /\s/.test(before[i - 1]))) { atIdx = i; break; }
+          if (/\s/.test(before[i])) break;
+        }
+        if (atIdx >= 0) {
+          const q = before.slice(atIdx + 1);
+          mentionStart = atIdx;
+          mentionQuery = q;
+          const devices = await fetchMentionDevices();
+          const lq = q.toLowerCase();
+          const filtered = devices.filter(d =>
+            d.device_name.toLowerCase().includes(lq) || d.device_id.toLowerCase().includes(lq)
+          );
+          renderMentionDropdown(filtered);
+        } else {
+          closeMentionDropdown();
+        }
+      });
+
+      // Keep mirror scroll in sync with textarea
+      chatInput.addEventListener("scroll", function() {
+        mentionMirror.scrollTop = chatInput.scrollTop;
+      }, { passive: true });
+
       chatInput.addEventListener("keydown", function(e) {
+        if (mentionActive) {
+          const items = mentionDropdown.querySelectorAll(".mention-item");
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            mentionIdx = Math.min(mentionIdx + 1, items.length - 1);
+            items.forEach((el, i) => el.classList.toggle("active", i === mentionIdx));
+            return;
+          }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            mentionIdx = Math.max(mentionIdx - 1, 0);
+            items.forEach((el, i) => el.classList.toggle("active", i === mentionIdx));
+            return;
+          }
+          if (e.key === "Enter" || e.key === "Tab") {
+            e.preventDefault();
+            // Gather current filtered list to select from
+            const pos = chatInput.selectionStart;
+            const before = chatInput.value.slice(0, pos);
+            let atIdx = -1;
+            for (let i = before.length - 1; i >= 0; i--) {
+              if (before[i] === "@" && (i === 0 || /\s/.test(before[i - 1]))) { atIdx = i; break; }
+              if (/\s/.test(before[i])) break;
+            }
+            const q = atIdx >= 0 ? before.slice(atIdx + 1).toLowerCase() : "";
+            const filtered = mentionDevices.filter(d =>
+              d.device_name.toLowerCase().includes(q) || d.device_id.toLowerCase().includes(q)
+            ).sort((a, b) => (b.online - a.online) || a.device_name.localeCompare(b.device_name));
+            if (filtered.length && mentionIdx < filtered.length) {
+              insertMention(filtered[mentionIdx]);
+            }
+            return;
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            closeMentionDropdown();
+            return;
+          }
+        }
+        // Atomic mention delete: Backspace/Delete removes the whole @DeviceName
+        if (e.key === "Backspace" || e.key === "Delete") {
+          const ta = chatInput;
+          const pos = ta.selectionStart;
+          const end = ta.selectionEnd;
+          // Only act when there's no selection (caret)
+          if (pos === end) {
+            const text = ta.value;
+            const re = buildMentionRegex();
+            let m;
+            re.lastIndex = 0;
+            while ((m = re.exec(text)) !== null) {
+              const mStart = m.index;
+              const mEnd = m.index + m[0].length;
+              const hit = e.key === "Backspace"
+                ? (pos > mStart && pos <= mEnd)
+                : (pos >= mStart && pos < mEnd);
+              if (hit) {
+                e.preventDefault();
+                // Also remove one trailing space if present
+                const delEnd = (mEnd < text.length && text[mEnd] === " ") ? mEnd + 1 : mEnd;
+                ta.value = text.slice(0, mStart) + text.slice(delEnd);
+                ta.setSelectionRange(mStart, mStart);
+                autoResize();
+                syncMentionMirror();
+                return;
+              }
+            }
+          }
+        }
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendChat(); }
       });
+
+      // Close mention dropdown when clicking outside
+      document.addEventListener("mousedown", function(e) {
+        if (mentionActive && !mentionDropdown.contains(e.target) && e.target !== chatInput && !e.target.closest("#mentionTriggerBtn")) {
+          closeMentionDropdown();
+        }
+      });
+
       chatSend.addEventListener("click", sendChat);
-      restoreConversation();
-      syncConversationFromServer().then(() => { checkAgentBusy(); connectBrainSSE(); });
+
+      // Mention trigger button — inserts @ and opens the dropdown
+      document.getElementById("mentionTriggerBtn").addEventListener("click", function(e) {
+        e.preventDefault();
+        const ta = chatInput;
+        const pos = ta.selectionStart;
+        const text = ta.value;
+        // Insert @ preceded by a space if needed
+        const needSpace = pos > 0 && !/\s/.test(text[pos - 1]);
+        const insert = (needSpace ? " " : "") + "@";
+        ta.value = text.slice(0, pos) + insert + text.slice(pos);
+        const newPos = pos + insert.length;
+        ta.setSelectionRange(newPos, newPos);
+        ta.focus();
+        autoResize();
+        // Trigger the mention input handler
+        ta.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      // Pre-fetch device list so mention highlighting works on restored messages
+      fetchMentionDevices().then(() => {
+        restoreConversation();
+        syncConversationFromServer().then(() => { checkAgentBusy(); connectBrainSSE(); });
+      }).catch(() => {
+        restoreConversation();
+        syncConversationFromServer().then(() => { checkAgentBusy(); connectBrainSSE(); });
+      });
       scheduleServerPolling(1200);
 
       // Scope "Select All" to the message balloon where the selection started.
@@ -6446,6 +6801,7 @@
         if (settingsPrefix) {
           chatInput.value = "";
           autoResize();
+          syncMentionMirror();
           if (openSettingsSection(settingsPrefix)) {
             showToast("Opened settings: " + settingsPrefix, 1300);
           } else {
@@ -6458,6 +6814,7 @@
         // Render a local echo immediately with file chips info; actual upload happens before agent call.
         chatInput.value = "";
         autoResize();
+        syncMentionMirror();
 
         const previewLines = [];
         if (text) previewLines.push(text);

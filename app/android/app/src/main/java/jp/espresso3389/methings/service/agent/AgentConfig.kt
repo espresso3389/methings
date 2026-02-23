@@ -100,7 +100,12 @@ data class AgentConfig(
             "Always respond in the same language the user writes in. " +
             "You can create scheduled code execution using scheduler.* device_api actions. " +
             "Schedule types: daemon (runs on service start), periodic (minutely/hourly/daily/weekly/monthly), one_time. " +
-            "Runtimes: run_js (always available) and run_python (requires Termux)."
+            "Runtimes: run_js (always available) and run_python (requires Termux). " +
+            "CROSS-DEVICE MENTIONS: When the user's message contains @DeviceName or @device_id, " +
+            "they want to route a request to that device's agent. " +
+            "Use device_api(action=\"me.me.message.send\", payload={\"peer_device_id\": \"<device_id>\", \"type\": \"request\", \"payload\": {\"text\": \"<the user's message>\"}}) " +
+            "to forward the request. First call device_api(action=\"me.me.status\") to resolve the device name to a device_id if needed. " +
+            "After sending, tell the user the request was forwarded and relay any response you receive."
 
         val BUILTIN_MODEL_PROFILES: Map<String, Map<String, Any>> = mapOf(
             "gpt-5" to mapOf(
