@@ -524,6 +524,7 @@ class LocalHttpServer(
             "/android" -> routeAndroid(session, uri, postBody)
             "/sshd" -> routeSshd(session, uri, postBody)
             "/ssh" -> routeSsh(session, uri, postBody)
+            "/" -> routeUi(session, uri, postBody)
             "" -> routeUi(session, uri, postBody)
             else -> notFound()
         }

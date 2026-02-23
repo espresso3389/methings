@@ -6595,9 +6595,20 @@
         // Check if all resolved.
         const allResolved = Object.values(_permState.items).every(e => e.status !== "pending");
         if (allResolved && _permState.cardEl) {
-          _permState.cardEl.classList.add("resolved");
-          const footer = _permState.cardEl.querySelector("#permCardFooter");
+          // Keep the chat clean: remove the permission banner once everything is resolved.
+          const card = _permState.cardEl;
+          card.classList.add("resolved");
+          const footer = card.querySelector("#permCardFooter");
           if (footer) footer.innerHTML = "";
+          setTimeout(() => {
+            try {
+              if (_permState.cardEl === card && card.isConnected) card.remove();
+              _permState.cardEl = null;
+              _permState.items = {};
+              _permState.knownIds.clear();
+              syncPermOverlay();
+            } catch (_) {}
+          }, 250);
         }
         syncPermOverlay();
       }
