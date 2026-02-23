@@ -335,6 +335,7 @@ class LocalHttpServer(
 
     @Volatile private var bootstrapPhase: String = "none"
     @Volatile private var bootstrapMessage: String = ""
+    @Volatile private var showTermuxSetupFlag = false
     private val bootstrapPrefs by lazy { context.getSharedPreferences("termux_bootstrap", Context.MODE_PRIVATE) }
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
@@ -2704,7 +2705,12 @@ class LocalHttpServer(
                         .put("bootstrap_phase", effectivePhase)
                         .put("bootstrap_message", bootstrapMessage)
                         .put("can_request_installs", termuxManager.canInstallPackages())
+                        .put("show_termux_setup", showTermuxSetupFlag.also { if (it) showTermuxSetupFlag = false })
                 )
+            }
+            path == "/termux/setup/show" && session.method == Method.POST -> {
+                showTermuxSetupFlag = true
+                jsonResponse(JSONObject().put("status", "ok"))
             }
             uri == "/termux/bootstrap.sh" && session.method == Method.GET -> {
                 val script = termuxManager.getBootstrapScript()

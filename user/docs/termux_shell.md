@@ -18,6 +18,8 @@
 
 **`termux_fs` remains Termux-only** — it accesses Termux's home directory which doesn't exist without Termux.
 
+**If Termux is needed but not set up**, call `device_api("termux.show_setup")` to open the setup wizard in the UI. The user can then install and bootstrap Termux without leaving the app.
+
 ---
 
 These tools use Termux when available (full bash, packages, PTY). The worker starts automatically when needed.

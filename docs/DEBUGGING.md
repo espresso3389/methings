@@ -296,6 +296,7 @@ Important files:
 
 ### Shell tool errors (requires Termux)
 - If Termux is not installed, shell tools (`run_python`, `run_pip`) return `shell_unavailable`.
+- The agent can call `device_api("termux.show_setup")` to prompt the user to open the setup wizard in the UI.
 - `run_curl` no longer requires Termux — it uses native HTTP. Legacy `run_curl(args, cwd)` form falls back to Termux shell.
 - Shell errors are returned in the tool call output and stored in chat messages.
 - `python -` (stdin mode) is not supported in `shell_exec` (no interactive stdin). Use:

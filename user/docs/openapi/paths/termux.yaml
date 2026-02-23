@@ -45,6 +45,36 @@ termuxRestart:
             example:
               status: ok
 
+termuxSetupShow:
+  post:
+    operationId: postTermuxSetupShow
+    summary: Prompt the UI to open the Termux setup wizard
+    description: >
+      Sets a one-shot flag that the UI consumes on its next /termux/status poll
+      (every 3 s). The setup wizard modal auto-opens in the web UI. Use this
+      when a shell tool fails because Termux is not installed or bootstrapped.
+    tags: [Termux]
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: Flag set successfully.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+            example:
+              status: ok
+
 termuxEval:
   post:
     operationId: postTermuxEval

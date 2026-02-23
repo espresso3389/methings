@@ -270,6 +270,7 @@ object ToolDefinitions {
     val ACTIONS: Map<String, ActionSpec> = mapOf(
         "termux.status" to ActionSpec("GET", "/termux/status", false),
         "termux.restart" to ActionSpec("POST", "/termux/restart", true),
+        "termux.show_setup" to ActionSpec("POST", "/termux/setup/show", false),
         "screen.status" to ActionSpec("GET", "/screen/status", false),
         "screen.keep_on" to ActionSpec("POST", "/screen/keep_on", true),
         "sshd.status" to ActionSpec("GET", "/sshd/status", false),

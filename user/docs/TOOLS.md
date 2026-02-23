@@ -218,6 +218,11 @@ Schedule types:
 Runtimes: `run_js` (built-in QuickJS with async/await support, always available), `run_python` (requires Termux).
 Limits: max 50 schedules, 200 log entries per schedule, 2000 global log entries.
 
+### Termux
+- `termux.status`: worker status, bootstrap phase, setup readiness. No payload needed.
+- `termux.restart`: restart the Termux worker. Permission-gated.
+- `termux.show_setup`: prompt the user to open the Termux setup wizard in the UI. Use when a shell tool fails because Termux is not installed or not bootstrapped.
+
 ### Intent (Android)
 - `intent.send`: launch an Android intent. Payload: `{"action": "android.intent.action.VIEW", "data": "https://..."}`.
 - `intent.share_app`: share the app via Android share sheet.

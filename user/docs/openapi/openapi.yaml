@@ -106,6 +106,8 @@ paths:
     $ref: './paths/termux.yaml#/termuxStatus'
   /termux/restart:
     $ref: './paths/termux.yaml#/termuxRestart'
+  /termux/setup/show:
+    $ref: './paths/termux.yaml#/termuxSetupShow'
   /termux/eval:
     $ref: './paths/termux.yaml#/termuxEval'
 

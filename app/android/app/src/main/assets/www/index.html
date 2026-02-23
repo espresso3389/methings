@@ -2046,50 +2046,20 @@
           </div>
         </section>
 
-        <!-- Termux Setup -->
+        <!-- Termux Setup (compact card; wizard lives in modal) -->
         <section class="card" id="settings-section-termux_setup">
           <div class="card-header">
             <div class="card-icon amber">&#9881;</div>
             <div class="card-title">Termux Setup</div>
             <div id="termuxSetupStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
           </div>
-          <div id="termuxSetupStepper" class="setup-stepper">
-            <div class="setup-step" data-step="0">
-              <div class="setup-step-num"><span>1</span><span class="done-check">&#10003;</span></div>
-              <div class="setup-step-body">
-                <div class="setup-step-title">Install Termux</div>
-                <div class="setup-step-desc">Download and install Termux from GitHub releases.</div>
-                <div class="setup-step-actions">
-                  <button class="btn primary" id="txSetupInstall">Install Termux</button>
-                  <button class="btn" id="txSetupDownload">Download manually</button>
-                  <span id="txInstallIndicator" class="thinking-dots" style="display:none;">Downloading Termux<span></span><span></span><span></span></span>
-                </div>
-              </div>
-            </div>
-            <div class="setup-step" data-step="1">
-              <div class="setup-step-num"><span>2</span><span class="done-check">&#10003;</span></div>
-              <div class="setup-step-body">
-                <div class="setup-step-title">Run bootstrap</div>
-                <div class="setup-step-desc">Copy the command below, then paste and run it in Termux.</div>
-                <div class="setup-step-actions">
-                  <code id="txSetupCmd">loading...</code>
-                  <button class="btn primary" id="txSetupCopy">Copy Command</button>
-                  <button class="btn" id="txSetupOpenTermux1">Open Termux</button>
-                </div>
-              </div>
-            </div>
-            <div class="setup-step" data-step="2">
-              <div class="setup-step-num"><span>3</span><span class="done-check">&#10003;</span></div>
-              <div class="setup-step-body">
-                <div class="setup-step-title">Setting up</div>
-                <div class="setup-step-desc">Installing packages and configuring the environment. If a permission dialog appears, tap Allow.</div>
-                <div class="setup-step-actions">
-                  <span id="txSetupProgress" class="thinking-dots">Setting up<span></span><span></span><span></span></span>
-                </div>
-              </div>
-            </div>
+          <!-- Shown when NOT ready -->
+          <div id="termuxSetupPrompt" style="display:none; margin-top:8px;">
+            <p class="muted" style="font-size:13px; margin:0 0 10px;">Termux provides Python, pip, and shell tools for the agent.</p>
+            <button class="btn primary" id="txOpenSetupWizard">Set up Termux</button>
           </div>
-          <div id="termuxSetupComplete" class="setup-complete-banner" style="display:none;">
+          <!-- Shown when ready -->
+          <div id="termuxSetupCompactReady" class="setup-complete-banner" style="display:none;">
             &#10003; Termux is set up and ready.
           </div>
         </section>
@@ -2681,6 +2651,56 @@
           <button class="btn" id="sshKeysRefresh">Refresh</button>
         </div>
         <div id="sshKeysList" style="margin-top:8px; flex:1 1 auto; min-height:140px; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px; background:rgba(255,255,255,0.02);"></div>
+      </div>
+    </div>
+
+    <!-- Termux Setup Wizard Modal -->
+    <div class="modal" id="termuxSetupModal" role="dialog" aria-modal="true" aria-labelledby="termuxSetupModalTitle">
+      <div class="modal-card settings-detail" style="max-width:440px;">
+        <div class="card-header">
+          <div class="card-icon amber">&#9881;</div>
+          <div class="card-title" id="termuxSetupModalTitle" style="margin-bottom:0;">Termux Setup</div>
+          <button class="icon-btn secondary" id="termuxSetupModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
+        </div>
+        <div id="termuxSetupStepper" class="setup-stepper">
+          <div class="setup-step" data-step="0">
+            <div class="setup-step-num"><span>1</span><span class="done-check">&#10003;</span></div>
+            <div class="setup-step-body">
+              <div class="setup-step-title">Install Termux</div>
+              <div class="setup-step-desc">Download and install Termux from GitHub releases.</div>
+              <div class="setup-step-actions">
+                <button class="btn primary" id="txSetupInstall">Install Termux</button>
+                <button class="btn" id="txSetupDownload">Download manually</button>
+                <span id="txInstallIndicator" class="thinking-dots" style="display:none;">Downloading Termux<span></span><span></span><span></span></span>
+              </div>
+            </div>
+          </div>
+          <div class="setup-step" data-step="1">
+            <div class="setup-step-num"><span>2</span><span class="done-check">&#10003;</span></div>
+            <div class="setup-step-body">
+              <div class="setup-step-title">Run bootstrap</div>
+              <div class="setup-step-desc">Copy the command below, then paste and run it in Termux.</div>
+              <div class="setup-step-actions">
+                <code id="txSetupCmd">loading...</code>
+                <button class="btn primary" id="txSetupCopy">Copy Command</button>
+                <button class="btn" id="txSetupOpenTermux1">Open Termux</button>
+              </div>
+            </div>
+          </div>
+          <div class="setup-step" data-step="2">
+            <div class="setup-step-num"><span>3</span><span class="done-check">&#10003;</span></div>
+            <div class="setup-step-body">
+              <div class="setup-step-title">Setting up</div>
+              <div class="setup-step-desc">Installing packages and configuring the environment. If a permission dialog appears, tap Allow.</div>
+              <div class="setup-step-actions">
+                <span id="txSetupProgress" class="thinking-dots">Setting up<span></span><span></span><span></span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="termuxSetupComplete" class="setup-complete-banner" style="display:none;">
+          &#10003; Termux is set up and ready.
+        </div>
       </div>
     </div>
 
@@ -11225,13 +11245,19 @@
 
       // --- Termux Setup Wizard ---
       (function() {
+        const modal = $("termuxSetupModal");
         const stepper = $("termuxSetupStepper");
         const badge = $("termuxSetupStatus");
         const banner = $("termuxSetupComplete");
         const steps = stepper.querySelectorAll(".setup-step");
         const sshdCard = $("settings-section-sshd");
+        const prompt = $("termuxSetupPrompt");
+        const compactReady = $("termuxSetupCompactReady");
         let txReleasesUrl = "";
         let txBootstrapCmd = "";
+
+        // Wire modal open/close
+        wireSimpleModal(modal, $("txOpenSetupWizard"), $("termuxSetupModalClose"));
 
         function deriveStep(d) {
           if (!d.installed) return 0;
@@ -11250,18 +11276,29 @@
             if (idx < current) el.classList.add("done");
             else if (idx === current) el.classList.add("active");
           });
+
+          // Update compact card and modal stepper display
           if (allDone) {
+            prompt.style.display = "none";
+            compactReady.style.display = "flex";
             stepper.style.display = "none";
             banner.style.display = "flex";
             setStatus(badge, "ok");
             badge.textContent = "ready";
+            // Auto-close modal after setup completes
+            if (modal.classList.contains("show")) {
+              setTimeout(function() { closeSimpleModal(modal); }, 1500);
+            }
           } else {
+            prompt.style.display = "";
+            compactReady.style.display = "none";
             stepper.style.display = "";
             banner.style.display = "none";
             if (current === 0) { setStatus(badge, "offline"); badge.textContent = "not installed"; }
             else if (current <= 2) { setStatus(badge, "starting"); badge.textContent = "setup needed"; }
             else { setStatus(badge, "starting"); badge.textContent = "starting"; }
           }
+
           // Dim dependent cards when setup incomplete
           var dimVal = allDone ? "" : "0.5";
           if (sshdCard) sshdCard.style.opacity = dimVal;
@@ -11286,6 +11323,10 @@
             if (!res.ok) throw 0;
             var d = await res.json();
             renderWizard(d);
+            // Auto-open modal when agent requests it
+            if (d.show_termux_setup) {
+              openSimpleModal(modal);
+            }
           } catch (_) {
             setStatus(badge, "offline");
             badge.textContent = "error";
