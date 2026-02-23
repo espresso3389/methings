@@ -9470,10 +9470,14 @@ class LocalHttpServer(
                 val key = payload.optString("key", "")
                 val label = payload.optString("label", "")
                 val expiresAt = if (payload.has("expires_at")) payload.optLong("expires_at", 0L) else null
-                val permissionId = payload.optString("permission_id", "")
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
-                }
+                val perm = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.ssh",
+                    capability = "ssh",
+                    detail = "Add SSH authorized key"
+                )
+                if (!perm.first) return perm.second!!
                 if (key.isBlank()) {
                     return badRequest("key_required")
                 }
@@ -9492,10 +9496,14 @@ class LocalHttpServer(
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 var fingerprint = payload.optString("fingerprint", "").trim()
                 val keyRaw = payload.optString("key", "")
-                val permissionId = payload.optString("permission_id", "")
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
-                }
+                val perm = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.ssh",
+                    capability = "ssh",
+                    detail = "Remove SSH authorized key"
+                )
+                if (!perm.first) return perm.second!!
                 if (fingerprint.isBlank() && keyRaw.isNotBlank()) {
                     val parsed = parseSshPublicKey(keyRaw)
                     if (parsed != null) {
@@ -9543,11 +9551,15 @@ class LocalHttpServer(
             }
             uri == "/sshd/pin/start" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val permissionId = payload.optString("permission_id", "")
                 val seconds = payload.optInt("seconds", 10)
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
-                }
+                val perm = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.ssh",
+                    capability = "ssh",
+                    detail = "Enable SSH PIN auth"
+                )
+                if (!perm.first) return perm.second!!
                 val state = sshPinManager.startPin(seconds)
                 sshdManager.enterPinMode()
                 syncAuthorizedKeys()
@@ -9567,6 +9579,13 @@ class LocalHttpServer(
             uri == "/sshd/pin/verify" && session.method == Method.GET -> {
                 // Called by the methings-pin-check script running inside Termux SSH session
                 val pin = session.parms["pin"] ?: ""
+                val state = sshPinManager.status()
+                if (state.expired || (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_PIN)) {
+                    sshPinManager.stopPin()
+                    sshdManager.exitPinMode()
+                    syncAuthorizedKeys()
+                    return jsonResponse(JSONObject().put("valid", false).put("reason", "expired"))
+                }
                 val valid = sshPinManager.verifyPin(pin)
                 jsonResponse(JSONObject().put("valid", valid))
             }
@@ -9588,11 +9607,15 @@ class LocalHttpServer(
             }
             uri == "/sshd/noauth/start" && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val permissionId = payload.optString("permission_id", "")
                 val seconds = payload.optInt("seconds", 30)
-                if (!isPermissionApproved(permissionId, consume = true)) {
-                    return forbidden("permission_required")
-                }
+                val perm = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.ssh",
+                    capability = "ssh",
+                    detail = "Enable SSH notification auth"
+                )
+                if (!perm.first) return perm.second!!
                 val state = sshNoAuthManager.start(seconds)
                 sshdManager.enterNotificationMode()
                 syncAuthorizedKeys()
@@ -9611,7 +9634,14 @@ class LocalHttpServer(
             uri == "/sshd/noauth/wait" && session.method == Method.GET -> {
                 // Called by methings-notif-check ForceCommand script after key auth.
                 // Blocks until the user taps Allow/Deny on the notification.
-                if (!sshNoAuthManager.isActive()) {
+                val state = sshNoAuthManager.status()
+                if (state.expired || (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_NOTIFICATION)) {
+                    sshNoAuthManager.stop()
+                    sshdManager.exitNotificationMode()
+                    syncAuthorizedKeys()
+                    return jsonResponse(JSONObject().put("approved", false).put("reason", "expired"))
+                }
+                if (!state.active) {
                     return jsonResponse(JSONObject().put("approved", false).put("reason", "inactive"))
                 }
                 val requestId = session.parms["id"]

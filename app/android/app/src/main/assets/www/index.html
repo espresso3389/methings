@@ -2082,6 +2082,18 @@
             <button class="btn" id="authNotification">Notification</button>
             <button class="btn" id="authPin">PIN</button>
           </div>
+          <div id="sshdNotifStatus" style="display:none;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.18);">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:13px;font-weight:600;color:var(--accent);">Notification auth active</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+              <span id="sshdNotifCountdown" class="muted" style="font-size:12px;"></span>
+              <div style="flex:1;height:3px;background:var(--surface);border-radius:2px;overflow:hidden;">
+                <div id="sshdNotifBarFill" style="height:100%;width:0%;background:var(--accent);border-radius:2px;transition:width 1s linear;"></div>
+              </div>
+              <button class="btn danger" id="sshdNotifStop" style="padding:4px 10px;font-size:12px;flex-shrink:0;">Stop</button>
+            </div>
+          </div>
           <div id="sshdPinStatus" style="display:none;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.18);">
             <div style="display:flex;align-items:center;gap:8px;">
               <span style="font-size:13px;font-weight:600;color:var(--accent);">PIN active</span>
@@ -8238,8 +8250,14 @@
       const sshKeysRefresh = $("sshKeysRefresh");
       let currentClientKeyPublic = "";
       const pinDurationMs = 20000;
+      const notifDurationMs = 30000;
       let pinExpiresAt = null;
+      let notifExpiresAt = null;
       let lastPin = null;
+      const sshdNotifStatus = $("sshdNotifStatus");
+      const sshdNotifCountdown = $("sshdNotifCountdown");
+      const sshdNotifBarFill = $("sshdNotifBarFill");
+      const sshdNotifStop = $("sshdNotifStop");
       const sshdPinStatus = $("sshdPinStatus");
       const sshdPinCode = $("sshdPinCode");
       const sshdPinCountdown = $("sshdPinCountdown");
@@ -9411,7 +9429,7 @@
             if (!fp) return;
             if (!await appConfirm("Remove SSH key", "Remove this authorized key?")) return;
             try {
-              const permission_id = await requestPermission("ssh_keys", "Remove SSH authorized key " + shortFp(fp));
+              const permission_id = await requestPermission("device.ssh", "Remove SSH authorized key " + shortFp(fp));
               const res = await fetch(API + "/sshd/keys/delete", {
                 method: "POST",
                 headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -9493,6 +9511,40 @@
           pinExpiresAt = null;
           sshdPinStatus.style.display = "none";
         }
+      }
+
+      async function refreshNoAuth() {
+        try {
+          const res = await fetch(API + "/sshd/noauth/status");
+          if (!res.ok) throw 0;
+          const data = await res.json();
+          if (data.active) {
+            notifExpiresAt = data.expires_at || null;
+            updateNoAuthCountdown();
+          } else {
+            notifExpiresAt = null;
+            sshdNotifStatus.style.display = "none";
+          }
+        } catch (_) {
+          notifExpiresAt = null;
+          sshdNotifStatus.style.display = "none";
+        }
+      }
+
+      function updateNoAuthCountdown() {
+        if (!notifExpiresAt) {
+          sshdNotifStatus.style.display = "none";
+          return;
+        }
+        const rem = notifExpiresAt - Date.now();
+        if (rem <= 0) {
+          notifExpiresAt = null;
+          sshdNotifStatus.style.display = "none";
+          return;
+        }
+        sshdNotifStatus.style.display = "";
+        sshdNotifCountdown.textContent = Math.ceil(rem / 1000) + "s remaining";
+        sshdNotifBarFill.style.width = Math.round(Math.max(0, Math.min(1, rem / notifDurationMs)) * 100) + "%";
       }
 
       function updatePinCountdown() {
@@ -11116,7 +11168,7 @@
         if (!key) return;
         const label = String(await appPrompt("Key label", "Label (optional)", "") || "").trim();
         try {
-          const permission_id = await requestPermission("ssh_keys", "Add SSH authorized key" + (label ? (" (" + label + ")") : ""));
+          const permission_id = await requestPermission("device.ssh", "Add SSH authorized key" + (label ? (" (" + label + ")") : ""));
           const res = await fetch(API + "/sshd/keys/add", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -11138,13 +11190,16 @@
           // Always require biometric for enabling auth modes.
           const u = await requestSettingsUnlock();
           if (!u || !u.ok) { showToast("Unlock failed", 1400); return; }
-          const permission_id = await requestPermission("ssh_noauth", "Enable SSH notification auth");
+          const permission_id = await requestPermission("device.ssh", "Enable SSH notification auth");
           const res = await fetch(API + "/sshd/noauth/start", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ permission_id, seconds: 30 }),
           });
           if (!res.ok) throw 0;
+          const data = await res.json();
+          notifExpiresAt = data.expires_at || (Date.now() + notifDurationMs);
+          updateNoAuthCountdown();
           sshDetail.textContent = "Notification auth enabled";
           await refreshSsh();
         } catch (_) {
@@ -11157,7 +11212,7 @@
           // Always require biometric for enabling auth modes.
           const u = await requestSettingsUnlock();
           if (!u || !u.ok) { showToast("Unlock failed", 1400); return; }
-          const permission_id = await requestPermission("ssh_pin", "Enable SSH PIN auth");
+          const permission_id = await requestPermission("device.ssh", "Enable SSH PIN auth");
           const res = await fetch(API + "/sshd/pin/start", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
@@ -11202,6 +11257,21 @@
           sshdPinStatus.style.display = "none";
         }
       });
+      sshdNotifStop.addEventListener("click", async () => {
+        try {
+          await fetch(API + "/sshd/noauth/stop", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({}),
+          });
+          await refreshNoAuth();
+          await refreshSsh();
+        } catch (_) {
+        } finally {
+          notifExpiresAt = null;
+          sshdNotifStatus.style.display = "none";
+        }
+      });
 
       // Agent console initial load (stubs removed; kept as no-ops for safety).
       refreshSshKeys();
@@ -11240,6 +11310,7 @@
       refreshAppInfo();
       refreshSsh();
       refreshPin();
+      refreshNoAuth();
       setInterval(refreshWorker, 5000);
       setInterval(refreshSsh, 5000);
 
@@ -11398,6 +11469,8 @@
       setInterval(renderMeSyncChatPopup, 1000);
       setInterval(refreshPin, 1000);
       setInterval(updatePinCountdown, 1000);
+      setInterval(refreshNoAuth, 1000);
+      setInterval(updateNoAuthCountdown, 1000);
       setInterval(refreshAppUpdateWorkStatus, 15000);
 
       // me.me BLE onboarding: auto-show on first launch if permissions not yet granted

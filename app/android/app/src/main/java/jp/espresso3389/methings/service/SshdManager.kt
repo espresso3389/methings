@@ -116,15 +116,9 @@ class SshdManager(
     }
 
     fun exitPinMode() {
-        val prev = prefs.getString(KEY_AUTH_MODE_PRE_PIN, null)
-        val fallback = prefs.getString(KEY_AUTH_MODE_LAST_NON_PIN, AUTH_MODE_PUBLIC_KEY)
-            ?: AUTH_MODE_PUBLIC_KEY
         prefs.edit().remove(KEY_AUTH_MODE_PRE_PIN).apply()
-        val normalizedPrev = when (prev) {
-            AUTH_MODE_PUBLIC_KEY, AUTH_MODE_NOTIFICATION -> prev
-            else -> null
-        }
-        setAuthMode(normalizedPrev ?: fallback)
+        // PIN mode is temporary; always return to default public_key mode on exit.
+        setAuthMode(AUTH_MODE_PUBLIC_KEY)
         restartIfRunning()
     }
 
@@ -139,15 +133,9 @@ class SshdManager(
     }
 
     fun exitNotificationMode() {
-        val prev = prefs.getString(KEY_AUTH_MODE_PRE_NOTIFICATION, null)
-        val fallback = prefs.getString(KEY_AUTH_MODE_LAST_NON_NOTIFICATION, AUTH_MODE_PUBLIC_KEY)
-            ?: AUTH_MODE_PUBLIC_KEY
         prefs.edit().remove(KEY_AUTH_MODE_PRE_NOTIFICATION).apply()
-        val normalizedPrev = when (prev) {
-            AUTH_MODE_PUBLIC_KEY, AUTH_MODE_PIN -> prev
-            else -> null
-        }
-        setAuthMode(normalizedPrev ?: fallback)
+        // Notification mode is temporary; always return to default public_key mode on exit.
+        setAuthMode(AUTH_MODE_PUBLIC_KEY)
         restartIfRunning()
     }
 
