@@ -122,6 +122,21 @@ data class AgentConfig(
                 "max_actions" to 8,
                 "max_tool_output_chars" to 9000,
             ),
+            // gemini-3.1 must precede gemini-3 (substring match: "gemini-3.1-x" contains "gemini-3")
+            "gemini-3.1" to mapOf(
+                "dialogue_window_user_assistant" to 64,
+                "dialogue_raw_fetch_limit" to 520,
+                "max_tool_rounds" to 20,
+                "max_actions" to 12,
+                "max_tool_output_chars" to 16000,
+            ),
+            "gemini-3" to mapOf(
+                "dialogue_window_user_assistant" to 48,
+                "dialogue_raw_fetch_limit" to 400,
+                "max_tool_rounds" to 18,
+                "max_actions" to 10,
+                "max_tool_output_chars" to 14000,
+            ),
         )
     }
 }
