@@ -49,6 +49,8 @@ tags:
     description: Bluetooth Low Energy scanning and GATT.
   - name: USB
     description: Generic USB device access and streaming.
+  - name: MCU
+    description: Generic MCU programming model and target probing.
   - name: UVC
     description: USB Video Class (webcam) helpers.
   - name: Vision
@@ -296,6 +298,24 @@ paths:
     $ref: './paths/usb.yaml#/usbStreamStop'
   /usb/stream/status:
     $ref: './paths/usb.yaml#/usbStreamStatus'
+
+  # ── MCU ──
+  /mcu/models:
+    $ref: './paths/mcu.yaml#/mcuModels'
+  /mcu/probe:
+    $ref: './paths/mcu.yaml#/mcuProbe'
+  /mcu/flash/plan:
+    $ref: './paths/mcu.yaml#/mcuFlashPlan'
+  /mcu/flash:
+    $ref: './paths/mcu.yaml#/mcuFlash'
+  /mcu/diag/serial:
+    $ref: './paths/mcu.yaml#/mcuDiagSerial'
+  /mcu/serial_lines:
+    $ref: './paths/mcu.yaml#/mcuSerialLines'
+  /mcu/reset:
+    $ref: './paths/mcu.yaml#/mcuReset'
+  /mcu/serial_monitor:
+    $ref: './paths/mcu.yaml#/mcuSerialMonitor'
 
   # ── UVC ──
   /uvc/mjpeg/capture:

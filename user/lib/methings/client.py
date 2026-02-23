@@ -73,6 +73,113 @@ class MethingsClient:
     def usb_status(self) -> Dict[str, Any]:
         return self.device_api("usb.status", {}, detail="USB status")
 
+    def mcu_models(self) -> Dict[str, Any]:
+        return self.device_api("mcu.models", {}, detail="MCU model list")
+
+    def mcu_probe(
+        self,
+        *,
+        model: str,
+        name: str = "",
+        vendor_id: Optional[int] = None,
+        product_id: Optional[int] = None,
+        permission_timeout_ms: int = 0,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": str(model).strip().lower(),
+            "permission_timeout_ms": int(permission_timeout_ms),
+        }
+        if name:
+            payload["name"] = name
+        if vendor_id is not None:
+            payload["vendor_id"] = int(vendor_id)
+        if product_id is not None:
+            payload["product_id"] = int(product_id)
+        return self.device_api("mcu.probe", payload, detail=f"MCU probe ({payload['model']})")
+
+    def mcu_flash_plan(self, *, plan_path: str, model: str = "esp32") -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "plan_path": str(plan_path).strip(),
+            "model": str(model).strip().lower(),
+        }
+        return self.device_api("mcu.flash.plan", payload, detail=f"MCU flash plan ({payload['model']})")
+
+    def mcu_flash(
+        self,
+        *,
+        model: str,
+        handle: str,
+        image_path: str = "",
+        segments: Optional[list] = None,
+        offset: int = 0x10000,
+        reboot: bool = True,
+        auto_enter_bootloader: bool = True,
+        timeout_ms: int = 2000,
+        interface_id: Optional[int] = None,
+        in_endpoint_address: Optional[int] = None,
+        out_endpoint_address: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": str(model).strip().lower(),
+            "handle": str(handle).strip(),
+            "offset": int(offset),
+            "reboot": bool(reboot),
+            "auto_enter_bootloader": bool(auto_enter_bootloader),
+            "timeout_ms": int(timeout_ms),
+        }
+        p = str(image_path).strip()
+        if p:
+            payload["image_path"] = p
+        if segments is not None:
+            payload["segments"] = segments
+        if interface_id is not None:
+            payload["interface_id"] = int(interface_id)
+        if in_endpoint_address is not None:
+            payload["in_endpoint_address"] = int(in_endpoint_address)
+        if out_endpoint_address is not None:
+            payload["out_endpoint_address"] = int(out_endpoint_address)
+        return self.device_api("mcu.flash", payload, detail=f"MCU flash ({payload['model']})")
+
+    def mcu_reset(
+        self,
+        *,
+        model: str,
+        handle: str,
+        mode: str = "reboot",
+        sleep_after_ms: int = 120,
+        timeout_ms: int = 2000,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": str(model).strip().lower(),
+            "handle": str(handle).strip(),
+            "mode": str(mode).strip().lower(),
+            "sleep_after_ms": int(sleep_after_ms),
+            "timeout_ms": int(timeout_ms),
+        }
+        return self.device_api("mcu.reset", payload, detail=f"MCU reset ({payload['model']})")
+
+    def mcu_serial_monitor(
+        self,
+        *,
+        model: str,
+        handle: str,
+        duration_ms: int = 2000,
+        configure_serial: bool = True,
+        flush_input: bool = False,
+        max_dump_bytes: int = 8192,
+        timeout_ms: int = 2000,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": str(model).strip().lower(),
+            "handle": str(handle).strip(),
+            "duration_ms": int(duration_ms),
+            "configure_serial": bool(configure_serial),
+            "flush_input": bool(flush_input),
+            "max_dump_bytes": int(max_dump_bytes),
+            "timeout_ms": int(timeout_ms),
+        }
+        return self.device_api("mcu.serial_monitor", payload, detail=f"MCU serial monitor ({payload['model']})")
+
     def stt_record(self, *, locale: str = "", partial: bool = True, max_results: int = 5) -> Dict[str, Any]:
         payload: Dict[str, Any] = {}
         if locale:

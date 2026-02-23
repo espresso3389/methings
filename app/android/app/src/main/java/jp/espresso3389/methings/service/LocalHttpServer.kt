@@ -96,6 +96,8 @@ import android.os.Handler
 import android.os.Looper
 import androidx.core.content.FileProvider
 import org.json.JSONArray
+import com.hoho.android.usbserial.driver.UsbSerialPort
+import com.hoho.android.usbserial.driver.UsbSerialProber
 
 class LocalHttpServer(
     private val context: Context,
@@ -499,6 +501,7 @@ class LocalHttpServer(
             "/notifications" -> routeNotifications(session, uri, postBody)
             "/screen" -> routeScreen(session, uri, postBody)
             "/usb" -> routeUsb(session, uri, postBody)
+            "/mcu" -> routeMcu(session, uri, postBody)
             "/uvc" -> routeUvc(session, uri, postBody)
             "/vision" -> routeVision(session, uri, postBody)
             "/camera" -> routeCamera(session, uri, postBody)
@@ -2166,6 +2169,78 @@ class LocalHttpServer(
         }
     }
 
+    private fun routeMcu(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/mcu/models" || uri == "/mcu/models/") && session.method == Method.GET -> {
+                return handleMcuModels()
+            }
+            (uri == "/mcu/probe" || uri == "/mcu/probe/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuProbe(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU probe handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_probe_handler_failed")
+                }
+            }
+            (uri == "/mcu/flash" || uri == "/mcu/flash/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuFlash(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU flash handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_flash_handler_failed")
+                }
+            }
+            (uri == "/mcu/flash/plan" || uri == "/mcu/flash/plan/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuFlashPlan(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU flash plan handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_flash_plan_handler_failed")
+                }
+            }
+            (uri == "/mcu/diag/serial" || uri == "/mcu/diag/serial/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuDiagSerial(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU diag serial handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_diag_serial_handler_failed")
+                }
+            }
+            (uri == "/mcu/serial_lines" || uri == "/mcu/serial_lines/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuSerialLines(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU serial lines handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_serial_lines_handler_failed")
+                }
+            }
+            (uri == "/mcu/reset" || uri == "/mcu/reset/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuReset(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU reset handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_reset_handler_failed")
+                }
+            }
+            (uri == "/mcu/serial_monitor" || uri == "/mcu/serial_monitor/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuSerialMonitor(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU serial monitor handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_serial_monitor_handler_failed")
+                }
+            }
+            else -> notFound()
+        }
+    }
+
     private fun routeUvc(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
             (uri == "/uvc/mjpeg/capture" || uri == "/uvc/mjpeg/capture/") && session.method == Method.POST -> {
@@ -3416,6 +3491,1737 @@ class LocalHttpServer(
                 .put("devices", devices)
                 .put("pending_permission_requests", pending)
         )
+    }
+
+    private fun handleMcuModels(): Response {
+        val models = org.json.JSONArray().put(
+            JSONObject()
+                .put("id", "esp32")
+                .put("family", "esp32")
+                .put("protocol", "espressif-rom-serial")
+                .put("status", "supported")
+                .put("notes", "Initial model support. Flash pipeline will be added incrementally.")
+        )
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("models", models)
+        )
+    }
+
+    private fun handleMcuProbe(session: IHTTPSession, payload: JSONObject): Response {
+        val model = payload.optString("model", "").trim().lowercase(Locale.US)
+        if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "model_required")
+        if (model != "esp32") {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "unsupported_model",
+                JSONObject()
+                    .put("model", model)
+                    .put("supported_models", org.json.JSONArray().put("esp32"))
+            )
+        }
+
+        val name = payload.optString("name", "").trim()
+        val vid = payload.optInt("vendor_id", -1)
+        val pid = payload.optInt("product_id", -1)
+        val timeoutMs = payload.optLong("permission_timeout_ms", 0L).coerceIn(0L, 120_000L)
+        val dev = findUsbDevice(name, vid, pid)
+            ?: return jsonError(Response.Status.NOT_FOUND, "usb_device_not_found")
+
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "MCU probe: model=$model vid=${dev.vendorId} pid=${dev.productId} name=${dev.deviceName}"
+        )
+        if (!perm.first) return perm.second!!
+
+        if (!ensureUsbPermission(dev, timeoutMs)) {
+            return jsonError(
+                Response.Status.FORBIDDEN,
+                "usb_permission_required",
+                JSONObject()
+                    .put("name", dev.deviceName)
+                    .put("vendor_id", dev.vendorId)
+                    .put("product_id", dev.productId)
+            )
+        }
+
+        val serial = findSerialBulkPort(dev)
+        val bridge = guessUsbSerialBridge(dev)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("model", model)
+                .put("device", usbDeviceToJson(dev))
+                .put("bridge_hint", bridge ?: JSONObject.NULL)
+                .put("serial_port", serial ?: JSONObject.NULL)
+                .put("ready_for_serial_protocol", serial != null)
+        )
+    }
+
+    private fun findSerialBulkPort(dev: UsbDevice): JSONObject? {
+        var best: JSONObject? = null
+        var bestScore = Int.MIN_VALUE
+        for (i in 0 until dev.interfaceCount) {
+            val intf = dev.getInterface(i)
+            var inEp: UsbEndpoint? = null
+            var outEp: UsbEndpoint? = null
+            for (e in 0 until intf.endpointCount) {
+                val ep = intf.getEndpoint(e)
+                if (ep.type != UsbConstants.USB_ENDPOINT_XFER_BULK) continue
+                if (ep.direction == UsbConstants.USB_DIR_IN && inEp == null) inEp = ep
+                if (ep.direction == UsbConstants.USB_DIR_OUT && outEp == null) outEp = ep
+            }
+            if (inEp == null || outEp == null) continue
+
+            val score = when (intf.interfaceClass) {
+                UsbConstants.USB_CLASS_CDC_DATA -> 100
+                UsbConstants.USB_CLASS_VENDOR_SPEC -> 90
+                UsbConstants.USB_CLASS_COMM -> 60
+                else -> 30
+            } + intf.endpointCount
+
+            if (score > bestScore) {
+                bestScore = score
+                best = JSONObject()
+                    .put("interface_id", intf.id)
+                    .put("interface_class", intf.interfaceClass)
+                    .put("interface_subclass", intf.interfaceSubclass)
+                    .put("interface_protocol", intf.interfaceProtocol)
+                    .put("in_endpoint_address", inEp.address)
+                    .put("out_endpoint_address", outEp.address)
+            }
+        }
+        return best
+    }
+
+    private fun guessUsbSerialBridge(dev: UsbDevice): String? {
+        return when (dev.vendorId) {
+            0x10C4 -> "cp210x"
+            0x1A86 -> "ch34x"
+            0x0403 -> "ftdi"
+            0x303A -> "esp-usb-serial-jtag"
+            else -> null
+        }
+    }
+
+    private data class EspSerialSelection(
+        val interfaceObj: UsbInterface,
+        val inEndpoint: UsbEndpoint,
+        val outEndpoint: UsbEndpoint,
+    )
+
+    private data class McuFlashSegment(
+        val relPath: String,
+        val offset: Int,
+        val bytes: ByteArray,
+    )
+
+    private class EspSlipCodec {
+        private val pending = ArrayDeque<Int>()
+        private val frame = ArrayList<Byte>()
+        private var inFrame = false
+
+        fun feed(data: ByteArray, length: Int) {
+            val n = length.coerceIn(0, data.size)
+            for (i in 0 until n) pending.addLast(data[i].toInt() and 0xFF)
+        }
+
+        fun nextFrame(): ByteArray? {
+            while (pending.isNotEmpty()) {
+                val b = pending.removeFirst()
+                if (b == 0xC0) {
+                    if (!inFrame) {
+                        inFrame = true
+                        frame.clear()
+                        continue
+                    }
+                    val out = frame.toByteArray()
+                    frame.clear()
+                    inFrame = true
+                    if (out.isNotEmpty()) return out
+                    continue
+                }
+                if (!inFrame) continue
+                if (b == 0xDB) {
+                    if (pending.isEmpty()) {
+                        // Need one more byte; keep escape marker for next feed.
+                        pending.addFirst(b)
+                        return null
+                    }
+                    val esc = pending.removeFirst()
+                    when (esc) {
+                        0xDC -> frame.add(0xC0.toByte())
+                        0xDD -> frame.add(0xDB.toByte())
+                        else -> return null
+                    }
+                } else {
+                    frame.add(b.toByte())
+                }
+            }
+            return null
+        }
+    }
+
+    private fun handleMcuFlash(session: IHTTPSession, payload: JSONObject): Response {
+        val model = payload.optString("model", "").trim().lowercase(Locale.US)
+        if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "model_required")
+        if (model != "esp32") {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "unsupported_model",
+                JSONObject()
+                    .put("model", model)
+                    .put("supported_models", org.json.JSONArray().put("esp32"))
+            )
+        }
+
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "MCU flash: model=$model handle=$handle"
+        )
+        if (!perm.first) return perm.second!!
+
+        val imagePath = payload.optString("image_path", "").trim()
+
+        val timeoutMs = payload.optInt("timeout_ms", 2000).coerceIn(100, 60_000)
+        val reboot = payload.optBoolean("reboot", true)
+        val autoEnterBootloader = payload.optBoolean("auto_enter_bootloader", true)
+        val debug = payload.optBoolean("debug", false)
+
+        val selection = pickEspSerialSelection(dev, payload)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "serial_port_not_found")
+
+        val segments = try {
+            buildMcuFlashSegments(payload, fallbackPath = imagePath)
+        } catch (ex: IllegalArgumentException) {
+            return jsonError(Response.Status.BAD_REQUEST, ex.message ?: "invalid_segments")
+        } catch (ex: Exception) {
+            return jsonError(Response.Status.INTERNAL_ERROR, "segment_prepare_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+        if (segments.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "segments_required")
+
+        val t0 = System.currentTimeMillis()
+        return try {
+            val bridge = guessUsbSerialBridge(dev)
+            val sessionCtx = EspSerialSession(
+                usbManager = usbManager,
+                dev = dev,
+                conn = conn,
+                inEp = selection.inEndpoint,
+                outEp = selection.outEndpoint,
+                timeoutMs = timeoutMs,
+                bridgeHint = bridge,
+                interfaceId = selection.interfaceObj.id,
+            )
+            try {
+                if (!sessionCtx.usesUsbSerial()) {
+                    val force = payload.optBoolean("force_claim", true)
+                    if (!conn.claimInterface(selection.interfaceObj, force)) {
+                        return jsonError(Response.Status.INTERNAL_ERROR, "claim_interface_failed")
+                    }
+                    runCatching { conn.setInterface(selection.interfaceObj) }
+                }
+                sessionCtx.configureSerial()
+                sessionCtx.flushInput()
+                var syncDebug: JSONArray? = null
+                val flashDebug: JSONArray? = if (debug) JSONArray() else null
+                var postSyncProbe: JSONObject? = null
+                var spiAttachDebug: JSONObject? = null
+                if (autoEnterBootloader) {
+                    syncDebug = sessionCtx.syncWithAutoResetProfiles(bridge, selection.interfaceObj.id, debug = debug)
+                } else {
+                    val syncStart = System.currentTimeMillis()
+                    try {
+                        sessionCtx.sync()
+                        if (debug) {
+                            syncDebug = JSONArray().put(
+                                JSONObject()
+                                    .put("profile", "direct_sync")
+                                    .put("ok", true)
+                                    .put("elapsed_ms", (System.currentTimeMillis() - syncStart).coerceAtLeast(0L))
+                            )
+                        }
+                    } catch (ex: Exception) {
+                        if (debug) {
+                            throw EspSyncException(
+                                ex.message ?: "esp_response_timeout",
+                                JSONArray().put(
+                                    JSONObject()
+                                        .put("profile", "direct_sync")
+                                        .put("ok", false)
+                                        .put("error", ex.message ?: "unknown_error")
+                                        .put("elapsed_ms", (System.currentTimeMillis() - syncStart).coerceAtLeast(0L))
+                                )
+                            )
+                        }
+                        throw ex
+                    }
+                }
+                if (debug) {
+                    val probeStart = System.currentTimeMillis()
+                    postSyncProbe = try {
+                        val magic = sessionCtx.readChipDetectMagic()
+                        JSONObject()
+                            .put("ok", true)
+                            .put("register", "0x40001000")
+                            .put("value", String.format(Locale.US, "0x%08x", magic))
+                            .put("elapsed_ms", (System.currentTimeMillis() - probeStart).coerceAtLeast(0L))
+                    } catch (ex: Exception) {
+                        JSONObject()
+                            .put("ok", false)
+                            .put("register", "0x40001000")
+                            .put("error", ex.message ?: "unknown_error")
+                            .put("elapsed_ms", (System.currentTimeMillis() - probeStart).coerceAtLeast(0L))
+                    }
+                }
+                val spiAttachStart = System.currentTimeMillis()
+                try {
+                    val attach = sessionCtx.attachEsp32SpiFlash()
+                    if (debug) {
+                        spiAttachDebug = attach
+                            .put("ok", true)
+                            .put("elapsed_ms", (System.currentTimeMillis() - spiAttachStart).coerceAtLeast(0L))
+                    }
+                } catch (ex: Exception) {
+                    if (debug) {
+                        spiAttachDebug = JSONObject()
+                            .put("ok", false)
+                            .put("error", ex.message ?: "unknown_error")
+                            .put("elapsed_ms", (System.currentTimeMillis() - spiAttachStart).coerceAtLeast(0L))
+                        throw EspFlashException(
+                            ex.message ?: "spi_attach_failed",
+                            JSONObject()
+                                .put("detail", ex.message ?: "spi_attach_failed")
+                                .put("failed_segment_index", 0)
+                                .put("failed_segment_path", segments.firstOrNull()?.relPath ?: JSONObject.NULL)
+                                .put("failed_stage", "spi_attach")
+                                .put("sync_debug", syncDebug ?: JSONArray())
+                                .put("post_sync_probe", if (postSyncProbe == null) JSONObject.NULL else postSyncProbe)
+                                .put("spi_attach_debug", spiAttachDebug)
+                                .put("flash_debug", flashDebug ?: JSONArray())
+                        )
+                    }
+                    throw ex
+                }
+                var totalBlocks = 0
+                val written = org.json.JSONArray()
+                for ((idx, seg) in segments.withIndex()) {
+                    val isLast = idx == segments.lastIndex
+                    val segStart = System.currentTimeMillis()
+                    val r = try {
+                        sessionCtx.flashImage(seg.bytes, seg.offset, reboot = reboot && isLast)
+                    } catch (ex: EspFlashStageException) {
+                        if (debug) {
+                            flashDebug?.put(
+                                JSONObject()
+                                    .put("segment_index", idx)
+                                    .put("path", seg.relPath)
+                                    .put("offset", seg.offset)
+                                    .put("ok", false)
+                                    .put("stage", ex.stage)
+                                    .put("block_index", if (ex.blockIndex == null) JSONObject.NULL else ex.blockIndex)
+                                    .put("blocks_written", ex.blocksWritten)
+                                    .put("elapsed_ms", (System.currentTimeMillis() - segStart).coerceAtLeast(0L))
+                                    .put("error", ex.message ?: "unknown_error")
+                            )
+                            throw EspFlashException(
+                                ex.message ?: ex.stage,
+                                JSONObject()
+                                    .put("detail", ex.message ?: ex.stage)
+                                    .put("failed_segment_index", idx)
+                                    .put("failed_segment_path", seg.relPath)
+                                    .put("failed_stage", ex.stage)
+                                    .put("sync_debug", syncDebug ?: JSONArray())
+                                    .put("post_sync_probe", if (postSyncProbe == null) JSONObject.NULL else postSyncProbe)
+                                    .put("spi_attach_debug", if (spiAttachDebug == null) JSONObject.NULL else spiAttachDebug)
+                                    .put("flash_debug", flashDebug ?: JSONArray())
+                            )
+                        }
+                        throw ex
+                    }
+                    totalBlocks += r.blocksWritten
+                    written.put(
+                        JSONObject()
+                            .put("path", seg.relPath)
+                            .put("offset", seg.offset)
+                            .put("size", seg.bytes.size)
+                            .put("md5", md5Hex(seg.bytes))
+                            .put("blocks_written", r.blocksWritten)
+                            .put("block_size", r.blockSize)
+                    )
+                    if (debug) {
+                        flashDebug?.put(
+                            JSONObject()
+                                .put("segment_index", idx)
+                                .put("path", seg.relPath)
+                                .put("offset", seg.offset)
+                                .put("ok", true)
+                                .put("stage", "flash_data_done")
+                                .put("blocks_written", r.blocksWritten)
+                                .put("elapsed_ms", (System.currentTimeMillis() - segStart).coerceAtLeast(0L))
+                        )
+                    }
+                }
+
+                val elapsed = (System.currentTimeMillis() - t0).coerceAtLeast(0L)
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("model", model)
+                        .put("handle", handle)
+                        .put("segment_count", segments.size)
+                        .put("segments", written)
+                        .put("interface_id", selection.interfaceObj.id)
+                        .put("in_endpoint_address", selection.inEndpoint.address)
+                        .put("out_endpoint_address", selection.outEndpoint.address)
+                        .put("blocks_written_total", totalBlocks)
+                        .put("elapsed_ms", elapsed)
+                        .put("transport", if (sessionCtx.usesUsbSerial()) "usb-serial-for-android" else "usb-bulk")
+                        .put("sync_debug", if (debug) (syncDebug ?: JSONArray()) else JSONObject.NULL)
+                        .put("post_sync_probe", if (debug) (postSyncProbe ?: JSONObject.NULL) else JSONObject.NULL)
+                        .put("spi_attach_debug", if (debug) (spiAttachDebug ?: JSONObject.NULL) else JSONObject.NULL)
+                        .put("flash_debug", if (debug) (flashDebug ?: JSONArray()) else JSONObject.NULL)
+                )
+            } finally {
+                sessionCtx.close()
+            }
+        } catch (ex: EspSyncException) {
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "mcu_flash_failed",
+                JSONObject()
+                    .put("detail", ex.message ?: "")
+                    .put("sync_debug", ex.attempts)
+            )
+        } catch (ex: EspFlashException) {
+            jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "mcu_flash_failed",
+                ex.detailPayload
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "mcu_flash_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleMcuFlashPlan(payload: JSONObject): Response {
+        val planPath = payload.optString("plan_path", "").trim()
+        if (planPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "plan_path_required")
+        val planFile = userPath(planPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        if (!planFile.exists() || !planFile.isFile) return jsonError(Response.Status.NOT_FOUND, "plan_not_found")
+
+        val planJson = try {
+            JSONObject(planFile.readText(Charsets.UTF_8))
+        } catch (ex: Exception) {
+            return jsonError(Response.Status.BAD_REQUEST, "invalid_plan_json", JSONObject().put("detail", ex.message ?: ""))
+        }
+
+        val flashFiles = planJson.optJSONObject("flash_files")
+            ?: return jsonError(Response.Status.BAD_REQUEST, "plan_flash_files_required")
+
+        val chipFromPlan = planJson.optJSONObject("extra_esptool_args")
+            ?.optString("chip", "")
+            ?.trim()
+            ?.lowercase(Locale.US)
+            ?: ""
+        val model = payload.optString("model", chipFromPlan.ifBlank { "esp32" }).trim().lowercase(Locale.US)
+        if (model != "esp32") {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "unsupported_model",
+                JSONObject()
+                    .put("model", model)
+                    .put("supported_models", org.json.JSONArray().put("esp32"))
+            )
+        }
+
+        val baseDir = planFile.parentFile ?: File(context.filesDir, "user")
+        val sortedOffsets = flashFiles.keys().asSequence().toList().sortedBy {
+            parseOffsetToInt(it)
+        }
+        if (sortedOffsets.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "plan_flash_files_empty")
+
+        val segments = org.json.JSONArray()
+        val missing = org.json.JSONArray()
+        for (offKey in sortedOffsets) {
+            val offset = parseOffsetToInt(offKey)
+                ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_offset", JSONObject().put("offset", offKey))
+            val raw = flashFiles.opt(offKey)
+            val path = when (raw) {
+                is String -> raw.trim()
+                is JSONObject -> raw.optString("file", raw.optString("path", "")).trim()
+                else -> ""
+            }
+            if (path.isBlank()) continue
+            val abs = File(baseDir, path).canonicalFile
+            val rel = toUserRelativePath(abs)
+                ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir", JSONObject().put("path", path))
+            val candidate = userPath(rel)
+            val exists = candidate?.exists() == true && candidate.isFile
+            if (!exists) {
+                missing.put(rel)
+            }
+            val size = if (exists) candidate!!.length() else 0L
+            segments.put(
+                JSONObject()
+                    .put("path", rel)
+                    .put("offset", offset)
+                    .put("exists", exists)
+                    .put("size", size)
+            )
+        }
+
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("model", model)
+                .put("plan_path", planPath)
+                .put("segment_count", segments.length())
+                .put("segments", segments)
+                .put("missing_files", missing)
+        )
+    }
+
+    private fun handleMcuDiagSerial(session: IHTTPSession, payload: JSONObject): Response {
+        val model = payload.optString("model", "").trim().lowercase(Locale.US)
+        if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "model_required")
+        if (model != "esp32") {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "unsupported_model",
+                JSONObject()
+                    .put("model", model)
+                    .put("supported_models", org.json.JSONArray().put("esp32"))
+            )
+        }
+
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "MCU serial diagnostics: model=$model handle=$handle"
+        )
+        if (!perm.first) return perm.second!!
+
+        val selection = pickEspSerialSelection(dev, payload)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "serial_port_not_found")
+        val timeoutMs = payload.optInt("timeout_ms", 2000).coerceIn(100, 60_000)
+        val sniffBeforeMs = payload.optInt("sniff_before_ms", 600).coerceIn(100, 10_000)
+        val sniffAfterMs = payload.optInt("sniff_after_ms", 1400).coerceIn(100, 20_000)
+        val autoEnterBootloader = payload.optBoolean("auto_enter_bootloader", true)
+
+        return try {
+            val bridge = guessUsbSerialBridge(dev)
+            val sessionCtx = EspSerialSession(
+                usbManager = usbManager,
+                dev = dev,
+                conn = conn,
+                inEp = selection.inEndpoint,
+                outEp = selection.outEndpoint,
+                timeoutMs = timeoutMs,
+                bridgeHint = bridge,
+                interfaceId = selection.interfaceObj.id,
+            )
+            try {
+                if (!sessionCtx.usesUsbSerial()) {
+                    val force = payload.optBoolean("force_claim", true)
+                    if (!conn.claimInterface(selection.interfaceObj, force)) {
+                        return jsonError(Response.Status.INTERNAL_ERROR, "claim_interface_failed")
+                    }
+                    runCatching { conn.setInterface(selection.interfaceObj) }
+                }
+                sessionCtx.configureSerial()
+                sessionCtx.flushInput()
+                val baseline = sessionCtx.sniffRaw(sniffBeforeMs)
+                if (autoEnterBootloader) {
+                    sessionCtx.enterBootloaderIfSupported(bridge, selection.interfaceObj.id)
+                    sessionCtx.settleAfterBootloaderReset()
+                }
+                sessionCtx.sendSyncProbe()
+                val replyRaw = sessionCtx.sniffRaw(sniffAfterMs)
+                val frames = sessionCtx.collectSlipFrames(400, 8)
+
+                val maxDump = 1024
+                val baselineSlice = baseline.copyOfRange(0, minOf(maxDump, baseline.size))
+                val replySlice = replyRaw.copyOfRange(0, minOf(maxDump, replyRaw.size))
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("model", model)
+                        .put("handle", handle)
+                        .put("bridge_hint", bridge ?: JSONObject.NULL)
+                        .put("interface_id", selection.interfaceObj.id)
+                        .put("in_endpoint_address", selection.inEndpoint.address)
+                        .put("out_endpoint_address", selection.outEndpoint.address)
+                        .put("baseline_len", baseline.size)
+                        .put("reply_len", replyRaw.size)
+                        .put("baseline_b64", android.util.Base64.encodeToString(baselineSlice, android.util.Base64.NO_WRAP))
+                        .put("reply_b64", android.util.Base64.encodeToString(replySlice, android.util.Base64.NO_WRAP))
+                        .put("baseline_ascii", bytesToAsciiPreview(baselineSlice))
+                        .put("reply_ascii", bytesToAsciiPreview(replySlice))
+                        .put("slip_frames", frames)
+                        .put("transport", if (sessionCtx.usesUsbSerial()) "usb-serial-for-android" else "usb-bulk")
+                )
+            } finally {
+                sessionCtx.close()
+            }
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "mcu_diag_serial_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleMcuSerialLines(session: IHTTPSession, payload: JSONObject): Response {
+        val model = payload.optString("model", "").trim().lowercase(Locale.US)
+        if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "model_required")
+        if (model != "esp32") {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "unsupported_model",
+                JSONObject()
+                    .put("model", model)
+                    .put("supported_models", org.json.JSONArray().put("esp32"))
+            )
+        }
+
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "MCU serial line control: model=$model handle=$handle"
+        )
+        if (!perm.first) return perm.second!!
+
+        val selection = pickEspSerialSelection(dev, payload)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "serial_port_not_found")
+        val timeoutMs = payload.optInt("timeout_ms", 2000).coerceIn(100, 60_000)
+        val sequence = payload.optString("sequence", "").trim().lowercase(Locale.US)
+        val dtr = if (payload.has("dtr")) payload.optBoolean("dtr") else null
+        val rts = if (payload.has("rts")) payload.optBoolean("rts") else null
+        val sleepAfterMs = payload.optInt("sleep_after_ms", 0).coerceIn(0, 5000)
+        val script = payload.optJSONArray("script")
+
+        return try {
+            val bridge = guessUsbSerialBridge(dev)
+            val sessionCtx = EspSerialSession(
+                usbManager = usbManager,
+                dev = dev,
+                conn = conn,
+                inEp = selection.inEndpoint,
+                outEp = selection.outEndpoint,
+                timeoutMs = timeoutMs,
+                bridgeHint = bridge,
+                interfaceId = selection.interfaceObj.id,
+            )
+            try {
+                if (!sessionCtx.usesUsbSerial()) {
+                    val force = payload.optBoolean("force_claim", true)
+                    if (!conn.claimInterface(selection.interfaceObj, force)) {
+                        return jsonError(Response.Status.INTERNAL_ERROR, "claim_interface_failed")
+                    }
+                    runCatching { conn.setInterface(selection.interfaceObj) }
+                }
+                sessionCtx.configureSerial()
+                var executedSteps = 0
+                if (script != null && script.length() > 0) {
+                    if (script.length() > 16) return jsonError(Response.Status.BAD_REQUEST, "script_too_long")
+                    for (i in 0 until script.length()) {
+                        val step = script.optJSONObject(i) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_script_step")
+                        val stepDtr = if (step.has("dtr")) step.optBoolean("dtr") else null
+                        val stepRts = if (step.has("rts")) step.optBoolean("rts") else null
+                        val stepSleep = step.optInt("sleep_ms", 0).coerceIn(0, 5000)
+                        if (stepDtr == null && stepRts == null) {
+                            return jsonError(Response.Status.BAD_REQUEST, "script_step_state_required")
+                        }
+                        sessionCtx.setModemLines(stepDtr, stepRts)
+                        if (stepSleep > 0) Thread.sleep(stepSleep.toLong())
+                        executedSteps += 1
+                    }
+                } else {
+                    when (sequence) {
+                        "", "none" -> {
+                            if (dtr == null && rts == null) {
+                                return jsonError(Response.Status.BAD_REQUEST, "sequence_or_line_state_required")
+                            }
+                            sessionCtx.setModemLines(dtr, rts)
+                        }
+                        "enter_bootloader", "download", "bootloader" -> {
+                            sessionCtx.enterBootloaderIfSupported(bridge, selection.interfaceObj.id)
+                            sessionCtx.settleAfterBootloaderReset()
+                        }
+                        "enter_bootloader_inverted", "download_inverted", "bootloader_inverted" -> {
+                            // Inverted mapping variant for boards wired opposite to common DTR/RTS usage.
+                            sessionCtx.setModemLines(dtr = true, rts = false)
+                            Thread.sleep(100)
+                            sessionCtx.setModemLines(dtr = false, rts = true)
+                            Thread.sleep(50)
+                            sessionCtx.setModemLines(dtr = false, rts = false)
+                            Thread.sleep(40)
+                            sessionCtx.settleAfterBootloaderReset()
+                        }
+                        "run", "normal" -> {
+                            sessionCtx.setModemLines(dtr = false, rts = false)
+                            Thread.sleep(40)
+                        }
+                        else -> {
+                            return jsonError(
+                                Response.Status.BAD_REQUEST,
+                                "invalid_sequence",
+                                JSONObject().put(
+                                    "allowed",
+                                    org.json.JSONArray()
+                                        .put("enter_bootloader")
+                                        .put("enter_bootloader_inverted")
+                                        .put("run")
+                                        .put("none")
+                                )
+                            )
+                        }
+                    }
+                }
+                if (sleepAfterMs > 0) Thread.sleep(sleepAfterMs.toLong())
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("model", model)
+                        .put("handle", handle)
+                        .put("bridge_hint", bridge ?: JSONObject.NULL)
+                        .put("interface_id", selection.interfaceObj.id)
+                        .put("sequence", if (sequence.isBlank()) "none" else sequence)
+                        .put("dtr", if (dtr == null) JSONObject.NULL else dtr)
+                        .put("rts", if (rts == null) JSONObject.NULL else rts)
+                        .put("executed_script_steps", executedSteps)
+                        .put("transport", if (sessionCtx.usesUsbSerial()) "usb-serial-for-android" else "usb-bulk")
+                )
+            } finally {
+                sessionCtx.close()
+            }
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "mcu_serial_lines_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleMcuReset(session: IHTTPSession, payload: JSONObject): Response {
+        val model = payload.optString("model", "").trim().lowercase(Locale.US)
+        if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "model_required")
+        if (model != "esp32") {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "unsupported_model",
+                JSONObject()
+                    .put("model", model)
+                    .put("supported_models", org.json.JSONArray().put("esp32"))
+            )
+        }
+
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "MCU reset control: model=$model handle=$handle"
+        )
+        if (!perm.first) return perm.second!!
+
+        val selection = pickEspSerialSelection(dev, payload)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "serial_port_not_found")
+        val timeoutMs = payload.optInt("timeout_ms", 2000).coerceIn(100, 60_000)
+        val mode = payload.optString("mode", "reboot").trim().lowercase(Locale.US)
+        val sleepAfterMs = payload.optInt("sleep_after_ms", 120).coerceIn(0, 5000)
+
+        return try {
+            val bridge = guessUsbSerialBridge(dev)
+            val sessionCtx = EspSerialSession(
+                usbManager = usbManager,
+                dev = dev,
+                conn = conn,
+                inEp = selection.inEndpoint,
+                outEp = selection.outEndpoint,
+                timeoutMs = timeoutMs,
+                bridgeHint = bridge,
+                interfaceId = selection.interfaceObj.id,
+            )
+            try {
+                if (!sessionCtx.usesUsbSerial()) {
+                    val force = payload.optBoolean("force_claim", true)
+                    if (!conn.claimInterface(selection.interfaceObj, force)) {
+                        return jsonError(Response.Status.INTERNAL_ERROR, "claim_interface_failed")
+                    }
+                    runCatching { conn.setInterface(selection.interfaceObj) }
+                }
+                sessionCtx.configureSerial()
+                when (mode) {
+                    "reboot", "reset" -> sessionCtx.rebootToRunIfSupported(bridge, selection.interfaceObj.id)
+                    "bootloader" -> {
+                        sessionCtx.enterBootloaderIfSupported(bridge, selection.interfaceObj.id)
+                        sessionCtx.settleAfterBootloaderReset()
+                    }
+                    "bootloader_inverted" -> {
+                        sessionCtx.enterBootloaderInvertedIfSupported(bridge, selection.interfaceObj.id)
+                        sessionCtx.settleAfterBootloaderReset()
+                    }
+                    "run", "normal" -> {
+                        sessionCtx.setModemLines(dtr = false, rts = false)
+                        Thread.sleep(40)
+                    }
+                    else -> {
+                        return jsonError(
+                            Response.Status.BAD_REQUEST,
+                            "invalid_mode",
+                            JSONObject().put(
+                                "allowed",
+                                org.json.JSONArray()
+                                    .put("reboot")
+                                    .put("bootloader")
+                                    .put("bootloader_inverted")
+                                    .put("run")
+                            )
+                        )
+                    }
+                }
+                if (sleepAfterMs > 0) Thread.sleep(sleepAfterMs.toLong())
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("model", model)
+                        .put("handle", handle)
+                        .put("mode", mode)
+                        .put("bridge_hint", bridge ?: JSONObject.NULL)
+                        .put("interface_id", selection.interfaceObj.id)
+                        .put("transport", if (sessionCtx.usesUsbSerial()) "usb-serial-for-android" else "usb-bulk")
+                )
+            } finally {
+                sessionCtx.close()
+            }
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "mcu_reset_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleMcuSerialMonitor(session: IHTTPSession, payload: JSONObject): Response {
+        val model = payload.optString("model", "").trim().lowercase(Locale.US)
+        if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "model_required")
+        if (model != "esp32") {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "unsupported_model",
+                JSONObject()
+                    .put("model", model)
+                    .put("supported_models", org.json.JSONArray().put("esp32"))
+            )
+        }
+
+        val handle = payload.optString("handle", "").trim()
+        if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val conn = usbConnections[handle] ?: return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+        val dev = usbDevicesByHandle[handle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "MCU passive serial monitor: model=$model handle=$handle"
+        )
+        if (!perm.first) return perm.second!!
+
+        val selection = pickEspSerialSelection(dev, payload)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "serial_port_not_found")
+        val timeoutMs = payload.optInt("timeout_ms", 2000).coerceIn(100, 60_000)
+        val durationMs = payload.optInt("duration_ms", 2000).coerceIn(100, 60_000)
+        val configureSerial = payload.optBoolean("configure_serial", true)
+        val flushInput = payload.optBoolean("flush_input", false)
+        val maxDumpBytes = payload.optInt("max_dump_bytes", 8192).coerceIn(256, 262_144)
+
+        return try {
+            val bridge = guessUsbSerialBridge(dev)
+            val sessionCtx = EspSerialSession(
+                usbManager = usbManager,
+                dev = dev,
+                conn = conn,
+                inEp = selection.inEndpoint,
+                outEp = selection.outEndpoint,
+                timeoutMs = timeoutMs,
+                bridgeHint = bridge,
+                interfaceId = selection.interfaceObj.id,
+            )
+            try {
+                if (!sessionCtx.usesUsbSerial()) {
+                    val force = payload.optBoolean("force_claim", true)
+                    if (!conn.claimInterface(selection.interfaceObj, force)) {
+                        return jsonError(Response.Status.INTERNAL_ERROR, "claim_interface_failed")
+                    }
+                    runCatching { conn.setInterface(selection.interfaceObj) }
+                }
+                if (configureSerial) sessionCtx.configureSerial()
+                if (flushInput) sessionCtx.flushInput()
+                val raw = sessionCtx.sniffRaw(durationMs)
+                val slice = raw.copyOfRange(0, minOf(maxDumpBytes, raw.size))
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("model", model)
+                        .put("handle", handle)
+                        .put("bridge_hint", bridge ?: JSONObject.NULL)
+                        .put("interface_id", selection.interfaceObj.id)
+                        .put("in_endpoint_address", selection.inEndpoint.address)
+                        .put("out_endpoint_address", selection.outEndpoint.address)
+                        .put("duration_ms", durationMs)
+                        .put("raw_len", raw.size)
+                        .put("truncated", raw.size > slice.size)
+                        .put("raw_b64", android.util.Base64.encodeToString(slice, android.util.Base64.NO_WRAP))
+                        .put("raw_ascii", bytesToAsciiPreview(slice))
+                        .put("transport", if (sessionCtx.usesUsbSerial()) "usb-serial-for-android" else "usb-bulk")
+                )
+            } finally {
+                sessionCtx.close()
+            }
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "mcu_serial_monitor_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun bytesToAsciiPreview(bytes: ByteArray): String {
+        val sb = StringBuilder(bytes.size)
+        for (b in bytes) {
+            val v = b.toInt() and 0xFF
+            if (v in 32..126 || v == 10 || v == 13 || v == 9) sb.append(v.toChar()) else sb.append('.')
+        }
+        return sb.toString()
+    }
+
+    private data class EspFlashResult(
+        val blocksWritten: Int,
+        val blockSize: Int,
+    )
+
+    private class EspSyncException(
+        message: String,
+        val attempts: JSONArray,
+    ) : IllegalStateException(message)
+
+    private class EspFlashStageException(
+        message: String,
+        val stage: String,
+        val blockIndex: Int?,
+        val blocksWritten: Int,
+    ) : IllegalStateException(message)
+
+    private class EspFlashException(
+        message: String,
+        val detailPayload: JSONObject,
+    ) : IllegalStateException(message)
+
+    private class EspSerialSession(
+        private val usbManager: UsbManager,
+        private val dev: UsbDevice,
+        private val conn: UsbDeviceConnection,
+        private val inEp: UsbEndpoint,
+        private val outEp: UsbEndpoint,
+        private val timeoutMs: Int,
+        private val bridgeHint: String?,
+        private val interfaceId: Int,
+    ) {
+        private val codec = EspSlipCodec()
+        private val readBuf = ByteArray(4096)
+        private val isFtdi = bridgeHint == "ftdi"
+        private var serialPort: UsbSerialPort? = null
+        private var serialConn: UsbDeviceConnection? = null
+
+        private val cmdSync = 0x08
+        private val cmdReadReg = 0x0A
+        private val cmdSpiAttach = 0x0D
+        private val cmdFlashBegin = 0x02
+        private val cmdFlashData = 0x03
+        private val cmdFlashEnd = 0x04
+        private val checksumMagic = 0xEF
+        private val flashBlockSize = 0x400
+
+        init {
+            serialPort = openUsbSerialPort()
+        }
+
+        fun usesUsbSerial(): Boolean = serialPort != null
+
+        fun close() {
+            runCatching { serialPort?.close() }
+            runCatching { serialConn?.close() }
+            serialPort = null
+            serialConn = null
+        }
+
+        fun configureSerial() {
+            val port = serialPort
+            if (port != null) {
+                port.setParameters(115200, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+                runCatching { port.setDTR(false) }
+                runCatching { port.setRTS(false) }
+                return
+            }
+            when (bridgeHint) {
+                "ftdi" -> {
+                    ftdiResetAll()
+                    // Make sure host TX is not gated by modem flow control defaults.
+                    ftdiSetFlowControlNone()
+                    ftdiSetLatencyTimer(1)
+                    ftdiSetBaudRate(115200)
+                    ftdiSetData8N1()
+                    // Default idle state
+                    ftdiSetModemDtrRts(dtr = false, rts = false)
+                }
+            }
+        }
+
+        fun flushInput() {
+            val port = serialPort
+            if (port != null) {
+                repeat(8) {
+                    val n = try {
+                        port.read(readBuf, 30)
+                    } catch (_: Exception) {
+                        -1
+                    }
+                    if (n <= 0) return
+                }
+                return
+            }
+            repeat(3) {
+                val n = conn.bulkTransfer(inEp, readBuf, readBuf.size, 30)
+                if (n <= 0) return
+            }
+        }
+
+        fun sniffRaw(durationMs: Int): ByteArray {
+            val deadline = System.currentTimeMillis() + durationMs.coerceAtLeast(1)
+            val out = ByteArrayOutputStream()
+            while (System.currentTimeMillis() < deadline) {
+                val chunk = readBulkChunk(100)
+                if (chunk.isNotEmpty()) {
+                    out.write(chunk)
+                }
+            }
+            return out.toByteArray()
+        }
+
+        fun enterBootloaderIfSupported(bridgeHint: String?, interfaceId: Int) {
+            when (bridgeHint) {
+                "cp210x" -> {
+                    // Matches esptool ClassicReset semantics for DTR/RTS.
+                    applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)
+                    Thread.sleep(100)
+                    applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)
+                    Thread.sleep(50)
+                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)
+                    Thread.sleep(40)
+                }
+                "ftdi" -> {
+                    // FTDI classic reset sequence (DTR=IO0, RTS=EN style wiring).
+                    applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)   // IO0 high, EN low
+                    Thread.sleep(100)
+                    applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)   // IO0 low, EN high
+                    Thread.sleep(50)
+                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)  // IO0 high
+                    Thread.sleep(40)
+                }
+            }
+        }
+
+        fun enterBootloaderInvertedIfSupported(bridgeHint: String?, interfaceId: Int) {
+            when (bridgeHint) {
+                "cp210x", "ftdi" -> {
+                    // Some boards wire EN/IO0 opposite to common DTR/RTS mapping.
+                    applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)
+                    Thread.sleep(100)
+                    applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)
+                    Thread.sleep(50)
+                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)
+                    Thread.sleep(40)
+                }
+            }
+        }
+
+        private fun enterBootloaderPulseEnIfSupported(bridgeHint: String?, interfaceId: Int) {
+            when (bridgeHint) {
+                "cp210x", "ftdi" -> {
+                    // Keep IO0 asserted during EN pulse; then release to run ROM loader.
+                    applyModemLines(dtr = true, rts = true, interfaceId = interfaceId)
+                    Thread.sleep(90)
+                    applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)
+                    Thread.sleep(120)
+                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)
+                    Thread.sleep(60)
+                }
+            }
+        }
+
+        fun rebootToRunIfSupported(bridgeHint: String?, interfaceId: Int) {
+            when (bridgeHint) {
+                "cp210x", "ftdi" -> {
+                    // Pulse EN low with IO0 released, then return to run mode.
+                    applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)
+                    Thread.sleep(90)
+                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)
+                    Thread.sleep(60)
+                }
+                else -> {
+                    setModemLines(dtr = false, rts = false)
+                    Thread.sleep(40)
+                }
+            }
+        }
+
+        fun settleAfterBootloaderReset() {
+            // Allow ROM banner to finish and drain stale bytes before issuing sync.
+            Thread.sleep(180)
+            flushInput()
+            Thread.sleep(50)
+        }
+
+        fun setModemLines(dtr: Boolean?, rts: Boolean?) {
+            val port = serialPort
+            if (port != null) {
+                if (dtr != null) runCatching { port.setDTR(dtr) }.getOrElse { throw IllegalStateException("serial_set_dtr_failed") }
+                if (rts != null) runCatching { port.setRTS(rts) }.getOrElse { throw IllegalStateException("serial_set_rts_failed") }
+                if (dtr == null && rts == null) throw IllegalStateException("line_state_required")
+                return
+            }
+            when (bridgeHint) {
+                "cp210x" -> {
+                    if (dtr == null && rts == null) throw IllegalStateException("cp210x_line_state_required")
+                    cp210xSetModemLines(dtr = dtr, rts = rts, interfaceId = interfaceId, timeoutMs = 1000)
+                }
+                "ftdi" -> {
+                    if (dtr == null || rts == null) throw IllegalStateException("ftdi_requires_dtr_and_rts")
+                    ftdiSetModemDtrRts(dtr = dtr, rts = rts)
+                }
+                else -> throw IllegalStateException("unsupported_serial_bridge")
+            }
+        }
+
+        fun sendSyncProbe() {
+            val payload = ByteArray(36)
+            payload[0] = 0x07
+            payload[1] = 0x07
+            payload[2] = 0x12
+            payload[3] = 0x20
+            for (i in 4 until payload.size) payload[i] = 0x55
+            val header = byteArrayOf(
+                0x00,
+                (cmdSync and 0xFF).toByte(),
+                (payload.size and 0xFF).toByte(),
+                ((payload.size ushr 8) and 0xFF).toByte(),
+                0x00, 0x00, 0x00, 0x00,
+            )
+            writeSlip(header + payload, timeoutMs.coerceAtLeast(200))
+        }
+
+        fun collectSlipFrames(durationMs: Int, maxFrames: Int): JSONArray {
+            val out = JSONArray()
+            val deadline = System.currentTimeMillis() + durationMs.coerceAtLeast(1)
+            while (out.length() < maxFrames && System.currentTimeMillis() < deadline) {
+                val remain = (deadline - System.currentTimeMillis()).coerceAtLeast(1L).toInt()
+                val frame = readSlipFrame(minOf(80, remain)) ?: continue
+                val preview = frame.copyOfRange(0, minOf(64, frame.size))
+                out.put(
+                    JSONObject()
+                        .put("len", frame.size)
+                        .put("preview_b64", android.util.Base64.encodeToString(preview, android.util.Base64.NO_WRAP))
+                        .put("preview_ascii", asciiPreview(preview))
+                )
+            }
+            return out
+        }
+
+        private fun asciiPreview(bytes: ByteArray): String {
+            val sb = StringBuilder(bytes.size)
+            for (b in bytes) {
+                val v = b.toInt() and 0xFF
+                if (v in 32..126 || v == 10 || v == 13 || v == 9) sb.append(v.toChar()) else sb.append('.')
+            }
+            return sb.toString()
+        }
+
+        fun sync() {
+            val payload = ByteArray(36)
+            payload[0] = 0x07
+            payload[1] = 0x07
+            payload[2] = 0x12
+            payload[3] = 0x20
+            for (i in 4 until payload.size) payload[i] = 0x55
+            val header = byteArrayOf(
+                0x00,
+                (cmdSync and 0xFF).toByte(),
+                (payload.size and 0xFF).toByte(),
+                ((payload.size ushr 8) and 0xFF).toByte(),
+                0x00, 0x00, 0x00, 0x00,
+            )
+
+            val candidateBauds = if (isFtdi) {
+                intArrayOf(115200, 74880, 57600, 38400, 230400)
+            } else {
+                intArrayOf(115200)
+            }
+
+            for (baud in candidateBauds) {
+                if (serialPort != null) {
+                    runCatching { serialPort?.setParameters(baud, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE) }
+                } else if (isFtdi) {
+                    runCatching { ftdiSetBaudRate(baud) }
+                }
+                flushInput()
+                // Match esptool-style sync retry behavior: many short attempts over a longer window.
+                repeat(48) {
+                    writeSlip(header + payload, timeoutMs.coerceAtLeast(200))
+                    val deadline = System.currentTimeMillis() + 140L
+                    while (System.currentTimeMillis() < deadline) {
+                        val remain = (deadline - System.currentTimeMillis()).coerceAtLeast(1L).toInt()
+                        try {
+                            val resp = readResponse(expectedOp = null, timeoutOverrideMs = minOf(70, remain))
+                            if (resp.op == cmdSync) return
+                        } catch (_: Exception) {
+                        }
+                    }
+                    Thread.sleep(35)
+                }
+            }
+            throw IllegalStateException("esp_response_timeout")
+        }
+
+        fun syncWithAutoResetProfiles(bridgeHint: String?, interfaceId: Int, debug: Boolean = false): JSONArray {
+            val attempts = JSONArray()
+            val profiles = ArrayList<Pair<String, () -> Unit>>()
+            profiles.add("enter_bootloader" to {
+                enterBootloaderIfSupported(bridgeHint, interfaceId)
+                settleAfterBootloaderReset()
+            })
+            profiles.add("enter_bootloader_inverted" to {
+                enterBootloaderInvertedIfSupported(bridgeHint, interfaceId)
+                settleAfterBootloaderReset()
+            })
+            profiles.add("enter_bootloader_pulse_en" to {
+                enterBootloaderPulseEnIfSupported(bridgeHint, interfaceId)
+                settleAfterBootloaderReset()
+            })
+            // Final attempt: if reset sequencing had no effect, try direct sync anyway.
+            profiles.add("flush_only" to { flushInput() })
+
+            var lastError: Exception? = null
+            for ((name, profile) in profiles) {
+                val start = System.currentTimeMillis()
+                try {
+                    profile()
+                    sync()
+                    if (debug) {
+                        attempts.put(
+                            JSONObject()
+                                .put("profile", name)
+                                .put("ok", true)
+                                .put("elapsed_ms", (System.currentTimeMillis() - start).coerceAtLeast(0L))
+                        )
+                    }
+                    return attempts
+                } catch (ex: Exception) {
+                    lastError = ex
+                    if (debug) {
+                        attempts.put(
+                            JSONObject()
+                                .put("profile", name)
+                                .put("ok", false)
+                                .put("error", ex.message ?: "unknown_error")
+                                .put("elapsed_ms", (System.currentTimeMillis() - start).coerceAtLeast(0L))
+                        )
+                    }
+                }
+            }
+            if (debug) throw EspSyncException(lastError?.message ?: "esp_response_timeout", attempts)
+            throw lastError ?: IllegalStateException("esp_response_timeout")
+        }
+
+        fun readChipDetectMagic(): Int {
+            // ESP32 ROM chip-detect magic register used by esptool family.
+            return readReg(0x40001000)
+        }
+
+        fun readReg(address: Int): Int {
+            val payload = le32(address)
+            return commandChecked(cmdReadReg, payload, checksum = 0, timeoutOverrideMs = maxOf(timeoutMs, 4000))
+        }
+
+        fun attachEsp32SpiFlash(): JSONObject {
+            // ESP32 ROM requires explicit SPI attach in no-stub flow.
+            val efuseBlk0Rdata5 = readReg(0x3FF5A014.toInt())
+            val efuseBlk0Rdata3 = readReg(0x3FF5A00C.toInt())
+            val clk = efuseBlk0Rdata5 and 0x1F
+            val q = (efuseBlk0Rdata5 ushr 5) and 0x1F
+            val d = (efuseBlk0Rdata5 ushr 10) and 0x1F
+            val cs = (efuseBlk0Rdata5 ushr 15) and 0x1F
+            val hd = (efuseBlk0Rdata3 ushr 4) and 0x1F
+            val attachArg = (hd shl 24) or (cs shl 18) or (d shl 12) or (q shl 6) or clk
+            val payload = le32(attachArg) + byteArrayOf(0x00, 0x00, 0x00, 0x00)
+            commandChecked(cmdSpiAttach, payload, checksum = 0, timeoutOverrideMs = maxOf(timeoutMs, 4000))
+            return JSONObject()
+                .put("clk", clk)
+                .put("q", q)
+                .put("d", d)
+                .put("hd", hd)
+                .put("cs", cs)
+                .put("attach_arg", String.format(Locale.US, "0x%08x", attachArg))
+        }
+
+        fun flashImage(image: ByteArray, offset: Int, reboot: Boolean): EspFlashResult {
+            val total = image.size
+            val blocks = (total + flashBlockSize - 1) / flashBlockSize
+            val eraseSize = total
+            val begin = le32(eraseSize) + le32(blocks) + le32(flashBlockSize) + le32(offset)
+            try {
+                commandChecked(cmdFlashBegin, begin, checksum = 0, timeoutOverrideMs = maxOf(timeoutMs, 10_000))
+            } catch (ex: Exception) {
+                throw EspFlashStageException(ex.message ?: "flash_begin_failed", "flash_begin", null, 0)
+            }
+
+            var seq = 0
+            var pos = 0
+            while (pos < total) {
+                val end = minOf(total, pos + flashBlockSize)
+                val chunk = image.copyOfRange(pos, end)
+                val block = if (chunk.size == flashBlockSize) chunk else chunk + ByteArray(flashBlockSize - chunk.size) { 0xFF.toByte() }
+                val hdr = le32(block.size) + le32(seq) + le32(0) + le32(0)
+                val payload = hdr + block
+                val chk = checksum(block)
+                try {
+                    commandChecked(cmdFlashData, payload, checksum = chk, timeoutOverrideMs = maxOf(timeoutMs, 8000))
+                } catch (ex: Exception) {
+                    throw EspFlashStageException(ex.message ?: "flash_data_failed", "flash_data", seq, seq)
+                }
+                seq += 1
+                pos = end
+            }
+
+            // Follow esptool no-stub ROM behavior: don't require FLASH_END reply.
+            // Some ROM flows return error on FLASH_END even after successful writes.
+            if (reboot) {
+                runCatching { setModemLines(dtr = false, rts = false) }
+            }
+            return EspFlashResult(blocksWritten = blocks, blockSize = flashBlockSize)
+        }
+
+        private fun commandChecked(op: Int, data: ByteArray, checksum: Int, timeoutOverrideMs: Int): Int {
+            val response = command(op, data, checksum, timeoutOverrideMs)
+            val status = response.payload
+            if (status.size < 2) throw IllegalStateException("short_status")
+            if ((status[0].toInt() and 0xFF) != 0) {
+                val reason = status[1].toInt() and 0xFF
+                throw IllegalStateException("esp_error_status_${reason}")
+            }
+            return response.value
+        }
+
+        private data class ResponseFrame(
+            val op: Int,
+            val value: Int,
+            val payload: ByteArray,
+        )
+
+        private fun command(op: Int, data: ByteArray, checksum: Int, timeoutOverrideMs: Int): ResponseFrame {
+            val header = byteArrayOf(
+                0x00,
+                (op and 0xFF).toByte(),
+                (data.size and 0xFF).toByte(),
+                ((data.size ushr 8) and 0xFF).toByte(),
+                (checksum and 0xFF).toByte(),
+                ((checksum ushr 8) and 0xFF).toByte(),
+                ((checksum ushr 16) and 0xFF).toByte(),
+                ((checksum ushr 24) and 0xFF).toByte(),
+            )
+            writeSlip(header + data, timeoutOverrideMs)
+            return readResponse(op, timeoutOverrideMs)
+        }
+
+        private fun readResponse(expectedOp: Int?, timeoutOverrideMs: Int): ResponseFrame {
+            val deadline = System.currentTimeMillis() + timeoutOverrideMs.toLong()
+            while (System.currentTimeMillis() < deadline) {
+                val frame = readSlipFrame((deadline - System.currentTimeMillis()).coerceAtLeast(1L).toInt())
+                    ?: continue
+                val off = locateEspResponseHeader(frame, expectedOp) ?: continue
+                val opRet = frame[off + 1].toInt() and 0xFF
+                val payloadLen = le16ToInt(frame, off + 2)
+                val value = le32ToInt(frame, off + 4)
+                val payloadStart = off + 8
+                val payloadEnd = minOf(payloadStart + payloadLen, frame.size)
+                val payload = frame.copyOfRange(payloadStart, payloadEnd)
+                return ResponseFrame(op = opRet, value = value, payload = payload)
+            }
+            throw IllegalStateException("esp_response_timeout")
+        }
+
+        private fun locateEspResponseHeader(frame: ByteArray, expectedOp: Int?): Int? {
+            if (frame.size < 8) return null
+            val last = frame.size - 8
+            for (i in 0..last) {
+                val dir = frame[i].toInt() and 0xFF
+                if (dir != 0x01) continue
+                val op = frame[i + 1].toInt() and 0xFF
+                if (expectedOp != null && op != expectedOp) continue
+                val len = le16ToInt(frame, i + 2)
+                val end = i + 8 + len
+                if (len < 0) continue
+                if (end <= frame.size) return i
+            }
+            return null
+        }
+
+        private fun readSlipFrame(timeout: Int): ByteArray? {
+            codec.nextFrame()?.let { return it }
+            val chunk = readBulkChunk(timeout)
+            if (chunk.isEmpty()) return null
+            codec.feed(chunk, chunk.size)
+            return codec.nextFrame()
+        }
+
+        private fun readBulkChunk(timeout: Int): ByteArray {
+            val port = serialPort
+            if (port != null) {
+                val n = try {
+                    port.read(readBuf, timeout.coerceIn(1, 60_000))
+                } catch (_: Exception) {
+                    -1
+                }
+                if (n <= 0) return ByteArray(0)
+                return readBuf.copyOfRange(0, n.coerceIn(0, readBuf.size))
+            }
+            val n = conn.bulkTransfer(inEp, readBuf, readBuf.size, timeout.coerceIn(1, 60_000))
+            if (n <= 0) return ByteArray(0)
+            return if (isFtdi) {
+                ftdiStripStatusBytes(readBuf, n)
+            } else {
+                readBuf.copyOfRange(0, n.coerceIn(0, readBuf.size))
+            }
+        }
+
+        private fun writeSlip(payload: ByteArray, timeoutOverrideMs: Int) {
+            val framed = slipEncode(payload)
+            var off = 0
+            while (off < framed.size) {
+                val chunk = minOf(16384, framed.size - off)
+                val part = framed.copyOfRange(off, off + chunk)
+                val n = if (serialPort != null) {
+                    try {
+                        serialPort!!.write(part, timeoutOverrideMs.coerceIn(1, 60_000))
+                        part.size
+                    } catch (_: Exception) {
+                        -1
+                    }
+                } else {
+                    conn.bulkTransfer(outEp, part, part.size, timeoutOverrideMs.coerceIn(1, 60_000))
+                }
+                if (n <= 0) throw IllegalStateException("esp_write_failed")
+                off += n
+            }
+        }
+
+        private fun slipEncode(payload: ByteArray): ByteArray {
+            val out = ByteArrayOutputStream(payload.size + 8)
+            out.write(0xC0)
+            for (b in payload) {
+                when (b.toInt() and 0xFF) {
+                    0xC0 -> {
+                        out.write(0xDB)
+                        out.write(0xDC)
+                    }
+                    0xDB -> {
+                        out.write(0xDB)
+                        out.write(0xDD)
+                    }
+                    else -> out.write(b.toInt() and 0xFF)
+                }
+            }
+            out.write(0xC0)
+            return out.toByteArray()
+        }
+
+        private fun checksum(data: ByteArray): Int {
+            var s = checksumMagic
+            for (b in data) s = s xor (b.toInt() and 0xFF)
+            return s
+        }
+
+        private fun openUsbSerialPort(): UsbSerialPort? {
+            return try {
+                val driver = UsbSerialProber.getDefaultProber().probeDevice(dev) ?: return null
+                val port = driver.ports.firstOrNull() ?: return null
+                val dedicatedConn = usbManager.openDevice(dev) ?: return null
+                port.open(dedicatedConn)
+                serialConn = dedicatedConn
+                port
+            } catch (_: Exception) {
+                runCatching { serialConn?.close() }
+                serialConn = null
+                null
+            }
+        }
+
+        private fun applyModemLines(dtr: Boolean, rts: Boolean, interfaceId: Int) {
+            val port = serialPort
+            if (port != null) {
+                runCatching { port.setDTR(dtr) }.getOrElse { throw IllegalStateException("serial_set_dtr_failed") }
+                runCatching { port.setRTS(rts) }.getOrElse { throw IllegalStateException("serial_set_rts_failed") }
+                return
+            }
+            when (bridgeHint) {
+                "cp210x" -> cp210xSetModemLines(dtr = dtr, rts = rts, interfaceId = interfaceId, timeoutMs = 1000)
+                "ftdi" -> ftdiSetModemDtrRts(dtr = dtr, rts = rts)
+                else -> throw IllegalStateException("unsupported_serial_bridge")
+            }
+        }
+
+        private fun cp210xSetModemLines(dtr: Boolean?, rts: Boolean?, interfaceId: Int, timeoutMs: Int) {
+            var value = 0
+            if (dtr != null) {
+                value = value or 0x0100
+                if (dtr) value = value or 0x0001
+            }
+            if (rts != null) {
+                value = value or 0x0200
+                if (rts) value = value or 0x0002
+            }
+            val rc = conn.controlTransfer(
+                0x41, // Host -> Interface | Vendor
+                0x07, // CP210X_SET_MHS
+                value,
+                interfaceId,
+                null,
+                0,
+                timeoutMs.coerceIn(1, 60_000)
+            )
+            if (rc < 0) throw IllegalStateException("cp210x_set_mhs_failed")
+        }
+
+        private fun ftdiStripStatusBytes(src: ByteArray, totalBytesRead: Int): ByteArray {
+            val packetSize = inEp.maxPacketSize.coerceAtLeast(2)
+            val out = ByteArrayOutputStream(totalBytesRead)
+            var srcPos = 0
+            val total = totalBytesRead.coerceIn(0, src.size)
+            while (srcPos < total) {
+                val end = minOf(srcPos + packetSize, total)
+                val payloadStart = minOf(srcPos + 2, end)
+                if (payloadStart < end) {
+                    out.write(src, payloadStart, end - payloadStart)
+                }
+                srcPos += packetSize
+            }
+            return out.toByteArray()
+        }
+
+        private fun ftdiControl(request: Int, value: Int, index: Int, timeoutMs: Int = 1000): Int {
+            return conn.controlTransfer(
+                0x40, // host->device, vendor
+                request,
+                value,
+                index,
+                null,
+                0,
+                timeoutMs.coerceIn(1, 60_000)
+            )
+        }
+
+        private fun ftdiResetAll() {
+            val rc = ftdiControl(request = 0, value = 0, index = interfaceId + 1)
+            if (rc < 0) throw IllegalStateException("ftdi_reset_failed")
+        }
+
+        private fun ftdiSetModemDtrRts(dtr: Boolean, rts: Boolean) {
+            val dtrBits = if (dtr) 0x0101 else 0x0100
+            val rtsBits = if (rts) 0x0202 else 0x0200
+            val value = dtrBits or rtsBits
+            val rc = ftdiControl(request = 1, value = value, index = interfaceId + 1)
+            if (rc < 0) throw IllegalStateException("ftdi_modem_ctrl_failed")
+        }
+
+        private fun ftdiSetData8N1() {
+            // 8 data bits, no parity, 1 stop bit.
+            val rc = ftdiControl(request = 4, value = 8, index = interfaceId + 1)
+            if (rc < 0) throw IllegalStateException("ftdi_set_data_failed")
+        }
+
+        private fun ftdiSetFlowControlNone() {
+            val rc = ftdiControl(request = 2, value = 0, index = interfaceId + 1)
+            if (rc < 0) throw IllegalStateException("ftdi_set_flow_none_failed")
+        }
+
+        private fun ftdiSetLatencyTimer(ms: Int) {
+            val clamped = ms.coerceIn(1, 255)
+            val rc = ftdiControl(request = 9, value = clamped, index = interfaceId + 1)
+            if (rc < 0) throw IllegalStateException("ftdi_set_latency_failed")
+        }
+
+        private fun ftdiSetBaudRate(baudRate: Int) {
+            if (baudRate <= 0 || baudRate > 3_500_000) throw IllegalStateException("ftdi_invalid_baud")
+            val (value, index) = ftdiBaudValueIndex(baudRate, interfaceId)
+            val rc = ftdiControl(request = 3, value = value, index = index)
+            if (rc < 0) throw IllegalStateException("ftdi_set_baud_failed")
+        }
+
+        private fun ftdiBaudValueIndex(baudRate: Int, portNumber: Int): Pair<Int, Int> {
+            val (divisorInit, subdivisor, _) = if (baudRate >= 2_500_000) {
+                Triple(0, 0, 3_000_000)
+            } else if (baudRate >= 1_750_000) {
+                Triple(1, 0, 2_000_000)
+            } else {
+                var divisor = ((24_000_000L shl 1) / baudRate.toLong()).toInt()
+                divisor = (divisor + 1) shr 1
+                val sub = divisor and 0x07
+                divisor = divisor shr 3
+                Triple(divisor, sub, 0)
+            }
+
+            var value = divisorInit
+            var index = 0
+            when (subdivisor) {
+                0 -> {}
+                4 -> value = value or 0x4000
+                2 -> value = value or 0x8000
+                1 -> value = value or 0xC000
+                3 -> { value = value or 0x0000; index = index or 1 }
+                5 -> { value = value or 0x4000; index = index or 1 }
+                6 -> { value = value or 0x8000; index = index or 1 }
+                7 -> { value = value or 0xC000; index = index or 1 }
+            }
+            // FTDI H-series / multi-port style index packing:
+            index = (index shl 8) or (portNumber + 1)
+            return Pair(value, index)
+        }
+
+        private fun le32(v: Int): ByteArray = byteArrayOf(
+            (v and 0xFF).toByte(),
+            ((v ushr 8) and 0xFF).toByte(),
+            ((v ushr 16) and 0xFF).toByte(),
+            ((v ushr 24) and 0xFF).toByte(),
+        )
+
+        private fun le32ToInt(buf: ByteArray, off: Int): Int {
+            if (off + 3 >= buf.size) return 0
+            return (buf[off].toInt() and 0xFF) or
+                ((buf[off + 1].toInt() and 0xFF) shl 8) or
+                ((buf[off + 2].toInt() and 0xFF) shl 16) or
+                ((buf[off + 3].toInt() and 0xFF) shl 24)
+        }
+
+        private fun le16ToInt(buf: ByteArray, off: Int): Int {
+            if (off + 1 >= buf.size) return 0
+            return (buf[off].toInt() and 0xFF) or
+                ((buf[off + 1].toInt() and 0xFF) shl 8)
+        }
+    }
+
+    private fun md5Hex(data: ByteArray): String {
+        val digest = MessageDigest.getInstance("MD5").digest(data)
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) sb.append(String.format(Locale.US, "%02x", b.toInt() and 0xFF))
+        return sb.toString()
+    }
+
+    private fun buildMcuFlashSegments(payload: JSONObject, fallbackPath: String): List<McuFlashSegment> {
+        val out = ArrayList<McuFlashSegment>()
+        val segments = payload.optJSONArray("segments")
+        if (segments != null && segments.length() > 0) {
+            for (i in 0 until segments.length()) {
+                val item = segments.optJSONObject(i)
+                    ?: throw IllegalArgumentException("invalid_segments")
+                val path = item.optString("path", "").trim()
+                if (path.isBlank()) throw IllegalArgumentException("segment_path_required")
+                val offset = item.optLong("offset", -1L)
+                if (offset < 0 || offset > 0xFFFFFFFFL) throw IllegalArgumentException("segment_offset_invalid")
+                val file = userPath(path) ?: throw IllegalArgumentException("path_outside_user_dir")
+                if (!file.exists() || !file.isFile) throw IllegalArgumentException("segment_not_found")
+                val bytes = file.readBytes()
+                if (bytes.isEmpty()) throw IllegalArgumentException("segment_empty")
+                out.add(McuFlashSegment(relPath = path, offset = offset.toInt(), bytes = bytes))
+            }
+            return out
+        }
+
+        if (fallbackPath.isBlank()) throw IllegalArgumentException("image_path_required")
+        val offset = payload.optLong("offset", 0x10000).coerceIn(0L, 0xFFFFFFFFL).toInt()
+        val file = userPath(fallbackPath) ?: throw IllegalArgumentException("path_outside_user_dir")
+        if (!file.exists() || !file.isFile) throw IllegalArgumentException("image_not_found")
+        val bytes = file.readBytes()
+        if (bytes.isEmpty()) throw IllegalArgumentException("image_empty")
+        out.add(McuFlashSegment(relPath = fallbackPath, offset = offset, bytes = bytes))
+        return out
+    }
+
+    private fun parseOffsetToInt(text: String): Int? {
+        val t = text.trim()
+        if (t.isBlank()) return null
+        return try {
+            val v = if (t.startsWith("0x", ignoreCase = true)) {
+                java.lang.Long.parseLong(t.substring(2), 16)
+            } else {
+                java.lang.Long.parseLong(t, 10)
+            }
+            if (v < 0L || v > 0xFFFFFFFFL) null else v.toInt()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun pickEspSerialSelection(dev: UsbDevice, payload: JSONObject): EspSerialSelection? {
+        val interfaceId = if (payload.has("interface_id")) payload.optInt("interface_id", -1) else -1
+        val inAddr = if (payload.has("in_endpoint_address")) payload.optInt("in_endpoint_address", -1) else -1
+        val outAddr = if (payload.has("out_endpoint_address")) payload.optInt("out_endpoint_address", -1) else -1
+
+        if (interfaceId >= 0 && inAddr >= 0 && outAddr >= 0) {
+            val intf = (0 until dev.interfaceCount).map { dev.getInterface(it) }.firstOrNull { it.id == interfaceId }
+                ?: return null
+            val inEp = (0 until intf.endpointCount).map { intf.getEndpoint(it) }
+                .firstOrNull { it.address == inAddr && it.type == UsbConstants.USB_ENDPOINT_XFER_BULK && it.direction == UsbConstants.USB_DIR_IN }
+                ?: return null
+            val outEp = (0 until intf.endpointCount).map { intf.getEndpoint(it) }
+                .firstOrNull { it.address == outAddr && it.type == UsbConstants.USB_ENDPOINT_XFER_BULK && it.direction == UsbConstants.USB_DIR_OUT }
+                ?: return null
+            return EspSerialSelection(intf, inEp, outEp)
+        }
+
+        val detected = findSerialBulkPort(dev) ?: return null
+        val autoIntfId = detected.optInt("interface_id", -1)
+        val autoIn = detected.optInt("in_endpoint_address", -1)
+        val autoOut = detected.optInt("out_endpoint_address", -1)
+        if (autoIntfId < 0 || autoIn < 0 || autoOut < 0) return null
+        val intf = (0 until dev.interfaceCount).map { dev.getInterface(it) }.firstOrNull { it.id == autoIntfId }
+            ?: return null
+        val inEp = (0 until intf.endpointCount).map { intf.getEndpoint(it) }.firstOrNull { it.address == autoIn }
+            ?: return null
+        val outEp = (0 until intf.endpointCount).map { intf.getEndpoint(it) }.firstOrNull { it.address == autoOut }
+            ?: return null
+        return EspSerialSelection(intf, inEp, outEp)
     }
 
     private fun setKeepScreenOn(enabled: Boolean, timeoutS: Long) {
@@ -4996,6 +6802,18 @@ class LocalHttpServer(
         return try {
             val out = File(root, rel).canonicalFile
             if (out.path.startsWith(root.canonicalPath + File.separator)) out else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun toUserRelativePath(abs: File): String? {
+        return try {
+            val root = File(context.filesDir, "user").canonicalFile
+            val canon = abs.canonicalFile
+            if (canon == root) return null
+            if (!canon.path.startsWith(root.path + File.separator)) return null
+            canon.relativeTo(root).path.replace("\\", "/")
         } catch (_: Exception) {
             null
         }

@@ -115,6 +115,13 @@
     },
     {
       "ecosystem": "android-gradle",
+      "name": "com.github.mik3y:usb-serial-for-android",
+      "version": "3.9.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
       "name": "com.google.android.gms:play-services-nearby",
       "version": "19.3.0",
       "source_path": "app/android/app/build.gradle.kts",

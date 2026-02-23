@@ -28,6 +28,7 @@ object CapabilityMap {
         "sensor"    to Triple("device.sensors",   "sensors",   "Sensors"),
         "sensors"   to Triple("device.sensors",   "sensors",   "Sensors"),
         "usb"       to Triple("device.usb",       "usb",       "USB access"),
+        "mcu"       to Triple("device.usb",       "usb",       "MCU programming"),
         "uvc"       to Triple("device.usb",       "usb",       "USB video"),
         "video"     to Triple("device.camera",    "camera",    "Video recording"),
         "screenrec" to Triple("device.screen",    "screen",    "Screen recording"),

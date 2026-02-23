@@ -1,0 +1,535 @@
+mcuModels:
+  get:
+    operationId: getMcuModels
+    summary: List supported MCU programming models
+    tags: [MCU]
+    responses:
+      '200':
+        description: Supported model list.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, models]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                models:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, family, protocol, status]
+                    properties:
+                      id:
+                        type: string
+                      family:
+                        type: string
+                      protocol:
+                        type: string
+                      status:
+                        type: string
+                      notes:
+                        type: string
+            example:
+              status: ok
+              models:
+                - id: esp32
+                  family: esp32
+                  protocol: espressif-rom-serial
+                  status: supported
+                  notes: Initial model support. Flash pipeline will be added incrementally.
+
+mcuProbe:
+  post:
+    operationId: postMcuProbe
+    summary: Probe a connected MCU target by model
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [model]
+                properties:
+                  model:
+                    type: string
+                    description: Programming model identifier. Currently only `esp32` is supported.
+                    enum: [esp32]
+                  name:
+                    type: string
+                    description: USB device name from usb.list.
+                  vendor_id:
+                    type: integer
+                    description: Match USB vendor ID.
+                  product_id:
+                    type: integer
+                    description: Match USB product ID.
+                  permission_timeout_ms:
+                    type: integer
+                    minimum: 0
+                    maximum: 120000
+                    description: Wait time for Android USB permission dialog response.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            model: esp32
+            vendor_id: 0x10c4
+            product_id: 0xea60
+    responses:
+      '200':
+        description: MCU probe result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, model, device, ready_for_serial_protocol]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                model:
+                  type: string
+                  enum: [esp32]
+                device:
+                  type: object
+                  description: USB device descriptor snapshot.
+                bridge_hint:
+                  type: [string, 'null']
+                  description: Best-effort USB-UART bridge guess (e.g. cp210x, ch34x, ftdi).
+                serial_port:
+                  type: [object, 'null']
+                  description: Detected bulk IN/OUT endpoint pair for serial transport.
+                ready_for_serial_protocol:
+                  type: boolean
+                  description: True if a bulk serial endpoint pair was detected.
+      '400':
+        description: Invalid request or unsupported model.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+mcuFlash:
+  post:
+    operationId: postMcuFlash
+    summary: Flash an MCU image using the selected model protocol
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    description: >
+      Initial implementation supports `model=esp32` and writes one or more binary
+      segments via Espressif ROM serial protocol over USB bulk endpoints.
+      For CP210x bridges, bootloader entry can be automated.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [model, handle]
+                properties:
+                  model:
+                    type: string
+                    enum: [esp32]
+                  handle:
+                    type: string
+                    description: USB handle returned by `usb.open`.
+                  image_path:
+                    type: string
+                    description: Relative path under user dir for single-image flashing.
+                  segments:
+                    type: array
+                    description: Multi-segment flash list. If present, `image_path`/`offset` are ignored.
+                    items:
+                      type: object
+                      required: [path, offset]
+                      properties:
+                        path:
+                          type: string
+                          description: Relative path under user dir for segment binary.
+                        offset:
+                          type: integer
+                          format: int32
+                          minimum: 0
+                          maximum: 4294967295
+                  offset:
+                    type: integer
+                    format: int32
+                    minimum: 0
+                    maximum: 4294967295
+                    default: 65536
+                    description: Flash offset in bytes.
+                  reboot:
+                    type: boolean
+                    default: true
+                    description: Reboot target after flashing.
+                  auto_enter_bootloader:
+                    type: boolean
+                    default: true
+                    description: Attempt automatic bootloader entry (currently implemented for CP210x bridges).
+                  timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+                    default: 2000
+                  interface_id:
+                    type: integer
+                    description: Optional explicit USB interface id.
+                  in_endpoint_address:
+                    type: integer
+                    description: Optional explicit bulk IN endpoint address.
+                  out_endpoint_address:
+                    type: integer
+                    description: Optional explicit bulk OUT endpoint address.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            model: esp32
+            handle: usb_0001
+            segments:
+              - path: firmware/bootloader.bin
+                offset: 4096
+              - path: firmware/partitions.bin
+                offset: 32768
+              - path: firmware/app.bin
+                offset: 65536
+            reboot: true
+    responses:
+      '200':
+        description: Flash completed.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, model, segment_count, segments, blocks_written_total]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                model:
+                  type: string
+                segment_count:
+                  type: integer
+                segments:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      path:
+                        type: string
+                      offset:
+                        type: integer
+                      size:
+                        type: integer
+                      md5:
+                        type: string
+                      blocks_written:
+                        type: integer
+                      block_size:
+                        type: integer
+                interface_id:
+                  type: integer
+                in_endpoint_address:
+                  type: integer
+                out_endpoint_address:
+                  type: integer
+                blocks_written_total:
+                  type: integer
+                elapsed_ms:
+                  type: integer
+      '400':
+        description: Invalid request.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+      '500':
+        description: Flash failed.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+mcuFlashPlan:
+  post:
+    operationId: postMcuFlashPlan
+    summary: Build a flash segment plan from ESP-IDF flasher_args.json
+    tags: [MCU]
+    description: >
+      Reads an ESP-IDF `flasher_args.json` file under user directory and extracts
+      a sorted segment list (`path`, `offset`) for `mcu.flash`.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [plan_path]
+            properties:
+              plan_path:
+                type: string
+                description: Relative path under user dir to flasher_args.json.
+              model:
+                type: string
+                enum: [esp32]
+                description: Optional model override. Defaults to plan chip or esp32.
+          example:
+            plan_path: firmware/flasher_args.json
+            model: esp32
+    responses:
+      '200':
+        description: Parsed flash plan.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, model, plan_path, segment_count, segments]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                model:
+                  type: string
+                plan_path:
+                  type: string
+                segment_count:
+                  type: integer
+                segments:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      path:
+                        type: string
+                      offset:
+                        type: integer
+                      exists:
+                        type: boolean
+                      size:
+                        type: integer
+                missing_files:
+                  type: array
+                  items:
+                    type: string
+      '400':
+        description: Invalid plan file or unsupported model.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+      '404':
+        description: Plan file not found.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+
+mcuDiagSerial:
+  post:
+    operationId: postMcuDiagSerial
+    summary: Active ESP32 serial diagnostic (sends sync probe)
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [model, handle]
+                properties:
+                  model:
+                    type: string
+                    enum: [esp32]
+                  handle:
+                    type: string
+                  auto_enter_bootloader:
+                    type: boolean
+                    default: true
+                  sniff_before_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 10000
+                  sniff_after_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 20000
+                  timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Diagnostic capture result.
+      '400':
+        description: Invalid request.
+      '403':
+        description: Permission required.
+      '500':
+        description: Diagnostic failed.
+
+mcuSerialLines:
+  post:
+    operationId: postMcuSerialLines
+    summary: Set ESP32 serial modem lines (DTR/RTS) or run preset sequence
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [model, handle]
+                properties:
+                  model:
+                    type: string
+                    enum: [esp32]
+                  handle:
+                    type: string
+                  sequence:
+                    type: string
+                    description: Preset sequence (`enter_bootloader`, `enter_bootloader_inverted`, `run`, `none`).
+                  dtr:
+                    type: boolean
+                  rts:
+                    type: boolean
+                  sleep_after_ms:
+                    type: integer
+                    minimum: 0
+                    maximum: 5000
+                  timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Line operation result.
+      '400':
+        description: Invalid request.
+      '403':
+        description: Permission required.
+      '500':
+        description: Line operation failed.
+
+mcuReset:
+  post:
+    operationId: postMcuReset
+    summary: Reset ESP32 target to run or bootloader mode
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [model, handle]
+                properties:
+                  model:
+                    type: string
+                    enum: [esp32]
+                  handle:
+                    type: string
+                  mode:
+                    type: string
+                    enum: [reboot, bootloader, bootloader_inverted, run]
+                    default: reboot
+                  sleep_after_ms:
+                    type: integer
+                    minimum: 0
+                    maximum: 5000
+                  timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Reset result.
+      '400':
+        description: Invalid request.
+      '403':
+        description: Permission required.
+      '500':
+        description: Reset failed.
+
+mcuSerialMonitor:
+  post:
+    operationId: postMcuSerialMonitor
+    summary: Passive ESP32 serial monitor (read-only, no probes)
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [model, handle]
+                properties:
+                  model:
+                    type: string
+                    enum: [esp32]
+                  handle:
+                    type: string
+                  duration_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+                  configure_serial:
+                    type: boolean
+                    default: true
+                  flush_input:
+                    type: boolean
+                    default: false
+                  max_dump_bytes:
+                    type: integer
+                    minimum: 256
+                    maximum: 262144
+                  timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Captured serial bytes and previews.
+      '400':
+        description: Invalid request.
+      '403':
+        description: Permission required.
+      '500':
+        description: Serial monitor failed.
