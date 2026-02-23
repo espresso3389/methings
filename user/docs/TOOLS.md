@@ -164,6 +164,26 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - `uvc.mjpeg.capture`: capture one frame. Key payload: `handle`, `width`, `height`, `fps`, `path`.
 - Requires both in-app `device.usb` permission and Android OS USB permission.
 
+### MCU (Model-Driven Programming) — `$sys/docs/openapi/paths/mcu.yaml`
+- `mcu.models`: list supported programming models and status.
+- `mcu.probe`: probe a connected target for the selected model.
+- `mcu.flash.plan`: parse `flasher_args.json` into sorted flash segments.
+- `mcu.flash`: flash one or multiple segments via the selected model protocol.
+- `mcu.reset`: reset target mode (mode set depends on model capabilities).
+- `mcu.serial_monitor`: passive serial capture after boot or reset.
+- `mcu.serial_lines`: explicit DTR/RTS line control and reset scripts.
+- `mcu.diag.serial`: active serial diagnostics (includes sync probe).
+
+Current implementation note:
+- `esp32` is the first supported model. API names and workflow are intentionally model-generic so additional MCU families can be added without renaming.
+
+Typical MCU workflow:
+- `usb.list` -> `usb.open` to get `handle`.
+- Upload binaries to user files (for example `firmware/bootloader.bin`, `firmware/partitions.bin`, `firmware/app.bin`).
+- Call `mcu.flash` with model-specific segment layout.
+- `mcu.reset` with `mode="reboot"`.
+- `mcu.serial_monitor` to confirm runtime logs.
+
 ### Location
 - `location.status`: current location provider state.
 - `location.get`: GPS fix. Key payload: `high_accuracy`, `timeout_ms`.
@@ -425,6 +445,7 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 - `$sys/docs/openapi/paths/camera.yaml` — CameraX still capture + preview stream
 - `$sys/docs/openapi/paths/uvc.yaml` — UVC MJPEG capture + PTZ
 - `$sys/docs/openapi/paths/usb.yaml` — USB device enumeration + transfers + streaming
+- `$sys/docs/openapi/paths/mcu.yaml` — model-driven MCU probe, flash, reset, and serial monitor
 - `$sys/docs/openapi/paths/ble.yaml` — BLE scanning + GATT + events
 - `$sys/docs/openapi/paths/tts.yaml` — Android TextToSpeech
 - `$sys/docs/openapi/paths/stt.yaml` — Android SpeechRecognizer
