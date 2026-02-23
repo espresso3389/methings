@@ -103,22 +103,6 @@ PermissionFields:
       type: string
       description: Previously approved permission request ID.
 
-SshTargetFields:
-  type: object
-  description: Common SSH target connection fields.
-  required: [host]
-  properties:
-    host:
-      type: string
-      description: Remote hostname or IP address.
-    user:
-      type: string
-      description: Remote username. Defaults to device SSH identity user.
-    port:
-      type: integer
-      default: 22
-      description: Remote SSH port.
-
 Schedule:
   type: object
   required: [id, name, launch_type, schedule_pattern, runtime, code, enabled, created_at, updated_at]
@@ -235,23 +219,3 @@ ExecutionLogEntry:
     result: "1700000060025"
     console_output: ""
     error: null
-
-SshOutputFields:
-  type: object
-  description: Common SSH command output fields.
-  properties:
-    stdout:
-      type: string
-      description: Standard output (may be truncated).
-    stderr:
-      type: string
-      description: Standard error (may be truncated).
-    exit_code:
-      type: integer
-      description: Process exit code.
-    truncated:
-      type: boolean
-      description: Whether output was truncated due to size limits.
-    timed_out:
-      type: boolean
-      description: Whether the command timed out.

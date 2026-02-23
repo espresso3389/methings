@@ -87,7 +87,8 @@ Notes:
 
 Used for allowlisted device control-plane actions. Some actions require user approval and will return `permission_required`.
 
-The full action map is in the OpenAPI spec at `$sys/docs/openapi/openapi.yaml`.
+Only `device_api` HTTP actions are documented in OpenAPI (`$sys/docs/openapi/openapi.yaml`).
+Agent tools such as `run_shell`, `run_js`, and `run_curl` are tool-runtime capabilities and are not OpenAPI paths.
 
 ## Remote Access via SSH Tunnel
 
@@ -99,41 +100,25 @@ ssh <user>@<device-ip> -p <ssh-port> -L 33389:127.0.0.1:33389
 
 Then `http://127.0.0.1:33389` on the remote machine gives full access to the WebView UI and all local HTTP APIs.
 
-SSH actions through `device_api`:
-- `ssh.exec`: one-shot remote command. Payload: `host`, `user`, `port`, `command`.
-- `ssh.scp`: upload/download files via SCP. Payload: `direction`, `host`, `user`, `local_path`, `remote_path`.
-- `ssh.ws.contract`: websocket contract for interactive SSH (`/ws/ssh/interactive`).
-
-Details and examples: `$sys/docs/openapi/paths/ssh.yaml` and `$sys/docs/openapi/paths/sshd.yaml`
+Direct outbound SSH client actions via `device_api` are deprecated and may be unavailable.
+Use `run_shell` for outbound SSH/SCP commands instead.
 
 ## App SSH Shell Commands (Outbound)
 
-When you are inside the app's SSH shell prompt (it looks like `methings>`), a few outbound SSH helpers are available:
+Use `run_shell` for outbound SSH/SCP operations:
 
-- `ssh user@host <command>`
-  - Interactive `ssh user@host` (no command) is not supported (no PTY). Use exec-form only.
-- `put <local_file> <user@host:remote_path_or_dir>`
-- `get <user@host:remote_file> <local_path>`
+- `run_shell(command="ssh user@host <command>")`
+- `run_shell(command="scp <local_file> user@host:<remote_path>")`
+- `run_shell(command="scp user@host:<remote_file> <local_path>")`
 
 Notes:
-- `scp` exists but may stall against some OpenSSH-for-Windows targets. Prefer `put/get` when `scp` stalls.
-- Node.js may be available as `node` plus JS tools `npm`/`npx` (if the runtime is bundled).
-- These outbound commands are available in the interactive SSH shell prompt (`methings>`), not via `device_api`.
-- `device_api` action `shell.exec` only allows `python`/`pip`/`curl` and cannot run `ssh`/`put`/`get`.
+- If Termux is unavailable, `run_shell` falls back to native Android shell.
+- If `ssh`/`scp` binaries are missing, call `device_api("termux.show_setup")` and ask the user to complete setup.
 
-### SSH Device API Quickstart
+### SSHD Management
 
-For SSHD and authorized key management, use `device_api` actions:
-
-- `ssh.status`, `ssh.config`
-- `ssh.keys.list`, `ssh.keys.add`, `ssh.keys.delete`
-- `ssh.keys.policy.get`, `ssh.keys.policy.set`
-- `ssh.pin.status`, `ssh.pin.start`, `ssh.pin.stop`
-- `ssh.noauth.status`, `ssh.noauth.start`, `ssh.noauth.stop`
-
-Delete key tips:
-- Prefer `ssh.keys.list` first and delete by returned `fingerprint`.
-- `ssh.keys.delete` also accepts `key` in payload when fingerprint is unknown.
+For on-device SSH server management, use the `/sshd/*` API endpoints (status/config/keys/pin/noauth).
+For outbound SSH client access to other machines, use `run_shell` only.
 
 ---
 

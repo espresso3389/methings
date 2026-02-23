@@ -424,9 +424,17 @@ class AgentRuntime(
 
         var pendingInput = buildInitialInput(providerKind, filteredDialogue, journalBlob, curText, item, supportedMediaTypes)
         var forcedRounds = 0
+        var roundsUsed = 0
+        var toolCallsRequested = 0
+        var toolCallsExecuted = 0
+        val toolUsageCounts = linkedMapOf<String, Int>()
+        var lastToolName = ""
+        var lastToolStatus = ""
+        var lastToolError = ""
 
         for (roundIdx in 0 until maxRounds) {
             checkInterrupt()
+            roundsUsed = roundIdx + 1
             emitLog("brain_status", JSONObject().apply {
                 put("item_id", item.optString("id"))
                 put("session_id", sessionId)
@@ -483,6 +491,7 @@ class AgentRuntime(
             val parseResult = parseProviderResponse(providerKind, payload)
             val messageTexts = parseResult.first
             val calls = parseResult.second
+            toolCallsRequested += calls.length()
 
             if (calls.length() == 0) {
                 if (messageTexts.isEmpty()) {
@@ -595,6 +604,11 @@ class AgentRuntime(
                 checkInterrupt()
                 val call = calls.getJSONObject(i)
                 val name = call.optString("name", "")
+                toolCallsExecuted++
+                if (name.isNotBlank()) {
+                    toolUsageCounts[name] = (toolUsageCounts[name] ?: 0) + 1
+                    lastToolName = name
+                }
                 val callId = call.optString("call_id", call.optString("id", ""))
                 val rawArgs = call.opt("arguments") ?: call.opt("input")
                 val args = try {
@@ -614,6 +628,8 @@ class AgentRuntime(
                 })
 
                 val result = toolExecutor.executeFunctionTool(name, args, curText)
+                lastToolStatus = result.optString("status", "").ifBlank { "ok" }
+                lastToolError = result.optString("error", "")
 
                 // Check for permission_required
                 val resultStatus = result.optString("status", "")
@@ -706,8 +722,29 @@ class AgentRuntime(
             Log.w(TAG, "Finalization failed", ex)
         }
 
+        val toolsUsedSummary = if (toolUsageCounts.isEmpty()) {
+            "none"
+        } else {
+            toolUsageCounts.entries
+                .sortedByDescending { it.value }
+                .take(6)
+                .joinToString(", ") { "${it.key} x${it.value}" }
+        }
+        val lastToolSummary = if (lastToolName.isBlank()) {
+            "none"
+        } else {
+            val errPart = if (lastToolError.isNotBlank()) " (error=$lastToolError)" else ""
+            "$lastToolName -> $lastToolStatus$errPart"
+        }
         recordMessage("assistant",
-            "Reached maximum tool rounds ($maxRounds). Try breaking the task into smaller steps.",
+            "Reached maximum tool rounds ($maxRounds).\n" +
+                "Progress summary:\n" +
+                "- Rounds used: $roundsUsed/$maxRounds\n" +
+                "- Tool calls requested by model: $toolCallsRequested\n" +
+                "- Tool calls executed: $toolCallsExecuted\n" +
+                "- Tools used: $toolsUsedSummary\n" +
+                "- Last tool result: $lastToolSummary\n" +
+                "Please continue with the next concrete sub-step.",
             JSONObject().put("item_id", item.optString("id")).put("session_id", sessionId))
     }
 

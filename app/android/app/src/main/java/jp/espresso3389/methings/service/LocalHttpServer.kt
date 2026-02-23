@@ -523,7 +523,6 @@ class LocalHttpServer(
             "/sys" -> routeSys(session, uri, postBody)
             "/android" -> routeAndroid(session, uri, postBody)
             "/sshd" -> routeSshd(session, uri, postBody)
-            "/ssh" -> routeSsh(session, uri, postBody)
             "/" -> routeUi(session, uri, postBody)
             "" -> routeUi(session, uri, postBody)
             else -> notFound()
@@ -9732,25 +9731,6 @@ class LocalHttpServer(
                 }
             }
             else -> newFixedLengthResponse(Response.Status.OK, "text/plain", "")
-        }
-    }
-
-    private fun routeSsh(session: IHTTPSession, uri: String, postBody: String?): Response {
-        return when {
-            uri == "/ssh/ws/contract" && session.method == Method.GET -> {
-                jsonResponse(
-                    JSONObject()
-                        .put("status", "ok")
-                        .put("ws_path", "/ws/ssh/interactive")
-                        .put("query", JSONObject()
-                            .put("host", "required hostname or IP")
-                            .put("user", "optional user")
-                            .put("port", "optional port (default 22)")
-                            .put("permission_id", "optional approved permission id")
-                            .put("identity", "optional stable identity for permission reuse"))
-                )
-            }
-            else -> notFound()
         }
     }
 

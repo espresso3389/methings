@@ -23,8 +23,6 @@ tags:
     description: On-device shell command execution.
   - name: SSHD
     description: On-device SSH server management.
-  - name: SSH
-    description: Remote SSH client (exec, scp, interactive).
   - name: Camera
     description: Camera capture and preview (CameraX).
   - name: MediaAudio
@@ -142,14 +140,6 @@ paths:
     $ref: './paths/sshd.yaml#/sshdNoauthStart'
   /sshd/noauth/stop:
     $ref: './paths/sshd.yaml#/sshdNoauthStop'
-
-  # ── SSH ──
-  /ssh/exec:
-    $ref: './paths/ssh.yaml#/sshExec'
-  /ssh/scp:
-    $ref: './paths/ssh.yaml#/sshScp'
-  /ssh/ws/contract:
-    $ref: './paths/ssh.yaml#/sshWsContract'
 
   # ── Camera ──
   /camera/list:
