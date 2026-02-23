@@ -293,13 +293,10 @@ class AgentRuntime(
                 }
             }
             "permission.auto_approved" -> {
-                recordMessage("assistant", "Permission auto-approved.",
-                    JSONObject().put("actor", "system"))
+                // Internal — no need to record in chat history
             }
             else -> {
-                // Generic event — record summary
-                val summary = "Event: $name"
-                recordMessage("tool", summary, JSONObject().put("actor", "system").put("event", name))
+                // Internal event — not recorded in chat history
                 // If run_agent is requested, escalate to a chat-like processing
                 if (payload.optBoolean("run_agent", false)) {
                     val prompt = payload.optString("prompt", "").ifEmpty {
@@ -1416,7 +1413,44 @@ class AgentRuntime(
 
     // --- Message Recording ---
 
+    /**
+     * Sanitize assistant text before recording: strip echoed system instructions
+     * and internal thinking blocks that models sometimes leak.
+     */
+    private fun sanitizeAssistantText(raw: String): String {
+        // Strip <thought>...</thought> blocks (internal reasoning)
+        var text = raw.replace(Regex("<thought>[\\s\\S]*?</thought>"), "").trim()
+        // Strip leading lines that are echoed system-prompt instructions.
+        // Pattern: lines starting with imperative directives (NEVER, Do NOT, Do not,
+        // Always, You MUST, You must, Only, Prefer, Keep responses, Use ...).
+        val instructionLine = Regex(
+            "^\\s*(?:" +
+                "(?:NEVER|ALWAYS|IMPORTANT)\\b" +
+                "|(?:Do (?:NOT|not))\\b" +
+                "|(?:You (?:MUST|must|ARE|are|MAY|should))\\b" +
+                "|(?:Only |Prefer |Keep responses|Use the available|Use device_api)" +
+                "|(?:If (?:a |the )?(?:tool|capability|request|user))" +
+                "|(?:Permission|Tool policy)" +
+                ").*",
+            RegexOption.MULTILINE
+        )
+        // Strip matching lines from the beginning of the text.
+        // Stop once we hit a non-matching, non-blank line.
+        val lines = text.lines().toMutableList()
+        while (lines.isNotEmpty()) {
+            val line = lines.first().trim()
+            if (line.isEmpty() || instructionLine.matches(line)) {
+                lines.removeFirst()
+            } else {
+                break
+            }
+        }
+        return lines.joinToString("\n").trim()
+    }
+
     private fun recordMessage(role: String, text: String, meta: JSONObject = JSONObject()) {
+        val displayText = if (role == "assistant") sanitizeAssistantText(text) else text
+        if (role == "assistant" && displayText.isBlank()) return // nothing useful to show
         if (!meta.has("actor") || meta.optString("actor", "").isBlank()) {
             meta.put("actor", when (role) {
                 "user" -> "human"
@@ -1428,7 +1462,7 @@ class AgentRuntime(
         val entry = JSONObject().apply {
             put("ts", System.currentTimeMillis())
             put("role", role)
-            put("text", text)
+            put("text", displayText)
             put("meta", meta)
         }
         synchronized(lock) {
