@@ -10241,126 +10241,197 @@
             return fallback;
           };
           const selfDeviceId = String(((data && data.self) || {}).device_id || "");
-          const allConnections = Array.isArray(data.connections) ? data.connections : [];
-          const allPending = Array.isArray(data.pending_requests) ? data.pending_requests : [];
-          const allDiscovered = Array.isArray(data.discovered) ? data.discovered : [];
-          // Dedup across all sections by device ID and filter out self
-          const shownIds = new Set();
-          const connections = allConnections.filter(c => {
-            const id = String(c.peer_device_id || "").trim();
-            if (!id || id === selfDeviceId || shownIds.has(id)) return false;
-            shownIds.add(id); return true;
-          });
-          const pending = allPending.filter(p => {
-            const id = String(p.source_device_id || "").trim();
-            if (!id || id === selfDeviceId || shownIds.has(id)) return false;
-            shownIds.add(id); return true;
-          });
-          const discovered = allDiscovered.filter(d => {
-            const id = String(d.device_id || "").trim();
-            if (!id || id === selfDeviceId || shownIds.has(id)) return false;
-            shownIds.add(id); return true;
-          });
-          // Build provisioned siblings not already shown
-          const provDevices = Array.isArray(provData.devices) ? provData.devices : [];
-          const linkedSiblings = provDevices.filter((d) => {
-            const did = String((d && d.device_id) || "").trim();
-            return did && did !== selfDeviceId && !shownIds.has(did);
-          });
-          meMePeersSummary.textContent =
-            String(connections.length) + " connected \u00b7 " +
-            String(pending.length) + " unapproved \u00b7 " +
-            String(discovered.length) + " discovered" +
-            (linkedSiblings.length > 0 ? (" \u00b7 " + String(linkedSiblings.length) + " linked") : "");
-          if (connections.length <= 0 && pending.length <= 0 && discovered.length <= 0 && linkedSiblings.length <= 0) {
-            const empty = document.createElement("div");
-            empty.className = "muted";
-            empty.textContent = "No devices.";
-            meMePeersList.appendChild(empty);
-            return;
+          // Unified device list (new API) with fallback to legacy sections
+          const devices = Array.isArray(data.devices) ? data.devices : null;
+          if (devices) {
+            // -- Unified path --
+            const stateCounts = { connected: 0, discovered: 0, pending: 0, offline: 0 };
+            devices.forEach((d) => { const s = String(d.state || "offline"); if (s in stateCounts) stateCounts[s]++; });
+            meMePeersSummary.textContent =
+              String(stateCounts.connected) + " connected \u00b7 " +
+              String(stateCounts.pending) + " pending \u00b7 " +
+              String(stateCounts.discovered) + " discovered \u00b7 " +
+              String(stateCounts.offline) + " offline";
+            if (devices.length <= 0) {
+              const empty = document.createElement("div");
+              empty.className = "muted";
+              empty.textContent = "No devices.";
+              meMePeersList.appendChild(empty);
+              return;
+            }
+            const methodIcon = (m) => ({ ble: "\u26A1", wifi: "\uD83D\uDCF6", p2p: "\uD83D\uDD17" }[String(m || "")] || "");
+            const stateBadge = (s) => {
+              const colors = { connected: "#22c55e", discovered: "#6366f1", pending: "#eab308", offline: "#6b7280" };
+              const labels = { connected: "Connected", discovered: "Discovered", pending: "Pending", offline: "Offline" };
+              const c = colors[s] || "#6b7280";
+              return "<span style='display:inline-block; padding:1px 7px; border-radius:6px; font-size:0.8em; background:" + c + "22; color:" + c + "; border:1px solid " + c + "44;'>" + (labels[s] || s) + "</span>";
+            };
+            const authBadge = (a) => {
+              const colors = { authorized: "#22c55e", provisioned_sibling: "#818cf8", unapproved: "#eab308", blocked: "#ef4444" };
+              const labels = { authorized: "Authorized", provisioned_sibling: "Provisioned", unapproved: "Unapproved", blocked: "Blocked" };
+              const c = colors[a] || "#6b7280";
+              return "<span style='display:inline-block; padding:1px 7px; border-radius:6px; font-size:0.8em; background:" + c + "22; color:" + c + "; border:1px solid " + c + "44;'>" + (labels[a] || a) + "</span>";
+            };
+            devices.forEach((dev) => {
+              const peerId = String(dev.device_id || "");
+              const peerName = String(dev.device_name || peerId || "unknown");
+              const state = String(dev.state || "offline");
+              const auth = String(dev.auth || "unapproved");
+              const connMethod = dev.connection_method && dev.connection_method !== null ? String(dev.connection_method) : "";
+              const requestId = String(dev.request_id || "");
+              const item = document.createElement("div");
+              item.style.border = "1px solid var(--border)";
+              item.style.borderRadius = "10px";
+              item.style.padding = "10px";
+              item.style.background = "rgba(255,255,255,0.02)";
+              let info = "";
+              if (state === "connected" && dev.connected_at) info = "connected " + escapeHtml(formatEpochLocal(dev.connected_at));
+              else if (dev.last_seen_at) info = "last seen " + escapeHtml(formatEpochLocal(dev.last_seen_at));
+              let html =
+                "<div style='display:flex; align-items:center; gap:6px; flex-wrap:wrap;'>" +
+                  "<span style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + "</span> " +
+                  stateBadge(state) + " " + authBadge(auth) +
+                  (connMethod ? (" <span style='font-size:0.9em;'>" + escapeHtml(methodIcon(connMethod) + " " + connMethod) + "</span>") : "") +
+                "</div>" +
+                "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
+                (info ? ("<div class='muted' style='margin-top:2px;'>" + info + "</div>") : "");
+              // Action buttons
+              const btns = [];
+              if (state === "pending" && requestId && auth === "unapproved") {
+                btns.push("<button class='btn primary' data-mm-action='approve' data-mm-request-id='" + escapeHtml(requestId) + "'>Approve</button>");
+              } else if (auth === "unapproved") {
+                btns.push("<button class='btn primary' data-mm-action='approve-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Approve</button>");
+              }
+              if (auth !== "blocked") {
+                btns.push("<button class='btn danger' data-mm-action='block-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Block</button>");
+              }
+              if (state !== "connected" && state !== "pending" && auth !== "blocked") {
+                btns.push("<button class='btn' data-mm-action='connect-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Connect</button>");
+              }
+              if (auth === "authorized" || auth === "blocked") {
+                btns.push("<button class='btn' data-mm-action='clear-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Clear</button>");
+              }
+              if (btns.length > 0) html += "<div style='display:flex; gap:8px; margin-top:8px;'>" + btns.join("") + "</div>";
+              item.innerHTML = html;
+              meMePeersList.appendChild(item);
+            });
+          } else {
+            // -- Legacy fallback (no unified devices field) --
+            const allConnections = Array.isArray(data.connections) ? data.connections : [];
+            const allPending = Array.isArray(data.pending_requests) ? data.pending_requests : [];
+            const allDiscovered = Array.isArray(data.discovered) ? data.discovered : [];
+            const shownIds = new Set();
+            const connections = allConnections.filter(c => {
+              const id = String(c.peer_device_id || "").trim();
+              if (!id || id === selfDeviceId || shownIds.has(id)) return false;
+              shownIds.add(id); return true;
+            });
+            const pending = allPending.filter(p => {
+              const id = String(p.source_device_id || "").trim();
+              if (!id || id === selfDeviceId || shownIds.has(id)) return false;
+              shownIds.add(id); return true;
+            });
+            const discovered = allDiscovered.filter(d => {
+              const id = String(d.device_id || "").trim();
+              if (!id || id === selfDeviceId || shownIds.has(id)) return false;
+              shownIds.add(id); return true;
+            });
+            const provDevices = Array.isArray(provData.devices) ? provData.devices : [];
+            const linkedSiblings = provDevices.filter((d) => {
+              const did = String((d && d.device_id) || "").trim();
+              return did && did !== selfDeviceId && !shownIds.has(did);
+            });
+            meMePeersSummary.textContent =
+              String(connections.length) + " connected \u00b7 " +
+              String(pending.length) + " unapproved \u00b7 " +
+              String(discovered.length) + " discovered" +
+              (linkedSiblings.length > 0 ? (" \u00b7 " + String(linkedSiblings.length) + " linked") : "");
+            if (connections.length <= 0 && pending.length <= 0 && discovered.length <= 0 && linkedSiblings.length <= 0) {
+              const empty = document.createElement("div");
+              empty.className = "muted";
+              empty.textContent = "No devices.";
+              meMePeersList.appendChild(empty);
+              return;
+            }
+            pending.forEach((req) => {
+              const item = document.createElement("div");
+              item.style.border = "1px solid var(--border)";
+              item.style.borderRadius = "10px";
+              item.style.padding = "10px";
+              item.style.background = "rgba(255,255,255,0.02)";
+              const sourceId = String(req.source_device_id || "");
+              const sourceName = String(req.source_device_name || sourceId || "unknown");
+              const requestId = String(req.id || "");
+              const authState = authStateForPeer(sourceId, "Unapproved");
+              item.innerHTML =
+                "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(sourceName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
+                "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(sourceId) + "</div>" +
+                "<div style='display:flex; gap:8px; margin-top:8px;'>" +
+                  "<button class='btn primary' data-mm-action='approve' data-mm-request-id='" + escapeHtml(requestId) + "'>Approve</button>" +
+                  "<button class='btn danger' data-mm-action='block' data-mm-request-id='" + escapeHtml(requestId) + "'>Block</button>" +
+                "</div>";
+              meMePeersList.appendChild(item);
+            });
+            connections.forEach((conn) => {
+              const item = document.createElement("div");
+              item.style.border = "1px solid var(--border)";
+              item.style.borderRadius = "10px";
+              item.style.padding = "10px";
+              item.style.background = "rgba(255,255,255,0.02)";
+              const peerName = String(conn.peer_device_name || conn.peer_device_id || "unknown");
+              const peerId = String(conn.peer_device_id || "");
+              const method = String(conn.method || "auto");
+              const state = String(conn.state || "unknown");
+              const connectedAt = formatEpochLocal(conn.connected_at);
+              const authState = authStateForPeer(peerId, "Unapproved");
+              item.innerHTML =
+                "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
+                "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
+                "<div class='muted' style='margin-top:2px;'>method " + escapeHtml(method) + " \u00b7 state " + escapeHtml(state) + "</div>" +
+                "<div class='muted' style='margin-top:2px;'>connected " + escapeHtml(connectedAt) + "</div>" +
+                "<div style='display:flex; gap:8px; margin-top:8px;'>" +
+                  "<button class='btn primary' data-mm-action='approve-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Approve</button>" +
+                  "<button class='btn danger' data-mm-action='block-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Block</button>" +
+                  "<button class='btn' data-mm-action='clear-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Clear</button>" +
+                "</div>";
+              meMePeersList.appendChild(item);
+            });
+            discovered.forEach((dev) => {
+              const item = document.createElement("div");
+              item.style.border = "1px solid var(--border)";
+              item.style.borderRadius = "10px";
+              item.style.padding = "10px";
+              item.style.background = "rgba(255,255,255,0.02)";
+              const peerId = String(dev.device_id || "");
+              const peerName = String(dev.device_name || peerId || "unknown");
+              const seen = formatEpochLocal(dev.last_seen_at);
+              const authState = authStateForPeer(peerId, "Discovered");
+              item.innerHTML =
+                "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
+                "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
+                "<div class='muted' style='margin-top:2px;'>last seen " + escapeHtml(seen) + "</div>" +
+                "<div style='display:flex; gap:8px; margin-top:8px;'>" +
+                  "<button class='btn primary' data-mm-action='approve-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Approve</button>" +
+                  "<button class='btn danger' data-mm-action='block-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Block</button>" +
+                  "<button class='btn' data-mm-action='clear-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Clear</button>" +
+                "</div>";
+              meMePeersList.appendChild(item);
+            });
+            linkedSiblings.forEach((dev) => {
+              const item = document.createElement("div");
+              item.style.border = "1px solid var(--border)";
+              item.style.borderRadius = "10px";
+              item.style.padding = "10px";
+              item.style.background = "rgba(255,255,255,0.02)";
+              const peerId = String(dev.device_id || "");
+              const peerName = String(dev.device_name || peerId || "unknown");
+              item.innerHTML =
+                "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span style='font-weight:400; color:#818cf8;'>(Linked)</span></div>" +
+                "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
+                "<div class='muted' style='margin-top:2px;'>method p2p / relay</div>";
+              meMePeersList.appendChild(item);
+            });
           }
-          pending.forEach((req) => {
-            const item = document.createElement("div");
-            item.style.border = "1px solid var(--border)";
-            item.style.borderRadius = "10px";
-            item.style.padding = "10px";
-            item.style.background = "rgba(255,255,255,0.02)";
-            const sourceId = String(req.source_device_id || "");
-            const sourceName = String(req.source_device_name || sourceId || "unknown");
-            const sourceDesc = String(req.source_device_description || "").trim();
-            const requestId = String(req.id || "");
-            const ownerIds = Array.isArray(req.source_owner_identities) ? req.source_owner_identities : [];
-            const authState = authStateForPeer(sourceId, "Unapproved");
-            item.innerHTML =
-              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(sourceName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
-              "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(sourceId) + "</div>" +
-              (sourceDesc ? ("<div class='muted' style='margin-top:2px; word-break:break-word;'>" + escapeHtml(sourceDesc) + "</div>") : "") +
-              "<div class='muted' style='margin-top:2px; word-break:break-word;'>owner " + escapeHtml(ownerIds.join(", ") || "-") + "</div>" +
-              "<div style='display:flex; gap:8px; margin-top:8px;'>" +
-                "<button class='btn primary' data-mm-action='approve' data-mm-request-id='" + escapeHtml(requestId) + "'>Approve</button>" +
-                "<button class='btn danger' data-mm-action='block' data-mm-request-id='" + escapeHtml(requestId) + "'>Block</button>" +
-              "</div>";
-            meMePeersList.appendChild(item);
-          });
-          connections.forEach((conn) => {
-            const item = document.createElement("div");
-            item.style.border = "1px solid var(--border)";
-            item.style.borderRadius = "10px";
-            item.style.padding = "10px";
-            item.style.background = "rgba(255,255,255,0.02)";
-            const peerName = String(conn.peer_device_name || conn.peer_device_id || "unknown");
-            const peerId = String(conn.peer_device_id || "");
-            const method = String(conn.method || "auto");
-            const state = String(conn.state || "unknown");
-            const connectedAt = formatEpochLocal(conn.connected_at);
-            const authState = authStateForPeer(peerId, "Unapproved");
-            item.innerHTML =
-              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
-              "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
-              "<div class='muted' style='margin-top:2px;'>method " + escapeHtml(method) + " \u00b7 state " + escapeHtml(state) + "</div>" +
-              "<div class='muted' style='margin-top:2px;'>connected " + escapeHtml(connectedAt) + "</div>" +
-              "<div style='display:flex; gap:8px; margin-top:8px;'>" +
-                "<button class='btn primary' data-mm-action='approve-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Approve</button>" +
-                "<button class='btn danger' data-mm-action='block-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Block</button>" +
-                "<button class='btn' data-mm-action='clear-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Clear</button>" +
-              "</div>";
-            meMePeersList.appendChild(item);
-          });
-          discovered.forEach((dev) => {
-            const item = document.createElement("div");
-            item.style.border = "1px solid var(--border)";
-            item.style.borderRadius = "10px";
-            item.style.padding = "10px";
-            item.style.background = "rgba(255,255,255,0.02)";
-            const peerId = String(dev.device_id || "");
-            const peerName = String(dev.device_name || peerId || "unknown");
-            const seen = formatEpochLocal(dev.last_seen_at);
-            const authState = authStateForPeer(peerId, "Discovered");
-            item.innerHTML =
-              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span class='muted' style='font-weight:400;'>(" + escapeHtml(authState) + ")</span></div>" +
-              "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
-              "<div class='muted' style='margin-top:2px;'>last seen " + escapeHtml(seen) + "</div>" +
-              "<div style='display:flex; gap:8px; margin-top:8px;'>" +
-                "<button class='btn primary' data-mm-action='approve-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Approve</button>" +
-                "<button class='btn danger' data-mm-action='block-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Block</button>" +
-                "<button class='btn' data-mm-action='clear-peer' data-mm-peer-id='" + escapeHtml(peerId) + "'>Clear</button>" +
-              "</div>";
-            meMePeersList.appendChild(item);
-          });
-          linkedSiblings.forEach((dev) => {
-            const item = document.createElement("div");
-            item.style.border = "1px solid var(--border)";
-            item.style.borderRadius = "10px";
-            item.style.padding = "10px";
-            item.style.background = "rgba(255,255,255,0.02)";
-            const peerId = String(dev.device_id || "");
-            const peerName = String(dev.device_name || peerId || "unknown");
-            item.innerHTML =
-              "<div style='font-weight:600; word-break:break-word;'>" + escapeHtml(peerName) + " <span style='font-weight:400; color:#818cf8;'>(Linked)</span></div>" +
-              "<div class='muted' style='margin-top:4px; word-break:break-all;'>device_id " + escapeHtml(peerId) + "</div>" +
-              "<div class='muted' style='margin-top:2px;'>method p2p / relay</div>";
-            meMePeersList.appendChild(item);
-          });
           meMePeersList.querySelectorAll("button[data-mm-action]").forEach((btn) => {
             btn.addEventListener("click", async () => {
               const action = String(btn.getAttribute("data-mm-action") || "");
@@ -10380,6 +10451,13 @@
                 } else if (action === "block-peer" && peerId) {
                   await setMeMePeerPolicy(peerId, "block");
                   showToast("Peer blocked", 1400);
+                } else if (action === "connect-peer" && peerId) {
+                  await fetch(API + "/me/me/connect", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json; charset=utf-8" },
+                    body: JSON.stringify({ target_device_id: peerId, method: "auto", allow_unknown: true }),
+                  });
+                  showToast("Connecting\u2026", 1400);
                 } else if (action === "clear-peer" && peerId) {
                   await setMeMePeerPolicy(peerId, "clear");
                   showToast("Peer policy cleared", 1400);

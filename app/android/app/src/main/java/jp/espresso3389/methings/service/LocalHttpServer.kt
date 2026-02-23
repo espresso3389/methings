@@ -8263,7 +8263,7 @@ class LocalHttpServer(
             if (did.isBlank() || did == cfg.deviceId) return@forEach
             if (meMeConnections.containsKey(did)) return@forEach
             if (cfg.blockedDevices.contains(did)) return@forEach
-            if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(did)) return@forEach
+            if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(did) && !isProvisionedSibling(did)) return@forEach
             if (meMeConnections.size >= cfg.maxConnections) return@forEach
             val hasPending = meMeConnectIntents.values.any { !it.accepted && it.targetDeviceId == did && it.expiresAt > now }
             if (hasPending) return@forEach
@@ -8404,9 +8404,94 @@ class LocalHttpServer(
         val pending = org.json.JSONArray(
             meMeConnectIntents.values
                 .filter { !it.accepted }
+                .filter { it.sourceDeviceId != cfg.deviceId }
                 .filter { req -> meMeConnections.values.none { conn -> conn.sessionId == req.sessionId } }
                 .sortedByDescending { it.createdAt }
                 .map { it.toJson(includeToken = false) }
+        )
+        // Build unified devices list
+        val unifiedMap = LinkedHashMap<String, JSONObject>()
+        // 1. Seed from provisioned siblings (excluding self)
+        val provSiblings = getProvisionedSiblingDevicesJson(cfg.deviceId)
+        for (i in 0 until provSiblings.length()) {
+            val d = provSiblings.optJSONObject(i) ?: continue
+            val did = d.optString("device_id", "").trim()
+            if (did.isBlank()) continue
+            unifiedMap[did] = JSONObject()
+                .put("device_id", did)
+                .put("device_name", d.optString("device_name", did))
+                .put("state", "offline")
+                .put("auth", "provisioned_sibling")
+                .put("connection_method", JSONObject.NULL)
+                .put("last_seen_at", JSONObject.NULL)
+                .put("connected_at", JSONObject.NULL)
+                .put("online", false)
+        }
+        // 2. Merge discovered devices (excluding self)
+        for (i in 0 until discovered.length()) {
+            val d = discovered.optJSONObject(i) ?: continue
+            val did = d.optString("device_id", "").trim()
+            if (did.isBlank() || did == cfg.deviceId) continue
+            val existing = unifiedMap[did]
+            val prevAuth = existing?.optString("auth", "unapproved") ?: "unapproved"
+            unifiedMap[did] = JSONObject()
+                .put("device_id", did)
+                .put("device_name", d.optString("device_name", "").trim().ifBlank { existing?.optString("device_name", did) ?: did })
+                .put("state", "discovered")
+                .put("auth", prevAuth)
+                .put("connection_method", JSONObject.NULL)
+                .put("last_seen_at", d.opt("last_seen_at") ?: JSONObject.NULL)
+                .put("connected_at", JSONObject.NULL)
+                .put("online", true)
+        }
+        // 3. Merge active connections (excluding self)
+        for (conn in connectionList) {
+            val did = conn.peerDeviceId.trim()
+            if (did.isBlank() || did == cfg.deviceId) continue
+            val existing = unifiedMap[did]
+            val prevAuth = existing?.optString("auth", "unapproved") ?: "unapproved"
+            unifiedMap[did] = JSONObject()
+                .put("device_id", did)
+                .put("device_name", conn.peerDeviceName.trim().ifBlank { existing?.optString("device_name", did) ?: did })
+                .put("state", "connected")
+                .put("auth", prevAuth)
+                .put("connection_method", conn.method.ifBlank { JSONObject.NULL })
+                .put("last_seen_at", JSONObject.NULL)
+                .put("connected_at", conn.connectedAt)
+                .put("online", true)
+        }
+        // 4. Merge pending requests — ONLY incoming (target == self), skip outgoing (source == self)
+        for (i in 0 until pending.length()) {
+            val p = pending.optJSONObject(i) ?: continue
+            val did = p.optString("source_device_id", "").trim()
+            if (did.isBlank() || did == cfg.deviceId) continue
+            val existing = unifiedMap[did]
+            if (existing != null && existing.optString("state", "") == "connected") continue
+            val prevAuth = existing?.optString("auth", "unapproved") ?: "unapproved"
+            unifiedMap[did] = (existing ?: JSONObject())
+                .put("device_id", did)
+                .put("device_name", p.optString("source_device_name", "").trim().ifBlank { existing?.optString("device_name", did) ?: did })
+                .put("state", "pending")
+                .put("auth", prevAuth)
+                .put("connection_method", JSONObject.NULL)
+                .put("last_seen_at", JSONObject.NULL)
+                .put("connected_at", JSONObject.NULL)
+                .put("online", false)
+                .put("request_id", p.optString("id", ""))
+        }
+        // 5. Apply allowed_devices / blocked_devices overrides
+        for ((did, dev) in unifiedMap) {
+            if (cfg.blockedDevices.contains(did)) {
+                dev.put("auth", "blocked")
+            } else if (cfg.allowedDevices.contains(did)) {
+                dev.put("auth", "authorized")
+            }
+            dev.put("online", dev.optString("state", "") in listOf("connected", "discovered"))
+        }
+        // Sort: connected > discovered > pending > offline
+        val stateOrder = mapOf("connected" to 0, "discovered" to 1, "pending" to 2, "provisioned" to 3, "offline" to 4)
+        val unifiedDevices = org.json.JSONArray(
+            unifiedMap.values.sortedBy { stateOrder[it.optString("state", "offline")] ?: 4 }
         )
         val p2pCfg = currentMeMeP2pConfig()
         val userSubject = (meMePrefs.getString("provision_user_subject", "") ?: "").trim()
@@ -8420,6 +8505,7 @@ class LocalHttpServer(
                 .put("pending_requests", pending)
                 .put("connections", connections)
                 .put("discovered", discovered)
+                .put("devices", unifiedDevices)
                 .put("advertising", runtime.optJSONObject("advertising") ?: JSONObject())
                 .put("relay", relayCfg.toJson(includeSecrets = false, fcmToken = NotifyGatewayClient.loadFcmToken(context)))
                 .put("relay_event_queue_count", relayQueueCount)
@@ -8533,7 +8619,7 @@ class LocalHttpServer(
         if (cfg.blockedDevices.contains(targetDeviceId)) {
             return jsonError(Response.Status.FORBIDDEN, "target_blocked")
         }
-        if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(targetDeviceId)) {
+        if (cfg.allowedDevices.isNotEmpty() && !cfg.allowedDevices.contains(targetDeviceId) && !isProvisionedSibling(targetDeviceId)) {
             return jsonError(Response.Status.FORBIDDEN, "target_not_allowed")
         }
         val existing = meMeConnections[targetDeviceId]
