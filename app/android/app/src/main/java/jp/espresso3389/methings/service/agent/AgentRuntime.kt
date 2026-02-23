@@ -305,10 +305,25 @@ class AgentRuntime(
                     val prompt = payload.optString("prompt", "").ifEmpty {
                         "System event: $name. ${payload.optString("summary", "")}"
                     }
+                    // Build a short display text for the chat UI (the full prompt goes to the agent)
+                    val displayText = if (name == "me.me.received") {
+                        val fromName = payload.optString("from_device_name", "").trim()
+                            .ifBlank { payload.optString("from_device_id", "").trim() }
+                        val preview = payload.optString("message_preview", "").trim()
+                        val mtype = payload.optString("message_type", "").trim()
+                        when (mtype) {
+                            "response" -> if (preview.isNotBlank()) "[$fromName] $preview" else "Response from $fromName"
+                            "file" -> "File from $fromName" + if (preview.isNotBlank()) ": $preview" else ""
+                            else -> if (preview.isNotBlank()) "[$fromName] $preview" else "Request from $fromName"
+                        }
+                    } else {
+                        ""
+                    }
                     val chatItem = JSONObject().apply {
                         put("id", item.optString("id"))
                         put("kind", "chat")
                         put("text", prompt)
+                        if (displayText.isNotBlank()) put("display_text", displayText)
                         put("meta", JSONObject().put("session_id", sessionIdForItem(item)).put("actor", "system"))
                         put("created_at", System.currentTimeMillis())
                         // me.me events with run_agent require actual tool calls (not text-only responses)
@@ -324,8 +339,9 @@ class AgentRuntime(
         val text = item.optString("text", "")
         val sessionId = sessionIdForItem(item)
 
-        // Record user message
-        recordMessage("user", text, JSONObject().apply {
+        // Record user message (use display_text for chat UI if available, full text goes to the LLM)
+        val visibleText = item.optString("display_text", "").ifBlank { text }
+        recordMessage("user", visibleText, JSONObject().apply {
             put("item_id", item.optString("id"))
             put("session_id", sessionId)
             put("actor", item.optJSONObject("meta")?.optString("actor", "human") ?: "human")
