@@ -5946,16 +5946,34 @@
         }
       }
 
+      var _scrollDebounce = null;
       function scrollToBottomSoon() {
         if (!chatMessages) return;
-        requestAnimationFrame(() => {
-          try { chatMessages.scrollTop = chatMessages.scrollHeight; } catch (_) {}
-        });
+        if (_scrollDebounce) clearTimeout(_scrollDebounce);
+        _scrollDebounce = setTimeout(() => {
+          _scrollDebounce = null;
+          try {
+            chatMessages.scrollTo({ top: chatMessages.scrollHeight, behavior: "smooth" });
+          } catch (_) {
+            try { chatMessages.scrollTop = chatMessages.scrollHeight; } catch (_) {}
+          }
+        }, 200);
       }
 
       chatMessages.addEventListener("scroll", () => {
         stickToBottom = isNearBottom(chatMessages, 140);
       }, { passive: true });
+
+      // When the scroll container resizes (keyboard, toolbar, textarea drag), keep pinned to bottom.
+      try {
+        new ResizeObserver(() => {
+          if (stickToBottom || isNearBottom(chatMessages, 300)) {
+            requestAnimationFrame(() => {
+              try { chatMessages.scrollTop = chatMessages.scrollHeight; stickToBottom = true; } catch (_) {}
+            });
+          }
+        }).observe(chatMessages);
+      } catch (_) {}
 
       function addMsg(role, content, meta) {
         if (chatWelcome.parentNode) chatWelcome.remove();
@@ -6555,10 +6573,17 @@
       // Expandable toolbar (collapsed: attach+textbox+send; expanded: +mic+mention row)
       (function initExpandableToolbar() {
         const inputArea = document.getElementById("chatInputArea");
-        function expandToolbar() { inputArea.classList.add("expanded"); }
+        function keepBottom(fn) {
+          const was = isNearBottom(chatMessages, 200);
+          fn();
+          if (was) requestAnimationFrame(() => {
+            try { chatMessages.scrollTop = chatMessages.scrollHeight; stickToBottom = true; } catch (_) {}
+          });
+        }
+        function expandToolbar() { keepBottom(() => inputArea.classList.add("expanded")); }
         function collapseToolbar() {
           if (chatInput.value.trim() || pendingAttachments.length) return;
-          inputArea.classList.remove("expanded");
+          keepBottom(() => inputArea.classList.remove("expanded"));
         }
         inputArea.addEventListener("click", function(e) {
           if (!inputArea.classList.contains("expanded")) expandToolbar();
