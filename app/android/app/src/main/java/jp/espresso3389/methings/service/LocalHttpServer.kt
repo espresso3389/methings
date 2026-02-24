@@ -127,6 +127,7 @@ class LocalHttpServer(
     private val usbDevicesByHandle = ConcurrentHashMap<String, UsbDevice>()
     private val usbStreams = ConcurrentHashMap<String, UsbStreamState>()
     private val serialSessions = ConcurrentHashMap<String, SerialSessionState>()
+    private val serialWsByHandle = ConcurrentHashMap<String, NanoWSD.WebSocket>()
 
     private val usbManager: UsbManager by lazy {
         context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -2261,6 +2262,9 @@ class LocalHttpServer(
 
     private fun routeSerial(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
+            (uri == "/serial/ws/contract" || uri == "/serial/ws/contract/") && session.method == Method.GET -> {
+                return handleSerialWsContract()
+            }
             (uri == "/serial/status" || uri == "/serial/status/") && session.method == Method.GET -> {
                 return handleSerialStatus(session)
             }
@@ -2320,6 +2324,36 @@ class LocalHttpServer(
             }
             else -> notFound()
         }
+    }
+
+    private fun handleSerialWsContract(): Response {
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("ws_path_template", "/ws/serial/{serial_handle}")
+                .put(
+                    "query",
+                    JSONObject()
+                        .put("permission_id", "optional")
+                        .put("identity", "optional")
+                        .put("read_timeout_ms", 200)
+                        .put("max_read_bytes", 4096)
+                        .put("write_timeout_ms", 2000)
+                )
+                .put("inbound_binary", "raw serial bytes to write")
+                .put(
+                    "inbound_json",
+                    JSONArray()
+                        .put(JSONObject().put("type", "write").put("data_b64", "<base64>").put("timeout_ms", 2000))
+                        .put(JSONObject().put("type", "lines").put("dtr", true).put("rts", false))
+                )
+                .put(
+                    "outbound",
+                    JSONArray()
+                        .put("binary frames: raw serial bytes read from device")
+                        .put("json frames: hello, write_ack, lines_ack, error")
+                )
+        )
     }
 
     private fun routeUvc(session: IHTTPSession, uri: String, postBody: String?): Response {
@@ -4887,6 +4921,10 @@ class LocalHttpServer(
     }
 
     private fun closeSerialSessionInternal(st: SerialSessionState) {
+        val ws = serialWsByHandle.remove(st.id)
+        if (ws != null) {
+            runCatching { ws.close(NanoWSD.WebSocketFrame.CloseCode.NormalClosure, "serial_closed", false) }
+        }
         runCatching { st.port.close() }
         runCatching { st.connection.close() }
     }
@@ -4911,6 +4949,8 @@ class LocalHttpServer(
             .put("stop_bits", st.stopBits)
             .put("parity", st.parity)
             .put("opened_at_ms", st.openedAtMs)
+            .put("ws_path", "/ws/serial/${st.id}")
+            .put("ws_connected", serialWsByHandle.containsKey(st.id))
             .put("driver", "usb-serial-for-android")
     }
 
@@ -6437,6 +6477,203 @@ class LocalHttpServer(
 
                 override fun onException(exception: java.io.IOException?) {
                     usbStreams[streamId]?.wsClients?.remove(this)
+                }
+            }
+        }
+
+        val serialPrefix = "/ws/serial/"
+        if (uri.startsWith(serialPrefix)) {
+            val serialHandle = uri.removePrefix(serialPrefix).trim()
+            val params = handshake.parameters
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
+            val readTimeoutMs = (params["read_timeout_ms"]?.firstOrNull() ?: "200").toIntOrNull()?.coerceIn(0, 60_000) ?: 200
+            val maxReadBytes = (params["max_read_bytes"]?.firstOrNull() ?: "4096").toIntOrNull()?.coerceIn(1, 256 * 1024) ?: 4096
+            val defaultWriteTimeoutMs = (params["write_timeout_ms"]?.firstOrNull() ?: "2000").toIntOrNull()?.coerceIn(0, 60_000) ?: 2000
+
+            return object : NanoWSD.WebSocket(handshake) {
+                private val stop = AtomicBoolean(false)
+                private var readThread: Thread? = null
+
+                override fun onOpen() {
+                    val st = serialSessions[serialHandle]
+                    if (st == null) {
+                        runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "serial_handle_not_found", false) }
+                        return
+                    }
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.usb",
+                        capability = "usb",
+                        detail = "Open serial websocket stream"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
+
+                    val existing = serialWsByHandle.putIfAbsent(serialHandle, this)
+                    if (existing != null && existing !== this) {
+                        runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "serial_ws_already_open", false) }
+                        return
+                    }
+
+                    runCatching {
+                        send(
+                            JSONObject()
+                                .put("type", "hello")
+                                .put("serial_handle", serialHandle)
+                                .put("read_timeout_ms", readTimeoutMs)
+                                .put("max_read_bytes", maxReadBytes)
+                                .put("write_timeout_ms", defaultWriteTimeoutMs)
+                                .toString()
+                        )
+                    }
+
+                    readThread = Thread {
+                        val buf = ByteArray(maxReadBytes)
+                        while (!stop.get() && isOpen) {
+                            try {
+                                val n = synchronized(st.lock) {
+                                    st.port.read(buf, readTimeoutMs)
+                                }
+                                if (n > 0) {
+                                    val out = buf.copyOfRange(0, n.coerceIn(0, buf.size))
+                                    send(out)
+                                }
+                            } catch (ex: Exception) {
+                                val msg = ex.message?.lowercase(Locale.US) ?: ""
+                                if (stop.get()) break
+                                if (ex is java.io.InterruptedIOException || msg.contains("timed out")) {
+                                    continue
+                                }
+                                runCatching {
+                                    send(JSONObject().put("type", "error").put("code", "serial_read_failed").put("detail", ex.message ?: "").toString())
+                                    close(NanoWSD.WebSocketFrame.CloseCode.InternalServerError, "serial_read_failed", false)
+                                }
+                                break
+                            }
+                        }
+                    }.also {
+                        it.name = "serial-ws-read-$serialHandle"
+                        it.start()
+                    }
+                }
+
+                override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
+                    stop.set(true)
+                    if (serialWsByHandle[serialHandle] === this) {
+                        serialWsByHandle.remove(serialHandle)
+                    }
+                    runCatching { readThread?.join(400) }
+                }
+
+                override fun onMessage(message: NanoWSD.WebSocketFrame?) {
+                    val st = serialSessions[serialHandle] ?: return
+                    val frame = message ?: return
+                    try {
+                        when (frame.opCode) {
+                            NanoWSD.WebSocketFrame.OpCode.Binary -> {
+                                val bytes = frame.binaryPayload ?: ByteArray(0)
+                                if (bytes.isEmpty()) return
+                                val n = synchronized(st.lock) {
+                                    st.port.write(bytes, defaultWriteTimeoutMs)
+                                }
+                                runCatching {
+                                    send(
+                                        JSONObject()
+                                            .put("type", "write_ack")
+                                            .put("bytes_written", n)
+                                            .toString()
+                                    )
+                                }
+                            }
+                            NanoWSD.WebSocketFrame.OpCode.Text -> {
+                                val text = frame.textPayload ?: ""
+                                if (text.isBlank()) return
+                                val payload = try {
+                                    JSONObject(text)
+                                } catch (_: Exception) {
+                                    runCatching {
+                                        send(JSONObject().put("type", "error").put("code", "invalid_json").toString())
+                                    }
+                                    return
+                                }
+                                when (payload.optString("type", "").trim().lowercase(Locale.US)) {
+                                    "write" -> {
+                                        val dataB64 = payload.optString("data_b64", "").trim()
+                                        if (dataB64.isBlank()) {
+                                            runCatching { send(JSONObject().put("type", "error").put("code", "data_b64_required").toString()) }
+                                            return
+                                        }
+                                        val bytes = try {
+                                            Base64.decode(dataB64, Base64.DEFAULT)
+                                        } catch (_: Exception) {
+                                            runCatching { send(JSONObject().put("type", "error").put("code", "invalid_data_b64").toString()) }
+                                            return
+                                        }
+                                        val timeoutMs = payload.optInt("timeout_ms", defaultWriteTimeoutMs).coerceIn(0, 60_000)
+                                        val n = synchronized(st.lock) {
+                                            st.port.write(bytes, timeoutMs)
+                                        }
+                                        runCatching {
+                                            send(
+                                                JSONObject()
+                                                    .put("type", "write_ack")
+                                                    .put("bytes_written", n)
+                                                    .toString()
+                                            )
+                                        }
+                                    }
+                                    "lines" -> {
+                                        val dtr = if (payload.has("dtr")) payload.optBoolean("dtr") else null
+                                        val rts = if (payload.has("rts")) payload.optBoolean("rts") else null
+                                        if (dtr == null && rts == null) {
+                                            runCatching { send(JSONObject().put("type", "error").put("code", "line_state_required").toString()) }
+                                            return
+                                        }
+                                        synchronized(st.lock) {
+                                            if (dtr != null) st.port.setDTR(dtr)
+                                            if (rts != null) st.port.setRTS(rts)
+                                        }
+                                        runCatching {
+                                            send(
+                                                JSONObject()
+                                                    .put("type", "lines_ack")
+                                                    .put("dtr", if (dtr == null) JSONObject.NULL else dtr)
+                                                    .put("rts", if (rts == null) JSONObject.NULL else rts)
+                                                    .toString()
+                                            )
+                                        }
+                                    }
+                                    else -> {
+                                        runCatching { send(JSONObject().put("type", "error").put("code", "unknown_message_type").toString()) }
+                                    }
+                                }
+                            }
+                            else -> {
+                                // Ignore ping/pong/continuation.
+                            }
+                        }
+                    } catch (ex: Exception) {
+                        runCatching {
+                            send(JSONObject().put("type", "error").put("code", "serial_write_failed").put("detail", ex.message ?: "").toString())
+                        }
+                    }
+                }
+
+                override fun onPong(pong: NanoWSD.WebSocketFrame?) {}
+
+                override fun onException(exception: java.io.IOException?) {
+                    stop.set(true)
+                    if (serialWsByHandle[serialHandle] === this) {
+                        serialWsByHandle.remove(serialHandle)
+                    }
                 }
             }
         }

@@ -152,9 +152,12 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 ### Serial (USB Serial) — `$sys/docs/openapi/paths/serial.yaml`
 - `serial.open`: open a serial session from a `usb.open` handle (configurable baud/data/stop/parity).
 - `serial.list_ports`: list USB serial driver ports available for a `usb.open` handle.
-- `serial.read` / `serial.write`: byte I/O using base64 payloads.
+- `serial.read` / `serial.write`: polling byte I/O using base64 payloads.
 - `serial.lines`: set DTR/RTS modem lines.
 - `serial.status` / `serial.close`: inspect and close serial sessions.
+- WebSocket async I/O: `GET /serial/ws/contract`, then connect to `/ws/serial/{serial_handle}`.
+  - Server -> client: binary frames (raw serial bytes), plus JSON `hello` / `error`.
+  - Client -> server: binary frames (raw bytes to write), or JSON `{"type":"write","data_b64":"..."}` / `{"type":"lines","dtr":...,"rts":...}`.
 
 ### MCU (Model-Driven Programming) — `$sys/docs/openapi/paths/mcu.yaml`
 - `mcu.models`: list supported programming models and status.

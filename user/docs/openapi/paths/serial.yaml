@@ -52,8 +52,47 @@ serialStatus:
                         type: integer
                       opened_at_ms:
                         type: integer
+                      ws_path:
+                        type: string
+                        description: WebSocket endpoint for async serial stream.
+                        examples: [/ws/serial/ser_abc123]
+                      ws_connected:
+                        type: boolean
                       driver:
                         type: string
+
+serialWsContract:
+  get:
+    operationId: getSerialWsContract
+    summary: Get WebSocket contract for asynchronous serial I/O
+    tags: [Serial]
+    responses:
+      '200':
+        description: WebSocket path and message formats.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, ws_path_template]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                ws_path_template:
+                  type: string
+                  example: /ws/serial/{serial_handle}
+                query:
+                  type: object
+                inbound_binary:
+                  type: string
+                inbound_json:
+                  type: array
+                  items:
+                    type: object
+                outbound:
+                  type: array
+                  items:
+                    type: string
 
 serialOpen:
   post:
@@ -230,7 +269,7 @@ serialClose:
 serialRead:
   post:
     operationId: postSerialRead
-    summary: Read bytes from a USB serial session
+    summary: Read bytes from a USB serial session (polling)
     tags: [Serial]
     x-permission:
       tool: device.usb
@@ -275,7 +314,7 @@ serialRead:
 serialWrite:
   post:
     operationId: postSerialWrite
-    summary: Write bytes to a USB serial session
+    summary: Write bytes to a USB serial session (polling)
     tags: [Serial]
     x-permission:
       tool: device.usb

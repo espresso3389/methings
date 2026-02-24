@@ -292,6 +292,8 @@ paths:
   # ── Serial ──
   /serial/status:
     $ref: './paths/serial.yaml#/serialStatus'
+  /serial/ws/contract:
+    $ref: './paths/serial.yaml#/serialWsContract'
   /serial/open:
     $ref: './paths/serial.yaml#/serialOpen'
   /serial/list_ports:
