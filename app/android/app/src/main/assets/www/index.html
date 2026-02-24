@@ -757,6 +757,32 @@
         transition: border-color var(--transition);
       }
       .chat-input-area textarea::placeholder { color: var(--ink-muted); }
+      .chat-send-hint {
+        position: absolute;
+        pointer-events: none;
+        white-space: nowrap;
+        font-size: 11px;
+        color: var(--ink-muted);
+        opacity: 0.55;
+        line-height: 1;
+        z-index: 3;
+        transition: opacity var(--transition);
+      }
+      .chat-send-hint.hidden { opacity: 0; }
+      .chat-send-hint kbd {
+        display: inline-block;
+        padding: 1px 5px;
+        font-size: 10px;
+        font-family: inherit;
+        background: rgba(255,255,255,0.07);
+        border: 1px solid rgba(255,255,255,0.18);
+        border-radius: 3px;
+        line-height: 1.5;
+        vertical-align: middle;
+      }
+      .chat-send-hint .hint-text {
+        vertical-align: middle;
+      }
       .chat-input-area textarea:focus { border-color: var(--border-focus); }
 
       /* @mention autocomplete dropdown */
@@ -1928,6 +1954,7 @@
         <div class="muted" id="recordingStatus" style="display:none;margin-top:-6px;margin-bottom:2px;">
           Recording...
         </div>
+        <div class="chat-send-hint" id="chatSendHint"><kbd>Ctrl</kbd><span class="hint-text">+</span><kbd>Enter</kbd> <span class="hint-text">to send</span></div>
         <div class="chat-input-row">
           <button class="icon-btn" id="chatUploadBtn" title="Attach file(s)" aria-label="Attach file(s)"></button>
           <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
@@ -6340,16 +6367,38 @@
       }
 
       var userResizeH = 0; // set by drag handle; 0 = natural sizing
+      var _sendHint = document.getElementById("chatSendHint");
+      function positionSendHint() {
+        if (!_sendHint) return;
+        var tr = chatInput.getBoundingClientRect();
+        var ar = chatInput.closest(".chat-input-area").getBoundingClientRect();
+        var margin = 8;
+        _sendHint.style.right = (ar.right - tr.right + margin) + "px";
+        if (chatInput.offsetHeight > 44) {
+          _sendHint.style.top = "auto";
+          _sendHint.style.bottom = (ar.bottom - tr.bottom + margin) + "px";
+          _sendHint.style.transform = "none";
+        } else {
+          var mid = tr.top - ar.top + tr.height / 2;
+          _sendHint.style.bottom = "auto";
+          _sendHint.style.top = mid + "px";
+          _sendHint.style.transform = "translateY(-50%)";
+        }
+      }
       function autoResize() {
         chatInput.style.height = "auto";
-        chatInput.style.height = Math.max(chatInput.scrollHeight, userResizeH) + "px";
+        var h = Math.max(chatInput.scrollHeight, userResizeH);
+        chatInput.style.height = h + "px";
+        positionSendHint();
       }
       function updateSendBtn() {
         var hasAtt = false;
         try { hasAtt = pendingAttachments && pendingAttachments.length > 0; } catch (_) {}
         chatSend.disabled = !chatInput.value.trim() && !hasAtt;
+        if (_sendHint) _sendHint.classList.toggle("hidden", !!chatInput.value);
       }
       chatInput.addEventListener("input", function() { autoResize(); updateSendBtn(); });
+      positionSendHint();
 
       /* ── @mention autocomplete ── */
       let mentionDevices = [];
@@ -6559,6 +6608,7 @@
             }
           }
         }
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); sendChat(); }
       });
 
       // Close mention dropdown when clicking outside
@@ -6580,10 +6630,11 @@
             try { chatMessages.scrollTop = chatMessages.scrollHeight; stickToBottom = true; } catch (_) {}
           });
         }
-        function expandToolbar() { keepBottom(() => inputArea.classList.add("expanded")); }
+        function expandToolbar() { keepBottom(() => inputArea.classList.add("expanded")); requestAnimationFrame(positionSendHint); }
         function collapseToolbar() {
           if (chatInput.value.trim() || pendingAttachments.length) return;
           keepBottom(() => inputArea.classList.remove("expanded"));
+          requestAnimationFrame(positionSendHint);
         }
         inputArea.addEventListener("click", function(e) {
           if (!inputArea.classList.contains("expanded")) expandToolbar();
