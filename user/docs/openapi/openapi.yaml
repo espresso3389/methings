@@ -289,6 +289,22 @@ paths:
   /usb/stream/status:
     $ref: './paths/usb.yaml#/usbStreamStatus'
 
+  # ── Serial ──
+  /serial/status:
+    $ref: './paths/serial.yaml#/serialStatus'
+  /serial/open:
+    $ref: './paths/serial.yaml#/serialOpen'
+  /serial/list_ports:
+    $ref: './paths/serial.yaml#/serialListPorts'
+  /serial/close:
+    $ref: './paths/serial.yaml#/serialClose'
+  /serial/read:
+    $ref: './paths/serial.yaml#/serialRead'
+  /serial/write:
+    $ref: './paths/serial.yaml#/serialWrite'
+  /serial/lines:
+    $ref: './paths/serial.yaml#/serialLines'
+
   # ── MCU ──
   /mcu/models:
     $ref: './paths/mcu.yaml#/mcuModels'
@@ -506,12 +522,38 @@ paths:
   # ── Files ──
   /user/upload:
     $ref: './paths/files.yaml#/userUpload'
+  /user/write:
+    $ref: './paths/files.yaml#/userWrite'
+  /user/write/{path}:
+    $ref: './paths/files.yaml#/userWriteByPath'
   /user/file:
     $ref: './paths/files.yaml#/userFile'
+  /user/file/{path}:
+    $ref: './paths/files.yaml#/userFileByPath'
   /user/file/info:
     $ref: './paths/files.yaml#/userFileInfo'
+  /user/file/info/{path}:
+    $ref: './paths/files.yaml#/userFileInfoByPath'
   /user/list:
     $ref: './paths/files.yaml#/userList'
+  /user/list/{path}:
+    $ref: './paths/files.yaml#/userListByPath'
+  /termux/write:
+    $ref: './paths/files.yaml#/termuxWrite'
+  /termux/write/{path}:
+    $ref: './paths/files.yaml#/termuxWriteByPath'
+  /termux/file:
+    $ref: './paths/files.yaml#/termuxFile'
+  /termux/file/{path}:
+    $ref: './paths/files.yaml#/termuxFileByPath'
+  /termux/file/info:
+    $ref: './paths/files.yaml#/termuxFileInfo'
+  /termux/file/info/{path}:
+    $ref: './paths/files.yaml#/termuxFileInfoByPath'
+  /termux/list:
+    $ref: './paths/files.yaml#/termuxList'
+  /termux/list/{path}:
+    $ref: './paths/files.yaml#/termuxListByPath'
   /sys/file:
     $ref: './paths/files.yaml#/sysFile'
   /sys/list:

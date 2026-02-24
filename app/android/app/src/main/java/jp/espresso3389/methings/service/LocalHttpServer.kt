@@ -65,6 +65,7 @@ import android.util.Base64
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.ByteArrayOutputStream
+import java.io.ByteArrayInputStream
 import java.security.KeyFactory
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
@@ -98,6 +99,10 @@ import androidx.core.content.FileProvider
 import org.json.JSONArray
 import com.hoho.android.usbserial.driver.UsbSerialPort
 import com.hoho.android.usbserial.driver.UsbSerialProber
+import jp.espresso3389.methings.service.mcu.esp.EspFlashException
+import jp.espresso3389.methings.service.mcu.esp.EspFlashStageException
+import jp.espresso3389.methings.service.mcu.esp.EspSerialSession
+import jp.espresso3389.methings.service.mcu.esp.EspSyncException
 
 class LocalHttpServer(
     private val context: Context,
@@ -121,6 +126,7 @@ class LocalHttpServer(
     private val usbConnections = ConcurrentHashMap<String, UsbDeviceConnection>()
     private val usbDevicesByHandle = ConcurrentHashMap<String, UsbDevice>()
     private val usbStreams = ConcurrentHashMap<String, UsbStreamState>()
+    private val serialSessions = ConcurrentHashMap<String, SerialSessionState>()
 
     private val usbManager: UsbManager by lazy {
         context.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -501,6 +507,7 @@ class LocalHttpServer(
             "/notifications" -> routeNotifications(session, uri, postBody)
             "/screen" -> routeScreen(session, uri, postBody)
             "/usb" -> routeUsb(session, uri, postBody)
+            "/serial" -> routeSerial(session, uri, postBody)
             "/mcu" -> routeMcu(session, uri, postBody)
             "/uvc" -> routeUvc(session, uri, postBody)
             "/vision" -> routeVision(session, uri, postBody)
@@ -1193,18 +1200,29 @@ class LocalHttpServer(
                 if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
                 // Strip #page=N fragment for file validation; preserve full path for JS.
                 val filePath = path.replace(Regex("#.*$"), "")
-                val file = if (filePath.startsWith("\$sys/")) {
-                    systemPath(filePath.removePrefix("\$sys/"))
+                val viewPath = if (filePath.startsWith("\$sys/")) {
+                    val file = systemPath(filePath.removePrefix("\$sys/"))
                         ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_system_dir")
+                    if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                    path
                 } else {
-                    userPath(filePath)
-                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                    val ref = parseFsPathRef(filePath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+                    if (ref.fs == "user") {
+                        val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                        if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                    } else if (ref.fs == "termux") {
+                        val stat = statFsPath(ref)
+                        if (!stat.first) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                    } else {
+                        return jsonError(Response.Status.BAD_REQUEST, "unsupported_filesystem")
+                    }
+                    val frag = path.substringAfter('#', "")
+                    if (frag.isNotBlank()) "${ref.displayPath}#$frag" else ref.displayPath
                 }
-                if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
                 val intent = Intent(ACTION_UI_VIEWER_COMMAND).apply {
                     setPackage(context.packageName)
                     putExtra(EXTRA_VIEWER_COMMAND, "open")
-                    putExtra(EXTRA_VIEWER_PATH, path)
+                    putExtra(EXTRA_VIEWER_PATH, viewPath)
                 }
                 context.sendBroadcast(intent)
                 jsonResponse(JSONObject().put("status", "ok"))
@@ -2241,6 +2259,69 @@ class LocalHttpServer(
         }
     }
 
+    private fun routeSerial(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/serial/status" || uri == "/serial/status/") && session.method == Method.GET -> {
+                return handleSerialStatus(session)
+            }
+            (uri == "/serial/open" || uri == "/serial/open/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleSerialOpen(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "Serial open handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "serial_open_handler_failed")
+                }
+            }
+            (uri == "/serial/list_ports" || uri == "/serial/list_ports/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleSerialListPorts(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "Serial list_ports handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "serial_list_ports_handler_failed")
+                }
+            }
+            (uri == "/serial/close" || uri == "/serial/close/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleSerialClose(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "Serial close handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "serial_close_handler_failed")
+                }
+            }
+            (uri == "/serial/read" || uri == "/serial/read/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleSerialRead(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "Serial read handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "serial_read_handler_failed")
+                }
+            }
+            (uri == "/serial/write" || uri == "/serial/write/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleSerialWrite(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "Serial write handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "serial_write_handler_failed")
+                }
+            }
+            (uri == "/serial/lines" || uri == "/serial/lines/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleSerialLines(payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "Serial lines handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "serial_lines_handler_failed")
+                }
+            }
+            else -> notFound()
+        }
+    }
+
     private fun routeUvc(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
             (uri == "/uvc/mjpeg/capture" || uri == "/uvc/mjpeg/capture/") && session.method == Method.POST -> {
@@ -2382,12 +2463,37 @@ class LocalHttpServer(
                 if (!ok.first) return ok.second!!
                 val outPath = payload.optString("path", "captures/capture_${System.currentTimeMillis()}.jpg")
                 val lens = payload.optString("lens", "back")
-                val file = userPath(outPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                val outRef = parseFsPathRef(outPath.trim()) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+                val tempCaptureRef = if (outRef.fs == "user") {
+                    outRef
+                } else {
+                    parseFsPathRef("user://captures/.tmp_capture_${System.currentTimeMillis()}.jpg")
+                        ?: return jsonError(Response.Status.INTERNAL_ERROR, "temp_path_resolve_failed")
+                }
+                val file = tempCaptureRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
                 val q = payload.optInt("jpeg_quality", 95).coerceIn(40, 100)
                 val exp = if (payload.has("exposure_compensation")) payload.optInt("exposure_compensation") else null
                 val out = JSONObject(camera.captureStill(file, lens, jpegQuality = q, exposureCompensation = exp))
+                if (out.optString("status", "") == "ok" && outRef.fs == "termux") {
+                    val bytes = try {
+                        file.readBytes()
+                    } catch (ex: Exception) {
+                        return jsonError(Response.Status.INTERNAL_ERROR, "capture_temp_read_failed", JSONObject().put("detail", ex.message ?: ""))
+                    }
+                    try {
+                        writeFsPathBytes(outRef, bytes)
+                    } catch (ex: IllegalArgumentException) {
+                        return when (ex.message ?: "") {
+                            "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                            "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                            else -> jsonError(Response.Status.INTERNAL_ERROR, "termux_fs_write_failed")
+                        }
+                    } finally {
+                        runCatching { file.delete() }
+                    }
+                }
                 // Absolute path is useful for logs/debugging, but tools should prefer rel_path under user root.
-                out.put("rel_path", outPath)
+                out.put("rel_path", outRef.displayPath)
                 return jsonResponse(out)
             }
             else -> notFound()
@@ -2720,6 +2826,46 @@ class LocalHttpServer(
         // Accept both /termux/* (canonical) and /python/* (legacy alias)
         val path = if (uri.startsWith("/python")) uri.replaceFirst("/python", "/termux") else uri
         return when {
+            path == "/termux/write" && session.method == Method.POST -> {
+                handleFileWrite(postBody, forcedPath = null, expectedFs = "termux")
+            }
+            path.startsWith("/termux/write/") && session.method == Method.POST -> {
+                val p = decodePathSuffix(path, "/termux/write/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                handleFileWrite(postBody, forcedPath = normalized, expectedFs = "termux")
+            }
+            path == "/termux/file" && session.method == Method.GET -> {
+                val raw = firstParam(session, "path").trim()
+                if (raw.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                val normalized = normalizeTermuxRoutePath(raw) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                serveFileByPath(normalized)
+            }
+            path.startsWith("/termux/file/info/") && session.method == Method.GET -> {
+                val p = decodePathSuffix(path, "/termux/file/info/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                handleFileInfoByPath(normalized)
+            }
+            path == "/termux/file/info" && session.method == Method.GET -> {
+                val raw = firstParam(session, "path").trim()
+                if (raw.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                val normalized = normalizeTermuxRoutePath(raw) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                handleFileInfoByPath(normalized)
+            }
+            path.startsWith("/termux/file/") && session.method == Method.GET -> {
+                val p = decodePathSuffix(path, "/termux/file/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                serveFileByPath(normalized)
+            }
+            path == "/termux/list" && session.method == Method.GET -> {
+                val raw = firstParam(session, "path").trim().ifBlank { "~" }
+                val normalized = normalizeTermuxRoutePath(raw) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                handleListByPath(normalized)
+            }
+            path.startsWith("/termux/list/") && session.method == Method.GET -> {
+                val p = decodePathSuffix(path, "/termux/list/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                handleListByPath(normalized)
+            }
             path == "/termux/worker/start" || path == "/termux/start" -> {
                 runtimeManager.startWorker()
                 jsonResponse(JSONObject().put("status", "starting"))
@@ -2995,11 +3141,30 @@ class LocalHttpServer(
 
     private fun routeUser(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
+            uri == "/user/write" && session.method == Method.POST -> {
+                handleFileWrite(postBody, forcedPath = null, expectedFs = "user")
+            }
+            uri.startsWith("/user/write/") && session.method == Method.POST -> {
+                val p = decodePathSuffix(uri, "/user/write/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                handleFileWrite(postBody, forcedPath = "user://$p", expectedFs = "user")
+            }
             uri == "/user/list" && session.method == Method.GET -> {
                 handleUserList(session)
             }
+            uri.startsWith("/user/list/") && session.method == Method.GET -> {
+                val p = decodePathSuffix(uri, "/user/list/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                handleListByPath("user://$p")
+            }
             uri == "/user/file" && session.method == Method.GET -> {
                 serveUserFile(session)
+            }
+            uri.startsWith("/user/file/info/") && session.method == Method.GET -> {
+                val p = decodePathSuffix(uri, "/user/file/info/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                handleFileInfoByPath("user://$p")
+            }
+            uri.startsWith("/user/file/") && session.method == Method.GET -> {
+                val p = decodePathSuffix(uri, "/user/file/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                serveFileByPath("user://$p")
             }
             uri.startsWith("/user/www/") && session.method == Method.GET -> {
                 serveUserWww(session)
@@ -3035,12 +3200,37 @@ class LocalHttpServer(
             (uri == "/webview/screenshot" || uri == "/webview/screenshot/") && session.method == Method.POST -> {
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val outPath = payload.optString("path", "browser/screenshot_${System.currentTimeMillis()}.jpg")
-                val file = userPath(outPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                val outRef = parseFsPathRef(outPath.trim()) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+                val tempOutRef = if (outRef.fs == "user") {
+                    outRef
+                } else {
+                    parseFsPathRef("user://browser/.tmp_screenshot_${System.currentTimeMillis()}.jpg")
+                        ?: return jsonError(Response.Status.INTERNAL_ERROR, "temp_path_resolve_failed")
+                }
+                val file = tempOutRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
                 val quality = payload.optInt("quality", 80).coerceIn(10, 100)
                 val timeoutS = payload.optLong("timeout_s", 10).coerceIn(1, 60)
                 val result = jp.espresso3389.methings.device.WebViewBrowserManager.screenshot(file, quality, timeoutS)
                 if (result.optString("status") == "ok") {
-                    result.put("rel_path", outPath)
+                    if (outRef.fs == "termux") {
+                        val bytes = try {
+                            file.readBytes()
+                        } catch (ex: Exception) {
+                            return jsonError(Response.Status.INTERNAL_ERROR, "screenshot_temp_read_failed", JSONObject().put("detail", ex.message ?: ""))
+                        }
+                        try {
+                            writeFsPathBytes(outRef, bytes)
+                        } catch (ex: IllegalArgumentException) {
+                            return when (ex.message ?: "") {
+                                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                                else -> jsonError(Response.Status.INTERNAL_ERROR, "termux_fs_write_failed")
+                            }
+                        } finally {
+                            runCatching { file.delete() }
+                        }
+                    }
+                    result.put("rel_path", outRef.displayPath)
                 }
                 jsonResponse(result)
             }
@@ -3215,56 +3405,82 @@ class LocalHttpServer(
     }
 
     private fun handleUserList(session: IHTTPSession): Response {
-        val rel = firstParam(session, "path").trim().trimStart('/')
-        val root = File(context.filesDir, "user").canonicalFile
-        val dir = if (rel.isBlank()) root else userPath(rel) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-        if (!dir.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
-        if (!dir.isDirectory) return jsonError(Response.Status.BAD_REQUEST, "not_a_directory")
-
-        val arr = org.json.JSONArray()
-        val kids = dir.listFiles()?.sortedBy { it.name.lowercase() } ?: emptyList()
-        for (f in kids) {
-            val item = JSONObject()
-                .put("name", f.name)
-                .put("is_dir", f.isDirectory)
-                .put("size", if (f.isFile) f.length() else 0L)
-                .put("mtime_ms", f.lastModified())
-            arr.put(item)
-        }
-        val outRel = if (dir == root) "" else dir.relativeTo(root).path.replace("\\", "/")
-        return jsonResponse(JSONObject().put("status", "ok").put("path", outRel).put("items", arr))
+        val raw = firstParam(session, "path").trim()
+        val path = if (raw.isBlank()) "user://." else raw
+        return handleListByPath(path)
     }
 
     private fun serveUserFile(session: IHTTPSession): Response {
-        val rel = firstParam(session, "path")
-        if (rel.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-        val file = userPath(rel) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-        if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+        val raw = firstParam(session, "path").trim()
+        if (raw.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+        return serveFileByPath(raw)
+    }
 
-        val relLower = rel.lowercase()
-        val nameLower = file.name.lowercase()
+    private fun handleUserFileInfo(session: IHTTPSession): Response {
+        val rawPath = firstParam(session, "path").replace(Regex("#.*$"), "").trim()
+        if (rawPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+        return handleFileInfoByPath(rawPath)
+    }
+
+    private fun handleListByPath(path: String): Response {
+        return listFsPath(path)
+    }
+
+    private fun serveFileByPath(raw: String): Response {
+        val ref = parseFsPathRef(raw) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        val displayPath = ref.displayPath
+        val name = when {
+            ref.fs == "user" -> ref.userFile?.name ?: raw.substringAfterLast('/')
+            ref.fs == "termux" -> ref.termuxPath?.substringAfterLast('/') ?: raw.substringAfterLast('/')
+            else -> raw.substringAfterLast('/')
+        }
+
+        val relLower = displayPath.lowercase()
+        val nameLower = name.lowercase()
         val isAudioRecordingWebm =
             (nameLower.endsWith(".webm") && (nameLower.startsWith("audio_recording") || relLower.contains("uploads/recordings/")))
         val mime = if (isAudioRecordingWebm) {
             "audio/webm"
         } else {
-            URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
+            URLConnection.guessContentTypeFromName(name) ?: mimeTypeFor(name)
         }
-        val stream: InputStream = FileInputStream(file)
-        val response = newChunkedResponse(Response.Status.OK, mime, stream)
+        if (ref.fs == "user") {
+            val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+            if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+            val stream: InputStream = FileInputStream(file)
+            val response = newChunkedResponse(Response.Status.OK, mime, stream)
+            response.addHeader("Cache-Control", "no-cache")
+            response.addHeader("X-Content-Type-Options", "nosniff")
+            return response
+        }
+        val bytes = try {
+            readFsPathBytes(ref).first
+        } catch (ex: IllegalArgumentException) {
+            return when (ex.message ?: "") {
+                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                "not_found" -> jsonError(Response.Status.NOT_FOUND, "not_found")
+                "file_too_large" -> jsonError(Response.Status.BAD_REQUEST, "file_too_large")
+                else -> jsonError(Response.Status.INTERNAL_ERROR, "file_read_failed")
+            }
+        }
+        val response = newFixedLengthResponse(Response.Status.OK, mime, ByteArrayInputStream(bytes), bytes.size.toLong())
         response.addHeader("Cache-Control", "no-cache")
         response.addHeader("X-Content-Type-Options", "nosniff")
         return response
     }
 
-    private fun handleUserFileInfo(session: IHTTPSession): Response {
-        val rel = firstParam(session, "path").replace(Regex("#.*$"), "")
-        if (rel.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-        val file = userPath(rel) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-        if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+    private fun handleFileInfoByPath(rawPath: String): Response {
+        val ref = parseFsPathRef(rawPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        val displayPath = ref.displayPath
+        val fileName = when (ref.fs) {
+            "user" -> ref.userFile?.name ?: rawPath.substringAfterLast('/')
+            "termux" -> ref.termuxPath?.substringAfterLast('/') ?: rawPath.substringAfterLast('/')
+            else -> rawPath.substringAfterLast('/')
+        }
 
-        val ext = file.name.substringAfterLast('.', "").lowercase()
-        val mime = URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name)
+        val ext = fileName.substringAfterLast('.', "").lowercase()
+        val mime = URLConnection.guessContentTypeFromName(fileName) ?: mimeTypeFor(fileName)
         val kind = when {
             ext in listOf("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg") -> "image"
             ext in listOf("mp4", "mkv", "mov", "m4v", "3gp", "webm") -> "video"
@@ -3276,50 +3492,125 @@ class LocalHttpServer(
         }
 
         val json = JSONObject()
-            .put("name", file.name)
-            .put("size", file.length())
-            .put("mtime_ms", file.lastModified())
+            .put("name", fileName)
+            .put("size", 0L)
+            .put("mtime_ms", 0L)
             .put("mime", mime)
             .put("kind", kind)
             .put("ext", ext)
+            .put("fs", ref.fs)
+            .put("path", displayPath)
 
-        // Image dimensions
-        if (kind == "image" && ext != "svg") {
-            try {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(file.absolutePath, bounds)
-                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
-                    json.put("width", bounds.outWidth)
-                    json.put("height", bounds.outHeight)
-                }
-            } catch (_: Exception) {}
-        }
+        if (ref.fs == "user") {
+            val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+            if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+            json.put("size", file.length())
+            json.put("mtime_ms", file.lastModified())
 
-        // Marp detection for markdown files
-        if (ext == "md") {
-            try {
-                // Read only first 1KB for front matter check
-                val head = file.inputStream().use { inp ->
-                    val buf = ByteArray(1024)
-                    val n = inp.read(buf)
-                    if (n > 0) String(buf, 0, n, Charsets.UTF_8) else ""
-                }
-                val fmMatch = Regex("^---\\s*\\n([\\s\\S]*?)\\n---").find(head)
-                val isMarp = fmMatch != null && Regex("^marp\\s*:\\s*true\\s*$", RegexOption.MULTILINE).containsMatchIn(fmMatch.groupValues[1])
-                json.put("is_marp", isMarp)
-                if (isMarp) {
-                    // Read full file for slide count
-                    val fullText = file.readText(Charsets.UTF_8)
-                    val stripped = fullText.replace(Regex("^---\\s*\\n[\\s\\S]*?\\n---\\n?"), "")
-                    val slideCount = stripped.split("\n---\n").size
-                    json.put("slide_count", slideCount)
-                }
-            } catch (_: Exception) {
-                json.put("is_marp", false)
+            if (kind == "image" && ext != "svg") {
+                try {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(file.absolutePath, bounds)
+                    if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                        json.put("width", bounds.outWidth)
+                        json.put("height", bounds.outHeight)
+                    }
+                } catch (_: Exception) {}
             }
+
+            if (ext == "md") {
+                try {
+                    val head = file.inputStream().use { inp ->
+                        val buf = ByteArray(1024)
+                        val n = inp.read(buf)
+                        if (n > 0) String(buf, 0, n, Charsets.UTF_8) else ""
+                    }
+                    val fmMatch = Regex("^---\\s*\\n([\\s\\S]*?)\\n---").find(head)
+                    val isMarp = fmMatch != null && Regex("^marp\\s*:\\s*true\\s*$", RegexOption.MULTILINE).containsMatchIn(fmMatch.groupValues[1])
+                    json.put("is_marp", isMarp)
+                    if (isMarp) {
+                        val fullText = file.readText(Charsets.UTF_8)
+                        val stripped = fullText.replace(Regex("^---\\s*\\n[\\s\\S]*?\\n---\\n?"), "")
+                        val slideCount = stripped.split("\n---\n").size
+                        json.put("slide_count", slideCount)
+                    }
+                } catch (_: Exception) {
+                    json.put("is_marp", false)
+                }
+            }
+        } else {
+            val stat = statFsPath(ref)
+            if (!stat.first) return jsonError(Response.Status.NOT_FOUND, "not_found")
+            json.put("size", stat.second)
         }
 
         return jsonResponse(json)
+    }
+
+    private fun handleFileWrite(postBody: String?, forcedPath: String?, expectedFs: String): Response {
+        val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+        val inputPath = forcedPath ?: payload.optString("path", "").trim()
+        if (inputPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+        val normalizedPath = when {
+            forcedPath != null -> forcedPath
+            expectedFs == "termux" -> normalizeTermuxRoutePath(inputPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+            else -> {
+                if (inputPath.startsWith("user://", ignoreCase = true)) inputPath
+                else if (inputPath.startsWith("/") || inputPath.startsWith("termux://", ignoreCase = true)) {
+                    return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                } else "user://${inputPath.trimStart('/')}"
+            }
+        }
+        val ref = parseFsPathRef(normalizedPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        if (ref.fs != expectedFs) {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                if (expectedFs == "user") "path_outside_user_dir" else "path_outside_termux_home"
+            )
+        }
+
+        val hasDataB64 = payload.optString("data_b64", "").trim().isNotBlank()
+        val hasContent = payload.has("content")
+        val hasBody = payload.has("body")
+        if (!hasDataB64 && !hasContent && !hasBody) {
+            return jsonError(Response.Status.BAD_REQUEST, "content_required")
+        }
+
+        val bytes = try {
+            if (hasDataB64) {
+                Base64.decode(payload.optString("data_b64", "").trim(), Base64.DEFAULT)
+            } else {
+                val encoding = payload.optString("encoding", "utf-8").trim().lowercase(Locale.US)
+                val value = if (hasContent) payload.opt("content") else payload.opt("body")
+                val text = when (value) {
+                    null, JSONObject.NULL -> ""
+                    is JSONObject, is JSONArray -> value.toString()
+                    else -> value.toString()
+                }
+                if (encoding == "base64") Base64.decode(text, Base64.DEFAULT) else text.toByteArray(Charsets.UTF_8)
+            }
+        } catch (_: Exception) {
+            return jsonError(Response.Status.BAD_REQUEST, "invalid_content")
+        }
+
+        return try {
+            val saved = writeFsPathBytes(ref, bytes)
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("path", saved)
+                    .put("bytes_written", bytes.size)
+            )
+        } catch (ex: IllegalArgumentException) {
+            when (ex.message ?: "") {
+                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                "path_outside_user_dir" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                else -> jsonError(Response.Status.INTERNAL_ERROR, "file_write_failed")
+            }
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "file_write_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
     }
 
     private fun serveUserWww(session: IHTTPSession): Response {
@@ -3361,17 +3652,25 @@ class LocalHttpServer(
         val name = (parms["name"]?.firstOrNull() ?: originalName).trim().ifBlank {
             "upload_" + System.currentTimeMillis().toString()
         }
-        val dir = (parms["dir"]?.firstOrNull() ?: parms["path"]?.firstOrNull() ?: "").trim().trimStart('/')
-        val relPath = if (dir.isBlank()) "uploads/$name" else (dir.trimEnd('/') + "/" + name)
-        val out = userPath(relPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-        out.parentFile?.mkdirs()
+        val dirRaw = (parms["dir"]?.firstOrNull() ?: parms["path"]?.firstOrNull() ?: "").trim()
+        val finalPath = if (dirRaw.isBlank()) {
+            "user://uploads/$name"
+        } else if (dirRaw.startsWith("user://", ignoreCase = true) ||
+            dirRaw.startsWith("termux://", ignoreCase = true) ||
+            dirRaw.startsWith(TERMUX_HOME_PREFIX)
+        ) {
+            dirRaw.trimEnd('/') + "/" + name
+        } else {
+            "user://" + dirRaw.trimStart('/').trimEnd('/') + "/" + name
+        }
+        val outRef = parseFsPathRef(finalPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        if (outRef.fs == "user") {
+            outRef.userFile?.parentFile?.mkdirs()
+        }
 
         return try {
-            File(tmp).inputStream().use { inp ->
-                out.outputStream().use { outp ->
-                    inp.copyTo(outp)
-                }
-            }
+            val bytes = File(tmp).readBytes()
+            writeFsPathBytes(outRef, bytes)
             // Upload is an explicit user action (file picker + send). Treat it as consent to let the
             // agent/UI read uploaded user files without re-prompting for device.files.
             try {
@@ -3408,9 +3707,15 @@ class LocalHttpServer(
             jsonResponse(
                 JSONObject()
                     .put("status", "ok")
-                    .put("path", relPath)
-                    .put("size", out.length())
+                    .put("path", outRef.displayPath)
+                    .put("size", bytes.size)
             )
+        } catch (ex: IllegalArgumentException) {
+            when (ex.message ?: "") {
+                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                else -> jsonError(Response.Status.INTERNAL_ERROR, "upload_failed", JSONObject().put("detail", ex.message ?: ""))
+            }
         } catch (ex: Exception) {
             jsonError(Response.Status.INTERNAL_ERROR, "upload_failed", JSONObject().put("detail", ex.message ?: ""))
         }
@@ -3619,52 +3924,6 @@ class LocalHttpServer(
         val offset: Int,
         val bytes: ByteArray,
     )
-
-    private class EspSlipCodec {
-        private val pending = ArrayDeque<Int>()
-        private val frame = ArrayList<Byte>()
-        private var inFrame = false
-
-        fun feed(data: ByteArray, length: Int) {
-            val n = length.coerceIn(0, data.size)
-            for (i in 0 until n) pending.addLast(data[i].toInt() and 0xFF)
-        }
-
-        fun nextFrame(): ByteArray? {
-            while (pending.isNotEmpty()) {
-                val b = pending.removeFirst()
-                if (b == 0xC0) {
-                    if (!inFrame) {
-                        inFrame = true
-                        frame.clear()
-                        continue
-                    }
-                    val out = frame.toByteArray()
-                    frame.clear()
-                    inFrame = true
-                    if (out.isNotEmpty()) return out
-                    continue
-                }
-                if (!inFrame) continue
-                if (b == 0xDB) {
-                    if (pending.isEmpty()) {
-                        // Need one more byte; keep escape marker for next feed.
-                        pending.addFirst(b)
-                        return null
-                    }
-                    val esc = pending.removeFirst()
-                    when (esc) {
-                        0xDC -> frame.add(0xC0.toByte())
-                        0xDD -> frame.add(0xDB.toByte())
-                        else -> return null
-                    }
-                } else {
-                    frame.add(b.toByte())
-                }
-            }
-            return null
-        }
-    }
 
     private fun handleMcuFlash(session: IHTTPSession, payload: JSONObject): Response {
         val model = payload.optString("model", "").trim().lowercase(Locale.US)
@@ -3919,11 +4178,20 @@ class LocalHttpServer(
     private fun handleMcuFlashPlan(payload: JSONObject): Response {
         val planPath = payload.optString("plan_path", "").trim()
         if (planPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "plan_path_required")
-        val planFile = userPath(planPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-        if (!planFile.exists() || !planFile.isFile) return jsonError(Response.Status.NOT_FOUND, "plan_not_found")
+        val planRef = parseFsPathRef(planPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        val planBytes = try {
+            readFsPathBytes(planRef).first
+        } catch (ex: IllegalArgumentException) {
+            return when (ex.message ?: "") {
+                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                "file_too_large" -> jsonError(Response.Status.BAD_REQUEST, "plan_too_large")
+                else -> jsonError(Response.Status.NOT_FOUND, "plan_not_found")
+            }
+        }
 
         val planJson = try {
-            JSONObject(planFile.readText(Charsets.UTF_8))
+            JSONObject(planBytes.toString(Charsets.UTF_8))
         } catch (ex: Exception) {
             return jsonError(Response.Status.BAD_REQUEST, "invalid_plan_json", JSONObject().put("detail", ex.message ?: ""))
         }
@@ -3947,7 +4215,12 @@ class LocalHttpServer(
             )
         }
 
-        val baseDir = planFile.parentFile ?: File(context.filesDir, "user")
+        val userRoot = File(context.filesDir, "user").canonicalFile
+        val baseDir = when (planRef.fs) {
+            "user" -> planRef.userFile?.parentFile ?: userRoot
+            "termux" -> File(planRef.termuxPath ?: TERMUX_HOME_PREFIX).parentFile ?: File(TERMUX_HOME_PREFIX)
+            else -> userRoot
+        }
         val sortedOffsets = flashFiles.keys().asSequence().toList().sortedBy {
             parseOffsetToInt(it)
         }
@@ -3965,18 +4238,30 @@ class LocalHttpServer(
                 else -> ""
             }
             if (path.isBlank()) continue
-            val abs = File(baseDir, path).canonicalFile
-            val rel = toUserRelativePath(abs)
-                ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir", JSONObject().put("path", path))
-            val candidate = userPath(rel)
-            val exists = candidate?.exists() == true && candidate.isFile
-            if (!exists) {
-                missing.put(rel)
+            val abs = File(baseDir, path).canonicalFile.path.replace('\\', '/')
+            val segmentPath = when (planRef.fs) {
+                "user" -> {
+                    val rel = toUserRelativePath(File(abs))
+                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir", JSONObject().put("path", path))
+                    "user://$rel"
+                }
+                "termux" -> {
+                    if (!isAllowedTermuxPath(abs)) {
+                        return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home", JSONObject().put("path", path))
+                    }
+                    "termux://~${abs.removePrefix(TERMUX_HOME_PREFIX)}"
+                }
+                else -> path
             }
-            val size = if (exists) candidate!!.length() else 0L
+            val ref = parseFsPathRef(segmentPath)
+                ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path", JSONObject().put("path", segmentPath))
+            val stat = statFsPath(ref)
+            val exists = stat.first
+            if (!exists) missing.put(segmentPath)
+            val size = if (exists) stat.second else 0L
             segments.put(
                 JSONObject()
-                    .put("path", rel)
+                    .put("path", segmentPath)
                     .put("offset", offset)
                     .put("exists", exists)
                     .put("size", size)
@@ -3987,7 +4272,7 @@ class LocalHttpServer(
             JSONObject()
                 .put("status", "ok")
                 .put("model", model)
-                .put("plan_path", planPath)
+                .put("plan_path", planRef.displayPath)
                 .put("segment_count", segments.length())
                 .put("segments", segments)
                 .put("missing_files", missing)
@@ -4418,729 +4703,6 @@ class LocalHttpServer(
         return sb.toString()
     }
 
-    private data class EspFlashResult(
-        val blocksWritten: Int,
-        val blockSize: Int,
-    )
-
-    private class EspSyncException(
-        message: String,
-        val attempts: JSONArray,
-    ) : IllegalStateException(message)
-
-    private class EspFlashStageException(
-        message: String,
-        val stage: String,
-        val blockIndex: Int?,
-        val blocksWritten: Int,
-    ) : IllegalStateException(message)
-
-    private class EspFlashException(
-        message: String,
-        val detailPayload: JSONObject,
-    ) : IllegalStateException(message)
-
-    private class EspSerialSession(
-        private val usbManager: UsbManager,
-        private val dev: UsbDevice,
-        private val conn: UsbDeviceConnection,
-        private val inEp: UsbEndpoint,
-        private val outEp: UsbEndpoint,
-        private val timeoutMs: Int,
-        private val bridgeHint: String?,
-        private val interfaceId: Int,
-    ) {
-        private val codec = EspSlipCodec()
-        private val readBuf = ByteArray(4096)
-        private val isFtdi = bridgeHint == "ftdi"
-        private var serialPort: UsbSerialPort? = null
-        private var serialConn: UsbDeviceConnection? = null
-
-        private val cmdSync = 0x08
-        private val cmdReadReg = 0x0A
-        private val cmdSpiAttach = 0x0D
-        private val cmdFlashBegin = 0x02
-        private val cmdFlashData = 0x03
-        private val cmdFlashEnd = 0x04
-        private val checksumMagic = 0xEF
-        private val flashBlockSize = 0x400
-
-        init {
-            serialPort = openUsbSerialPort()
-        }
-
-        fun usesUsbSerial(): Boolean = serialPort != null
-
-        fun close() {
-            runCatching { serialPort?.close() }
-            runCatching { serialConn?.close() }
-            serialPort = null
-            serialConn = null
-        }
-
-        fun configureSerial() {
-            val port = serialPort
-            if (port != null) {
-                port.setParameters(115200, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
-                runCatching { port.setDTR(false) }
-                runCatching { port.setRTS(false) }
-                return
-            }
-            when (bridgeHint) {
-                "ftdi" -> {
-                    ftdiResetAll()
-                    // Make sure host TX is not gated by modem flow control defaults.
-                    ftdiSetFlowControlNone()
-                    ftdiSetLatencyTimer(1)
-                    ftdiSetBaudRate(115200)
-                    ftdiSetData8N1()
-                    // Default idle state
-                    ftdiSetModemDtrRts(dtr = false, rts = false)
-                }
-            }
-        }
-
-        fun flushInput() {
-            val port = serialPort
-            if (port != null) {
-                repeat(8) {
-                    val n = try {
-                        port.read(readBuf, 30)
-                    } catch (_: Exception) {
-                        -1
-                    }
-                    if (n <= 0) return
-                }
-                return
-            }
-            repeat(3) {
-                val n = conn.bulkTransfer(inEp, readBuf, readBuf.size, 30)
-                if (n <= 0) return
-            }
-        }
-
-        fun sniffRaw(durationMs: Int): ByteArray {
-            val deadline = System.currentTimeMillis() + durationMs.coerceAtLeast(1)
-            val out = ByteArrayOutputStream()
-            while (System.currentTimeMillis() < deadline) {
-                val chunk = readBulkChunk(100)
-                if (chunk.isNotEmpty()) {
-                    out.write(chunk)
-                }
-            }
-            return out.toByteArray()
-        }
-
-        fun enterBootloaderIfSupported(bridgeHint: String?, interfaceId: Int) {
-            when (bridgeHint) {
-                "cp210x" -> {
-                    // Matches esptool ClassicReset semantics for DTR/RTS.
-                    applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)
-                    Thread.sleep(100)
-                    applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)
-                    Thread.sleep(50)
-                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)
-                    Thread.sleep(40)
-                }
-                "ftdi" -> {
-                    // FTDI classic reset sequence (DTR=IO0, RTS=EN style wiring).
-                    applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)   // IO0 high, EN low
-                    Thread.sleep(100)
-                    applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)   // IO0 low, EN high
-                    Thread.sleep(50)
-                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)  // IO0 high
-                    Thread.sleep(40)
-                }
-            }
-        }
-
-        fun enterBootloaderInvertedIfSupported(bridgeHint: String?, interfaceId: Int) {
-            when (bridgeHint) {
-                "cp210x", "ftdi" -> {
-                    // Some boards wire EN/IO0 opposite to common DTR/RTS mapping.
-                    applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)
-                    Thread.sleep(100)
-                    applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)
-                    Thread.sleep(50)
-                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)
-                    Thread.sleep(40)
-                }
-            }
-        }
-
-        private fun enterBootloaderPulseEnIfSupported(bridgeHint: String?, interfaceId: Int) {
-            when (bridgeHint) {
-                "cp210x", "ftdi" -> {
-                    // Keep IO0 asserted during EN pulse; then release to run ROM loader.
-                    applyModemLines(dtr = true, rts = true, interfaceId = interfaceId)
-                    Thread.sleep(90)
-                    applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)
-                    Thread.sleep(120)
-                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)
-                    Thread.sleep(60)
-                }
-            }
-        }
-
-        fun rebootToRunIfSupported(bridgeHint: String?, interfaceId: Int) {
-            when (bridgeHint) {
-                "cp210x", "ftdi" -> {
-                    // Pulse EN low with IO0 released, then return to run mode.
-                    applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)
-                    Thread.sleep(90)
-                    applyModemLines(dtr = false, rts = false, interfaceId = interfaceId)
-                    Thread.sleep(60)
-                }
-                else -> {
-                    setModemLines(dtr = false, rts = false)
-                    Thread.sleep(40)
-                }
-            }
-        }
-
-        fun settleAfterBootloaderReset() {
-            // Allow ROM banner to finish and drain stale bytes before issuing sync.
-            Thread.sleep(180)
-            flushInput()
-            Thread.sleep(50)
-        }
-
-        fun setModemLines(dtr: Boolean?, rts: Boolean?) {
-            val port = serialPort
-            if (port != null) {
-                if (dtr != null) runCatching { port.setDTR(dtr) }.getOrElse { throw IllegalStateException("serial_set_dtr_failed") }
-                if (rts != null) runCatching { port.setRTS(rts) }.getOrElse { throw IllegalStateException("serial_set_rts_failed") }
-                if (dtr == null && rts == null) throw IllegalStateException("line_state_required")
-                return
-            }
-            when (bridgeHint) {
-                "cp210x" -> {
-                    if (dtr == null && rts == null) throw IllegalStateException("cp210x_line_state_required")
-                    cp210xSetModemLines(dtr = dtr, rts = rts, interfaceId = interfaceId, timeoutMs = 1000)
-                }
-                "ftdi" -> {
-                    if (dtr == null || rts == null) throw IllegalStateException("ftdi_requires_dtr_and_rts")
-                    ftdiSetModemDtrRts(dtr = dtr, rts = rts)
-                }
-                else -> throw IllegalStateException("unsupported_serial_bridge")
-            }
-        }
-
-        fun sendSyncProbe() {
-            val payload = ByteArray(36)
-            payload[0] = 0x07
-            payload[1] = 0x07
-            payload[2] = 0x12
-            payload[3] = 0x20
-            for (i in 4 until payload.size) payload[i] = 0x55
-            val header = byteArrayOf(
-                0x00,
-                (cmdSync and 0xFF).toByte(),
-                (payload.size and 0xFF).toByte(),
-                ((payload.size ushr 8) and 0xFF).toByte(),
-                0x00, 0x00, 0x00, 0x00,
-            )
-            writeSlip(header + payload, timeoutMs.coerceAtLeast(200))
-        }
-
-        fun collectSlipFrames(durationMs: Int, maxFrames: Int): JSONArray {
-            val out = JSONArray()
-            val deadline = System.currentTimeMillis() + durationMs.coerceAtLeast(1)
-            while (out.length() < maxFrames && System.currentTimeMillis() < deadline) {
-                val remain = (deadline - System.currentTimeMillis()).coerceAtLeast(1L).toInt()
-                val frame = readSlipFrame(minOf(80, remain)) ?: continue
-                val preview = frame.copyOfRange(0, minOf(64, frame.size))
-                out.put(
-                    JSONObject()
-                        .put("len", frame.size)
-                        .put("preview_b64", android.util.Base64.encodeToString(preview, android.util.Base64.NO_WRAP))
-                        .put("preview_ascii", asciiPreview(preview))
-                )
-            }
-            return out
-        }
-
-        private fun asciiPreview(bytes: ByteArray): String {
-            val sb = StringBuilder(bytes.size)
-            for (b in bytes) {
-                val v = b.toInt() and 0xFF
-                if (v in 32..126 || v == 10 || v == 13 || v == 9) sb.append(v.toChar()) else sb.append('.')
-            }
-            return sb.toString()
-        }
-
-        fun sync() {
-            val payload = ByteArray(36)
-            payload[0] = 0x07
-            payload[1] = 0x07
-            payload[2] = 0x12
-            payload[3] = 0x20
-            for (i in 4 until payload.size) payload[i] = 0x55
-            val header = byteArrayOf(
-                0x00,
-                (cmdSync and 0xFF).toByte(),
-                (payload.size and 0xFF).toByte(),
-                ((payload.size ushr 8) and 0xFF).toByte(),
-                0x00, 0x00, 0x00, 0x00,
-            )
-
-            val candidateBauds = if (isFtdi) {
-                intArrayOf(115200, 74880, 57600, 38400, 230400)
-            } else {
-                intArrayOf(115200)
-            }
-
-            for (baud in candidateBauds) {
-                if (serialPort != null) {
-                    runCatching { serialPort?.setParameters(baud, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE) }
-                } else if (isFtdi) {
-                    runCatching { ftdiSetBaudRate(baud) }
-                }
-                flushInput()
-                // Match esptool-style sync retry behavior: many short attempts over a longer window.
-                repeat(48) {
-                    writeSlip(header + payload, timeoutMs.coerceAtLeast(200))
-                    val deadline = System.currentTimeMillis() + 140L
-                    while (System.currentTimeMillis() < deadline) {
-                        val remain = (deadline - System.currentTimeMillis()).coerceAtLeast(1L).toInt()
-                        try {
-                            val resp = readResponse(expectedOp = null, timeoutOverrideMs = minOf(70, remain))
-                            if (resp.op == cmdSync) return
-                        } catch (_: Exception) {
-                        }
-                    }
-                    Thread.sleep(35)
-                }
-            }
-            throw IllegalStateException("esp_response_timeout")
-        }
-
-        fun syncWithAutoResetProfiles(bridgeHint: String?, interfaceId: Int, debug: Boolean = false): JSONArray {
-            val attempts = JSONArray()
-            val profiles = ArrayList<Pair<String, () -> Unit>>()
-            profiles.add("enter_bootloader" to {
-                enterBootloaderIfSupported(bridgeHint, interfaceId)
-                settleAfterBootloaderReset()
-            })
-            profiles.add("enter_bootloader_inverted" to {
-                enterBootloaderInvertedIfSupported(bridgeHint, interfaceId)
-                settleAfterBootloaderReset()
-            })
-            profiles.add("enter_bootloader_pulse_en" to {
-                enterBootloaderPulseEnIfSupported(bridgeHint, interfaceId)
-                settleAfterBootloaderReset()
-            })
-            // Final attempt: if reset sequencing had no effect, try direct sync anyway.
-            profiles.add("flush_only" to { flushInput() })
-
-            var lastError: Exception? = null
-            for ((name, profile) in profiles) {
-                val start = System.currentTimeMillis()
-                try {
-                    profile()
-                    sync()
-                    if (debug) {
-                        attempts.put(
-                            JSONObject()
-                                .put("profile", name)
-                                .put("ok", true)
-                                .put("elapsed_ms", (System.currentTimeMillis() - start).coerceAtLeast(0L))
-                        )
-                    }
-                    return attempts
-                } catch (ex: Exception) {
-                    lastError = ex
-                    if (debug) {
-                        attempts.put(
-                            JSONObject()
-                                .put("profile", name)
-                                .put("ok", false)
-                                .put("error", ex.message ?: "unknown_error")
-                                .put("elapsed_ms", (System.currentTimeMillis() - start).coerceAtLeast(0L))
-                        )
-                    }
-                }
-            }
-            if (debug) throw EspSyncException(lastError?.message ?: "esp_response_timeout", attempts)
-            throw lastError ?: IllegalStateException("esp_response_timeout")
-        }
-
-        fun readChipDetectMagic(): Int {
-            // ESP32 ROM chip-detect magic register used by esptool family.
-            return readReg(0x40001000)
-        }
-
-        fun readReg(address: Int): Int {
-            val payload = le32(address)
-            return commandChecked(cmdReadReg, payload, checksum = 0, timeoutOverrideMs = maxOf(timeoutMs, 4000))
-        }
-
-        fun attachEsp32SpiFlash(): JSONObject {
-            // ESP32 ROM requires explicit SPI attach in no-stub flow.
-            val efuseBlk0Rdata5 = readReg(0x3FF5A014.toInt())
-            val efuseBlk0Rdata3 = readReg(0x3FF5A00C.toInt())
-            val clk = efuseBlk0Rdata5 and 0x1F
-            val q = (efuseBlk0Rdata5 ushr 5) and 0x1F
-            val d = (efuseBlk0Rdata5 ushr 10) and 0x1F
-            val cs = (efuseBlk0Rdata5 ushr 15) and 0x1F
-            val hd = (efuseBlk0Rdata3 ushr 4) and 0x1F
-            val attachArg = (hd shl 24) or (cs shl 18) or (d shl 12) or (q shl 6) or clk
-            val payload = le32(attachArg) + byteArrayOf(0x00, 0x00, 0x00, 0x00)
-            commandChecked(cmdSpiAttach, payload, checksum = 0, timeoutOverrideMs = maxOf(timeoutMs, 4000))
-            return JSONObject()
-                .put("clk", clk)
-                .put("q", q)
-                .put("d", d)
-                .put("hd", hd)
-                .put("cs", cs)
-                .put("attach_arg", String.format(Locale.US, "0x%08x", attachArg))
-        }
-
-        fun flashImage(image: ByteArray, offset: Int, reboot: Boolean): EspFlashResult {
-            val total = image.size
-            val blocks = (total + flashBlockSize - 1) / flashBlockSize
-            val eraseSize = total
-            val begin = le32(eraseSize) + le32(blocks) + le32(flashBlockSize) + le32(offset)
-            try {
-                commandChecked(cmdFlashBegin, begin, checksum = 0, timeoutOverrideMs = maxOf(timeoutMs, 10_000))
-            } catch (ex: Exception) {
-                throw EspFlashStageException(ex.message ?: "flash_begin_failed", "flash_begin", null, 0)
-            }
-
-            var seq = 0
-            var pos = 0
-            while (pos < total) {
-                val end = minOf(total, pos + flashBlockSize)
-                val chunk = image.copyOfRange(pos, end)
-                val block = if (chunk.size == flashBlockSize) chunk else chunk + ByteArray(flashBlockSize - chunk.size) { 0xFF.toByte() }
-                val hdr = le32(block.size) + le32(seq) + le32(0) + le32(0)
-                val payload = hdr + block
-                val chk = checksum(block)
-                try {
-                    commandChecked(cmdFlashData, payload, checksum = chk, timeoutOverrideMs = maxOf(timeoutMs, 8000))
-                } catch (ex: Exception) {
-                    throw EspFlashStageException(ex.message ?: "flash_data_failed", "flash_data", seq, seq)
-                }
-                seq += 1
-                pos = end
-            }
-
-            // Follow esptool no-stub ROM behavior: don't require FLASH_END reply.
-            // Some ROM flows return error on FLASH_END even after successful writes.
-            if (reboot) {
-                runCatching { setModemLines(dtr = false, rts = false) }
-            }
-            return EspFlashResult(blocksWritten = blocks, blockSize = flashBlockSize)
-        }
-
-        private fun commandChecked(op: Int, data: ByteArray, checksum: Int, timeoutOverrideMs: Int): Int {
-            val response = command(op, data, checksum, timeoutOverrideMs)
-            val status = response.payload
-            if (status.size < 2) throw IllegalStateException("short_status")
-            if ((status[0].toInt() and 0xFF) != 0) {
-                val reason = status[1].toInt() and 0xFF
-                throw IllegalStateException("esp_error_status_${reason}")
-            }
-            return response.value
-        }
-
-        private data class ResponseFrame(
-            val op: Int,
-            val value: Int,
-            val payload: ByteArray,
-        )
-
-        private fun command(op: Int, data: ByteArray, checksum: Int, timeoutOverrideMs: Int): ResponseFrame {
-            val header = byteArrayOf(
-                0x00,
-                (op and 0xFF).toByte(),
-                (data.size and 0xFF).toByte(),
-                ((data.size ushr 8) and 0xFF).toByte(),
-                (checksum and 0xFF).toByte(),
-                ((checksum ushr 8) and 0xFF).toByte(),
-                ((checksum ushr 16) and 0xFF).toByte(),
-                ((checksum ushr 24) and 0xFF).toByte(),
-            )
-            writeSlip(header + data, timeoutOverrideMs)
-            return readResponse(op, timeoutOverrideMs)
-        }
-
-        private fun readResponse(expectedOp: Int?, timeoutOverrideMs: Int): ResponseFrame {
-            val deadline = System.currentTimeMillis() + timeoutOverrideMs.toLong()
-            while (System.currentTimeMillis() < deadline) {
-                val frame = readSlipFrame((deadline - System.currentTimeMillis()).coerceAtLeast(1L).toInt())
-                    ?: continue
-                val off = locateEspResponseHeader(frame, expectedOp) ?: continue
-                val opRet = frame[off + 1].toInt() and 0xFF
-                val payloadLen = le16ToInt(frame, off + 2)
-                val value = le32ToInt(frame, off + 4)
-                val payloadStart = off + 8
-                val payloadEnd = minOf(payloadStart + payloadLen, frame.size)
-                val payload = frame.copyOfRange(payloadStart, payloadEnd)
-                return ResponseFrame(op = opRet, value = value, payload = payload)
-            }
-            throw IllegalStateException("esp_response_timeout")
-        }
-
-        private fun locateEspResponseHeader(frame: ByteArray, expectedOp: Int?): Int? {
-            if (frame.size < 8) return null
-            val last = frame.size - 8
-            for (i in 0..last) {
-                val dir = frame[i].toInt() and 0xFF
-                if (dir != 0x01) continue
-                val op = frame[i + 1].toInt() and 0xFF
-                if (expectedOp != null && op != expectedOp) continue
-                val len = le16ToInt(frame, i + 2)
-                val end = i + 8 + len
-                if (len < 0) continue
-                if (end <= frame.size) return i
-            }
-            return null
-        }
-
-        private fun readSlipFrame(timeout: Int): ByteArray? {
-            codec.nextFrame()?.let { return it }
-            val chunk = readBulkChunk(timeout)
-            if (chunk.isEmpty()) return null
-            codec.feed(chunk, chunk.size)
-            return codec.nextFrame()
-        }
-
-        private fun readBulkChunk(timeout: Int): ByteArray {
-            val port = serialPort
-            if (port != null) {
-                val n = try {
-                    port.read(readBuf, timeout.coerceIn(1, 60_000))
-                } catch (_: Exception) {
-                    -1
-                }
-                if (n <= 0) return ByteArray(0)
-                return readBuf.copyOfRange(0, n.coerceIn(0, readBuf.size))
-            }
-            val n = conn.bulkTransfer(inEp, readBuf, readBuf.size, timeout.coerceIn(1, 60_000))
-            if (n <= 0) return ByteArray(0)
-            return if (isFtdi) {
-                ftdiStripStatusBytes(readBuf, n)
-            } else {
-                readBuf.copyOfRange(0, n.coerceIn(0, readBuf.size))
-            }
-        }
-
-        private fun writeSlip(payload: ByteArray, timeoutOverrideMs: Int) {
-            val framed = slipEncode(payload)
-            var off = 0
-            while (off < framed.size) {
-                val chunk = minOf(16384, framed.size - off)
-                val part = framed.copyOfRange(off, off + chunk)
-                val n = if (serialPort != null) {
-                    try {
-                        serialPort!!.write(part, timeoutOverrideMs.coerceIn(1, 60_000))
-                        part.size
-                    } catch (_: Exception) {
-                        -1
-                    }
-                } else {
-                    conn.bulkTransfer(outEp, part, part.size, timeoutOverrideMs.coerceIn(1, 60_000))
-                }
-                if (n <= 0) throw IllegalStateException("esp_write_failed")
-                off += n
-            }
-        }
-
-        private fun slipEncode(payload: ByteArray): ByteArray {
-            val out = ByteArrayOutputStream(payload.size + 8)
-            out.write(0xC0)
-            for (b in payload) {
-                when (b.toInt() and 0xFF) {
-                    0xC0 -> {
-                        out.write(0xDB)
-                        out.write(0xDC)
-                    }
-                    0xDB -> {
-                        out.write(0xDB)
-                        out.write(0xDD)
-                    }
-                    else -> out.write(b.toInt() and 0xFF)
-                }
-            }
-            out.write(0xC0)
-            return out.toByteArray()
-        }
-
-        private fun checksum(data: ByteArray): Int {
-            var s = checksumMagic
-            for (b in data) s = s xor (b.toInt() and 0xFF)
-            return s
-        }
-
-        private fun openUsbSerialPort(): UsbSerialPort? {
-            return try {
-                val driver = UsbSerialProber.getDefaultProber().probeDevice(dev) ?: return null
-                val port = driver.ports.firstOrNull() ?: return null
-                val dedicatedConn = usbManager.openDevice(dev) ?: return null
-                port.open(dedicatedConn)
-                serialConn = dedicatedConn
-                port
-            } catch (_: Exception) {
-                runCatching { serialConn?.close() }
-                serialConn = null
-                null
-            }
-        }
-
-        private fun applyModemLines(dtr: Boolean, rts: Boolean, interfaceId: Int) {
-            val port = serialPort
-            if (port != null) {
-                runCatching { port.setDTR(dtr) }.getOrElse { throw IllegalStateException("serial_set_dtr_failed") }
-                runCatching { port.setRTS(rts) }.getOrElse { throw IllegalStateException("serial_set_rts_failed") }
-                return
-            }
-            when (bridgeHint) {
-                "cp210x" -> cp210xSetModemLines(dtr = dtr, rts = rts, interfaceId = interfaceId, timeoutMs = 1000)
-                "ftdi" -> ftdiSetModemDtrRts(dtr = dtr, rts = rts)
-                else -> throw IllegalStateException("unsupported_serial_bridge")
-            }
-        }
-
-        private fun cp210xSetModemLines(dtr: Boolean?, rts: Boolean?, interfaceId: Int, timeoutMs: Int) {
-            var value = 0
-            if (dtr != null) {
-                value = value or 0x0100
-                if (dtr) value = value or 0x0001
-            }
-            if (rts != null) {
-                value = value or 0x0200
-                if (rts) value = value or 0x0002
-            }
-            val rc = conn.controlTransfer(
-                0x41, // Host -> Interface | Vendor
-                0x07, // CP210X_SET_MHS
-                value,
-                interfaceId,
-                null,
-                0,
-                timeoutMs.coerceIn(1, 60_000)
-            )
-            if (rc < 0) throw IllegalStateException("cp210x_set_mhs_failed")
-        }
-
-        private fun ftdiStripStatusBytes(src: ByteArray, totalBytesRead: Int): ByteArray {
-            val packetSize = inEp.maxPacketSize.coerceAtLeast(2)
-            val out = ByteArrayOutputStream(totalBytesRead)
-            var srcPos = 0
-            val total = totalBytesRead.coerceIn(0, src.size)
-            while (srcPos < total) {
-                val end = minOf(srcPos + packetSize, total)
-                val payloadStart = minOf(srcPos + 2, end)
-                if (payloadStart < end) {
-                    out.write(src, payloadStart, end - payloadStart)
-                }
-                srcPos += packetSize
-            }
-            return out.toByteArray()
-        }
-
-        private fun ftdiControl(request: Int, value: Int, index: Int, timeoutMs: Int = 1000): Int {
-            return conn.controlTransfer(
-                0x40, // host->device, vendor
-                request,
-                value,
-                index,
-                null,
-                0,
-                timeoutMs.coerceIn(1, 60_000)
-            )
-        }
-
-        private fun ftdiResetAll() {
-            val rc = ftdiControl(request = 0, value = 0, index = interfaceId + 1)
-            if (rc < 0) throw IllegalStateException("ftdi_reset_failed")
-        }
-
-        private fun ftdiSetModemDtrRts(dtr: Boolean, rts: Boolean) {
-            val dtrBits = if (dtr) 0x0101 else 0x0100
-            val rtsBits = if (rts) 0x0202 else 0x0200
-            val value = dtrBits or rtsBits
-            val rc = ftdiControl(request = 1, value = value, index = interfaceId + 1)
-            if (rc < 0) throw IllegalStateException("ftdi_modem_ctrl_failed")
-        }
-
-        private fun ftdiSetData8N1() {
-            // 8 data bits, no parity, 1 stop bit.
-            val rc = ftdiControl(request = 4, value = 8, index = interfaceId + 1)
-            if (rc < 0) throw IllegalStateException("ftdi_set_data_failed")
-        }
-
-        private fun ftdiSetFlowControlNone() {
-            val rc = ftdiControl(request = 2, value = 0, index = interfaceId + 1)
-            if (rc < 0) throw IllegalStateException("ftdi_set_flow_none_failed")
-        }
-
-        private fun ftdiSetLatencyTimer(ms: Int) {
-            val clamped = ms.coerceIn(1, 255)
-            val rc = ftdiControl(request = 9, value = clamped, index = interfaceId + 1)
-            if (rc < 0) throw IllegalStateException("ftdi_set_latency_failed")
-        }
-
-        private fun ftdiSetBaudRate(baudRate: Int) {
-            if (baudRate <= 0 || baudRate > 3_500_000) throw IllegalStateException("ftdi_invalid_baud")
-            val (value, index) = ftdiBaudValueIndex(baudRate, interfaceId)
-            val rc = ftdiControl(request = 3, value = value, index = index)
-            if (rc < 0) throw IllegalStateException("ftdi_set_baud_failed")
-        }
-
-        private fun ftdiBaudValueIndex(baudRate: Int, portNumber: Int): Pair<Int, Int> {
-            val (divisorInit, subdivisor, _) = if (baudRate >= 2_500_000) {
-                Triple(0, 0, 3_000_000)
-            } else if (baudRate >= 1_750_000) {
-                Triple(1, 0, 2_000_000)
-            } else {
-                var divisor = ((24_000_000L shl 1) / baudRate.toLong()).toInt()
-                divisor = (divisor + 1) shr 1
-                val sub = divisor and 0x07
-                divisor = divisor shr 3
-                Triple(divisor, sub, 0)
-            }
-
-            var value = divisorInit
-            var index = 0
-            when (subdivisor) {
-                0 -> {}
-                4 -> value = value or 0x4000
-                2 -> value = value or 0x8000
-                1 -> value = value or 0xC000
-                3 -> { value = value or 0x0000; index = index or 1 }
-                5 -> { value = value or 0x4000; index = index or 1 }
-                6 -> { value = value or 0x8000; index = index or 1 }
-                7 -> { value = value or 0xC000; index = index or 1 }
-            }
-            // FTDI H-series / multi-port style index packing:
-            index = (index shl 8) or (portNumber + 1)
-            return Pair(value, index)
-        }
-
-        private fun le32(v: Int): ByteArray = byteArrayOf(
-            (v and 0xFF).toByte(),
-            ((v ushr 8) and 0xFF).toByte(),
-            ((v ushr 16) and 0xFF).toByte(),
-            ((v ushr 24) and 0xFF).toByte(),
-        )
-
-        private fun le32ToInt(buf: ByteArray, off: Int): Int {
-            if (off + 3 >= buf.size) return 0
-            return (buf[off].toInt() and 0xFF) or
-                ((buf[off + 1].toInt() and 0xFF) shl 8) or
-                ((buf[off + 2].toInt() and 0xFF) shl 16) or
-                ((buf[off + 3].toInt() and 0xFF) shl 24)
-        }
-
-        private fun le16ToInt(buf: ByteArray, off: Int): Int {
-            if (off + 1 >= buf.size) return 0
-            return (buf[off].toInt() and 0xFF) or
-                ((buf[off + 1].toInt() and 0xFF) shl 8)
-        }
-    }
-
     private fun md5Hex(data: ByteArray): String {
         val digest = MessageDigest.getInstance("MD5").digest(data)
         val sb = StringBuilder(digest.size * 2)
@@ -5159,22 +4721,42 @@ class LocalHttpServer(
                 if (path.isBlank()) throw IllegalArgumentException("segment_path_required")
                 val offset = item.optLong("offset", -1L)
                 if (offset < 0 || offset > 0xFFFFFFFFL) throw IllegalArgumentException("segment_offset_invalid")
-                val file = userPath(path) ?: throw IllegalArgumentException("path_outside_user_dir")
-                if (!file.exists() || !file.isFile) throw IllegalArgumentException("segment_not_found")
-                val bytes = file.readBytes()
+                val ref = parseFsPathRef(path) ?: throw IllegalArgumentException("invalid_path")
+                val bytes = try {
+                    readFsPathBytes(ref).first
+                } catch (ex: IllegalArgumentException) {
+                    throw IllegalArgumentException(
+                        when (ex.message ?: "") {
+                            "path_outside_termux_home" -> "path_outside_termux_home"
+                            "termux_unavailable" -> "termux_unavailable"
+                            "file_too_large" -> "segment_too_large"
+                            else -> "segment_not_found"
+                        }
+                    )
+                }
                 if (bytes.isEmpty()) throw IllegalArgumentException("segment_empty")
-                out.add(McuFlashSegment(relPath = path, offset = offset.toInt(), bytes = bytes))
+                out.add(McuFlashSegment(relPath = ref.displayPath, offset = offset.toInt(), bytes = bytes))
             }
             return out
         }
 
         if (fallbackPath.isBlank()) throw IllegalArgumentException("image_path_required")
         val offset = payload.optLong("offset", 0x10000).coerceIn(0L, 0xFFFFFFFFL).toInt()
-        val file = userPath(fallbackPath) ?: throw IllegalArgumentException("path_outside_user_dir")
-        if (!file.exists() || !file.isFile) throw IllegalArgumentException("image_not_found")
-        val bytes = file.readBytes()
+        val ref = parseFsPathRef(fallbackPath) ?: throw IllegalArgumentException("invalid_path")
+        val bytes = try {
+            readFsPathBytes(ref).first
+        } catch (ex: IllegalArgumentException) {
+            throw IllegalArgumentException(
+                when (ex.message ?: "") {
+                    "path_outside_termux_home" -> "path_outside_termux_home"
+                    "termux_unavailable" -> "termux_unavailable"
+                    "file_too_large" -> "image_too_large"
+                    else -> "image_not_found"
+                }
+            )
+        }
         if (bytes.isEmpty()) throw IllegalArgumentException("image_empty")
-        out.add(McuFlashSegment(relPath = fallbackPath, offset = offset, bytes = bytes))
+        out.add(McuFlashSegment(relPath = ref.displayPath, offset = offset, bytes = bytes))
         return out
     }
 
@@ -5304,6 +4886,265 @@ class LocalHttpServer(
         return handleScreenStatus()
     }
 
+    private fun closeSerialSessionInternal(st: SerialSessionState) {
+        runCatching { st.port.close() }
+        runCatching { st.connection.close() }
+    }
+
+    private fun closeSerialSessionsForUsbHandle(usbHandle: String): Int {
+        val targets = serialSessions.values.filter { it.usbHandle == usbHandle }
+        for (st in targets) {
+            serialSessions.remove(st.id)
+            closeSerialSessionInternal(st)
+        }
+        return targets.size
+    }
+
+    private fun serialSessionToJson(st: SerialSessionState): JSONObject {
+        return JSONObject()
+            .put("serial_handle", st.id)
+            .put("usb_handle", st.usbHandle)
+            .put("device_name", st.deviceName)
+            .put("port_index", st.portIndex)
+            .put("baud_rate", st.baudRate)
+            .put("data_bits", st.dataBits)
+            .put("stop_bits", st.stopBits)
+            .put("parity", st.parity)
+            .put("opened_at_ms", st.openedAtMs)
+            .put("driver", "usb-serial-for-android")
+    }
+
+    private fun handleSerialStatus(session: IHTTPSession): Response {
+        val perm = ensureDevicePermission(
+            session,
+            JSONObject(),
+            tool = "device.usb",
+            capability = "usb",
+            detail = "USB serial status"
+        )
+        if (!perm.first) return perm.second!!
+
+        val items = JSONArray()
+        serialSessions.values.sortedBy { it.id }.forEach { items.put(serialSessionToJson(it)) }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("count", items.length())
+                .put("items", items)
+        )
+    }
+
+    private fun handleSerialOpen(session: IHTTPSession, payload: JSONObject): Response {
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "Open USB serial session"
+        )
+        if (!perm.first) return perm.second!!
+
+        val usbHandle = payload.optString("handle", "").trim()
+        if (usbHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val dev = usbDevicesByHandle[usbHandle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+        if (!usbConnections.containsKey(usbHandle)) return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+
+        if (!runCatching { usbManager.hasPermission(dev) }.getOrDefault(false)) {
+            return jsonError(Response.Status.FORBIDDEN, "usb_permission_required")
+        }
+
+        val portIndex = payload.optInt("port_index", 0)
+        if (portIndex < 0) return jsonError(Response.Status.BAD_REQUEST, "invalid_port_index")
+        val baudRate = payload.optInt("baud_rate", 115200).coerceIn(300, 3_500_000)
+        val dataBits = payload.optInt("data_bits", UsbSerialPort.DATABITS_8)
+        val stopBits = payload.optInt("stop_bits", UsbSerialPort.STOPBITS_1)
+        val parity = payload.optInt("parity", UsbSerialPort.PARITY_NONE)
+        val dtr = if (payload.has("dtr")) payload.optBoolean("dtr") else null
+        val rts = if (payload.has("rts")) payload.optBoolean("rts") else null
+
+        val serialConn = usbManager.openDevice(dev) ?: return jsonError(Response.Status.INTERNAL_ERROR, "serial_open_failed")
+        return try {
+            val driver = UsbSerialProber.getDefaultProber().probeDevice(dev)
+            if (driver == null) {
+                runCatching { serialConn.close() }
+                return jsonError(Response.Status.BAD_REQUEST, "serial_driver_not_found")
+            }
+            val ports = driver.ports
+            if (portIndex >= ports.size) {
+                runCatching { serialConn.close() }
+                return jsonError(
+                    Response.Status.BAD_REQUEST,
+                    "serial_port_not_found",
+                    JSONObject().put("available_ports", ports.size)
+                )
+            }
+            val port = ports[portIndex]
+            port.open(serialConn)
+            port.setParameters(baudRate, dataBits, stopBits, parity)
+            if (dtr != null) runCatching { port.setDTR(dtr) }
+            if (rts != null) runCatching { port.setRTS(rts) }
+
+            val serialHandle = UUID.randomUUID().toString()
+            val st = SerialSessionState(
+                id = serialHandle,
+                usbHandle = usbHandle,
+                deviceName = dev.deviceName,
+                portIndex = portIndex,
+                baudRate = baudRate,
+                dataBits = dataBits,
+                stopBits = stopBits,
+                parity = parity,
+                connection = serialConn,
+                port = port,
+                openedAtMs = System.currentTimeMillis(),
+            )
+            serialSessions[serialHandle] = st
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("session", serialSessionToJson(st))
+            )
+        } catch (ex: Exception) {
+            runCatching { serialConn.close() }
+            jsonError(Response.Status.INTERNAL_ERROR, "serial_open_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleSerialListPorts(session: IHTTPSession, payload: JSONObject): Response {
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "List USB serial ports"
+        )
+        if (!perm.first) return perm.second!!
+
+        val usbHandle = payload.optString("handle", "").trim()
+        if (usbHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val dev = usbDevicesByHandle[usbHandle] ?: return jsonError(Response.Status.NOT_FOUND, "device_not_found")
+        if (!usbConnections.containsKey(usbHandle)) return jsonError(Response.Status.NOT_FOUND, "handle_not_found")
+
+        if (!runCatching { usbManager.hasPermission(dev) }.getOrDefault(false)) {
+            return jsonError(Response.Status.FORBIDDEN, "usb_permission_required")
+        }
+
+        val driver = UsbSerialProber.getDefaultProber().probeDevice(dev)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "serial_driver_not_found")
+
+        val ports = JSONArray()
+        driver.ports.forEachIndexed { idx, port ->
+            ports.put(
+                JSONObject()
+                    .put("port_index", idx)
+                    .put("port_number", runCatching { port.portNumber }.getOrNull() ?: idx)
+                    .put("driver_class", port.javaClass.simpleName)
+            )
+        }
+
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("handle", usbHandle)
+                .put("device_name", dev.deviceName)
+                .put("bridge_hint", guessUsbSerialBridge(dev) ?: JSONObject.NULL)
+                .put("driver", driver.javaClass.simpleName)
+                .put("port_count", ports.length())
+                .put("ports", ports)
+        )
+    }
+
+    private fun handleSerialClose(payload: JSONObject): Response {
+        val serialHandle = payload.optString("serial_handle", "").trim()
+        if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
+        val st = serialSessions.remove(serialHandle)
+        if (st != null) closeSerialSessionInternal(st)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("closed", st != null)
+        )
+    }
+
+    private fun handleSerialRead(payload: JSONObject): Response {
+        val serialHandle = payload.optString("serial_handle", "").trim()
+        if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
+        val st = serialSessions[serialHandle] ?: return jsonError(Response.Status.NOT_FOUND, "serial_handle_not_found")
+        val maxBytes = payload.optInt("max_bytes", 4096).coerceIn(1, 1024 * 1024)
+        val timeoutMs = payload.optInt("timeout_ms", 200).coerceIn(0, 60_000)
+
+        val buf = ByteArray(maxBytes)
+        return try {
+            val n = synchronized(st.lock) {
+                st.port.read(buf, timeoutMs)
+            }
+            val out = if (n > 0) buf.copyOfRange(0, n.coerceIn(0, buf.size)) else ByteArray(0)
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("serial_handle", serialHandle)
+                    .put("bytes_read", out.size)
+                    .put("data_b64", Base64.encodeToString(out, Base64.NO_WRAP))
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "serial_read_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleSerialWrite(payload: JSONObject): Response {
+        val serialHandle = payload.optString("serial_handle", "").trim()
+        if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
+        val st = serialSessions[serialHandle] ?: return jsonError(Response.Status.NOT_FOUND, "serial_handle_not_found")
+        val timeoutMs = payload.optInt("timeout_ms", 2000).coerceIn(0, 60_000)
+        val dataB64 = payload.optString("data_b64", "").trim()
+        if (dataB64.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "data_b64_required")
+        val bytes = try {
+            Base64.decode(dataB64, Base64.DEFAULT)
+        } catch (_: Exception) {
+            return jsonError(Response.Status.BAD_REQUEST, "invalid_data_b64")
+        }
+        if (bytes.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "data_empty")
+
+        return try {
+            val n = synchronized(st.lock) {
+                st.port.write(bytes, timeoutMs)
+            }
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("serial_handle", serialHandle)
+                    .put("bytes_written", n)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "serial_write_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleSerialLines(payload: JSONObject): Response {
+        val serialHandle = payload.optString("serial_handle", "").trim()
+        if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
+        val st = serialSessions[serialHandle] ?: return jsonError(Response.Status.NOT_FOUND, "serial_handle_not_found")
+        val dtr = if (payload.has("dtr")) payload.optBoolean("dtr") else null
+        val rts = if (payload.has("rts")) payload.optBoolean("rts") else null
+        if (dtr == null && rts == null) return jsonError(Response.Status.BAD_REQUEST, "line_state_required")
+
+        return try {
+            synchronized(st.lock) {
+                if (dtr != null) st.port.setDTR(dtr)
+                if (rts != null) st.port.setRTS(rts)
+            }
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("serial_handle", serialHandle)
+                    .put("dtr", if (dtr == null) JSONObject.NULL else dtr)
+                    .put("rts", if (rts == null) JSONObject.NULL else rts)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "serial_lines_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
     private fun handleUsbOpen(session: IHTTPSession, payload: JSONObject): Response {
         val name = payload.optString("name", "").trim()
         val vid = payload.optInt("vendor_id", -1)
@@ -5357,13 +5198,19 @@ class LocalHttpServer(
     private fun handleUsbClose(payload: JSONObject): Response {
         val handle = payload.optString("handle", "").trim()
         if (handle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "handle_required")
+        val serialClosed = closeSerialSessionsForUsbHandle(handle)
         val conn = usbConnections.remove(handle)
         usbDevicesByHandle.remove(handle)
         try {
             conn?.close()
         } catch (_: Exception) {
         }
-        return jsonResponse(JSONObject().put("status", "ok").put("closed", conn != null))
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("closed", conn != null)
+                .put("serial_sessions_closed", serialClosed)
+        )
     }
 
     private fun handleUsbControlTransfer(payload: JSONObject): Response {
@@ -5608,6 +5455,21 @@ class LocalHttpServer(
     private data class UsbStreamClient(
         val socket: Socket,
         val out: java.io.BufferedOutputStream,
+    )
+
+    private data class SerialSessionState(
+        val id: String,
+        val usbHandle: String,
+        val deviceName: String,
+        val portIndex: Int,
+        val baudRate: Int,
+        val dataBits: Int,
+        val stopBits: Int,
+        val parity: Int,
+        val connection: UsbDeviceConnection,
+        val port: UsbSerialPort,
+        val openedAtMs: Long,
+        val lock: Any = Any(),
     )
 
     private data class UsbStreamState(
@@ -6807,6 +6669,333 @@ class LocalHttpServer(
         }
     }
 
+    private data class FsPathRef(
+        val fs: String,
+        val sourcePath: String,
+        val displayPath: String,
+        val userFile: File? = null,
+        val userRelPath: String? = null,
+        val termuxPath: String? = null,
+    )
+
+    private fun parseFsPathRef(rawPath: String): FsPathRef? {
+        val raw = rawPath.trim()
+        if (raw.isBlank()) return null
+
+        if (raw.startsWith("user://", ignoreCase = true)) {
+            val rel = raw.substringAfter("://").trim().trimStart('/')
+            if (rel.isBlank() || rel == ".") {
+                val root = File(context.filesDir, "user").canonicalFile
+                return FsPathRef(
+                    fs = "user",
+                    sourcePath = raw,
+                    displayPath = "user://.",
+                    userFile = root,
+                    userRelPath = ""
+                )
+            }
+            val file = userPath(rel) ?: return null
+            return FsPathRef(
+                fs = "user",
+                sourcePath = raw,
+                displayPath = "user://$rel",
+                userFile = file,
+                userRelPath = rel
+            )
+        }
+
+        if (raw.startsWith("termux://", ignoreCase = true)) {
+            val rest0 = raw.substringAfter("://").trim()
+            val abs = when {
+                rest0 == "~" -> TERMUX_HOME_PREFIX
+                rest0.startsWith("~/") -> TERMUX_HOME_PREFIX + "/" + rest0.removePrefix("~/")
+                rest0.startsWith("/") -> rest0
+                else -> TERMUX_HOME_PREFIX + "/" + rest0.trimStart('/')
+            }
+            val normalizedAbs = abs.replace('\\', '/')
+            if (!isAllowedTermuxPath(normalizedAbs)) return null
+            val display = "termux://${normalizedAbs.removePrefix(TERMUX_HOME_PREFIX).let { if (it.isBlank()) "~" else "~$it" }}"
+            return FsPathRef(
+                fs = "termux",
+                sourcePath = raw,
+                displayPath = display,
+                termuxPath = normalizedAbs
+            )
+        }
+
+        if (raw.startsWith(TERMUX_HOME_PREFIX + "/") || raw == TERMUX_HOME_PREFIX) {
+            val normalizedAbs = raw.replace('\\', '/')
+            if (!isAllowedTermuxPath(normalizedAbs)) return null
+            val display = "termux://${normalizedAbs.removePrefix(TERMUX_HOME_PREFIX).let { if (it.isBlank()) "~" else "~$it" }}"
+            return FsPathRef(
+                fs = "termux",
+                sourcePath = raw,
+                displayPath = display,
+                termuxPath = normalizedAbs
+            )
+        }
+
+        if (raw.startsWith("/")) return null
+        val rel = raw.trimStart('/')
+        if (rel.isBlank() || rel == ".") {
+            val root = File(context.filesDir, "user").canonicalFile
+            return FsPathRef(
+                fs = "user",
+                sourcePath = raw,
+                displayPath = "user://.",
+                userFile = root,
+                userRelPath = ""
+            )
+        }
+        val file = userPath(rel) ?: return null
+        return FsPathRef(
+            fs = "user",
+            sourcePath = raw,
+            displayPath = "user://$rel",
+            userFile = file,
+            userRelPath = rel
+        )
+    }
+
+    private fun decodePathSuffix(uri: String, prefix: String): String? {
+        if (!uri.startsWith(prefix)) return null
+        val raw = uri.substring(prefix.length)
+        if (raw.isBlank()) return null
+        val decoded = runCatching { URLDecoder.decode(raw, StandardCharsets.UTF_8.name()) }.getOrNull() ?: return null
+        val clean = decoded.trim().replace("\\", "/")
+        return clean.ifBlank { null }
+    }
+
+    private fun normalizeTermuxRoutePath(path: String): String? {
+        val p = path.trim()
+        if (p.isBlank()) return null
+        if (p.startsWith("termux://", ignoreCase = true)) {
+            val ref = parseFsPathRef(p) ?: return null
+            return ref.displayPath
+        }
+        if (p.startsWith(TERMUX_HOME_PREFIX) || p == "~" || p.startsWith("~/") || p.startsWith("/")) {
+            val asUri = "termux://$p"
+            val ref = parseFsPathRef(asUri) ?: return null
+            return ref.displayPath
+        }
+        val ref = parseFsPathRef("termux://~/$p") ?: return null
+        return ref.displayPath
+    }
+
+    private fun isAllowedTermuxPath(absPath: String): Boolean {
+        if (absPath.isBlank()) return false
+        val p = absPath.replace('\\', '/')
+        if (p == TERMUX_HOME_PREFIX) return true
+        return p.startsWith(TERMUX_HOME_PREFIX + "/")
+    }
+
+    private fun readFsPathBytes(ref: FsPathRef, maxBytes: Int = 64 * 1024 * 1024): Pair<ByteArray, String> {
+        return when (ref.fs) {
+            "user" -> {
+                val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
+                if (!file.exists() || !file.isFile) throw IllegalArgumentException("not_found")
+                val bytes = file.readBytes()
+                Pair(bytes, ref.displayPath)
+            }
+            "termux" -> {
+                val absPath = ref.termuxPath ?: throw IllegalArgumentException("path_outside_termux_home")
+                val payload = JSONObject()
+                    .put("path", absPath)
+                    .put("offset", 0)
+                    .put("max_bytes", maxBytes.coerceIn(1, 128 * 1024 * 1024))
+                val rsp = workerJsonRequest("/fs/read", "POST", payload, readTimeoutMs = 30_000)
+                    ?: throw IllegalArgumentException("termux_unavailable")
+                val body = rsp.second
+                if (rsp.first !in 200..299) {
+                    val err = body.optString("error", "").trim()
+                    throw IllegalArgumentException(
+                        when (err) {
+                            "not_found" -> "not_found"
+                            "path_outside_home" -> "path_outside_termux_home"
+                            else -> "termux_fs_read_failed"
+                        }
+                    )
+                }
+                val encoding = body.optString("encoding", "utf-8").trim().lowercase(Locale.US)
+                val content = body.optString("content", "")
+                val truncated = body.optBoolean("truncated", false)
+                val bytes = when (encoding) {
+                    "base64" -> runCatching { Base64.decode(content, Base64.DEFAULT) }.getOrNull()
+                        ?: throw IllegalArgumentException("termux_fs_read_failed")
+                    else -> content.toByteArray(Charsets.UTF_8)
+                }
+                if (truncated) throw IllegalArgumentException("file_too_large")
+                Pair(bytes, ref.displayPath)
+            }
+            else -> throw IllegalArgumentException("unsupported_filesystem")
+        }
+    }
+
+    private fun writeFsPathBytes(ref: FsPathRef, bytes: ByteArray): String {
+        return when (ref.fs) {
+            "user" -> {
+                val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
+                file.parentFile?.mkdirs()
+                file.writeBytes(bytes)
+                ref.displayPath
+            }
+            "termux" -> {
+                val absPath = ref.termuxPath ?: throw IllegalArgumentException("path_outside_termux_home")
+                val payload = JSONObject()
+                    .put("path", absPath)
+                    .put("content", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                    .put("encoding", "base64")
+                val rsp = workerJsonRequest("/fs/write", "POST", payload, readTimeoutMs = 30_000)
+                    ?: throw IllegalArgumentException("termux_unavailable")
+                if (rsp.first !in 200..299) {
+                    val err = rsp.second.optString("error", "").trim()
+                    throw IllegalArgumentException(
+                        when (err) {
+                            "path_outside_home" -> "path_outside_termux_home"
+                            else -> "termux_fs_write_failed"
+                        }
+                    )
+                }
+                ref.displayPath
+            }
+            else -> throw IllegalArgumentException("unsupported_filesystem")
+        }
+    }
+
+    private fun materializeFsPathToLocalFile(ref: FsPathRef, prefix: String): Pair<File, Boolean> {
+        return when (ref.fs) {
+            "user" -> {
+                val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
+                if (!file.exists() || !file.isFile) throw IllegalArgumentException("not_found")
+                Pair(file, false)
+            }
+            "termux" -> {
+                val bytes = readFsPathBytes(ref).first
+                val ext = ref.termuxPath?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() } ?: "bin"
+                val tmp = File.createTempFile(prefix, ".$ext", context.cacheDir)
+                tmp.writeBytes(bytes)
+                Pair(tmp, true)
+            }
+            else -> throw IllegalArgumentException("unsupported_filesystem")
+        }
+    }
+
+    private fun statFsPath(ref: FsPathRef): Pair<Boolean, Long> {
+        return when (ref.fs) {
+            "user" -> {
+                val f = ref.userFile
+                if (f != null && f.exists() && f.isFile) Pair(true, f.length()) else Pair(false, 0L)
+            }
+            "termux" -> {
+                val absPath = ref.termuxPath ?: return Pair(false, 0L)
+                val payload = JSONObject().put("path", absPath).put("offset", 0).put("max_bytes", 1)
+                val rsp = workerJsonRequest("/fs/read", "POST", payload, readTimeoutMs = 5000) ?: return Pair(false, 0L)
+                if (rsp.first !in 200..299) return Pair(false, 0L)
+                Pair(true, rsp.second.optLong("size", 0L))
+            }
+            else -> Pair(false, 0L)
+        }
+    }
+
+    private fun workerJsonRequest(
+        path: String,
+        method: String = "POST",
+        body: JSONObject? = null,
+        readTimeoutMs: Int = 5000,
+    ): Pair<Int, JSONObject>? {
+        return try {
+            val url = java.net.URL("http://127.0.0.1:8776$path")
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+                requestMethod = method
+                connectTimeout = 2000
+                readTimeout = readTimeoutMs
+                if (method == "POST") {
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                }
+            }
+            if (method == "POST") {
+                conn.outputStream.use { it.write((body ?: JSONObject()).toString().toByteArray(Charsets.UTF_8)) }
+            }
+            val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
+            val txt = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
+            val json = runCatching { JSONObject(txt) }.getOrElse { JSONObject().put("raw", txt) }
+            Pair(code, json)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun listFsPath(path: String): Response {
+        val ref = parseFsPathRef(path) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        return when (ref.fs) {
+            "user" -> {
+                val root = File(context.filesDir, "user").canonicalFile
+                val dir = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                if (!dir.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                if (!dir.isDirectory) return jsonError(Response.Status.BAD_REQUEST, "not_a_directory")
+                val arr = org.json.JSONArray()
+                val kids = dir.listFiles()?.sortedBy { it.name.lowercase() } ?: emptyList()
+                for (f in kids) {
+                    arr.put(
+                        JSONObject()
+                            .put("name", f.name)
+                            .put("is_dir", f.isDirectory)
+                            .put("size", if (f.isFile) f.length() else 0L)
+                            .put("mtime_ms", f.lastModified())
+                    )
+                }
+                val outRel = if (dir == root) "" else dir.relativeTo(root).path.replace("\\", "/")
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("fs", "user")
+                        .put("path", outRel)
+                        .put("path_uri", if (outRel.isBlank()) "user://." else "user://$outRel")
+                        .put("items", arr)
+                )
+            }
+            "termux" -> {
+                val termuxPath = ref.termuxPath ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                val payload = JSONObject().put("path", termuxPath)
+                val rsp = workerJsonRequest("/fs/list", "POST", payload, readTimeoutMs = 10_000)
+                    ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                val code = rsp.first
+                val body = rsp.second
+                if (code !in 200..299) {
+                    val err = body.optString("error", "")
+                    return when (err) {
+                        "not_a_directory" -> jsonError(Response.Status.BAD_REQUEST, "not_a_directory")
+                        "path_outside_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                        else -> jsonError(Response.Status.NOT_FOUND, "not_found")
+                    }
+                }
+                val entries = body.optJSONArray("entries") ?: JSONArray()
+                val out = JSONArray()
+                for (i in 0 until entries.length()) {
+                    val item = entries.optJSONObject(i) ?: continue
+                    out.put(
+                        JSONObject()
+                            .put("name", item.optString("name", ""))
+                            .put("is_dir", item.optBoolean("is_dir", false))
+                            .put("size", item.optLong("size", 0L))
+                            .put("mtime_ms", (item.optDouble("mtime", 0.0) * 1000.0).toLong())
+                    )
+                }
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("fs", "termux")
+                        .put("path", termuxPath)
+                        .put("path_uri", ref.displayPath)
+                        .put("items", out)
+                )
+            }
+            else -> jsonError(Response.Status.BAD_REQUEST, "unsupported_filesystem")
+        }
+    }
+
     private fun toUserRelativePath(abs: File): String? {
         return try {
             val root = File(context.filesDir, "user").canonicalFile
@@ -6872,7 +7061,19 @@ class LocalHttpServer(
         val path = payload.optString("path", "").trim()
         if (name.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "name_required")
         if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-        val file = userPath(path) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        val ref = parseFsPathRef(path) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        val mat = try {
+            materializeFsPathToLocalFile(ref, "vision_model_")
+        } catch (ex: IllegalArgumentException) {
+            return when (ex.message ?: "") {
+                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                "not_found" -> jsonError(Response.Status.NOT_FOUND, "not_found")
+                else -> jsonError(Response.Status.INTERNAL_ERROR, "file_read_failed")
+            }
+        }
+        val file = mat.first
+        val isTemp = mat.second
         val delegate = payload.optString("delegate", "none")
         val threads = payload.optInt("num_threads", 2)
         return try {
@@ -6880,6 +7081,8 @@ class LocalHttpServer(
             jsonResponse(JSONObject(info))
         } catch (ex: Exception) {
             jsonError(Response.Status.BAD_REQUEST, "model_load_failed", JSONObject().put("detail", ex.message ?: ""))
+        } finally {
+            if (isTemp) runCatching { file.delete() }
         }
     }
 
@@ -6934,7 +7137,19 @@ class LocalHttpServer(
         if (!ensureVisionPermission(payload)) return forbidden("permission_required")
         val path = payload.optString("path", "").trim()
         if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-        val file = userPath(path) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        val ref = parseFsPathRef(path) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        val mat = try {
+            materializeFsPathToLocalFile(ref, "vision_image_")
+        } catch (ex: IllegalArgumentException) {
+            return when (ex.message ?: "") {
+                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                "not_found" -> jsonError(Response.Status.NOT_FOUND, "not_found")
+                else -> jsonError(Response.Status.INTERNAL_ERROR, "file_read_failed")
+            }
+        }
+        val file = mat.first
+        val isTemp = mat.second
         return try {
             val frame = VisionImageIo.decodeFileToRgba(file)
             val id = visionFrames.put(frame)
@@ -6948,6 +7163,8 @@ class LocalHttpServer(
             )
         } catch (ex: Exception) {
             jsonError(Response.Status.BAD_REQUEST, "image_load_failed", JSONObject().put("detail", ex.message ?: ""))
+        } finally {
+            if (isTemp) runCatching { file.delete() }
         }
     }
 
@@ -6960,10 +7177,27 @@ class LocalHttpServer(
         if (id.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "frame_id_required")
         if (outPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
         val frame = visionFrames.get(id) ?: return jsonError(Response.Status.NOT_FOUND, "frame_not_found")
-        val outFile = userPath(outPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        val outRef = parseFsPathRef(outPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
         return try {
-            VisionImageIo.encodeRgbaToFile(frame, format, outFile, jpegQuality)
-            jsonResponse(JSONObject().put("status", "ok").put("saved", true).put("path", outFile.absolutePath))
+            if (outRef.fs == "user") {
+                val outFile = outRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                VisionImageIo.encodeRgbaToFile(frame, format, outFile, jpegQuality)
+            } else {
+                val tmp = File.createTempFile("vision_out_", ".${format.lowercase(Locale.US)}", context.cacheDir)
+                try {
+                    VisionImageIo.encodeRgbaToFile(frame, format, tmp, jpegQuality)
+                    writeFsPathBytes(outRef, tmp.readBytes())
+                } finally {
+                    runCatching { tmp.delete() }
+                }
+            }
+            jsonResponse(JSONObject().put("status", "ok").put("saved", true).put("path", outRef.displayPath))
+        } catch (ex: IllegalArgumentException) {
+            when (ex.message ?: "") {
+                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
+                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                else -> jsonError(Response.Status.BAD_REQUEST, "frame_save_failed", JSONObject().put("detail", ex.message ?: ""))
+            }
         } catch (ex: Exception) {
             jsonError(Response.Status.BAD_REQUEST, "frame_save_failed", JSONObject().put("detail", ex.message ?: ""))
         }
@@ -8108,7 +8342,7 @@ class LocalHttpServer(
         //
         // ${vault:key} -> credentialStore (secret)
         // ${config:brain.api_key|brain.base_url|brain.model|brain.vendor} -> brain SharedPreferences
-        // ${file:rel_path[:base64|text]} -> read from user root (base64 or utf-8 text)
+        // ${file:path[:base64|text]} -> read from user:// or termux:// path
         // ICU regex on Android treats a bare '}' as syntax error; escape both braces.
         val re = Regex("\\$\\{([^}]+)\\}")
         return re.replace(s) { m ->
@@ -8133,28 +8367,33 @@ class LocalHttpServer(
                 }
             }
             if (kind == "file" && parts.size >= 2) {
-                val rel = parts[1].trim().trimStart('/')
+                val path = parts[1].trim()
                 val mode = if (parts.size >= 3) parts[2].trim().lowercase() else "base64"
-                val f = userPath(rel) ?: return@replace ""
-                if (!f.exists() || !f.isFile) return@replace ""
-                exp.usedFiles.add(rel)
+                val ref = parseFsPathRef(path) ?: return@replace ""
+                exp.usedFiles.add(ref.displayPath)
                 return@replace try {
+                    val bytes0 = readFsPathBytes(ref).first
                     val bytes: ByteArray = when (mode) {
-                        "text" -> f.readBytes()
-                        "base64_raw" -> f.readBytes()
+                        "text" -> bytes0
+                        "base64_raw" -> bytes0
                         else -> {
                             // Default: base64. For common image types, downscale/compress to reduce upload size.
-                            val ext = f.name.substringAfterLast('.', "").lowercase()
+                            val fileName = when (ref.fs) {
+                                "user" -> ref.userFile?.name ?: ""
+                                "termux" -> ref.termuxPath?.substringAfterLast('/') ?: ""
+                                else -> ""
+                            }
+                            val ext = fileName.substringAfterLast('.', "").lowercase()
                             val isImg = ext in setOf("jpg", "jpeg", "png", "webp")
                             val enabled = fileTransferPrefs.getBoolean("image_resize_enabled", true)
-                            if (mode == "base64" && enabled && isImg) {
+                            if (mode == "base64" && enabled && isImg && ref.fs == "user") {
                                 downscaleImageToJpeg(
-                                    f,
+                                    ref.userFile!!,
                                     maxDimPx = fileTransferPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096),
                                     jpegQuality = fileTransferPrefs.getInt("image_resize_jpeg_quality", 70).coerceIn(30, 95)
-                                ) ?: f.readBytes()
+                                ) ?: bytes0
                             } else {
-                                f.readBytes()
+                                bytes0
                             }
                         }
                     }
@@ -9355,8 +9594,10 @@ class LocalHttpServer(
             }
 
             if (streamRel != null) {
-                val file = userPath(streamRel)
-                    ?: return jsonError(Response.Status.BAD_REQUEST, "stream_path_outside_user_dir")
+                val ref = parseFsPathRef(streamRel)
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_stream_path")
+                if (ref.fs != "user") return jsonError(Response.Status.BAD_REQUEST, "intent_stream_must_be_user_path")
+                val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "stream_path_outside_user_dir")
                 if (!file.exists() || !file.isFile) {
                     return jsonError(Response.Status.BAD_REQUEST, "stream_file_not_found")
                 }
@@ -11184,7 +11425,7 @@ class LocalHttpServer(
 
     /**
      * If the payload contains `rel_path` but no `data_b64`, resolve the file
-     * under the user directory, read its bytes, and embed as `data_b64` + `mime_type`.
+     * from user:// or termux:// path, read its bytes, and embed as `data_b64` + `mime_type`.
      * Images are compressed to fit within BLE transport limits.
      * This ensures the receiver gets actual file content instead of a sender-local path.
      */
@@ -11195,29 +11436,36 @@ class LocalHttpServer(
         // Already has embedded data — nothing to do
         val dataKeys = listOf("data_b64", "file_b64", "attachment_b64", "content_b64", "bytes_b64")
         if (dataKeys.any { payloadValue.optString(it, "").trim().isNotBlank() }) return payloadValue
-        val userRoot = File(context.filesDir, "user").canonicalFile
-        val file = File(userRoot, relPath).let { f ->
-            if (f.canonicalFile.startsWith(userRoot)) f.canonicalFile else null
-        }
-        if (file == null || !file.isFile || !file.canRead()) {
+        val ref = parseFsPathRef(relPath)
+        if (ref == null) {
             Log.w(TAG, "embedMeMeFileContent: cannot read rel_path=$relPath")
             return payloadValue
         }
-        val rawBytes = file.readBytes()
+        val rawBytes = try {
+            readFsPathBytes(ref).first
+        } catch (_: Exception) {
+            Log.w(TAG, "embedMeMeFileContent: cannot read rel_path=$relPath")
+            return payloadValue
+        }
         if (rawBytes.isEmpty()) {
             Log.w(TAG, "embedMeMeFileContent: file is empty rel_path=$relPath")
             return payloadValue
         }
+        val fileName = when (ref.fs) {
+            "user" -> ref.userFile?.name ?: relPath.substringAfterLast('/')
+            "termux" -> ref.termuxPath?.substringAfterLast('/') ?: relPath.substringAfterLast('/')
+            else -> relPath.substringAfterLast('/')
+        }
         val mime = payloadValue.optString("mime_type", "").trim()
-            .ifBlank { URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name) }
+            .ifBlank { URLConnection.guessContentTypeFromName(fileName) ?: mimeTypeFor(fileName) }
         // For images, apply file transfer resize settings (same as cloud uploads)
-        val ext = file.name.substringAfterLast('.', "").lowercase()
+        val ext = fileName.substringAfterLast('.', "").lowercase()
         val isImg = mime.startsWith("image/") && ext in setOf("jpg", "jpeg", "png", "webp")
         val imgResizeEnabled = fileTransferPrefs.getBoolean("image_resize_enabled", true)
-        val bytes = if (isImg && imgResizeEnabled) {
+        val bytes = if (isImg && imgResizeEnabled && ref.fs == "user" && ref.userFile != null) {
             val maxDimPx = fileTransferPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096)
             val jpegQuality = fileTransferPrefs.getInt("image_resize_jpeg_quality", 70).coerceIn(30, 95)
-            downscaleImageToJpeg(file, maxDimPx, jpegQuality) ?: rawBytes
+            downscaleImageToJpeg(ref.userFile, maxDimPx, jpegQuality) ?: rawBytes
         } else {
             rawBytes
         }
@@ -11228,7 +11476,7 @@ class LocalHttpServer(
             out.put("mime_type", mime)
         }
         if (out.optString("file_name", "").trim().isBlank()) {
-            out.put("file_name", file.name)
+            out.put("file_name", fileName)
         }
         // Remove rel_path since it's sender-local and meaningless to the receiver
         out.remove("rel_path")
@@ -15988,6 +16236,7 @@ class LocalHttpServer(
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
         private const val PORT = 33389
+        private const val TERMUX_HOME_PREFIX = "/data/data/com.termux/files/home"
         private const val ME_SYNC_LAN_PORT = 8766
         private const val ME_ME_LAN_PORT = 8767
         private const val ME_ME_BLE_MAX_MESSAGE_BYTES = 1_000_000

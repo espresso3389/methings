@@ -1,0 +1,358 @@
+serialStatus:
+  get:
+    operationId: getSerialStatus
+    summary: List open USB serial sessions
+    tags: [Serial]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    parameters:
+      - name: identity
+        in: query
+        schema:
+          type: string
+      - name: permission_id
+        in: query
+        schema:
+          type: string
+    responses:
+      '200':
+        description: Open serial sessions.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, count, items]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                count:
+                  type: integer
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      serial_handle:
+                        type: string
+                      usb_handle:
+                        type: string
+                      device_name:
+                        type: string
+                      port_index:
+                        type: integer
+                      baud_rate:
+                        type: integer
+                      data_bits:
+                        type: integer
+                      stop_bits:
+                        type: integer
+                      parity:
+                        type: integer
+                      opened_at_ms:
+                        type: integer
+                      driver:
+                        type: string
+
+serialOpen:
+  post:
+    operationId: postSerialOpen
+    summary: Open a USB serial session from a USB handle
+    tags: [Serial]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle]
+                properties:
+                  handle:
+                    type: string
+                    description: USB handle from `usb.open`.
+                  port_index:
+                    type: integer
+                    default: 0
+                  baud_rate:
+                    type: integer
+                    default: 115200
+                  data_bits:
+                    type: integer
+                    default: 8
+                    description: UsbSerialPort DATABITS_* value.
+                  stop_bits:
+                    type: integer
+                    default: 1
+                    description: UsbSerialPort STOPBITS_* value.
+                  parity:
+                    type: integer
+                    default: 0
+                    description: UsbSerialPort PARITY_* value.
+                  dtr:
+                    type: boolean
+                  rts:
+                    type: boolean
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Serial session opened.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, session]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                session:
+                  type: object
+      '400':
+        description: Invalid request.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+serialListPorts:
+  post:
+    operationId: postSerialListPorts
+    summary: List available serial ports for a USB device handle
+    tags: [Serial]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [handle]
+                properties:
+                  handle:
+                    type: string
+                    description: USB handle from `usb.open`.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Available ports on the matched USB serial driver.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, handle, port_count, ports]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                handle:
+                  type: string
+                device_name:
+                  type: string
+                bridge_hint:
+                  type: [string, 'null']
+                driver:
+                  type: string
+                port_count:
+                  type: integer
+                ports:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      port_index:
+                        type: integer
+                      port_number:
+                        type: integer
+                      driver_class:
+                        type: string
+      '400':
+        description: Invalid request or no serial driver.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+serialClose:
+  post:
+    operationId: postSerialClose
+    summary: Close a USB serial session
+    tags: [Serial]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [serial_handle]
+                properties:
+                  serial_handle:
+                    type: string
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Serial session close result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, closed]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                closed:
+                  type: boolean
+
+serialRead:
+  post:
+    operationId: postSerialRead
+    summary: Read bytes from a USB serial session
+    tags: [Serial]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [serial_handle]
+                properties:
+                  serial_handle:
+                    type: string
+                  max_bytes:
+                    type: integer
+                    default: 4096
+                  timeout_ms:
+                    type: integer
+                    default: 200
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Read result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, serial_handle, bytes_read, data_b64]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                serial_handle:
+                  type: string
+                bytes_read:
+                  type: integer
+                data_b64:
+                  type: string
+
+serialWrite:
+  post:
+    operationId: postSerialWrite
+    summary: Write bytes to a USB serial session
+    tags: [Serial]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [serial_handle, data_b64]
+                properties:
+                  serial_handle:
+                    type: string
+                  data_b64:
+                    type: string
+                  timeout_ms:
+                    type: integer
+                    default: 2000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Write result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, serial_handle, bytes_written]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                serial_handle:
+                  type: string
+                bytes_written:
+                  type: integer
+
+serialLines:
+  post:
+    operationId: postSerialLines
+    summary: Set serial modem line states (DTR/RTS)
+    tags: [Serial]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [serial_handle]
+                properties:
+                  serial_handle:
+                    type: string
+                  dtr:
+                    type: boolean
+                  rts:
+                    type: boolean
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Line state update result.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, serial_handle]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                serial_handle:
+                  type: string
+                dtr:
+                  type: [boolean, 'null']
+                rts:
+                  type: [boolean, 'null']
