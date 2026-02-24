@@ -21,9 +21,9 @@ userUpload:
               dir:
                 type: string
                 description: >
-                  Destination directory. Supports user relative (legacy),
-                  `user://<relative-dir>`, and `termux://<dir>`.
-                  Defaults to `user://uploads`.
+                  Destination directory. Supports app-local relative path
+                  (preferred), `termux://<dir>`, or absolute Termux HOME path.
+                  Defaults to `uploads`.
     responses:
       '200':
         description: File uploaded successfully.
@@ -38,10 +38,10 @@ userUpload:
                   const: ok
                 path:
                   type: string
-                  description: Saved file path (`user://...` or `termux://...`).
+                  description: Saved file path (app-local relative, `termux://...`, or absolute Termux path).
             example:
               status: ok
-              path: "user://uploads/photo.jpg"
+              path: "uploads/photo.jpg"
 
 userWrite:
   post:
@@ -92,7 +92,7 @@ userWrite:
                   type: integer
             example:
               status: ok
-              path: user://notes/hello.txt
+              path: notes/hello.txt
               bytes_written: 5
 
 userWriteByPath:
@@ -236,7 +236,6 @@ userFile:
       Preferred path-style routes:
       - `/user/file/<relative-path>`
       - `/termux/file/<path-under-home>`
-      Query form (`/user/file?path=...`) remains supported for compatibility.
     tags: [Files]
     parameters:
       - name: path
@@ -246,9 +245,9 @@ userFile:
           type: string
         description: >
           File path. Supports:
-          - user relative path (legacy)
-          - `user://<relative-path>`
+          - app-local relative path (preferred)
           - `termux://<path>` (restricted to Termux HOME)
+          - absolute Termux HOME path (`/data/data/com.termux/files/home/...`)
     responses:
       '200':
         description: File bytes (content type matches the file).
@@ -334,8 +333,7 @@ userFileInfo:
     description: >
       Preferred path-style routes:
       - `/user/file/info/<relative-path>`
-      - `/termux/file/info/<path-under-home>`
-      Query form (`/user/file/info?path=...`) remains supported for compatibility.
+      - `/termux/file_info/<path-under-home>`
 
       Returns file metadata without serving bytes. Strips #page=N fragment
       from path before lookup. For images (except SVG), includes width/height
@@ -351,8 +349,8 @@ userFileInfo:
         schema:
           type: string
         description: >
-          File path (supports #page=N fragment). Supports user relative,
-          `user://...`, and `termux://...` (Termux HOME only).
+          File path (supports #page=N fragment). Supports app-local relative
+          path, `termux://...`, and absolute Termux HOME path.
     responses:
       '200':
         description: File metadata and derived info.
@@ -536,8 +534,8 @@ userList:
         schema:
           type: string
         description: >
-          Directory path. Supports user relative, `user://...`, and
-          `termux://...` (Termux HOME only). Empty path lists user root.
+          Directory path. Supports app-local relative path (preferred),
+          `termux://...`, and absolute Termux HOME path. Empty path lists user root.
     responses:
       '200':
         description: Directory listing.
@@ -659,10 +657,10 @@ termuxListByPath:
                   items:
                     type: object
 
-sysFile:
+sysFileByPath:
   get:
-    operationId: getSysFile
-    summary: Serve a system reference file
+    operationId: getSysFileByPath
+    summary: Serve a system reference file (path-style)
     description: >
       System reference docs (docs/, examples/, lib/) are extracted to
       files/system/ and always overwritten on app start to match the
@@ -671,7 +669,7 @@ sysFile:
     tags: [Files]
     parameters:
       - name: path
-        in: query
+        in: path
         required: true
         schema:
           type: string

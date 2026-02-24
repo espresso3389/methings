@@ -2869,21 +2869,15 @@ class LocalHttpServer(
                 handleFileWrite(postBody, forcedPath = normalized, expectedFs = "termux")
             }
             path == "/termux/file" && session.method == Method.GET -> {
-                val raw = firstParam(session, "path").trim()
-                if (raw.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                val normalized = normalizeTermuxRoutePath(raw) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                serveFileByPath(normalized)
+                jsonError(Response.Status.GONE, "use_path_style_route")
             }
-            path.startsWith("/termux/file/info/") && session.method == Method.GET -> {
-                val p = decodePathSuffix(path, "/termux/file/info/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+            path.startsWith("/termux/file_info/") && session.method == Method.GET -> {
+                val p = decodePathSuffix(path, "/termux/file_info/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
                 val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
                 handleFileInfoByPath(normalized)
             }
-            path == "/termux/file/info" && session.method == Method.GET -> {
-                val raw = firstParam(session, "path").trim()
-                if (raw.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                val normalized = normalizeTermuxRoutePath(raw) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                handleFileInfoByPath(normalized)
+            path == "/termux/file_info" && session.method == Method.GET -> {
+                jsonError(Response.Status.GONE, "use_path_style_route")
             }
             path.startsWith("/termux/file/") && session.method == Method.GET -> {
                 val p = decodePathSuffix(path, "/termux/file/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
@@ -3190,7 +3184,7 @@ class LocalHttpServer(
                 handleListByPath("user://$p")
             }
             uri == "/user/file" && session.method == Method.GET -> {
-                serveUserFile(session)
+                jsonError(Response.Status.GONE, "use_path_style_route")
             }
             uri.startsWith("/user/file/info/") && session.method == Method.GET -> {
                 val p = decodePathSuffix(uri, "/user/file/info/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
@@ -3207,7 +3201,7 @@ class LocalHttpServer(
                 handleUserUpload(session)
             }
             uri == "/user/file/info" && session.method == Method.GET -> {
-                handleUserFileInfo(session)
+                jsonError(Response.Status.GONE, "use_path_style_route")
             }
             else -> notFound()
         }
@@ -3366,7 +3360,11 @@ class LocalHttpServer(
                 handleSysList(session)
             }
             uri == "/sys/file" && session.method == Method.GET -> {
-                serveSysFile(session)
+                jsonError(Response.Status.GONE, "use_path_style_route")
+            }
+            uri.startsWith("/sys/file/") && session.method == Method.GET -> {
+                val p = decodePathSuffix(uri, "/sys/file/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                serveSysFileByPath(p)
             }
             else -> notFound()
         }
@@ -3374,7 +3372,14 @@ class LocalHttpServer(
 
 
     private fun firstParam(session: IHTTPSession, name: String): String {
-        return session.parameters[name]?.firstOrNull()?.trim() ?: ""
+        val raw = session.parameters[name]?.firstOrNull()?.trim() ?: ""
+        if (raw.isBlank()) return ""
+        // Decode once in case a client sends URL-encoded query values.
+        return runCatching { URLDecoder.decode(raw, StandardCharsets.UTF_8.name()) }
+            .getOrNull()
+            ?.trim()
+            .orEmpty()
+            .ifBlank { raw }
     }
 
     private fun normalizeSettingsSectionId(raw: String): String {
@@ -3442,18 +3447,6 @@ class LocalHttpServer(
         val raw = firstParam(session, "path").trim()
         val path = if (raw.isBlank()) "user://." else raw
         return handleListByPath(path)
-    }
-
-    private fun serveUserFile(session: IHTTPSession): Response {
-        val raw = firstParam(session, "path").trim()
-        if (raw.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-        return serveFileByPath(raw)
-    }
-
-    private fun handleUserFileInfo(session: IHTTPSession): Response {
-        val rawPath = firstParam(session, "path").replace(Regex("#.*$"), "").trim()
-        if (rawPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-        return handleFileInfoByPath(rawPath)
     }
 
     private fun handleListByPath(path: String): Response {
@@ -7278,8 +7271,8 @@ class LocalHttpServer(
         return jsonResponse(JSONObject().put("status", "ok").put("path", outRel).put("items", arr))
     }
 
-    private fun serveSysFile(session: IHTTPSession): Response {
-        val rel = firstParam(session, "path")
+    private fun serveSysFileByPath(relRaw: String): Response {
+        val rel = relRaw.trim()
         if (rel.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
         val file = systemPath(rel) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_system_dir")
         if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")

@@ -59,7 +59,7 @@ Lists files in an app user directory or a Termux HOME directory.
 System reference docs (`docs/`, `examples/`, `lib/`) are extracted to `files/system/`
 and always overwritten on app start to match the current app version. The agent
 accesses them via the `$sys/` prefix in filesystem tools, which routes through
-`GET /sys/file` and `GET /sys/list`.
+`GET /sys/file/<path>` and `GET /sys/list`.
 
 ## Chat UI Shortcuts
 
@@ -67,7 +67,8 @@ accesses them via the `$sys/` prefix in filesystem tools, which routes through
 
 Include `rel_path: <path>` in chat messages to trigger inline preview cards
 in the app UI. For Marp presentations, append `#page=N` to show a specific slide.
-Use `user://<relative-path>` for app files and `termux://<path>` for Termux files.
+Use plain relative paths for app-local files, and `termux://<path>` (or absolute
+Termux HOME path) for Termux files.
 
 ### Settings Navigation
 

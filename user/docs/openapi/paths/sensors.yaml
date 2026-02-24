@@ -24,23 +24,48 @@ sensorList:
           application/json:
             schema:
               type: object
-              required: [status, sensors]
+              required: [status, items]
               properties:
                 status:
                   type: string
                   const: ok
-                sensors:
+                items:
                   type: array
                   items:
                     type: object
                     properties:
-                      name:
-                        type: string
                       type:
                         type: integer
                         description: Android sensor type constant.
+                      string_type:
+                        type: string
+                        description: Android sensor string type.
+                      name:
+                        type: string
                       vendor:
                         type: string
+                      version:
+                        type: integer
+                      power_mw:
+                        type: number
+                      resolution:
+                        type: number
+                      max_range:
+                        type: number
+                      min_delay_us:
+                        type: integer
+            example:
+              status: ok
+              items:
+                - type: 1
+                  string_type: android.sensor.accelerometer
+                  name: BMI160 Accelerometer
+                  vendor: Bosch
+                  version: 1
+                  power_mw: 0.13
+                  resolution: 0.01
+                  max_range: 78.4
+                  min_delay_us: 5000
       '403':
         description: Permission required.
         content:
@@ -71,12 +96,14 @@ sensorsWsContract:
       '200':
         description: >
           WebSocket connection details for realtime sensor data.
-          Connect to the returned ws_path to receive sensor events.
+          Connect to the returned ws_path to receive JSON text frames.
+          Stream emits `hello` on connect, then `sample` frames.
+          On failures, emits `error` or `permission_required` and closes.
         content:
           application/json:
             schema:
               type: object
-              required: [status, ws_path]
+              required: [status, ws_path, query, sample_event, ws_message_types]
               properties:
                 status:
                   type: string
@@ -85,9 +112,150 @@ sensorsWsContract:
                   type: string
                   description: WebSocket path for sensor data stream.
                   examples: [/ws/sensors]
+                query:
+                  type: object
+                  description: Supported query parameters for `/ws/sensors`.
+                  properties:
+                    sensors:
+                      type: string
+                      description: Comma-separated sensor keys or names.
+                    rate_hz:
+                      type: string
+                      description: Sampling rate range and default.
+                    latency:
+                      type: string
+                      description: Delivery latency mode.
+                    timestamp:
+                      type: string
+                      description: Timestamp base (`mono` or `unix`).
+                    backpressure:
+                      type: string
+                      description: Queue policy (`drop_old` or `drop_new`).
+                    max_queue:
+                      type: string
+                      description: Queue size limits and default.
+                sample_event:
+                  type: object
+                  description: Example `sample` frame payload.
+                ws_message_types:
+                  type: object
+                  description: WebSocket JSON frame schemas.
+                  properties:
+                    hello:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum: [hello]
+                        stream_id:
+                          type: string
+                        sensors:
+                          type: array
+                          items:
+                            type: string
+                        rate_hz:
+                          type: integer
+                        latency:
+                          type: string
+                        timestamp:
+                          type: string
+                          enum: [mono, unix]
+                        backpressure:
+                          type: object
+                          properties:
+                            mode:
+                              type: string
+                              enum: [drop_old, drop_new]
+                            max_queue:
+                              type: integer
+                    sample:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum: [sample]
+                        stream_id:
+                          type: string
+                        sensor:
+                          type: string
+                          description: Normalized sensor key (for example `a`, `g`, `m`).
+                        t:
+                          type: number
+                          description: Timestamp in seconds (monotonic or unix based on query).
+                        seq:
+                          type: integer
+                          format: int64
+                          description: Stream-local increasing sequence number.
+                        v:
+                          type: array
+                          items:
+                            type: number
+                          description: Sensor values from Android `SensorEvent.values`.
+                    error:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum: [error]
+                        code:
+                          type: string
+                          description: >
+                            Error code (`sensors_required`, `start_failed`, etc).
+                        detail:
+                          description: Optional structured error details.
+                    permission_required:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum: [permission_required]
+                        request:
+                          type: object
+                          description: Standard permission request payload.
             example:
               status: ok
               ws_path: /ws/sensors
+              query:
+                sensors: "comma-separated sensor keys, e.g. a,g,m"
+                rate_hz: "1..1000 (default 200)"
+                latency: "realtime|normal|ui (default realtime)"
+                timestamp: "mono|unix (default mono)"
+                backpressure: "drop_old|drop_new (default drop_old)"
+                max_queue: "64..50000 (default 4096)"
+              sample_event:
+                type: sample
+                stream_id: s1234abcd
+                sensor: a
+                t: 12345.678
+                seq: 1001
+                v: [0.01, 9.8, 0.12]
+              ws_message_types:
+                hello:
+                  type: hello
+                  stream_id: s1234abcd
+                  sensors: [a, g, m]
+                  rate_hz: 200
+                  latency: realtime
+                  timestamp: mono
+                  backpressure:
+                    mode: drop_old
+                    max_queue: 4096
+                sample:
+                  type: sample
+                  stream_id: s1234abcd
+                  sensor: a
+                  t: 12345.678
+                  seq: 1001
+                  v: [0.01, 9.8, 0.12]
+                error:
+                  type: error
+                  code: sensors_required
+                permission_required:
+                  type: permission_required
+                  request:
+                    id: p_123
+                    tool: device.sensors
+                    detail: Open sensors websocket stream
       '403':
         description: Permission required.
         content:

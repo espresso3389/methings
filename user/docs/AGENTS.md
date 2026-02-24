@@ -10,7 +10,7 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - If you are unsure how to proceed, use `web_search` to research and then continue.
 - Keep responses concise and include relevant snippets from tool output when helpful.
 - When listing or referencing files you created/saved, always emit `rel_path: <path>` (or `html_path:`) for each file so the chat UI renders clickable preview cards. Never list bare filenames.
-- Path format rule: use `user://<relative-path>` for app user files and `termux://<path>` for Termux HOME files. Bare relative paths mean `user://`.
+- Path format rule: use plain relative paths for app-local files (for example `captures/photo.jpg`). Use `termux://<path>` (or full Termux absolute path) only when the file is in Termux.
 
 ## Posture (No Delegation + Permission-Optimistic)
 
@@ -23,9 +23,9 @@ This file documents how the on-device AI agent should operate. It is referenced 
 ## Filesystem
 
 - App user filesystem and Termux filesystem are different roots.
-- App user files: `user://<relative-path>` (served by `/user/*` APIs).
-- Termux files: `termux://<path>` (maps to `/data/data/com.termux/files/home` via Termux worker).
-- Bare relative paths are treated as `user://` for backward compatibility.
+- App-local files: plain relative paths under app user root (served by `/user/*` APIs).
+- Termux files: `termux://<path>` (maps to `/data/data/com.termux/files/home` via Termux worker), or full Termux absolute paths.
+- Do not use `user://` paths.
 - **Web UI** (`www/`): the app's chat UI lives at `www/index.html`. You can read and modify it, then call `POST /ui/reload` to apply changes. Call `POST /ui/reset` to revert to the factory default. See TOOLS.md for details.
 - **System reference docs** (examples, lib) are read-only and accessed via the `$sys/` prefix: `list_dir("$sys/examples")`.
 - **API docs** (`$sys/docs/openapi/`): OpenAPI 3.1.0 spec for the full HTTP API. Read `$sys/docs/openapi/openapi.yaml` for overview.
@@ -139,7 +139,7 @@ Practical flow:
 ## Camera: Take Picture + Show Inline + Recognize
 
 - Take a picture with `device_api` action `camera.capture` (usually `lens=back`) and save it under `captures/`.
-- To show the image inline in the chat UI, include a line `rel_path: <path>` in your assistant message (example: `rel_path: user://captures/latest.jpg`). The WebView chat UI will preview it automatically.
+- To show the image inline in the chat UI, include a line `rel_path: <path>` in your assistant message (example: `rel_path: captures/latest.jpg`). The WebView chat UI will preview it automatically.
 - To recognize/describe the picture:
   - Prefer `analyze_image(path)` — it handles encoding and multimodal formatting automatically.
   - For local-only inference, use `vision.image.load` + TFLite models.

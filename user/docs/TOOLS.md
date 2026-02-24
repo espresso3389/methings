@@ -60,7 +60,7 @@ Notes:
 - `analyze_audio(path, data_b64?, mime_type?, prompt?)` — Analyze an audio file using built-in LLM audio understanding. **Only supported by Gemini.** Other providers return `{"status":"error","error":"media_not_supported"}`.
 
 Parameters:
-- `path` (required): user file path (`user://...` or legacy relative path).
+- `path` (required): app-local relative path.
 - `data_b64`: alternative to `path` — provide raw base64 data directly.
 - `mime_type`: override auto-detected MIME type.
 - `prompt`: optional question or instruction (e.g. "transcribe this", "what objects are visible?").
@@ -141,7 +141,7 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - `screen.keep_on`: keep screen awake. Payload: `{"keep_on": true/false}`.
 
 ### Camera — `$sys/docs/openapi/paths/camera.yaml`
-- `camera.capture`: take a still photo. Key payload: `lens` (back/front), `path` (`user://...` / `termux://...` / legacy relative). Returns `rel_path`.
+- `camera.capture`: take a still photo. Key payload: `lens` (back/front), `path` (app-local relative, `termux://...`, or absolute Termux path). Returns `rel_path`.
 - `camera.preview.start/stop`: JPEG preview stream via `/ws/camera/preview`.
 - Do not `pip install` camera bindings; use `device_api`.
 
@@ -291,7 +291,7 @@ Limits: max 50 schedules, 200 log entries per schedule, 2000 global log entries.
 - `webview.open`: open URL in agent-controlled browser. Key payload: `url`, `timeout_s`.
 - `webview.close`: close the browser.
 - `webview.status`: current URL, title, dimensions, loading state.
-- `webview.screenshot`: capture page as JPEG. Key payload: `path` (`user://...` / `termux://...` / legacy relative), `quality`. Returns `rel_path`.
+- `webview.screenshot`: capture page as JPEG. Key payload: `path` (app-local relative, `termux://...`, or absolute Termux path), `quality`. Returns `rel_path`.
 - `webview.js`: execute JavaScript. Key payload: `script`. Returns `result`.
 - `webview.tap`: simulate tap. Key payload: `x`, `y`.
 - `webview.scroll`: scroll page. Key payload: `dx`, `dy`.
@@ -357,11 +357,11 @@ rel_path: captures/latest.jpg
 ```
 
 Filesystem path convention:
-- `user://<relative-path>`: app user files (`/user/*` APIs).
+- `<relative-path>`: app-local files under user root (`/user/*` APIs).
 - `termux://<path>`: Termux HOME files (maps to `/data/data/com.termux/files/home`).
-- Backward compatibility: bare relative paths are treated as `user://`.
+- `/data/data/com.termux/files/home/...`: explicit Termux absolute path.
 
-When you create, save, capture, or reference a file, you MUST include `rel_path: <path>` (or `html_path:` for HTML) in your assistant message. Use explicit filesystem prefixes when the file is in Termux. This applies to:
+When you create, save, capture, or reference a file, you MUST include `rel_path: <path>` (or `html_path:` for HTML) in your assistant message. For app-local files, use plain relative paths. Use explicit Termux paths only for Termux files. This applies to:
 - Captured images/audio/video
 - Generated scripts, reports, or data files
 - **Listing files you created** — never list bare filenames; always emit a `rel_path:` line for each file so the user gets clickable, previewable cards instead of plain text
@@ -371,7 +371,6 @@ User UX notes:
 - Media cards include a Share icon.
 
 To fetch the image onto your dev machine (preferred): `GET /user/file/<relative-path>` or `GET /termux/file/<path-under-home>`.
-Backward-compatible query form still works: `GET /user/file?path=<path>`.
 
 #### Marp Slide Navigation (`#page=N`)
 
@@ -391,12 +390,12 @@ rel_path: presentations/demo.md#page=3
 If your reply includes `html_path: ...`, the app will show an OPEN card.
 
 ```text
-html_path: user://agent_ui/sample.html
+html_path: agent_ui/sample.html
 ```
 
 Rules:
 - Prefer `html_path:` (use `open_html:` only for backward compatibility).
-- Viewer OPEN supports both `user://...` and `termux://...` paths.
+- Viewer OPEN supports app-local relative paths and Termux paths (`termux://...` / absolute Termux path).
 - Do not tell the user to manually open a URL or endpoint.
 
 ---
@@ -425,7 +424,7 @@ Prefer the configured Brain provider (Settings -> Brain):
 Template placeholders (expanded server-side, never echoed back):
 - `${vault:<name>}`: credential stored in vault
 - `${config:brain.api_key|brain.base_url|brain.model|brain.vendor}`: brain config values
-- `${file:<path>:base64}`: base64 of a file (`user://...` or `termux://...`; auto-downscale applies to user image files)
+- `${file:<path>:base64}`: base64 of a file (app-local relative path, `termux://...`, or absolute Termux path; auto-downscale applies to app-local image files)
 - `${file:<path>:base64_raw}`: base64 of original bytes
 - `${file:<path>:text}`: UTF-8 decode of file
 
@@ -442,7 +441,7 @@ File transfer prefs: see `$sys/docs/openapi/paths/cloud.yaml` (`/file_transfer/p
 
 Path-style file APIs:
 - Read: `/user/file/<path>`, `/termux/file/<path>`
-- Info: `/user/file/info/<path>`, `/termux/file/info/<path>`
+- Info: `/user/file/info/<path>`, `/termux/file_info/<path>`
 - List: `/user/list/<dir>`, `/termux/list/<dir>`
 - Write: `/user/write/<path>`, `/termux/write/<path>` (POST JSON: `content` or `data_b64`)
 
@@ -460,7 +459,7 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 ## Common Errors
 
 - `permission_required`: user needs to approve on device UI, then retry.
-- `path_outside_user_dir`: path must be under app user root (or use `user://`).
+- `path_outside_user_dir`: path must be under app user root (use app-local relative path).
 - `path_outside_termux_home`: path must be under Termux HOME (`/data/data/com.termux/files/home`).
 - `termux_unavailable`: Termux worker is not reachable.
 - `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without Termux).

@@ -115,8 +115,9 @@ cameraCapture:
                   path:
                     type: string
                     description: >
-                      Output path. Supports user relative (legacy),
-                      `user://<relative-path>`, and `termux://<path>`.
+                      Output path. Supports app-local relative path
+                      (preferred), `termux://<path>`, and absolute
+                      Termux HOME path.
                       Default: captures/capture_<timestamp>.jpg
                   lens:
                     type: string
@@ -153,11 +154,11 @@ cameraCapture:
                   description: Absolute path (for debugging).
                 rel_path:
                   type: string
-                  description: Saved file path (`user://...` or `termux://...`).
+                  description: Saved file path (app-local relative, `termux://...`, or absolute Termux path).
             example:
               status: ok
               path: "/data/data/.../files/user/captures/capture_1700000000000.jpg"
-              rel_path: "user://captures/capture_1700000000000.jpg"
+              rel_path: "captures/capture_1700000000000.jpg"
       '400':
         description: Invalid path.
         content:

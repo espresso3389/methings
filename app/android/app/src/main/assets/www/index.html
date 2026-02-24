@@ -3654,6 +3654,26 @@
         return renderMarkdownFallback(text);
       }
 
+      function sanitizeAssistantText(text) {
+        let out = String(text || "");
+        out = out.replace(/<\s*(?:thought|tought)\b[^>]*>[\s\S]*?<\s*\/\s*(?:thought|tought)\s*>/gi, "");
+        out = out.replace(/<\s*(?:thought|tought)\b[^>]*>/gi, "");
+        out = out.replace(/<\s*\/\s*(?:thought|tought)\s*>/gi, "");
+        const hiddenLinePatterns = [
+          /^\s*use only one tool call at a time[\s.!]*$/i,
+          /^\s*you must use only one tool call at a time[\s.!]*$/i,
+          /^\s*<\s*(?:thought|tought)\b.*$/i,
+          /^\s*<\s*\/\s*(?:thought|tought)\s*>\s*$/i,
+        ];
+        out = out
+          .split(/\r?\n/)
+          .filter((line) => !hiddenLinePatterns.some((re) => re.test(line)))
+          .join("\n")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+        return out;
+      }
+
       // ==============================
       // Marp presentation helpers
       // ==============================
@@ -4034,7 +4054,13 @@
       }
 
       function safeRelPath(p) {
-        // Normalize common "rel_path:" render variants:
+        // Normalize common rel_path/html_path variants.
+        // Policy:
+        // - Plain relative paths are local app files (user root).
+        // - termux:// and /data/data/com.termux/files/home/... are explicit Termux paths.
+        // - Any other URI-like scheme is rejected here.
+        //
+        // Also normalize punctuation/wrappers:
         // - Trailing punctuation: "captures/latest.jpg." or "...jpg," breaks ext detection.
         // - Wrapped in quotes/backticks/brackets.
         // - Fragment like #page=3 (used for Marp slide navigation) is stripped here;
@@ -4048,7 +4074,10 @@
         s = s.replace(/[.,;:]+$/, "");
         if (!s) return "";
         const low = s.toLowerCase();
-        if (low.startsWith("termux://") || low.startsWith("user://")) return s;
+        if (low.startsWith("termux://")) return s;
+        if (low.startsWith("user://")) return "";
+        // Reject any other URI-like scheme to avoid ambiguous resolution.
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return "";
         if (s.startsWith("/data/data/com.termux/files/home")) return s;
         s = s.replace(/^\/+/, "");
         if (s.split("/").some(seg => seg === "..")) return "";
@@ -4056,9 +4085,9 @@
       }
 
       function fileUrl(rel) {
-        const p = String(rel || "").trim();
-        if (p.startsWith("$sys/")) return API + "/sys/file?path=" + encodeURIComponent(p.slice(5));
+        let p = String(rel || "").trim();
         const encodeSegs = (s) => String(s || "").split("/").filter(x => x.length > 0).map(x => encodeURIComponent(x)).join("/");
+        if (p.startsWith("$sys/")) return API + "/sys/file/" + encodeSegs(p.slice(5));
         const low = p.toLowerCase();
         if (low.startsWith("termux://")) {
           let rest = p.slice("termux://".length);
@@ -4078,7 +4107,8 @@
           if (rest.startsWith("/")) rest = rest.slice(1);
           return API + "/termux/file/" + encodeSegs(rest);
         }
-        const relPath = low.startsWith("user://") ? p.slice("user://".length) : p;
+        if (low.startsWith("user://")) return "";
+        const relPath = p;
         return API + "/user/file/" + encodeSegs(relPath);
       }
 
@@ -4091,6 +4121,33 @@
         }
       }
 
+      function isEmbeddedClientWebView() {
+        try {
+          if (typeof AndroidBridge !== "undefined") return true;
+          const ua = String((navigator && navigator.userAgent) || "");
+          // Android WebView commonly includes "; wv)".
+          if (/;\s*wv\)/i.test(ua)) return true;
+        } catch (_) {}
+        return false;
+      }
+
+      function openPreviewByEnvironment(url) {
+        const u = String(url || "");
+        if (!u) return;
+        if (!isEmbeddedClientWebView()) {
+          openPreviewInNewTab(u);
+          return;
+        }
+        try {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
+            AndroidBridge.openInWebview(u);
+            return;
+          }
+        } catch (_) {}
+        // Embedded WebView without bridge support: fallback to same-tab navigation.
+        try { location.href = u; } catch (_) {}
+      }
+
       function extractRelPathsFromText(text) {
         const t = String(text || "");
         const out = [];
@@ -4101,10 +4158,10 @@
           const p = safeRelPath(raw);
           if (!p) return;
           const low = p.toLowerCase();
-          const hasScheme = low.startsWith("user://") || low.startsWith("termux://");
+          const hasTermuxScheme = low.startsWith("termux://");
           const isTermuxAbs = p.startsWith("/data/data/com.termux/files/home/");
           const hasExt = /\.[a-z0-9]+$/.test(p);
-          if (!(hasScheme || isTermuxAbs || hasExt)) return;
+          if (!(hasTermuxScheme || isTermuxAbs || hasExt)) return;
           if (!seen.has(p)) { out.push(raw.trim()); seen.add(p); }
         }
 
@@ -4216,11 +4273,7 @@
           openBtn.innerHTML = ICON.externalLink;
           const open = () => {
             const url = fileUrl(pWithPage);
-            if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
-              AndroidBridge.openInWebview(url, true);
-            } else {
-              openPreviewInNewTab(url);
-            }
+            openPreviewByEnvironment(url);
           };
           openBtn.addEventListener("click", (ev) => {
             ev.preventDefault();
@@ -4301,11 +4354,7 @@
 
         // Tap card → open in split browser panel (no duplicate card)
         card.addEventListener("click", () => {
-          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
-            AndroidBridge.openInWebview(url);
-          } else {
-            openPreviewInNewTab(url);
-          }
+          openPreviewByEnvironment(url);
         });
 
         return card;
@@ -4463,7 +4512,7 @@
                 img.dataset.relPath = p;
                 img.style.cursor = "zoom-in";
                 const open = () => {
-                  if (typeof AndroidBridge === "undefined") {
+                  if (!isEmbeddedClientWebView()) {
                     openPreviewInNewTab(fileUrl(p));
                     return;
                   }
@@ -4512,7 +4561,7 @@
                 card.addEventListener("click", (ev) => {
                   if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
                   if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
-                  if (typeof AndroidBridge === "undefined") {
+                  if (!isEmbeddedClientWebView()) {
                     openPreviewInNewTab(fileUrl(p));
                     return;
                   }
@@ -4532,7 +4581,7 @@
                 card.addEventListener("click", (ev) => {
                   if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
                   if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
-                  if (typeof AndroidBridge === "undefined") {
+                  if (!isEmbeddedClientWebView()) {
                     openPreviewInNewTab(fileUrl(p));
                     return;
                   }
@@ -4638,14 +4687,10 @@
                     if (ext === "html" || ext === "htm") {
                       const pWithPage = (p0Page >= 0) ? (p + "#page=" + p0Page) : p;
                       const url = fileUrl(pWithPage);
-                      if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
-                        AndroidBridge.openInWebview(url);
-                      } else {
-                        openPreviewInNewTab(url);
-                      }
+                      openPreviewByEnvironment(url);
                       return;
                     }
-                    if (typeof AndroidBridge === "undefined") {
+                    if (!isEmbeddedClientWebView()) {
                       openPreviewInNewTab(fileUrl(p));
                       return;
                     }
@@ -4687,7 +4732,7 @@
       const viewerIframe = $("viewerIframe");
       const viewerBody = $("viewerBody");
       const viewerText = $("viewerText");
-      const isEmbeddedWebView = (typeof AndroidBridge !== "undefined");
+      const isEmbeddedWebView = isEmbeddedClientWebView();
 
       let viewerPaths = [];
       let viewerIndex = 0;
@@ -5520,14 +5565,16 @@
               const ts = Number(data.ts || 0);
               const itemId = meta.item_id || "";
               if (!text || (role !== "user" && role !== "assistant")) return;
+              const visibleText = role === "assistant" ? sanitizeAssistantText(text) : text;
+              if (role === "assistant" && !visibleText) return;
               // Resolve SSE waiters.
               if (role === "assistant" && itemId && _sseWaiters.has(itemId)) {
                 const w = _sseWaiters.get(itemId);
                 if (w) {
-                  w.lastText = text;
-                  if (String(meta.error || "") === "brain_item_failed" || /^Error:/i.test(text)) {
+                  w.lastText = visibleText;
+                  if (String(meta.error || "") === "brain_item_failed" || /^Error:/i.test(visibleText)) {
                     w.failed = true;
-                    w.failMsg = text;
+                    w.failMsg = visibleText;
                   }
                 }
               }
@@ -5542,22 +5589,22 @@
                   if (role === "assistant") {
                     if (_thinking.el === existing) _thinking.el = null;
                     // Always reflect the latest assistant text for the same item_id.
-                    existing.innerHTML = renderMarkdown(text);
+                    existing.innerHTML = renderMarkdown(visibleText);
                     if (streaming && !activeAgentItemId && String(meta.error || "") === "brain_item_failed") {
                       streaming = false;
                       chatSend.disabled = false;
                       setInterruptUi(false, "");
                     }
                   }
-                  try { renderInlineAttachments(existing, text); } catch (_) {}
-                  try { renderInlineHtmlLinks(existing, text); } catch (_) {}
-                  upsertConversationEntry(role, itemId, text, meta, ts);
+                  try { renderInlineAttachments(existing, visibleText); } catch (_) {}
+                  try { renderInlineHtmlLinks(existing, visibleText); } catch (_) {}
+                  upsertConversationEntry(role, itemId, visibleText, meta, ts);
                   if (role === "assistant") clearWorkingByItemId(itemId);
                   return;
                 }
               }
-              addMsg(role, text, Object.assign({}, meta, { _ts: ts }));
-              conversation.push({ role: role, content: text, meta: meta, ts: ts || Date.now() });
+              addMsg(role, visibleText, Object.assign({}, meta, { _ts: ts }));
+              conversation.push({ role: role, content: visibleText, meta: meta, ts: ts || Date.now() });
               if (role === "assistant" && itemId) clearWorkingByItemId(itemId);
               conversation = conversation.slice(-220);
               saveConversation();
@@ -5893,18 +5940,20 @@
         if (m.debug) div.dataset.debug = "1";
         if (actor) div.dataset.actor = actor;
         if (meta && meta._ts) div.dataset.ts = String(meta._ts);
+        const safeContent = (role === "assistant") ? sanitizeAssistantText(content) : String(content || "");
+        if (role === "assistant" && !safeContent) return null;
         if (role === "assistant" || role === "user") {
-          div.innerHTML = renderMarkdown(content);
+          div.innerHTML = renderMarkdown(safeContent);
           // Attachments should render for both user and assistant messages.
-          try { renderInlineAttachments(div, content); } catch (_) {}
-          try { renderInlineHtmlLinks(div, content); } catch (_) {}
-          try { renderInlineUrlCards(div, content); } catch (_) {}
+          try { renderInlineAttachments(div, safeContent); } catch (_) {}
+          try { renderInlineHtmlLinks(div, safeContent); } catch (_) {}
+          try { renderInlineUrlCards(div, safeContent); } catch (_) {}
           try { renderInlineMentions(div); } catch (_) {}
           // Retry affordance for agent failures.
           try {
             const err = m && m.error ? String(m.error) : "";
             const itemId = m && m.item_id ? String(m.item_id) : "";
-            const isAgentFailure = role === "assistant" && !!itemId && (err === "brain_item_failed" || /^Error:/i.test(String(content || "").trim()));
+            const isAgentFailure = role === "assistant" && !!itemId && (err === "brain_item_failed" || /^Error:/i.test(String(safeContent || "").trim()));
             if (isAgentFailure) {
               const actions = document.createElement("div");
               actions.dataset.ui = "retry-actions";
@@ -5920,7 +5969,7 @@
             }
           } catch (_) {}
         } else {
-          div.textContent = content;
+          div.textContent = safeContent;
         }
         chatAppend(div);
         if (shouldScroll || isDebug || stickToBottom) scrollToBottomSoon();
@@ -6059,7 +6108,9 @@
               if (ts > cur) lastAssistantTsByItem.set(itemId, ts);
             }
             if (role !== "user" && role !== "assistant") continue;
-            rebuilt.push({ role: role, content: msg.text, meta: meta, ts: ts });
+            const visibleText = role === "assistant" ? sanitizeAssistantText(msg.text) : msg.text;
+            if (!visibleText || !String(visibleText).trim()) continue;
+            rebuilt.push({ role: role, content: visibleText, meta: meta, ts: ts });
           }
           if (!rebuilt.length) return;
           lastServerTs = Math.max(lastServerTs, maxTs);
@@ -6119,6 +6170,7 @@
             if (!text) continue;
             const ts = Number(msg.ts || 0);
             const meta = (msg && msg.meta && typeof msg.meta === "object") ? msg.meta : {};
+            const visibleText = msg.role === "assistant" ? sanitizeAssistantText(text) : text;
             maxTs = Math.max(maxTs, ts);
             if (ts && ts <= lastServerTs) continue;
 
@@ -6130,6 +6182,7 @@
               continue;
             }
             if (msg.role !== "user" && msg.role !== "assistant") continue;
+              if (msg.role === "assistant" && !visibleText) continue;
               if (itemId) {
                 const existing = findRenderedByItem(msg.role, itemId);
                 if (existing) {
@@ -6138,7 +6191,7 @@
                   if (msg.role === "assistant") {
                     if (_thinking.el === existing) _thinking.el = null;
                     // Always keep the newest assistant content for the same item_id.
-                    existing.innerHTML = renderMarkdown(text);
+                    existing.innerHTML = renderMarkdown(visibleText);
                     // Clean up recovered-streaming state if applicable.
                     if (streaming && !activeAgentItemId) {
                     streaming = false;
@@ -6147,9 +6200,9 @@
                   }
                 }
                 // Always refresh attachments and persist upgraded content for rotation recovery.
-                try { renderInlineAttachments(existing, text); } catch (_) {}
-                try { renderInlineHtmlLinks(existing, text); } catch (_) {}
-                upsertConversationEntry(msg.role, itemId, text, meta, ts);
+                try { renderInlineAttachments(existing, visibleText); } catch (_) {}
+                try { renderInlineHtmlLinks(existing, visibleText); } catch (_) {}
+                upsertConversationEntry(msg.role, itemId, visibleText, meta, ts);
                 if (msg.role === "assistant") clearWorkingByItemId(itemId);
                 // Permission resume events: show working indicator for the resumed item id.
                 try {
@@ -6160,8 +6213,8 @@
               }
             }
 
-            addMsg(msg.role, text, Object.assign({}, meta, { _ts: ts }));
-            conversation.push({ role: msg.role, content: text, meta: meta, ts: ts });
+            addMsg(msg.role, visibleText, Object.assign({}, meta, { _ts: ts }));
+            conversation.push({ role: msg.role, content: visibleText, meta: meta, ts: ts });
             if (msg.role === "assistant" && itemId) clearWorkingByItemId(itemId);
             try {
               const rid = (meta && (meta.resume_item_id || meta.resumeItemId)) ? String(meta.resume_item_id || meta.resumeItemId) : "";
@@ -6542,8 +6595,9 @@
       // Permission cards (inline in chat)
       // ==============================
       const BIOMETRIC_TOOLS = new Set(["credentials", "ssh_keys", "ssh_pin"]);
-      const _permState = { knownIds: new Set(), cardEl: null, items: {} };
+      const _permState = { knownIds: new Set(), cardEl: null, items: {}, staleDenyInFlight: new Set() };
       const _remotePermState = { knownIds: new Set() };
+      const BIOMETRIC_PENDING_TIMEOUT_MS = 35 * 1000;
 
       /** Append el to chatMessages, but keep active perm-card pinned at the bottom. */
       function chatAppend(el) {
@@ -6593,7 +6647,9 @@
               "<div class='perm-item-detail'>" + (p.detail || "").replace(/</g, "&lt;") + "</div>" +
             "</div>" +
             (isBio
-              ? "<div style='font-size:11px; color:var(--ink-muted); white-space:nowrap;'>device auth</div>"
+              ? "<div class='perm-item-actions'>" +
+                  "<button class='btn' data-action='deny' data-pid='" + p.id + "'>Dismiss</button>" +
+                "</div>"
               : "<div class='perm-item-actions'>" +
                   "<button class='btn' data-action='deny' data-pid='" + p.id + "'>Deny</button>" +
                   "<button class='btn primary' data-action='approve' data-pid='" + p.id + "'>Allow</button>" +
@@ -6702,7 +6758,29 @@
           } catch (_) {}
 
           const allPending = pending.concat(remotePending);
+          // Biometric permission prompts (e.g., ssh_keys) should never remain pending forever.
+          // If they outlive the local request timeout, auto-deny to clear stale banners.
+          const now = Date.now();
+          for (const p of allPending) {
+            if (!p || p.remote || !BIOMETRIC_TOOLS.has(String(p.tool || ""))) continue;
+            const createdAt = Number(p.created_at || 0);
+            if (!createdAt || (now - createdAt) < BIOMETRIC_PENDING_TIMEOUT_MS) continue;
+            const pid = String(p.id || "");
+            if (!pid || _permState.staleDenyInFlight.has(pid)) continue;
+            _permState.staleDenyInFlight.add(pid);
+            postPermAction(pid, "deny").finally(() => {
+              _permState.staleDenyInFlight.delete(pid);
+            });
+          }
           const allPendingIds = new Set(allPending.map(p => p.id));
+          if (allPendingIds.size === 0) {
+            if (_permState.cardEl && _permState.cardEl.isConnected) _permState.cardEl.remove();
+            _permState.cardEl = null;
+            _permState.items = {};
+            _permState.knownIds.clear();
+            syncPermOverlay();
+            return;
+          }
 
           // Check for resolved permissions we're tracking.
           for (const [pid, entry] of Object.entries(_permState.items)) {
@@ -6761,7 +6839,9 @@
               "<div class='perm-item-detail'>" + detail.replace(/</g, "&lt;") + "</div>" +
             "</div>" +
             (isBio
-              ? "<div style='font-size:11px; color:var(--ink-muted); white-space:nowrap;'>device auth</div>"
+              ? "<div class='perm-item-actions'>" +
+                  "<button class='btn' data-action='deny' data-pid='" + pid + "'>Dismiss</button>" +
+                "</div>"
               : "<div class='perm-item-actions'>" +
                   "<button class='btn' data-action='deny' data-pid='" + pid + "'>Deny</button>" +
                   "<button class='btn primary' data-action='approve' data-pid='" + pid + "'>Allow</button>" +
@@ -6976,7 +7056,7 @@
             throw new Error("Agent finished without response");
           }
           const memRe = /<<MEMORY_UPDATE>>([\s\S]*?)<<END_MEMORY>>/g;
-          const cleaned = (answer || "").replace(memRe, "").trim();
+          const cleaned = sanitizeAssistantText((answer || "").replace(memRe, "").trim());
 
           if (cleaned) {
             if (_thinking.el === aDiv) _thinking.el = null;
@@ -7057,7 +7137,7 @@
 
           const answer = await waitForAgentReply(newId);
           if (!answer) throw new Error("Agent finished without response");
-          const cleaned = String(answer || "").trim();
+          const cleaned = sanitizeAssistantText(String(answer || "").trim());
           if (cleaned) {
             if (_thinking.el === aDiv) _thinking.el = null;
             aDiv.innerHTML = renderMarkdown(cleaned);
@@ -9647,18 +9727,26 @@
         });
         if (!res.ok) throw new Error("permission request failed");
         const data = await res.json();
-        if (data.status === "approved") return data.id;
+        const permissionId = String(data.id || "").trim();
+        if (data.status === "approved") return permissionId;
+        if (!permissionId) throw new Error("permission id missing");
         const deadline = Date.now() + 30000;
         while (Date.now() < deadline) {
           await new Promise(r => setTimeout(r, 500));
-          try {
-            const sr = await fetch(API + "/permissions/" + data.id);
-            if (!sr.ok) continue;
-            const sd = await sr.json();
-            if (sd.status === "approved") return data.id;
-            if (sd.status === "denied") throw new Error("permission denied");
-          } catch (_) {}
+          const sr = await fetch(API + "/permissions/" + permissionId).catch(() => null);
+          if (!sr || !sr.ok) continue;
+          const sd = await sr.json().catch(() => ({}));
+          if (sd.status === "approved") return permissionId;
+          if (sd.status === "denied") throw new Error("permission denied");
         }
+        // Avoid leaving stale pending permission rows after timeout.
+        try {
+          await fetch(API + "/permissions/" + permissionId + "/deny", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: "{}",
+          });
+        } catch (_) {}
         throw new Error("permission timeout");
       }
 
@@ -11334,7 +11422,7 @@
 
       // When viewed in a normal browser (not Android WebView), open external
       // links in a new tab so the UI page is not navigated away.
-      if (typeof AndroidBridge === "undefined") {
+      if (!isEmbeddedClientWebView()) {
         document.addEventListener("click", function(e) {
           var a = e.target.closest("a[href]");
           if (!a) return;

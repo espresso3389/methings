@@ -723,7 +723,7 @@ class MainActivity : AppCompatActivity() {
                 browserUrlView.text = url ?: ""
                 // Show source toggle only for local file URLs
                 val u = url ?: ""
-                val isLocalFile = u.contains("/user/file?path=") || u.contains("/sys/file?path=")
+                val isLocalFile = u.contains("/user/file/") || u.contains("/sys/file/")
                 browserSourceBtn.visibility = if (isLocalFile) View.VISIBLE else View.GONE
             }
 

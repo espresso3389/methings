@@ -528,12 +528,8 @@ paths:
     $ref: './paths/files.yaml#/userWrite'
   /user/write/{path}:
     $ref: './paths/files.yaml#/userWriteByPath'
-  /user/file:
-    $ref: './paths/files.yaml#/userFile'
   /user/file/{path}:
     $ref: './paths/files.yaml#/userFileByPath'
-  /user/file/info:
-    $ref: './paths/files.yaml#/userFileInfo'
   /user/file/info/{path}:
     $ref: './paths/files.yaml#/userFileInfoByPath'
   /user/list:
@@ -544,19 +540,15 @@ paths:
     $ref: './paths/files.yaml#/termuxWrite'
   /termux/write/{path}:
     $ref: './paths/files.yaml#/termuxWriteByPath'
-  /termux/file:
-    $ref: './paths/files.yaml#/termuxFile'
   /termux/file/{path}:
     $ref: './paths/files.yaml#/termuxFileByPath'
-  /termux/file/info:
-    $ref: './paths/files.yaml#/termuxFileInfo'
-  /termux/file/info/{path}:
+  /termux/file_info/{path}:
     $ref: './paths/files.yaml#/termuxFileInfoByPath'
   /termux/list:
     $ref: './paths/files.yaml#/termuxList'
   /termux/list/{path}:
     $ref: './paths/files.yaml#/termuxListByPath'
-  /sys/file:
-    $ref: './paths/files.yaml#/sysFile'
+  /sys/file/{path}:
+    $ref: './paths/files.yaml#/sysFileByPath'
   /sys/list:
     $ref: './paths/files.yaml#/sysList'
