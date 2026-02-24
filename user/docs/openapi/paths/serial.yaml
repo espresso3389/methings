@@ -66,6 +66,19 @@ serialWsContract:
     operationId: getSerialWsContract
     summary: Get WebSocket contract for asynchronous serial I/O
     tags: [Serial]
+    description: >
+      Async serial transport over WebSocket. Connect to
+      `/ws/serial/{serial_handle}` after opening a serial session with
+      `serial.open`.
+
+      Read path:
+      server sends binary WebSocket frames containing raw serial bytes.
+
+      Write path:
+      client can send either binary frames (raw bytes), or text JSON commands.
+      JSON command examples:
+      `{"type":"write","data_b64":"SGVsbG8NCg==","timeout_ms":2000}`,
+      `{"type":"lines","dtr":true,"rts":false}`.
     responses:
       '200':
         description: WebSocket path and message formats.
@@ -83,16 +96,41 @@ serialWsContract:
                   example: /ws/serial/{serial_handle}
                 query:
                   type: object
+                  properties:
+                    permission_id:
+                      type: string
+                    identity:
+                      type: string
+                    read_timeout_ms:
+                      type: integer
+                      default: 200
+                    max_read_bytes:
+                      type: integer
+                      default: 4096
+                    write_timeout_ms:
+                      type: integer
+                      default: 2000
                 inbound_binary:
                   type: string
+                  example: raw serial bytes to write
                 inbound_json:
                   type: array
                   items:
                     type: object
+                  example:
+                    - type: write
+                      data_b64: SGVsbG8NCg==
+                      timeout_ms: 2000
+                    - type: lines
+                      dtr: true
+                      rts: false
                 outbound:
                   type: array
                   items:
                     type: string
+                  example:
+                    - binary frames: raw serial bytes read from device
+                    - json frames: hello, write_ack, lines_ack, error, permission_required
 
 serialOpen:
   post:

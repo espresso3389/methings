@@ -159,6 +159,30 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
   - Server -> client: binary frames (raw serial bytes), plus JSON `hello` / `error`.
   - Client -> server: binary frames (raw bytes to write), or JSON `{"type":"write","data_b64":"..."}` / `{"type":"lines","dtr":...,"rts":...}`.
 
+Serial WebSocket usage (recommended for realtime):
+1. Open USB and serial session:
+   - `POST /usb/open` -> `handle`
+   - `POST /serial/list_ports` with `{"handle":"..."}` to choose `port_index`
+   - `POST /serial/open` with `{"handle":"...","port_index":0,"baud_rate":115200}` -> `serial_handle`
+2. Connect WebSocket:
+   - `ws://127.0.0.1:33389/ws/serial/{serial_handle}?permission_id=...&identity=...`
+   - Optional query params: `read_timeout_ms`, `max_read_bytes`, `write_timeout_ms`
+3. Read from device asynchronously:
+   - Incoming binary frames are raw serial bytes.
+4. Write to device asynchronously:
+   - Send binary frame (raw bytes), or send text JSON:
+     - `{"type":"write","data_b64":"SGVsbG8NCg==","timeout_ms":2000}`
+5. Toggle modem lines if needed:
+   - Send text JSON: `{"type":"lines","dtr":true,"rts":false}`
+6. Close:
+   - Close WebSocket, then `POST /serial/close` with `{"serial_handle":"..."}`
+
+WebSocket event examples:
+- `{"type":"hello","serial_handle":"...","read_timeout_ms":200,"max_read_bytes":4096,"write_timeout_ms":2000}`
+- `{"type":"write_ack","bytes_written":14}`
+- `{"type":"lines_ack","dtr":true,"rts":false}`
+- `{"type":"error","code":"serial_write_failed","detail":"..."}`
+
 ### MCU (Model-Driven Programming) — `$sys/docs/openapi/paths/mcu.yaml`
 - `mcu.models`: list supported programming models and status.
 - `mcu.probe`: probe a connected target for the selected model.
