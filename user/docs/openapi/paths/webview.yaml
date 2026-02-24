@@ -106,7 +106,7 @@ webviewScreenshot:
     summary: Capture browser screenshot
     description: >
       Renders the current WebView to a JPEG image and saves it under the
-      user directory.  Returns the relative path.
+      selected filesystem path. Returns `rel_path`.
     tags: [WebView]
     requestBody:
       required: false
@@ -118,7 +118,9 @@ webviewScreenshot:
               path:
                 type: string
                 default: "browser/screenshot_<timestamp>.jpg"
-                description: User-root relative output path.
+                description: >
+                  Output path. Supports user relative (legacy),
+                  `user://<relative-path>`, and `termux://<path>`.
               quality:
                 type: integer
                 default: 80
@@ -129,7 +131,7 @@ webviewScreenshot:
                 type: integer
                 default: 10
           example:
-            path: "browser/page.jpg"
+            path: "user://browser/page.jpg"
             quality: 85
     responses:
       '200':

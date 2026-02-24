@@ -86,7 +86,8 @@ data class AgentConfig(
             "Do NOT pre-emptively tell the user \"please allow\" before attempting the tool call. " +
             "Never ask the user to approve the same action twice. " +
             "Prefer device_api for device controls exposed by the Kotlin control plane. " +
-            "When you create an HTML app/page under user files and want the user to open it, include a line `html_path: <relative_path>.html` in your response. " +
+            "When you create or reference files, always disambiguate filesystem: use `user://<relative_path>` for app user files and `termux://<path>` for Termux files. " +
+            "When you create an HTML app/page under app user files and want the user to open it, include `html_path: user://<relative_path>.html` in your response. " +
             "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. " +
             "For code execution, prefer run_js (built-in QuickJS engine, always available) for data processing, calculations, and general programming. " +
             "run_python/run_pip require Termux; run_curl works natively without Termux. " +

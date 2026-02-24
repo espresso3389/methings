@@ -956,27 +956,33 @@ class AgentRuntime(
             }
 
             for (path in pathsToCheck) {
+                val normalizedPath = when {
+                    path.startsWith("user://", ignoreCase = true) -> path.substringAfter("://").trim().trimStart('/')
+                    path.startsWith("termux://", ignoreCase = true) -> ""
+                    else -> path
+                }
+                if (normalizedPath.isBlank()) continue
                 // Check images
-                if ("image" in supportedTypes && MediaEncoder.isImagePath(path)) {
-                    val file = File(userDir, path)
-                    Log.d(TAG, "extractMedia: found image path='$path', exists=${file.exists()}")
+                if ("image" in supportedTypes && MediaEncoder.isImagePath(normalizedPath)) {
+                    val file = File(userDir, normalizedPath)
+                    Log.d(TAG, "extractMedia: found image path='$normalizedPath', exists=${file.exists()}")
                     if (file.exists()) {
                         val maxDim = if (toolExecutor.imageResizeEnabled) toolExecutor.imageMaxDimPx else Int.MAX_VALUE
                         val encoded = MediaEncoder.encodeImage(file, maxDim, toolExecutor.imageJpegQuality)
                         if (encoded != null) {
-                            Log.i(TAG, "extractMedia: encoded image from '$path' (${encoded.base64.length} chars base64)")
+                            Log.i(TAG, "extractMedia: encoded image from '$normalizedPath' (${encoded.base64.length} chars base64)")
                             return ExtractedMedia(encoded.base64, encoded.mimeType, "image")
                         }
                     }
                 }
                 // Check audio
-                if ("audio" in supportedTypes && MediaEncoder.isAudioPath(path)) {
-                    val file = File(userDir, path)
-                    Log.d(TAG, "extractMedia: found audio path='$path', exists=${file.exists()}")
+                if ("audio" in supportedTypes && MediaEncoder.isAudioPath(normalizedPath)) {
+                    val file = File(userDir, normalizedPath)
+                    Log.d(TAG, "extractMedia: found audio path='$normalizedPath', exists=${file.exists()}")
                     if (file.exists()) {
                         val encoded = MediaEncoder.encodeAudio(file)
                         if (encoded != null) {
-                            Log.i(TAG, "extractMedia: encoded audio from '$path' (${encoded.base64.length} chars base64)")
+                            Log.i(TAG, "extractMedia: encoded audio from '$normalizedPath' (${encoded.base64.length} chars base64)")
                             return ExtractedMedia(encoded.base64, encoded.mimeType, "audio")
                         }
                     }
@@ -997,8 +1003,13 @@ class AgentRuntime(
             val trimmed = line.trim()
             if (trimmed.startsWith("rel_path:")) {
                 val p = trimmed.substringAfter("rel_path:").trim()
-                if (p.isNotEmpty() && MediaEncoder.isMediaPath(p)) {
-                    paths.add(p)
+                val normalizedPath = if (p.startsWith("user://", ignoreCase = true)) {
+                    p.substringAfter("://").trim().trimStart('/')
+                } else {
+                    p
+                }
+                if (normalizedPath.isNotEmpty() && MediaEncoder.isMediaPath(normalizedPath)) {
+                    paths.add(normalizedPath)
                     continue  // Remove this line from text sent to LLM
                 }
             }

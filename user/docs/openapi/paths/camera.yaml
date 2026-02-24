@@ -95,11 +95,11 @@ cameraCapture:
     operationId: postCameraCapture
     summary: Capture a still image
     description: >
-      Captures a still image to user root. The HTTP call blocks until the file
+      Captures a still image to the requested filesystem path. The HTTP call blocks until the file
       is saved (or a timeout/error), so rel_path is guaranteed to exist when
       status=ok. To show the image inline in the chat UI, include `rel_path: <path>`
       in your message. To download to a dev machine, use
-      `GET /user/file?path=<rel_path>`.
+      `GET /user/file/<relative-path>` (or `GET /termux/file/<path-under-home>` for Termux files).
     tags: [Camera]
     x-permission:
       tool: device.camera
@@ -115,7 +115,8 @@ cameraCapture:
                   path:
                     type: string
                     description: >
-                      User-root relative output path.
+                      Output path. Supports user relative (legacy),
+                      `user://<relative-path>`, and `termux://<path>`.
                       Default: captures/capture_<timestamp>.jpg
                   lens:
                     type: string
@@ -152,11 +153,11 @@ cameraCapture:
                   description: Absolute path (for debugging).
                 rel_path:
                   type: string
-                  description: User-root relative path (use with filesystem tools).
+                  description: Saved file path (`user://...` or `termux://...`).
             example:
               status: ok
               path: "/data/data/.../files/user/captures/capture_1700000000000.jpg"
-              rel_path: "captures/capture_1700000000000.jpg"
+              rel_path: "user://captures/capture_1700000000000.jpg"
       '400':
         description: Invalid path.
         content:

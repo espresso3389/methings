@@ -1,7 +1,7 @@
 userUpload:
   post:
     operationId: postUserUpload
-    summary: Upload a file to user root
+    summary: Upload a file to app user or Termux HOME
     description: >
       Uploaded files are treated as an explicit read grant. Use `rel_path: <path>`
       in chat responses to trigger inline preview cards in the app UI.
@@ -21,8 +21,9 @@ userUpload:
               dir:
                 type: string
                 description: >
-                  Subdirectory under files/user/ to store the file.
-                  Defaults to uploads/.
+                  Destination directory. Supports user relative (legacy),
+                  `user://<relative-dir>`, and `termux://<dir>`.
+                  Defaults to `user://uploads`.
     responses:
       '200':
         description: File uploaded successfully.
@@ -37,15 +38,205 @@ userUpload:
                   const: ok
                 path:
                   type: string
-                  description: User-root relative path of the uploaded file.
+                  description: Saved file path (`user://...` or `termux://...`).
             example:
               status: ok
-              path: "uploads/photo.jpg"
+              path: "user://uploads/photo.jpg"
+
+userWrite:
+  post:
+    operationId: postUserWrite
+    summary: Write file bytes/text to app user filesystem
+    description: >
+      Writes content to a file in app user filesystem.
+      Preferred path-style route: `/user/write/<relative-path>`.
+      Compatibility route: `/user/write` with `path` in JSON body.
+    tags: [Files]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              path:
+                type: string
+                description: User file path (required for `/user/write`).
+              content:
+                description: UTF-8 content (string/object/array).
+              body:
+                description: Alias of `content`.
+              data_b64:
+                type: string
+                description: Raw bytes as base64.
+              encoding:
+                type: string
+                description: `utf-8` (default) or `base64` when using `content`/`body`.
+          example:
+            content: "hello"
+    responses:
+      '200':
+        description: File written.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, path, bytes_written]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                path:
+                  type: string
+                bytes_written:
+                  type: integer
+            example:
+              status: ok
+              path: user://notes/hello.txt
+              bytes_written: 5
+
+userWriteByPath:
+  post:
+    operationId: postUserWriteByPath
+    summary: Write file bytes/text to app user filesystem (path-style)
+    tags: [Files]
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: User relative path.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              content: {}
+              body: {}
+              data_b64:
+                type: string
+              encoding:
+                type: string
+    responses:
+      '200':
+        description: File written.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, path, bytes_written]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                path:
+                  type: string
+                bytes_written:
+                  type: integer
+
+termuxWrite:
+  post:
+    operationId: postTermuxWrite
+    summary: Write file bytes/text to Termux HOME filesystem
+    description: >
+      Writes content to a file in Termux HOME.
+      Preferred path-style route: `/termux/write/<path-under-home>`.
+      Compatibility route: `/termux/write` with `path` in JSON body.
+    tags: [Files]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              path:
+                type: string
+                description: Termux file path (`termux://...`, `~/...`, or absolute HOME path).
+              content:
+                description: UTF-8 content (string/object/array).
+              body:
+                description: Alias of `content`.
+              data_b64:
+                type: string
+                description: Raw bytes as base64.
+              encoding:
+                type: string
+                description: `utf-8` (default) or `base64` when using `content`/`body`.
+          example:
+            path: termux://~/tmp/hello.txt
+            content: "hello"
+    responses:
+      '200':
+        description: File written.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, path, bytes_written]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                path:
+                  type: string
+                bytes_written:
+                  type: integer
+
+termuxWriteByPath:
+  post:
+    operationId: postTermuxWriteByPath
+    summary: Write file bytes/text to Termux HOME filesystem (path-style)
+    tags: [Files]
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Path under Termux HOME.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              content: {}
+              body: {}
+              data_b64:
+                type: string
+              encoding:
+                type: string
+    responses:
+      '200':
+        description: File written.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, path, bytes_written]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                path:
+                  type: string
+                bytes_written:
+                  type: integer
 
 userFile:
   get:
     operationId: getUserFile
-    summary: Serve a file from user root
+    summary: Serve a file from app user or Termux HOME
+    description: >
+      Preferred path-style routes:
+      - `/user/file/<relative-path>`
+      - `/termux/file/<path-under-home>`
+      Query form (`/user/file?path=...`) remains supported for compatibility.
     tags: [Files]
     parameters:
       - name: path
@@ -53,7 +244,11 @@ userFile:
         required: true
         schema:
           type: string
-        description: User-root relative path.
+        description: >
+          File path. Supports:
+          - user relative path (legacy)
+          - `user://<relative-path>`
+          - `termux://<path>` (restricted to Termux HOME)
     responses:
       '200':
         description: File bytes (content type matches the file).
@@ -69,11 +264,79 @@ userFile:
             schema:
               $ref: '../components/schemas.yaml#/ErrorResponse'
 
+termuxFile:
+  get:
+    operationId: getTermuxFile
+    summary: Serve a file from Termux HOME
+    tags: [Files]
+    parameters:
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Termux file path.
+    responses:
+      '200':
+        description: File bytes.
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+
+userFileByPath:
+  get:
+    operationId: getUserFileByPath
+    summary: Serve an app user file (path-style)
+    tags: [Files]
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: User relative path.
+    responses:
+      '200':
+        description: File bytes.
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+
+termuxFileByPath:
+  get:
+    operationId: getTermuxFileByPath
+    summary: Serve a Termux HOME file (path-style)
+    tags: [Files]
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Path under Termux HOME.
+    responses:
+      '200':
+        description: File bytes.
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
+
 userFileInfo:
   get:
     operationId: getUserFileInfo
     summary: Get file metadata
     description: >
+      Preferred path-style routes:
+      - `/user/file/info/<relative-path>`
+      - `/termux/file/info/<path-under-home>`
+      Query form (`/user/file/info?path=...`) remains supported for compatibility.
+
       Returns file metadata without serving bytes. Strips #page=N fragment
       from path before lookup. For images (except SVG), includes width/height
       via BitmapFactory (omitted if corrupt). For .md files, includes is_marp
@@ -87,7 +350,9 @@ userFileInfo:
         required: true
         schema:
           type: string
-        description: User-root relative path (supports #page=N fragment).
+        description: >
+          File path (supports #page=N fragment). Supports user relative,
+          `user://...`, and `termux://...` (Termux HOME only).
     responses:
       '200':
         description: File metadata and derived info.
@@ -146,10 +411,10 @@ userFileInfo:
             schema:
               $ref: '../components/schemas.yaml#/ErrorResponse'
 
-userList:
+termuxFileInfo:
   get:
-    operationId: getUserList
-    summary: List files in a user-root directory
+    operationId: getTermuxFileInfo
+    summary: Get Termux file metadata
     tags: [Files]
     parameters:
       - name: path
@@ -157,7 +422,122 @@ userList:
         required: true
         schema:
           type: string
-        description: User-root relative directory path.
+        description: Termux file path.
+    responses:
+      '200':
+        description: File metadata.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, size, mtime_ms, mime, kind, ext]
+              properties:
+                name:
+                  type: string
+                size:
+                  type: integer
+                  format: int64
+                mtime_ms:
+                  type: integer
+                  format: int64
+                mime:
+                  type: string
+                kind:
+                  type: string
+                ext:
+                  type: string
+
+userFileInfoByPath:
+  get:
+    operationId: getUserFileInfoByPath
+    summary: Get app user file metadata (path-style)
+    tags: [Files]
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: User relative path.
+    responses:
+      '200':
+        description: File metadata.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, size, mtime_ms, mime, kind, ext]
+              properties:
+                name:
+                  type: string
+                size:
+                  type: integer
+                  format: int64
+                mtime_ms:
+                  type: integer
+                  format: int64
+                mime:
+                  type: string
+                kind:
+                  type: string
+                ext:
+                  type: string
+
+termuxFileInfoByPath:
+  get:
+    operationId: getTermuxFileInfoByPath
+    summary: Get Termux HOME file metadata (path-style)
+    tags: [Files]
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Path under Termux HOME.
+    responses:
+      '200':
+        description: File metadata.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, size, mtime_ms, mime, kind, ext]
+              properties:
+                name:
+                  type: string
+                size:
+                  type: integer
+                  format: int64
+                mtime_ms:
+                  type: integer
+                  format: int64
+                mime:
+                  type: string
+                kind:
+                  type: string
+                ext:
+                  type: string
+
+userList:
+  get:
+    operationId: getUserList
+    summary: List files in app user or Termux HOME directory
+    description: >
+      Preferred path-style routes:
+      - `/user/list/<relative-dir>`
+      - `/termux/list/<path-under-home>`
+      Query form (`/user/list?path=...`) remains supported for compatibility.
+    tags: [Files]
+    parameters:
+      - name: path
+        in: query
+        required: false
+        schema:
+          type: string
+        description: >
+          Directory path. Supports user relative, `user://...`, and
+          `termux://...` (Termux HOME only). Empty path lists user root.
     responses:
       '200':
         description: Directory listing.
@@ -188,6 +568,96 @@ userList:
           application/json:
             schema:
               $ref: '../components/schemas.yaml#/ErrorResponse'
+
+termuxList:
+  get:
+    operationId: getTermuxList
+    summary: List Termux HOME directory
+    tags: [Files]
+    parameters:
+      - name: path
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Termux directory path.
+    responses:
+      '200':
+        description: Directory listing.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, path, items]
+              properties:
+                status:
+                  type: string
+                path:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    type: object
+
+userListByPath:
+  get:
+    operationId: getUserListByPath
+    summary: List app user directory (path-style)
+    tags: [Files]
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: User relative directory path.
+    responses:
+      '200':
+        description: Directory listing.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, path, items]
+              properties:
+                status:
+                  type: string
+                path:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    type: object
+
+termuxListByPath:
+  get:
+    operationId: getTermuxListByPath
+    summary: List Termux HOME directory (path-style)
+    tags: [Files]
+    parameters:
+      - name: path
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Path under Termux HOME.
+    responses:
+      '200':
+        description: Directory listing.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, path, items]
+              properties:
+                status:
+                  type: string
+                path:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    type: object
 
 sysFile:
   get:

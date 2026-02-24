@@ -4043,19 +4043,52 @@
         // Strip zero-width/invisible separators that can break ext detection.
         s = s.replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g, "");
         s = s.replace(/#.*$/, "");
-        s = s.replace(/^\/+/, "");
         s = s.replace(/^["'`<(\[]+/, "");
         s = s.replace(/["'`>\])]+$/, "");
         s = s.replace(/[.,;:]+$/, "");
         if (!s) return "";
+        const low = s.toLowerCase();
+        if (low.startsWith("termux://") || low.startsWith("user://")) return s;
+        if (s.startsWith("/data/data/com.termux/files/home")) return s;
+        s = s.replace(/^\/+/, "");
         if (s.split("/").some(seg => seg === "..")) return "";
         return s;
       }
 
       function fileUrl(rel) {
-        if (rel.startsWith("$sys/"))
-          return API + "/sys/file?path=" + encodeURIComponent(rel.slice(5));
-        return API + "/user/file?path=" + encodeURIComponent(rel);
+        const p = String(rel || "").trim();
+        if (p.startsWith("$sys/")) return API + "/sys/file?path=" + encodeURIComponent(p.slice(5));
+        const encodeSegs = (s) => String(s || "").split("/").filter(x => x.length > 0).map(x => encodeURIComponent(x)).join("/");
+        const low = p.toLowerCase();
+        if (low.startsWith("termux://")) {
+          let rest = p.slice("termux://".length);
+          if (rest === "~") rest = "";
+          else if (rest.startsWith("~/")) rest = rest.slice(2);
+          else if (rest.startsWith("/")) {
+            if (rest.startsWith("/data/data/com.termux/files/home/")) {
+              rest = rest.slice("/data/data/com.termux/files/home/".length);
+            } else if (rest === "/data/data/com.termux/files/home") {
+              rest = "";
+            }
+          }
+          return API + "/termux/file/" + encodeSegs(rest);
+        }
+        if (p.startsWith("/data/data/com.termux/files/home")) {
+          let rest = p.slice("/data/data/com.termux/files/home".length);
+          if (rest.startsWith("/")) rest = rest.slice(1);
+          return API + "/termux/file/" + encodeSegs(rest);
+        }
+        const relPath = low.startsWith("user://") ? p.slice("user://".length) : p;
+        return API + "/user/file/" + encodeSegs(relPath);
+      }
+
+      function openPreviewInNewTab(url) {
+        try {
+          const w = window.open(String(url || ""), "_blank", "noopener,noreferrer");
+          return !!w;
+        } catch (_) {
+          return false;
+        }
       }
 
       function extractRelPathsFromText(text) {
@@ -4066,7 +4099,13 @@
         function add(raw) {
           // Dedup on clean path (fragment-stripped) but preserve raw form for page info.
           const p = safeRelPath(raw);
-          if (p && !seen.has(p)) { out.push(raw.trim()); seen.add(p); }
+          if (!p) return;
+          const low = p.toLowerCase();
+          const hasScheme = low.startsWith("user://") || low.startsWith("termux://");
+          const isTermuxAbs = p.startsWith("/data/data/com.termux/files/home/");
+          const hasExt = /\.[a-z0-9]+$/.test(p);
+          if (!(hasScheme || isTermuxAbs || hasExt)) return;
+          if (!seen.has(p)) { out.push(raw.trim()); seen.add(p); }
         }
 
         // JSON-ish: "rel_path":"captures/foo.jpg" or "captures/foo.jpg#page=3"
@@ -4078,7 +4117,7 @@
         // Also support spaces by capturing to end-of-line (common for uploaded filenames like "Slack - Ding.mp3").
         const rePlainQuoted = /\brel_path\b\s*[:=]\s*`([^`]+)`/gi;
         while ((m = rePlainQuoted.exec(t)) !== null) add(m[1]);
-        const rePlainEol = /\brel_path\b\s*[:=]\s*([$a-zA-Z0-9._\-\/][$a-zA-Z0-9._\-\/ ]*\.[a-zA-Z0-9]+(?:#page=\d+)?)/gi;
+        const rePlainEol = /\brel_path\b\s*[:=]\s*([^\r\n]+)/gi;
         while ((m = rePlainEol.exec(t)) !== null) add(m[1]);
 
         // Loose fallback (common folders + media extensions).
@@ -4180,15 +4219,7 @@
             if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
               AndroidBridge.openInWebview(url, true);
             } else {
-              fetch("/webview/split", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ visible: true, fullscreen: true })
-              }).then(() => fetch("/webview/open", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ url: url, timeout_s: 30 })
-              })).catch(() => {});
+              openPreviewInNewTab(url);
             }
           };
           openBtn.addEventListener("click", (ev) => {
@@ -4273,11 +4304,7 @@
           if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
             AndroidBridge.openInWebview(url);
           } else {
-            fetch("/webview/open", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ url: url, timeout_s: 30 })
-            }).catch(() => {});
+            openPreviewInNewTab(url);
           }
         });
 
@@ -4435,7 +4462,13 @@
                 img.src = src;
                 img.dataset.relPath = p;
                 img.style.cursor = "zoom-in";
-                const open = () => { try { openViewerFor(p); } catch (_) {} };
+                const open = () => {
+                  if (typeof AndroidBridge === "undefined") {
+                    openPreviewInNewTab(fileUrl(p));
+                    return;
+                  }
+                  try { openViewerFor(p); } catch (_) {}
+                };
                 img.addEventListener("click", open);
                 card.addEventListener("click", (ev) => {
                   // Don't steal clicks from the Share icon.
@@ -4479,6 +4512,10 @@
                 card.addEventListener("click", (ev) => {
                   if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
                   if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
+                  if (typeof AndroidBridge === "undefined") {
+                    openPreviewInNewTab(fileUrl(p));
+                    return;
+                  }
                   try { openMediaViewer(p, "video"); } catch (_) {}
                 });
                 hint.textContent = "Video (tap to open)";
@@ -4495,6 +4532,10 @@
                 card.addEventListener("click", (ev) => {
                   if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
                   if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
+                  if (typeof AndroidBridge === "undefined") {
+                    openPreviewInNewTab(fileUrl(p));
+                    return;
+                  }
                   try { openMediaViewer(p, "audio"); } catch (_) {}
                 });
                 // Audio attachments are rendered as a minimal player; the card header/hint are hidden by CSS.
@@ -4600,12 +4641,12 @@
                       if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInWebview) {
                         AndroidBridge.openInWebview(url);
                       } else {
-                        fetch("/webview/open", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ url: url, timeout_s: 30 })
-                        }).catch(() => {});
+                        openPreviewInNewTab(url);
                       }
+                      return;
+                    }
+                    if (typeof AndroidBridge === "undefined") {
+                      openPreviewInNewTab(fileUrl(p));
                       return;
                     }
                     try { openTextViewer(p, content, ext, p0Page); } catch (_) {}
@@ -9468,7 +9509,7 @@
           }
           // Fallback: show file-only keys if the DB is empty (e.g., keys were edited via SSH).
           try {
-            const fres = await fetch(API + "/user/file?path=" + encodeURIComponent(".ssh/authorized_keys"));
+            const fres = await fetch(API + "/user/file/.ssh/authorized_keys");
             if (!fres.ok) { renderSshKeys([]); return; }
             const txt = await fres.text().catch(() => "");
             const lines = String(txt || "").split("\n").map(s => s.trim()).filter(Boolean).filter(s => !s.startsWith("#"));

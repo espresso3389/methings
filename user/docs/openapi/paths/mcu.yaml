@@ -149,7 +149,9 @@ mcuFlash:
                     description: USB handle returned by `usb.open`.
                   image_path:
                     type: string
-                    description: Relative path under user dir for single-image flashing.
+                    description: >
+                      Flash image path. Supports user relative (legacy),
+                      `user://<relative-path>`, and `termux://<path>`.
                   segments:
                     type: array
                     description: Multi-segment flash list. If present, `image_path`/`offset` are ignored.
@@ -159,7 +161,9 @@ mcuFlash:
                       properties:
                         path:
                           type: string
-                          description: Relative path under user dir for segment binary.
+                          description: >
+                            Segment binary path. Supports user relative (legacy),
+                            `user://<relative-path>`, and `termux://<path>`.
                         offset:
                           type: integer
                           format: int32
@@ -286,7 +290,9 @@ mcuFlashPlan:
             properties:
               plan_path:
                 type: string
-                description: Relative path under user dir to flasher_args.json.
+                description: >
+                  Path to flasher_args.json. Supports user relative (legacy),
+                  `user://<relative-path>`, and `termux://<path>`.
               model:
                 type: string
                 enum: [esp32]

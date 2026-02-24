@@ -8,7 +8,7 @@ cloudRequest:
 
       **Raw mode**: Supply a full provider request JSON. Placeholders are expanded:
         - `${config:<key>}`: expands config/credential values via broker
-        - `${file:<rel_path>:base64}`: reads file bytes and injects base64 payload
+        - `${file:<path>:base64}`: reads file bytes from `user://` or `termux://` path and injects base64 payload
 
 
       **Adapter mode**: Use the `adapter` field for simplified multi-provider
