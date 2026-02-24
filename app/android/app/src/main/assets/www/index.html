@@ -4075,7 +4075,6 @@
         if (!s) return "";
         const low = s.toLowerCase();
         if (low.startsWith("termux://")) return s;
-        if (low.startsWith("user://")) return "";
         // Reject any other URI-like scheme to avoid ambiguous resolution.
         if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return "";
         if (s.startsWith("/data/data/com.termux/files/home")) return s;
@@ -4107,7 +4106,6 @@
           if (rest.startsWith("/")) rest = rest.slice(1);
           return API + "/termux/file/" + encodeSegs(rest);
         }
-        if (low.startsWith("user://")) return "";
         const relPath = p;
         return API + "/user/file/" + encodeSegs(relPath);
       }

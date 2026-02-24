@@ -957,7 +957,6 @@ class AgentRuntime(
 
             for (path in pathsToCheck) {
                 val normalizedPath = when {
-                    path.startsWith("user://", ignoreCase = true) -> path.substringAfter("://").trim().trimStart('/')
                     path.startsWith("termux://", ignoreCase = true) -> ""
                     else -> path
                 }
@@ -1003,11 +1002,7 @@ class AgentRuntime(
             val trimmed = line.trim()
             if (trimmed.startsWith("rel_path:")) {
                 val p = trimmed.substringAfter("rel_path:").trim()
-                val normalizedPath = if (p.startsWith("user://", ignoreCase = true)) {
-                    p.substringAfter("://").trim().trimStart('/')
-                } else {
-                    p
-                }
+                val normalizedPath = p
                 if (normalizedPath.isNotEmpty() && MediaEncoder.isMediaPath(normalizedPath)) {
                     paths.add(normalizedPath)
                     continue  // Remove this line from text sent to LLM

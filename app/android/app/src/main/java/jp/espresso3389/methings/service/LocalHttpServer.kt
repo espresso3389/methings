@@ -2289,7 +2289,7 @@ class LocalHttpServer(
             (uri == "/serial/close" || uri == "/serial/close/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialClose(payload)
+                    handleSerialClose(session, payload)
                 } catch (ex: Exception) {
                     Log.e(TAG, "Serial close handler failed", ex)
                     jsonError(Response.Status.INTERNAL_ERROR, "serial_close_handler_failed")
@@ -2298,7 +2298,7 @@ class LocalHttpServer(
             (uri == "/serial/read" || uri == "/serial/read/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialRead(payload)
+                    handleSerialRead(session, payload)
                 } catch (ex: Exception) {
                     Log.e(TAG, "Serial read handler failed", ex)
                     jsonError(Response.Status.INTERNAL_ERROR, "serial_read_handler_failed")
@@ -2307,7 +2307,7 @@ class LocalHttpServer(
             (uri == "/serial/write" || uri == "/serial/write/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialWrite(payload)
+                    handleSerialWrite(session, payload)
                 } catch (ex: Exception) {
                     Log.e(TAG, "Serial write handler failed", ex)
                     jsonError(Response.Status.INTERNAL_ERROR, "serial_write_handler_failed")
@@ -2316,7 +2316,7 @@ class LocalHttpServer(
             (uri == "/serial/lines" || uri == "/serial/lines/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialLines(payload)
+                    handleSerialLines(session, payload)
                 } catch (ex: Exception) {
                     Log.e(TAG, "Serial lines handler failed", ex)
                     jsonError(Response.Status.INTERNAL_ERROR, "serial_lines_handler_failed")
@@ -2501,7 +2501,7 @@ class LocalHttpServer(
                 val tempCaptureRef = if (outRef.fs == "user") {
                     outRef
                 } else {
-                    parseFsPathRef("user://captures/.tmp_capture_${System.currentTimeMillis()}.jpg")
+                    parseFsPathRef("captures/.tmp_capture_${System.currentTimeMillis()}.jpg")
                         ?: return jsonError(Response.Status.INTERNAL_ERROR, "temp_path_resolve_failed")
                 }
                 val file = tempCaptureRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
@@ -3174,25 +3174,25 @@ class LocalHttpServer(
             }
             uri.startsWith("/user/write/") && session.method == Method.POST -> {
                 val p = decodePathSuffix(uri, "/user/write/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                handleFileWrite(postBody, forcedPath = "user://$p", expectedFs = "user")
+                handleFileWrite(postBody, forcedPath = p, expectedFs = "user")
             }
             uri == "/user/list" && session.method == Method.GET -> {
                 handleUserList(session)
             }
             uri.startsWith("/user/list/") && session.method == Method.GET -> {
                 val p = decodePathSuffix(uri, "/user/list/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                handleListByPath("user://$p")
+                handleListByPath(p)
             }
             uri == "/user/file" && session.method == Method.GET -> {
                 jsonError(Response.Status.GONE, "use_path_style_route")
             }
             uri.startsWith("/user/file/info/") && session.method == Method.GET -> {
                 val p = decodePathSuffix(uri, "/user/file/info/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                handleFileInfoByPath("user://$p")
+                handleFileInfoByPath(p)
             }
             uri.startsWith("/user/file/") && session.method == Method.GET -> {
                 val p = decodePathSuffix(uri, "/user/file/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                serveFileByPath("user://$p")
+                serveFileByPath(p)
             }
             uri.startsWith("/user/www/") && session.method == Method.GET -> {
                 serveUserWww(session)
@@ -3232,7 +3232,7 @@ class LocalHttpServer(
                 val tempOutRef = if (outRef.fs == "user") {
                     outRef
                 } else {
-                    parseFsPathRef("user://browser/.tmp_screenshot_${System.currentTimeMillis()}.jpg")
+                    parseFsPathRef("browser/.tmp_screenshot_${System.currentTimeMillis()}.jpg")
                         ?: return jsonError(Response.Status.INTERNAL_ERROR, "temp_path_resolve_failed")
                 }
                 val file = tempOutRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
@@ -3445,7 +3445,7 @@ class LocalHttpServer(
 
     private fun handleUserList(session: IHTTPSession): Response {
         val raw = firstParam(session, "path").trim()
-        val path = if (raw.isBlank()) "user://." else raw
+        val path = if (raw.isBlank()) "." else raw
         return handleListByPath(path)
     }
 
@@ -3582,10 +3582,11 @@ class LocalHttpServer(
             forcedPath != null -> forcedPath
             expectedFs == "termux" -> normalizeTermuxRoutePath(inputPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
             else -> {
-                if (inputPath.startsWith("user://", ignoreCase = true)) inputPath
-                else if (inputPath.startsWith("/") || inputPath.startsWith("termux://", ignoreCase = true)) {
+                if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(inputPath) ||
+                    inputPath.startsWith("/") ||
+                    inputPath.startsWith("termux://", ignoreCase = true)) {
                     return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-                } else "user://${inputPath.trimStart('/')}"
+                } else inputPath.trimStart('/')
             }
         }
         val ref = parseFsPathRef(normalizedPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
@@ -3681,14 +3682,15 @@ class LocalHttpServer(
         }
         val dirRaw = (parms["dir"]?.firstOrNull() ?: parms["path"]?.firstOrNull() ?: "").trim()
         val finalPath = if (dirRaw.isBlank()) {
-            "user://uploads/$name"
-        } else if (dirRaw.startsWith("user://", ignoreCase = true) ||
-            dirRaw.startsWith("termux://", ignoreCase = true) ||
+            "uploads/$name"
+        } else if (dirRaw.startsWith("termux://", ignoreCase = true) ||
             dirRaw.startsWith(TERMUX_HOME_PREFIX)
         ) {
             dirRaw.trimEnd('/') + "/" + name
+        } else if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(dirRaw)) {
+            return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
         } else {
-            "user://" + dirRaw.trimStart('/').trimEnd('/') + "/" + name
+            dirRaw.trimStart('/').trimEnd('/') + "/" + name
         }
         val outRef = parseFsPathRef(finalPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
         if (outRef.fs == "user") {
@@ -4270,7 +4272,7 @@ class LocalHttpServer(
                 "user" -> {
                     val rel = toUserRelativePath(File(abs))
                         ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir", JSONObject().put("path", path))
-                    "user://$rel"
+                    rel
                 }
                 "termux" -> {
                     if (!isAllowedTermuxPath(abs)) {
@@ -5087,7 +5089,16 @@ class LocalHttpServer(
         )
     }
 
-    private fun handleSerialClose(payload: JSONObject): Response {
+    private fun handleSerialClose(session: IHTTPSession, payload: JSONObject): Response {
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "Close USB serial session"
+        )
+        if (!perm.first) return perm.second!!
+
         val serialHandle = payload.optString("serial_handle", "").trim()
         if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
         val st = serialSessions.remove(serialHandle)
@@ -5099,7 +5110,16 @@ class LocalHttpServer(
         )
     }
 
-    private fun handleSerialRead(payload: JSONObject): Response {
+    private fun handleSerialRead(session: IHTTPSession, payload: JSONObject): Response {
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "Read from USB serial session"
+        )
+        if (!perm.first) return perm.second!!
+
         val serialHandle = payload.optString("serial_handle", "").trim()
         if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
         val st = serialSessions[serialHandle] ?: return jsonError(Response.Status.NOT_FOUND, "serial_handle_not_found")
@@ -5124,7 +5144,16 @@ class LocalHttpServer(
         }
     }
 
-    private fun handleSerialWrite(payload: JSONObject): Response {
+    private fun handleSerialWrite(session: IHTTPSession, payload: JSONObject): Response {
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "Write to USB serial session"
+        )
+        if (!perm.first) return perm.second!!
+
         val serialHandle = payload.optString("serial_handle", "").trim()
         if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
         val st = serialSessions[serialHandle] ?: return jsonError(Response.Status.NOT_FOUND, "serial_handle_not_found")
@@ -5153,7 +5182,16 @@ class LocalHttpServer(
         }
     }
 
-    private fun handleSerialLines(payload: JSONObject): Response {
+    private fun handleSerialLines(session: IHTTPSession, payload: JSONObject): Response {
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "Set USB serial line state"
+        )
+        if (!perm.first) return perm.second!!
+
         val serialHandle = payload.optString("serial_handle", "").trim()
         if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
         val st = serialSessions[serialHandle] ?: return jsonError(Response.Status.NOT_FOUND, "serial_handle_not_found")
@@ -6912,26 +6950,12 @@ class LocalHttpServer(
         val raw = rawPath.trim()
         if (raw.isBlank()) return null
 
-        if (raw.startsWith("user://", ignoreCase = true)) {
-            val rel = raw.substringAfter("://").trim().trimStart('/')
-            if (rel.isBlank() || rel == ".") {
-                val root = File(context.filesDir, "user").canonicalFile
-                return FsPathRef(
-                    fs = "user",
-                    sourcePath = raw,
-                    displayPath = "user://.",
-                    userFile = root,
-                    userRelPath = ""
-                )
-            }
-            val file = userPath(rel) ?: return null
-            return FsPathRef(
-                fs = "user",
-                sourcePath = raw,
-                displayPath = "user://$rel",
-                userFile = file,
-                userRelPath = rel
-            )
+        // Reject malformed/unknown URI-like prefixes early.
+        // Only termux:// is accepted as a filesystem URI form.
+        if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(raw) &&
+            !raw.startsWith("termux://", ignoreCase = true)
+        ) {
+            return null
         }
 
         if (raw.startsWith("termux://", ignoreCase = true)) {
@@ -6972,7 +6996,7 @@ class LocalHttpServer(
             return FsPathRef(
                 fs = "user",
                 sourcePath = raw,
-                displayPath = "user://.",
+                displayPath = ".",
                 userFile = root,
                 userRelPath = ""
             )
@@ -6981,7 +7005,7 @@ class LocalHttpServer(
         return FsPathRef(
             fs = "user",
             sourcePath = raw,
-            displayPath = "user://$rel",
+            displayPath = rel,
             userFile = file,
             userRelPath = rel
         )
@@ -7182,7 +7206,7 @@ class LocalHttpServer(
                         .put("status", "ok")
                         .put("fs", "user")
                         .put("path", outRel)
-                        .put("path_uri", if (outRel.isBlank()) "user://." else "user://$outRel")
+                        .put("path_uri", if (outRel.isBlank()) "." else outRel)
                         .put("items", arr)
                 )
             }
@@ -8572,7 +8596,7 @@ class LocalHttpServer(
         //
         // ${vault:key} -> credentialStore (secret)
         // ${config:brain.api_key|brain.base_url|brain.model|brain.vendor} -> brain SharedPreferences
-        // ${file:path[:base64|text]} -> read from user:// or termux:// path
+        // ${file:path[:base64|text]} -> read from app-local relative or termux:// path
         // ICU regex on Android treats a bare '}' as syntax error; escape both braces.
         val re = Regex("\\$\\{([^}]+)\\}")
         return re.replace(s) { m ->
@@ -11655,7 +11679,7 @@ class LocalHttpServer(
 
     /**
      * If the payload contains `rel_path` but no `data_b64`, resolve the file
-     * from user:// or termux:// path, read its bytes, and embed as `data_b64` + `mime_type`.
+     * from app-local relative path or termux:// path, read its bytes, and embed as `data_b64` + `mime_type`.
      * Images are compressed to fit within BLE transport limits.
      * This ensures the receiver gets actual file content instead of a sender-local path.
      */
