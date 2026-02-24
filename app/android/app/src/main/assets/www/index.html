@@ -768,7 +768,6 @@
         z-index: 3;
         transition: opacity var(--transition);
       }
-      .chat-send-hint.hidden { opacity: 0; }
       .chat-send-hint kbd {
         display: inline-block;
         padding: 1px 5px;
@@ -6395,9 +6394,12 @@
         var hasAtt = false;
         try { hasAtt = pendingAttachments && pendingAttachments.length > 0; } catch (_) {}
         chatSend.disabled = !chatInput.value.trim() && !hasAtt;
-        if (_sendHint) _sendHint.classList.toggle("hidden", !!chatInput.value);
       }
       chatInput.addEventListener("input", function() { autoResize(); updateSendBtn(); });
+      // Fallback: resize on keyup too (Enter may not fire input on some IMEs/WebViews)
+      chatInput.addEventListener("keyup", function(e) {
+        if (e.key === "Enter" || e.key === "Backspace" || e.key === "Delete") autoResize();
+      });
       positionSendHint();
 
       /* ── @mention autocomplete ── */
