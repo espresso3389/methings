@@ -150,32 +150,54 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - Requires both in-app `device.usb` permission and Android OS USB permission.
 
 ### Serial (USB Serial) — `$sys/docs/openapi/paths/serial.yaml`
-- `serial.open`: open a serial session from a `usb.open` handle (configurable baud/data/stop/parity).
-- `serial.list_ports`: list USB serial driver ports available for a `usb.open` handle.
-- `serial.read` / `serial.write`: polling byte I/O using base64 payloads.
-- `serial.lines`: set DTR/RTS modem lines.
-- `serial.status` / `serial.close`: inspect and close serial sessions.
+
+**Serial operations are direct HTTP endpoints, NOT `device_api` actions.** Use `run_js` with `fetch()` or `run_curl` to call them. Do NOT use `device_api(action="serial.open")` — it will fail with `unknown_action`.
+
+HTTP endpoints:
+- `POST /serial/open`: open a serial session from a `usb.open` handle (configurable baud/data/stop/parity).
+- `POST /serial/list_ports`: list USB serial driver ports available for a `usb.open` handle.
+- `POST /serial/read` / `POST /serial/write`: polling byte I/O using base64 payloads.
+- `POST /serial/lines`: set DTR/RTS modem lines.
+- `GET /serial/status` / `POST /serial/close`: inspect and close serial sessions.
 - WebSocket async I/O: `GET /serial/ws/contract`, then connect to `/ws/serial/{serial_handle}`.
   - Server -> client: binary frames (raw serial bytes), plus JSON `hello` / `error`.
   - Client -> server: binary frames (raw bytes to write), or JSON `{"type":"write","data_b64":"..."}` / `{"type":"lines","dtr":...,"rts":...}`.
 
 Serial WebSocket usage (recommended for realtime):
-1. Open USB and serial session:
-   - `POST /usb/open` -> `handle`
+1. Open USB device first (this IS a `device_api` action):
+   - `device_api(action="usb.open", payload={...})` -> `handle`
+2. Open serial session via HTTP (use `run_js` or `run_curl`):
    - `POST /serial/list_ports` with `{"handle":"..."}` to choose `port_index`
    - `POST /serial/open` with `{"handle":"...","port_index":0,"baud_rate":115200}` -> `serial_handle`
-2. Connect WebSocket:
+3. Connect WebSocket (use `run_js` with `connectWs()`):
    - `ws://127.0.0.1:33389/ws/serial/{serial_handle}?permission_id=...&identity=...`
    - Optional query params: `read_timeout_ms`, `max_read_bytes`, `write_timeout_ms`
-3. Read from device asynchronously:
+4. Read from device asynchronously:
    - Incoming binary frames are raw serial bytes.
-4. Write to device asynchronously:
+5. Write to device asynchronously:
    - Send binary frame (raw bytes), or send text JSON:
      - `{"type":"write","data_b64":"SGVsbG8NCg==","timeout_ms":2000}`
-5. Toggle modem lines if needed:
+6. Toggle modem lines if needed:
    - Send text JSON: `{"type":"lines","dtr":true,"rts":false}`
-6. Close:
+7. Close:
    - Close WebSocket, then `POST /serial/close` with `{"serial_handle":"..."}`
+
+Example using `run_js`:
+```javascript
+// Step 2: open serial session (after usb.open gives you a handle)
+const resp = await fetch('http://127.0.0.1:33389/serial/open', {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({handle: "<usb_handle>", port_index: 0, baud_rate: 115200})
+});
+const {session} = await resp.json();
+const serialHandle = session.serial_handle;
+
+// Step 3: connect WebSocket for async I/O
+const ws = await connectWs(`ws://127.0.0.1:33389/ws/serial/${serialHandle}`);
+ws.onmessage = msg => console.log('rx:', msg);
+ws.send(JSON.stringify({type: 'write', data_b64: btoa('Hello\r\n')}));
+```
 
 WebSocket event examples:
 - `{"type":"hello","serial_handle":"...","read_timeout_ms":200,"max_read_bytes":4096,"write_timeout_ms":2000}`
