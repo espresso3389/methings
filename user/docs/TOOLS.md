@@ -396,6 +396,7 @@ html_path: agent_ui/sample.html
 Rules:
 - Prefer `html_path:` (use `open_html:` only for backward compatibility).
 - Viewer OPEN supports app-local relative paths and Termux paths (`termux://...` / absolute Termux path).
+- Do not save agent-generated HTML under `www/` unless explicitly editing the app UI. Prefer `apps/` or another non-UI directory.
 - Do not tell the user to manually open a URL or endpoint.
 
 ---

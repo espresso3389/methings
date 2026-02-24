@@ -26,6 +26,8 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - App-local files: plain relative paths under app user root (served by `/user/*` APIs).
 - Termux files: `termux://<path>` (maps to `/data/data/com.termux/files/home` via Termux worker), or full Termux absolute paths.
 - **Web UI** (`www/`): the app's chat UI lives at `www/index.html`. You can read and modify it, then call `POST /ui/reload` to apply changes. Call `POST /ui/reset` to revert to the factory default. See TOOLS.md for details.
+- Do not place agent-generated apps/pages under `www/` unless the user explicitly asked to modify the app UI itself. Use another directory (for example `apps/`).
+- Runtime notices from the app are written to `AGENT_NOTICES.md` and auto-injected into context.
 - **System reference docs** (examples, lib) are read-only and accessed via the `$sys/` prefix: `list_dir("$sys/examples")`.
 - **API docs** (`$sys/docs/openapi/`): OpenAPI 3.1.0 spec for the full HTTP API. Read `$sys/docs/openapi/openapi.yaml` for overview.
 - **Agent docs** (`$sys/docs/`): conceptual guides (permissions, me.me, me.sync, viewer, relay integrations) and agent tool conventions (`$sys/docs/agent_tools.md`).

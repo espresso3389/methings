@@ -3,6 +3,9 @@ package jp.espresso3389.methings.service
 import android.content.Context
 import android.util.Log
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class AssetExtractor(private val context: Context) {
     fun extractServerAssets(): File? {
@@ -26,7 +29,11 @@ class AssetExtractor(private val context: Context) {
                     val localVersion = File(targetDir, ".version").takeIf { it.exists() }?.readText()?.trim()
                     val assetVersion = readAssetText("www/.version")
                     if (assetVersion != null && assetVersion.isNotBlank() && assetVersion != localVersion) {
-                        val result = resetUiAssets()
+                        val result = resetUiAssets(
+                            reason = "version_upgrade",
+                            oldVersion = localVersion,
+                            newVersion = assetVersion,
+                        )
                         cleanupLegacyUiDir()
                         return result
                     }
@@ -179,12 +186,17 @@ class AssetExtractor(private val context: Context) {
         }
     }
 
-    fun resetUiAssets(): File? {
+    fun resetUiAssets(
+        reason: String = "manual_reset",
+        oldVersion: String? = null,
+        newVersion: String? = null,
+    ): File? {
         return try {
             val root = context.filesDir
             val targetDir = File(root, "user/www")
             val tmpDir = File(root, "user/www.tmp")
-            val backupDir = File(root, "user/www.bak")
+            val backupRoot = File(root, "user/www.bak")
+            val backupDir = File(backupRoot, timestampTag())
 
             if (tmpDir.exists()) {
                 deleteRecursive(tmpDir)
@@ -192,11 +204,11 @@ class AssetExtractor(private val context: Context) {
             tmpDir.mkdirs()
             copyAssetDir("www", tmpDir)
 
-            if (backupDir.exists()) {
-                deleteRecursive(backupDir)
-            }
+            backupRoot.mkdirs()
             if (targetDir.exists()) {
+                if (backupDir.exists()) deleteRecursive(backupDir)
                 if (!targetDir.renameTo(backupDir)) {
+                    targetDir.copyRecursively(backupDir, overwrite = true)
                     deleteRecursive(targetDir)
                 }
             }
@@ -204,14 +216,17 @@ class AssetExtractor(private val context: Context) {
             if (!tmpDir.renameTo(targetDir)) {
                 // Fallback: try to restore previous version.
                 if (backupDir.exists()) {
-                    backupDir.renameTo(targetDir)
+                    if (!backupDir.renameTo(targetDir)) {
+                        backupDir.copyRecursively(targetDir, overwrite = true)
+                    }
                 }
                 deleteRecursive(tmpDir)
                 return null
             }
 
             if (backupDir.exists()) {
-                deleteRecursive(backupDir)
+                writeUiBackupMeta(backupDir, reason, oldVersion, newVersion)
+                appendAgentUiNotice(backupDir.name, reason, oldVersion, newVersion)
             }
             targetDir
         } catch (ex: Exception) {
@@ -354,6 +369,52 @@ class AssetExtractor(private val context: Context) {
             }
         }
         file.delete()
+    }
+
+    private fun timestampTag(): String {
+        val fmt = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+        return fmt.format(Date()) + "_" + System.currentTimeMillis().toString()
+    }
+
+    private fun writeUiBackupMeta(
+        backupDir: File,
+        reason: String,
+        oldVersion: String?,
+        newVersion: String?,
+    ) {
+        runCatching {
+            val meta = buildString {
+                append("reason=").append(reason).append('\n')
+                append("old_version=").append(oldVersion ?: "").append('\n')
+                append("new_version=").append(newVersion ?: "").append('\n')
+                append("created_at_ms=").append(System.currentTimeMillis()).append('\n')
+            }
+            File(backupDir, ".meta").writeText(meta, Charsets.UTF_8)
+        }
+    }
+
+    private fun appendAgentUiNotice(
+        backupTag: String,
+        reason: String,
+        oldVersion: String?,
+        newVersion: String?,
+    ) {
+        runCatching {
+            val userDir = File(context.filesDir, "user")
+            userDir.mkdirs()
+            val noticesFile = File(userDir, "AGENT_NOTICES.md")
+            val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date())
+            val oldV = (oldVersion ?: "").ifBlank { "unknown" }
+            val newV = (newVersion ?: "").ifBlank { "unknown" }
+            val line = "- [$ts] UI assets replaced (`$reason`). old=`$oldV` new=`$newV`; backup at `www.bak/$backupTag/`.\n"
+            val existing = if (noticesFile.exists()) noticesFile.readText(Charsets.UTF_8) else ""
+            val merged = (existing + line)
+                .lines()
+                .filter { it.isNotBlank() }
+                .takeLast(50)
+                .joinToString("\n", postfix = "\n")
+            noticesFile.writeText(merged, Charsets.UTF_8)
+        }
     }
 
     companion object {

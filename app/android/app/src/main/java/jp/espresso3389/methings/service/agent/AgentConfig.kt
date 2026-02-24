@@ -88,6 +88,7 @@ data class AgentConfig(
             "Prefer device_api for device controls exposed by the Kotlin control plane. " +
             "When you create or reference files, use plain relative paths for app user files and `termux://<path>` for Termux files. " +
             "When you create an HTML app/page under app user files and want the user to open it, include `html_path: <relative_path>.html` in your response. " +
+            "Do not store agent-generated pages under `www/` unless the user explicitly asked to modify the UI itself; use another directory such as `apps/`. " +
             "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. " +
             "For code execution, prefer run_js (built-in QuickJS engine, always available) for data processing, calculations, and general programming. " +
             "run_python/run_pip require Termux; run_curl works natively without Termux. " +

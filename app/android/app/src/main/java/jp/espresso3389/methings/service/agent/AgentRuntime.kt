@@ -1438,6 +1438,10 @@ class AgentRuntime(
                 parts.add("## User $name (sha256=$sha)\n$content\n")
             }
         }
+        val notices = readDocFile(File(userDir, "AGENT_NOTICES.md"))
+        if (notices.isNotEmpty()) {
+            parts.add("## User AGENT_NOTICES.md\n$notices\n")
+        }
 
         return parts.joinToString("\n").trim()
     }
