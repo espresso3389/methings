@@ -218,6 +218,7 @@ class LocalHttpServer(
             sessionIdProvider = { "default" },
             jsRuntime = agentJsRuntime,
             nativeShell = nativeShellExecutor,
+            ensureTermuxWorker = { ensureWorkerRunning() },
         ).also { executor ->
             // Apply File Transfer image settings
             val ftPrefs = fileTransferPrefs
@@ -1831,10 +1832,11 @@ class LocalHttpServer(
     }
 
     private fun ensureWorkerRunning() {
-        if (runtimeManager.getStatus() != "ok") {
-            runtimeManager.startWorker()
-            waitForTermuxHealth(5000)
-        }
+        // ensureWorkerForShell() pings the worker and starts it if needed.
+        // Even if startWorker() returns true, the worker boots asynchronously,
+        // so always wait for the health endpoint to respond.
+        runtimeManager.ensureWorkerForShell()
+        waitForTermuxHealth(8000)
     }
 
     private fun handleShellExec(payload: JSONObject): Response {
@@ -1842,19 +1844,13 @@ class LocalHttpServer(
         val hasCommand = payload.has("command") && payload.optString("command", "").isNotEmpty()
 
         if (hasCommand) {
-            // New format: try worker first, fall back to native shell
+            // Proxy to Termux worker — no native fallback
             ensureWorkerRunning()
             val timeoutMs = payload.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
             val readTimeout = (timeoutMs + 5_000).toInt()
             val proxied = proxyWorkerRequest("/exec", "POST", payload.toString(), readTimeoutMs = readTimeout)
             if (proxied != null) return proxied
-
-            // Worker unavailable — use native shell fallback
-            val command = payload.optString("command", "")
-            val cwd = payload.optString("cwd", "")
-            val env = payload.optJSONObject("env")
-            val result = nativeShellExecutor.exec(command, cwd, timeoutMs, env)
-            return jsonResponse(result)
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
         }
 
         // Legacy format: cmd + args

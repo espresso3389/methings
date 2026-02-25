@@ -78,14 +78,35 @@ object ToolDefinitions {
             put("cwd", prop("string"))
         }.withRequired("args", "cwd"))
 
-        tools.put(functionTool("run_shell", "Execute a shell command. Uses Termux when available (full bash + packages); falls back to native Android shell (/system/bin/sh) otherwise. For long-running or interactive commands, use shell_session instead.") {
+        tools.put(functionTool("local_run_shell", "Execute a command in the native Android shell (/system/bin/sh). Always available. Cannot access Termux files or packages. For Termux, use termux_run_shell. For long-running or interactive commands, use local_shell_session instead.") {
             put("command", prop("string"))
             put("cwd", prop("string"))
             put("timeout_ms", prop("integer"))
             put("env", JSONObject().put("type", "object").put("additionalProperties", true))
         }.withRequired("command"))
 
-        tools.put(functionTool("shell_session", "Manage persistent shell sessions. Termux provides full PTY (ANSI, resize); native mode uses pipe-based sessions (no PTY). Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size, Termux only), kill (terminate), list (active sessions).") {
+        tools.put(functionTool("termux_run_shell", "Execute a command in Termux bash (full Linux environment + packages). Requires Termux worker (port 8776). If unavailable, call device_api(action='termux.status') then device_api(action='termux.restart'). For long-running or interactive commands, use termux_shell_session instead.") {
+            put("command", prop("string"))
+            put("cwd", prop("string"))
+            put("timeout_ms", prop("integer"))
+            put("env", JSONObject().put("type", "object").put("additionalProperties", true))
+        }.withRequired("command"))
+
+        tools.put(functionTool("local_shell_session", "Manage persistent native Android shell sessions (pipe-based, no PTY). Always available. Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), kill (terminate), list (active sessions). resize is accepted but has no effect (no PTY).") {
+            put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
+                put("start"); put("exec"); put("write"); put("read"); put("resize"); put("kill"); put("list")
+            }))
+            put("session_id", prop("string"))
+            put("command", prop("string"))
+            put("input", prop("string"))
+            put("cwd", prop("string"))
+            put("rows", prop("integer"))
+            put("cols", prop("integer"))
+            put("timeout", prop("integer"))
+            put("env", JSONObject().put("type", "object").put("additionalProperties", true))
+        }.withRequired("action"))
+
+        tools.put(functionTool("termux_shell_session", "Manage persistent Termux PTY sessions (full ANSI, resize). Requires Termux worker (port 8776). If unavailable, call device_api(action='termux.status') then device_api(action='termux.restart'). Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions).") {
             put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
                 put("start"); put("exec"); put("write"); put("read"); put("resize"); put("kill"); put("list")
             }))

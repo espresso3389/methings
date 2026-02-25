@@ -1,20 +1,28 @@
 # Shell & File Access Tools
 
-## Native Fallback
+## Local Shell (always available)
 
-`run_shell` and `shell_session` work **without Termux**. When the Termux worker is unreachable, they automatically fall back to native Android shell execution using `/system/bin/sh` via `ProcessBuilder`.
+`local_run_shell` and `local_shell_session` use the native Android shell (`/system/bin/sh`). They are always available, even without Termux.
 
 **Native mode capabilities:**
 - Standard shell builtins and toybox/toolbox commands: `ls`, `cat`, `echo`, `mkdir`, `rm`, `cp`, `mv`, `grep`, `sed`, `awk`, `wc`, `sort`, `find`, `tar`, `gzip`, `ping`, `id`, `date`, `env`, `which`, `chmod`, `df`, `du`, `head`, `tail`, `tee`, `xargs`
 - Working directory defaults to the app's user directory
-- Environment variables and cwd persist within `shell_session` sessions
+- Environment variables and cwd persist within `local_shell_session` sessions
 
 **Native mode limitations:**
 - Only `sh` (not `bash`) — no bash-specific syntax (arrays, `[[ ]]`, process substitution)
 - No package manager (`apt`, `pkg`) — only what Android ships
 - No `python`, `pip`, `node`, `git`, `gcc`, or other development tools
-- `shell_session` uses pipes (no PTY) — no ANSI escape codes, no terminal resize
-- Response includes `"backend": "native"` so you can detect which mode was used
+- `local_shell_session` uses pipes (no PTY) — no ANSI escape codes, no terminal resize
+- Cannot access Termux files under `/data/data/com.termux/`
+
+## Termux Shell (requires Termux)
+
+`termux_run_shell` and `termux_shell_session` use the Termux worker (port 8776) for full Linux shell access (bash, packages, PTY). The worker starts automatically when needed.
+
+If the Termux worker is unavailable, these tools return `termux_required` error. To recover:
+1. Call `device_api(action="termux.status")` to check state
+2. Call `device_api(action="termux.restart")` to restart the worker
 
 **`termux_fs` remains Termux-only** — it accesses Termux's home directory which doesn't exist without Termux.
 
@@ -22,11 +30,36 @@
 
 ---
 
-These tools use Termux when available (full bash, packages, PTY). The worker starts automatically when needed.
+## `local_run_shell(command, cwd?, timeout_ms?, env?)`
 
-## `run_shell(command, cwd?, timeout_ms?, env?)`
+Execute a one-shot command in the native Android shell (`/system/bin/sh`). Returns separate stdout and stderr.
 
-Execute a one-shot shell command in Termux via `bash -lc`. Returns separate stdout and stderr.
+**Parameters:**
+- `command` (string, required): The shell command to execute.
+- `cwd` (string): Working directory. Defaults to the app's user directory.
+- `timeout_ms` (integer): Execution timeout in ms. Default 60000, max 300000.
+- `env` (object): Extra environment variables to set.
+
+**Returns:**
+```json
+{
+  "status": "ok",
+  "exit_code": 0,
+  "stdout": "...",
+  "stderr": "..."
+}
+```
+
+**Examples:**
+```
+local_run_shell(command="ls -la")
+local_run_shell(command="id")
+local_run_shell(command="cat /proc/cpuinfo | head -20")
+```
+
+## `termux_run_shell(command, cwd?, timeout_ms?, env?)`
+
+Execute a one-shot shell command in Termux via `bash -lc`. Returns separate stdout and stderr. Requires Termux worker.
 
 **Parameters:**
 - `command` (string, required): The shell command to execute.
@@ -56,15 +89,26 @@ On timeout:
 
 **Examples:**
 ```
-run_shell(command="ls -la ~/methings")
-run_shell(command="python3 -c \"import sys; print(sys.version)\"")
-run_shell(command="apt list --installed 2>/dev/null | head -20")
-run_shell(command="gcc -o hello hello.c && ./hello", cwd="~/projects", timeout_ms=120000)
+termux_run_shell(command="ls -la ~/methings")
+termux_run_shell(command="python3 -c \"import sys; print(sys.version)\"")
+termux_run_shell(command="apt list --installed 2>/dev/null | head -20")
+termux_run_shell(command="gcc -o hello hello.c && ./hello", cwd="~/projects", timeout_ms=120000)
 ```
 
-## `shell_session(action, session_id?, command?, input?, cwd?, rows?, cols?, timeout?, env?)`
+## `local_shell_session(action, session_id?, command?, input?, cwd?, timeout?, env?)`
 
-Manage persistent PTY bash sessions. Unlike `run_shell`, sessions maintain state (environment variables, current directory, running processes) across multiple commands.
+Manage persistent native Android shell sessions (pipe-based, no PTY). Sessions maintain state (environment variables, current directory) across multiple commands.
+
+### Actions
+
+Same actions as `termux_shell_session` (start, exec, write, read, resize, kill, list), but:
+- Uses `/system/bin/sh` instead of Termux bash
+- No PTY — `resize` is accepted but has no effect
+- No ANSI escape codes in output
+
+## `termux_shell_session(action, session_id?, command?, input?, cwd?, rows?, cols?, timeout?, env?)`
+
+Manage persistent Termux PTY bash sessions. Unlike `termux_run_shell`, sessions maintain state (environment variables, current directory, running processes) across multiple commands. Requires Termux worker.
 
 ### Actions
 
@@ -102,25 +146,25 @@ Manage persistent PTY bash sessions. Unlike `run_shell`, sessions maintain state
 **Example flow:**
 ```
 # Start a session
-shell_session(action="start", cwd="~/project")
-→ {session_id: "a1b2c3d4e5f6", output: "user@localhost:~/project$ "}
+termux_shell_session(action="start", cwd="~/project")
+-> {session_id: "a1b2c3d4e5f6", output: "user@localhost:~/project$ "}
 
 # Run commands
-shell_session(action="exec", session_id="a1b2c3d4e5f6", command="export MY_VAR=hello")
-shell_session(action="exec", session_id="a1b2c3d4e5f6", command="echo $MY_VAR")
-→ {output: "echo $MY_VAR\r\nhello\r\nuser@localhost:~/project$ ", alive: true}
+termux_shell_session(action="exec", session_id="a1b2c3d4e5f6", command="export MY_VAR=hello")
+termux_shell_session(action="exec", session_id="a1b2c3d4e5f6", command="echo $MY_VAR")
+-> {output: "echo $MY_VAR\r\nhello\r\nuser@localhost:~/project$ ", alive: true}
 
 # Interactive: answer a prompt
-shell_session(action="write", session_id="a1b2c3d4e5f6", input="y\n")
+termux_shell_session(action="write", session_id="a1b2c3d4e5f6", input="y\n")
 
 # Clean up
-shell_session(action="kill", session_id="a1b2c3d4e5f6")
+termux_shell_session(action="kill", session_id="a1b2c3d4e5f6")
 ```
 
 **Notes:**
 - Sessions auto-expire after 30 minutes of inactivity.
 - PTY output includes terminal control sequences (ANSI codes).
-- For simple one-shot commands, prefer `run_shell` instead.
+- For simple one-shot commands, prefer `termux_run_shell` instead.
 
 ## `termux_fs(action, path, content?, encoding?, max_bytes?, offset?, show_hidden?, parents?, recursive?)`
 
@@ -172,10 +216,12 @@ termux_fs(action="stat", path="~/methings")
 
 | Need | Tool |
 |------|------|
-| Run a quick command, get stdout/stderr | `run_shell` |
-| Interactive session, maintain state | `shell_session` |
+| Quick command, native Android shell | `local_run_shell` |
+| Quick command, full Linux (Termux) | `termux_run_shell` |
+| Interactive session, native shell | `local_shell_session` |
+| Interactive session, Termux PTY | `termux_shell_session` |
 | Read/write files in Termux home | `termux_fs` |
 | Read/write files in app user root | `read_file` / `write_file` |
 | Run JavaScript (no Termux needed) | `run_js` |
 | Make HTTP requests (no Termux needed) | `run_curl` |
-| Run Python specifically | `run_python` (or `run_shell`) |
+| Run Python specifically | `run_python` (or `termux_run_shell`) |

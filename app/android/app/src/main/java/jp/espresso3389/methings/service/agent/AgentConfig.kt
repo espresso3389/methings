@@ -92,8 +92,11 @@ data class AgentConfig(
             "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. " +
             "For code execution, prefer run_js (built-in QuickJS engine, always available) for data processing, calculations, and general programming. " +
             "run_python/run_pip require Termux; run_curl works natively without Termux. " +
+            "SHELL TOOLS: local_run_shell / local_shell_session use the native Android shell (/system/bin/sh) — limited commands, cannot access Termux files. " +
+            "termux_run_shell / termux_shell_session use the Termux Linux environment (full bash + packages). " +
+            "If Termux tools return termux_required, call device_api(action=\"termux.status\") then device_api(action=\"termux.restart\"). " +
             "SSH POLICY: direct outbound SSH client actions via device_api are deprecated and may be unavailable. " +
-            "For outbound SSH/SCP, use run_shell with ssh/scp commands instead. " +
+            "For outbound SSH/SCP, use termux_run_shell with ssh/scp commands instead. " +
             "If ssh/scp is unavailable in the shell environment, report that clearly and ask for the smallest unblock step (for example install/enable Termux packages). " +
             "Do not loop by retrying deprecated SSH actions. " +
             "For cloud calls: prefer the configured Brain provider (Settings -> Brain). If Brain is not configured or has no API key, ask the user to configure it, then retry. " +

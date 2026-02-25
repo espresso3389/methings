@@ -34,25 +34,30 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 - `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine with **async/await support**. Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`. Top-level `await` is supported. Full API reference: `$sys/docs/run_js.md`.
 - `run_curl(url, method?, headers?, body?, timeout_ms?)` — Make HTTP requests natively. Parameters: `url` (required), `method` (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), `headers` (JSON object), `body` (string), `timeout_ms` (default 30000). Returns `{status, http_status, headers, body}`.
 
-### Shell (works with or without Termux)
+### Local Shell (always available)
 
-- `run_shell(command, cwd?, timeout_ms?, env?)` — Execute a shell command. Uses Termux when available (full bash + packages); falls back to native Android shell (`/system/bin/sh`) otherwise. Returns `{status, exit_code, stdout, stderr, backend}`. Default timeout 60s, max 300s.
-- `shell_session(action, session_id?, command?, ...)` — Persistent shell sessions. Termux provides full PTY (ANSI, resize); native mode uses pipe-based sessions (no PTY). Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. Maintains state across commands.
+- `local_run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in the native Android shell (`/system/bin/sh`). Always available. Cannot access Termux files or packages. Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s.
+- `local_shell_session(action, session_id?, command?, ...)` — Persistent native Android shell sessions (pipe-based, no PTY). Actions: `start`, `exec`, `write`, `read`, `resize` (no-op), `kill`, `list`. Maintains state across commands.
 
-### Termux-only
+### Termux Shell (requires Termux)
+
+- `termux_run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in Termux bash (full Linux environment + packages). Requires Termux worker (port 8776). Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s. If unavailable, returns `termux_required` error.
+- `termux_shell_session(action, session_id?, command?, ...)` — Persistent Termux PTY sessions (full ANSI, resize). Requires Termux worker. Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. If unavailable, returns `termux_required` error.
+
+### Termux-only (other)
 
 - `termux_fs(action, path, ...)` — Access Termux filesystem (outside app user root). Actions: `read`, `write`, `list`, `stat`, `mkdir`, `delete`. Requires Termux.
 - `run_python(args, cwd)` — Run Python locally. Requires Termux.
 - `run_pip(args, cwd)` — Run pip locally. Requires Termux.
 
-Full reference for shell tools: `$sys/docs/termux_shell.md`.
+Full reference for Termux shell tools: `$sys/docs/termux_shell.md`.
 
 Notes:
 - Prefer `run_js` over `run_python` — it supports fetch, WebSocket, file I/O, and timers natively.
-- Prefer `run_shell` over `run_python` for general commands — it can run any program, not just Python.
+- Prefer `local_run_shell` or `termux_run_shell` over `run_python` for general commands — they can run any program, not just Python.
 - `run_curl` now works natively without Termux. Legacy `run_curl(args, cwd)` form is still supported for backward compatibility.
 - `python -` (stdin) is not supported (no interactive stdin). Use `python -c "..."` or write a script file and run it.
-- For interactive/stateful workflows (e.g., virtual envs, build systems), use `shell_session` to keep state between commands.
+- For interactive/stateful workflows (e.g., virtual envs, build systems), use `local_shell_session` or `termux_shell_session` to keep state between commands.
 
 ## Media Analysis Tools (Built-in Multimodal)
 
@@ -88,7 +93,7 @@ Notes:
 Used for allowlisted device control-plane actions. Some actions require user approval and will return `permission_required`.
 
 Only `device_api` HTTP actions are documented in OpenAPI (`$sys/docs/openapi/openapi.yaml`).
-Agent tools such as `run_shell`, `run_js`, and `run_curl` are tool-runtime capabilities and are not OpenAPI paths.
+Agent tools such as `local_run_shell`, `termux_run_shell`, `run_js`, and `run_curl` are tool-runtime capabilities and are not OpenAPI paths.
 
 ## Remote Access via SSH Tunnel
 
@@ -101,24 +106,24 @@ ssh <user>@<device-ip> -p <ssh-port> -L 33389:127.0.0.1:33389
 Then `http://127.0.0.1:33389` on the remote machine gives full access to the WebView UI and all local HTTP APIs.
 
 Direct outbound SSH client actions via `device_api` are deprecated and may be unavailable.
-Use `run_shell` for outbound SSH/SCP commands instead.
+Use `termux_run_shell` for outbound SSH/SCP commands instead.
 
 ## App SSH Shell Commands (Outbound)
 
-Use `run_shell` for outbound SSH/SCP operations:
+Use `termux_run_shell` for outbound SSH/SCP operations:
 
-- `run_shell(command="ssh user@host <command>")`
-- `run_shell(command="scp <local_file> user@host:<remote_path>")`
-- `run_shell(command="scp user@host:<remote_file> <local_path>")`
+- `termux_run_shell(command="ssh user@host <command>")`
+- `termux_run_shell(command="scp <local_file> user@host:<remote_path>")`
+- `termux_run_shell(command="scp user@host:<remote_file> <local_path>")`
 
 Notes:
-- If Termux is unavailable, `run_shell` falls back to native Android shell.
+- SSH/SCP require Termux. If the Termux worker is unavailable, the tool returns `termux_required`.
 - If `ssh`/`scp` binaries are missing, call `device_api("termux.show_setup")` and ask the user to complete setup.
 
 ### SSHD Management
 
 For on-device SSH server management, use the `/sshd/*` API endpoints (status/config/keys/pin/noauth).
-For outbound SSH client access to other machines, use `run_shell` only.
+For outbound SSH client access to other machines, use `termux_run_shell` only.
 
 ---
 
@@ -485,8 +490,9 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 - `path_outside_user_dir`: path must be under app user root (use app-local relative path).
 - `path_outside_termux_home`: path must be under Termux HOME (`/data/data/com.termux/files/home`).
 - `termux_unavailable`: Termux worker is not reachable.
-- `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without Termux).
-- `worker_unavailable`: Termux worker is not reachable on port 8776. `run_shell` and `shell_session` will fall back to native shell automatically; other Termux tools require Termux to be installed and running.
+- `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `local_run_shell`/`termux_run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without Termux).
+- `termux_required`: Termux worker is not reachable on port 8776. Call `device_api(action="termux.status")` then `device_api(action="termux.restart")` to recover. Use `local_run_shell`/`local_shell_session` for native Android shell (no Termux needed).
+- `worker_unavailable`: Termux worker is not reachable on port 8776. Termux-dependent tools (`termux_run_shell`, `termux_shell_session`, `termux_fs`, `run_python`, `run_pip`) require Termux to be installed and running.
 
 ## Package Name Gotchas
 
@@ -521,7 +527,7 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 
 Tool-specific references (under `$sys/docs/`):
 - `$sys/docs/run_js.md` — run_js async API: fetch, WebSocket, file I/O, timers, device_api
-- `$sys/docs/termux_shell.md` — run_shell, shell_session, termux_fs: Termux shell & file access
+- `$sys/docs/termux_shell.md` — local_run_shell, termux_run_shell, local_shell_session, termux_shell_session, termux_fs: shell & file access
 
 Conceptual guides (under `$sys/docs/`):
 - `$sys/docs/agent_tools.md` — agent tool conventions, filesystem helpers, chat shortcuts
