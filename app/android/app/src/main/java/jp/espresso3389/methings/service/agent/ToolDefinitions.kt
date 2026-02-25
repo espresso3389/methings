@@ -85,7 +85,7 @@ object ToolDefinitions {
             put("env", JSONObject().put("type", "object").put("additionalProperties", true))
         }.withRequired("command"))
 
-        tools.put(functionTool("termux_run_shell", "Execute a command in Termux bash (full Linux environment + packages). Requires Termux worker (port 8776). If unavailable, call device_api(action='termux.status') then device_api(action='termux.restart'). For long-running or interactive commands, use termux_shell_session instead.") {
+        tools.put(functionTool("termux_run_shell", "Execute a command in Termux bash (full Linux environment + packages). Requires Termux worker (port 8776). If unavailable (termux_required), call device_api(action='termux.restart') and retry once. Check device_api(action='termux.status') only if failures continue. For long-running or interactive commands, use termux_shell_session instead.") {
             put("command", prop("string"))
             put("cwd", prop("string"))
             put("timeout_ms", prop("integer"))
@@ -106,7 +106,7 @@ object ToolDefinitions {
             put("env", JSONObject().put("type", "object").put("additionalProperties", true))
         }.withRequired("action"))
 
-        tools.put(functionTool("termux_shell_session", "Manage persistent Termux PTY sessions (full ANSI, resize). Requires Termux worker (port 8776). If unavailable, call device_api(action='termux.status') then device_api(action='termux.restart'). Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions).") {
+        tools.put(functionTool("termux_shell_session", "Manage persistent Termux PTY sessions (full ANSI, resize). Requires Termux worker (port 8776). If unavailable (termux_required), call device_api(action='termux.restart') and retry once. Check device_api(action='termux.status') only if failures continue. Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions).") {
             put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
                 put("start"); put("exec"); put("write"); put("read"); put("resize"); put("kill"); put("list")
             }))

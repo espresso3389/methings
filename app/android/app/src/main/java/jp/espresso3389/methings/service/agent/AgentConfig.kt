@@ -94,7 +94,9 @@ data class AgentConfig(
             "run_python/run_pip require Termux; run_curl works natively without Termux. " +
             "SHELL TOOLS: local_run_shell / local_shell_session use the native Android shell (/system/bin/sh) — limited commands, cannot access Termux files. " +
             "termux_run_shell / termux_shell_session use the Termux Linux environment (full bash + packages). " +
-            "If Termux tools return termux_required, call device_api(action=\"termux.status\") then device_api(action=\"termux.restart\"). " +
+            "If a Termux tool returns termux_required, call device_api(action=\"termux.restart\") and retry that tool once. " +
+            "Only call device_api(action=\"termux.status\") when repeated Termux failures need diagnosis. " +
+            "Do not repeatedly poll termux.status during normal execution. " +
             "SSH POLICY: direct outbound SSH client actions via device_api are deprecated and may be unavailable. " +
             "For outbound SSH/SCP, use termux_run_shell with ssh/scp commands instead. " +
             "If ssh/scp is unavailable in the shell environment, report that clearly and ask for the smallest unblock step (for example install/enable Termux packages). " +

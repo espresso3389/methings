@@ -5693,6 +5693,22 @@
         closeBrainSSE();
         if (!chatSessionId) return;
         try {
+          function eventMatchesActiveSession(data, fallbackMeta) {
+            const sid = String(chatSessionId || "").trim();
+            if (!sid) return true;
+            const d = (data && typeof data === "object") ? data : {};
+            const m = (fallbackMeta && typeof fallbackMeta === "object")
+              ? fallbackMeta
+              : ((d.meta && typeof d.meta === "object") ? d.meta : {});
+            const eventSid = String(d.session_id || m.session_id || "").trim();
+            if (eventSid) return eventSid === sid;
+            // status() payload shape fallback
+            if (Object.prototype.hasOwnProperty.call(d, "busy")) {
+              return isSessionBusy(d, sid);
+            }
+            return true;
+          }
+
           const url = API + "/brain/events?session_id=" + encodeURIComponent(chatSessionId);
           const es = new EventSource(url);
           _brainSSE = es;
@@ -5710,6 +5726,7 @@
               const meta = (data.meta && typeof data.meta === "object") ? data.meta : {};
               const ts = Number(data.ts || 0);
               const itemId = meta.item_id || "";
+              if (!eventMatchesActiveSession(data, meta)) return;
               if (!text || (role !== "user" && role !== "assistant")) return;
               const visibleText = role === "assistant" ? sanitizeAssistantText(text) : text;
               if (role === "assistant" && !visibleText) return;
@@ -5800,12 +5817,16 @@
           }
           es.addEventListener("brain_item_started", function(e) {
             try {
+              const data = JSON.parse((e && e.data) || "{}");
+              if (!eventMatchesActiveSession(data, null)) return;
               if (streaming) return;
               scheduleThinkingShow("");
             } catch (_) {}
           });
           es.addEventListener("brain_idle", function(e) {
             try {
+              const data = JSON.parse((e && e.data) || "{}");
+              if (!eventMatchesActiveSession(data, null)) return;
               if (streaming) return;
               dismissThinkingNow();
             } catch (_) {}
@@ -5813,6 +5834,7 @@
           es.addEventListener("brain_item_failed", function(e) {
             try {
               const data = JSON.parse((e && e.data) || "{}");
+              if (!eventMatchesActiveSession(data, null)) return;
               const id = String(data.id || data.item_id || "").trim();
               const err = String(data.error || "").trim();
               if (id && _sseWaiters.has(id)) {
@@ -5830,6 +5852,7 @@
           es.addEventListener("brain_item_done", function(e) {
             try {
               const data = JSON.parse((e && e.data) || "{}");
+              if (!eventMatchesActiveSession(data, null)) return;
               const id = String(data.id || data.item_id || "").trim();
               if (id) resolveSseWaiter(id, "");
               if (!streaming) dismissThinkingNow();
@@ -5838,6 +5861,7 @@
           es.addEventListener("brain_item_interrupted", function(e) {
             try {
               const data = JSON.parse((e && e.data) || "{}");
+              if (!eventMatchesActiveSession(data, null)) return;
               const id = String(data.id || data.item_id || "").trim();
               if (id && _sseWaiters.has(id)) resolveSseWaiter(id, "Interrupted.");
               if (streaming) return;
@@ -5846,8 +5870,9 @@
           });
           es.addEventListener("brain_status", function(e) {
             try {
-              if (streaming) return;
               const data = JSON.parse(e.data);
+              if (!eventMatchesActiveSession(data, null)) return;
+              if (streaming) return;
               const label = data.label || "";
               if (!label) return;
               // If indicator already visible, update label immediately.

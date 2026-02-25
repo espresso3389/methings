@@ -374,7 +374,8 @@ class ToolExecutor(
                 .put("status", "error")
                 .put("error", "termux_required")
                 .put("detail", "Termux worker (port 8776) is not responding. " +
-                    "Call device_api(action=\"termux.status\") then device_api(action=\"termux.restart\").")
+                    "Call device_api(action=\"termux.restart\") and retry once. " +
+                    "If it still fails, call device_api(action=\"termux.status\") and use device_api(action=\"termux.show_setup\") when setup is incomplete.")
         }
         return workerResult
     }
@@ -439,7 +440,8 @@ class ToolExecutor(
                 .put("status", "error")
                 .put("error", "termux_required")
                 .put("detail", "Termux worker (port 8776) is not responding. " +
-                    "Call device_api(action=\"termux.status\") then device_api(action=\"termux.restart\").")
+                    "Call device_api(action=\"termux.restart\") and retry once. " +
+                    "If it still fails, call device_api(action=\"termux.status\") and use device_api(action=\"termux.show_setup\") when setup is incomplete.")
         }
         return workerResult
     }

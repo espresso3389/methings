@@ -21,8 +21,9 @@
 `termux_run_shell` and `termux_shell_session` use the Termux worker (port 8776) for full Linux shell access (bash, packages, PTY). The worker starts automatically when needed.
 
 If the Termux worker is unavailable, these tools return `termux_required` error. To recover:
-1. Call `device_api(action="termux.status")` to check state
-2. Call `device_api(action="termux.restart")` to restart the worker
+1. Call `device_api(action="termux.restart")` and retry the same tool once
+2. If it still fails, call `device_api(action="termux.status")` to diagnose state
+3. If status indicates not installed/bootstrap incomplete, call `device_api("termux.show_setup")`
 
 **`termux_fs` remains Termux-only** — it accesses Termux's home directory which doesn't exist without Termux.
 
