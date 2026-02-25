@@ -59,6 +59,8 @@ This file documents how the on-device AI agent should operate. It is referenced 
 
 - Built-in tools (always available, no Termux): `run_js` (QuickJS engine), `run_curl` (native HTTP).
 - Termux-dependent tools: `run_python`, `run_pip`.
+- Termux shell tools (`termux_run_shell`, `termux_shell_session`, `termux_fs`) already auto-start/auto-recover the worker internally. Call them directly; do not pre-check `termux.status` in normal flow.
+- Only if a Termux tool still returns `termux_required`: retry once, then call `device_api("termux.restart")`, and diagnose with `device_api("termux.status")` only when failure persists.
 - Prefer `run_js` for data processing, calculations, and general programming tasks.
 - Do not request a generic shell for arbitrary commands.
 

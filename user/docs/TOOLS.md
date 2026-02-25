@@ -41,8 +41,8 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 
 ### Termux Shell (requires Termux)
 
-- `termux_run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in Termux bash (full Linux environment + packages). Requires Termux worker (port 8776). Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s. If unavailable, returns `termux_required` error.
-- `termux_shell_session(action, session_id?, command?, ...)` — Persistent Termux PTY sessions (full ANSI, resize). Requires Termux worker. Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. If unavailable, returns `termux_required` error.
+- `termux_run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in Termux bash (full Linux environment + packages). Requires Termux worker (port 8776). Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s. The runtime auto-starts/auto-recovers the worker before execution; only persistent failure returns `termux_required`.
+- `termux_shell_session(action, session_id?, command?, ...)` — Persistent Termux PTY sessions (full ANSI, resize). Requires Termux worker. Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. The runtime auto-starts/auto-recovers the worker; only persistent failure returns `termux_required`.
 
 ### Termux-only (other)
 
@@ -491,7 +491,7 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 - `path_outside_termux_home`: path must be under Termux HOME (`/data/data/com.termux/files/home`).
 - `termux_unavailable`: Termux worker is not reachable.
 - `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `local_run_shell`/`termux_run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without Termux).
-- `termux_required`: Termux worker is not reachable on port 8776. First call `device_api(action="termux.restart")` and retry once. If it still fails, call `device_api(action="termux.status")`; when setup is incomplete, call `device_api(action="termux.show_setup")`. Use `local_run_shell`/`local_shell_session` for native Android shell (no Termux needed).
+- `termux_required`: Termux worker is not reachable on port 8776 even after automatic recovery attempts. Retry the same tool once, then call `device_api(action="termux.restart")` and retry once. If it still fails, call `device_api(action="termux.status")`; when setup is incomplete, call `device_api(action="termux.show_setup")`. Use `local_run_shell`/`local_shell_session` for native Android shell (no Termux needed).
 - `worker_unavailable`: Termux worker is not reachable on port 8776. Termux-dependent tools (`termux_run_shell`, `termux_shell_session`, `termux_fs`, `run_python`, `run_pip`) require Termux to be installed and running.
 
 ## Package Name Gotchas
