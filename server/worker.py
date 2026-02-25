@@ -22,6 +22,20 @@ from socketserver import ThreadingMixIn
 PORT = 8776
 HOME = os.environ.get("HOME", "/data/data/com.termux/files/home")
 SESSION_IDLE_TIMEOUT = 1800  # 30 min
+
+def _ensure_apt_noninteractive():
+    """Drop an apt config that auto-confirms installs so non-interactive
+    subprocess calls (apt install ...) never hang on a [Y/n] prompt."""
+    conf_dir = "/data/data/com.termux/files/usr/etc/apt/apt.conf.d"
+    conf_file = os.path.join(conf_dir, "99methings-noninteractive")
+    if os.path.exists(conf_file):
+        return
+    try:
+        os.makedirs(conf_dir, exist_ok=True)
+        with open(conf_file, "w") as f:
+            f.write('APT::Get::Assume-Yes "true";\n')
+    except OSError:
+        pass
 SESSION_REAP_INTERVAL = 60  # check every 60s
 
 # ─── PTY Session ──────────────────────────────────────────────────
@@ -51,6 +65,7 @@ class PtySession:
         shell = os.environ.get("SHELL", "/data/data/com.termux/files/usr/bin/bash")
         spawn_env = os.environ.copy()
         spawn_env["TERM"] = "xterm-256color"
+        spawn_env.setdefault("DEBIAN_FRONTEND", "noninteractive")
         if env:
             spawn_env.update(env)
 
@@ -463,6 +478,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
         env_extra = params.get("env")
 
         spawn_env = os.environ.copy()
+        # Non-interactive: suppress apt/dpkg prompts that would hang subprocess
+        spawn_env.setdefault("DEBIAN_FRONTEND", "noninteractive")
         if env_extra and isinstance(env_extra, dict):
             spawn_env.update(env_extra)
 
@@ -637,6 +654,7 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 # ─── Main ─────────────────────────────────────────────────────────
 
 def main():
+    _ensure_apt_noninteractive()
     # Start idle-session reaper
     threading.Thread(target=reap_idle_sessions, daemon=True).start()
 

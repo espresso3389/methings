@@ -454,7 +454,30 @@ class AgentRuntime(
 
             val body = buildRequestBody(providerKind, model, tools, pendingInput, systemPrompt, toolRequiredUnsatisfied)
 
-            // Debug: log request structure (content types, not full data) for troubleshooting
+            // Debug: log input structure for troubleshooting
+            try {
+                val inputArr = pendingInput as? JSONArray
+                if (inputArr != null) {
+                    val summary = (0 until inputArr.length()).joinToString(", ") { i ->
+                        val o = inputArr.optJSONObject(i)
+                        val role = o?.optString("role", "?") ?: "?"
+                        val text = o?.optString("text", "") ?: ""
+                        val content = o?.opt("content")
+                        val textLen = when {
+                            text.isNotEmpty() -> text.length
+                            content is String -> content.length
+                            content is JSONArray -> {
+                                (0 until content.length()).sumOf { j ->
+                                    content.optJSONObject(j)?.optString("text", "")?.length ?: 0
+                                }
+                            }
+                            else -> 0
+                        }
+                        "$role($textLen)"
+                    }
+                    Log.i(TAG, "Round $roundIdx input: [$summary] system=${systemPrompt.length}chars tools=${tools.length()}")
+                }
+            } catch (_: Exception) {}
             if (providerKind == ProviderKind.GOOGLE_GEMINI) {
                 logGeminiRequestStructure(body)
             }
@@ -516,6 +539,21 @@ class AgentRuntime(
                         "You MUST call one or more tools to perform the action(s) — do NOT " +
                         "describe or narrate tool usage, actually call the tools. " +
                         "Then summarize after tool outputs are provided.")
+                    continue
+                }
+                // Soft nudge: if this is the first round and no tools have been
+                // called at all, give the model one more chance.  Many models
+                // respond with text-only ("I'm ready" / "please clarify") instead
+                // of acting.  The nudge asks them to reconsider.
+                if (roundIdx == 0 && forcedRounds == 0 && toolCallsExecuted == 0) {
+                    forcedRounds++
+                    pendingInput = appendUserNudge(providerKind, pendingInput,
+                        "You responded with text but did not call any tools. " +
+                        "If the user's request requires any action (creating files, running code, " +
+                        "querying device state, searching the web, etc.), you MUST call the " +
+                        "appropriate tools now — do not just describe or narrate, actually " +
+                        "invoke the tools. Only respond with text alone if the request is " +
+                        "purely conversational (greeting, opinion, clarification).")
                     continue
                 }
                 // Final assistant message
