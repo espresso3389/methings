@@ -360,22 +360,21 @@ class ToolExecutor(
         val timeoutMs = args.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
         val env = args.optJSONObject("env")
 
-        ensureTermuxWorker?.invoke()
-
         val body = JSONObject().apply {
             put("command", command)
             if (cwd.isNotEmpty()) put("cwd", cwd)
             put("timeout_ms", timeoutMs)
             if (env != null) put("env", env)
         }
-        val workerResult = proxyWorkerPost("/exec", body)
+        val workerResult = runTermuxWorkerCall { proxyWorkerPost("/exec", body) }
         if (workerResult.optString("error") == "worker_unavailable") {
             return JSONObject()
                 .put("status", "error")
                 .put("error", "termux_required")
                 .put("detail", "Termux worker (port 8776) is not responding. " +
-                    "Call device_api(action=\"termux.restart\") and retry once. " +
-                    "If it still fails, call device_api(action=\"termux.status\") and use device_api(action=\"termux.show_setup\") when setup is incomplete.")
+                    "The system already tried to start/recover it automatically. " +
+                    "If it still fails, call device_api(action=\"termux.restart\") and retry once. " +
+                    "Use device_api(action=\"termux.show_setup\") if Termux setup is incomplete.")
         }
         return workerResult
     }
@@ -432,16 +431,15 @@ class ToolExecutor(
         val action = args.optString("action", "")
         if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
 
-        ensureTermuxWorker?.invoke()
-
-        val workerResult = executeShellSessionViaWorker(action, args)
+        val workerResult = runTermuxWorkerCall { executeShellSessionViaWorker(action, args) }
         if (workerResult.optString("error") == "worker_unavailable") {
             return JSONObject()
                 .put("status", "error")
                 .put("error", "termux_required")
                 .put("detail", "Termux worker (port 8776) is not responding. " +
-                    "Call device_api(action=\"termux.restart\") and retry once. " +
-                    "If it still fails, call device_api(action=\"termux.status\") and use device_api(action=\"termux.show_setup\") when setup is incomplete.")
+                    "The system already tried to start/recover it automatically. " +
+                    "If it still fails, call device_api(action=\"termux.restart\") and retry once. " +
+                    "Use device_api(action=\"termux.show_setup\") if Termux setup is incomplete.")
         }
         return workerResult
     }
@@ -504,15 +502,14 @@ class ToolExecutor(
         val path = args.optString("path", "")
         if (path.isEmpty() && action != "list") return JSONObject().put("status", "error").put("error", "missing_path")
 
-        ensureTermuxWorker?.invoke()
-
         // Check worker availability first and return a helpful message
-        val pingResult = proxyWorkerGet("/health")
+        val pingResult = runTermuxWorkerCall { proxyWorkerGet("/health") }
         if (pingResult.optString("error") == "worker_unavailable") {
             return JSONObject()
                 .put("status", "error")
                 .put("error", "termux_required")
-                .put("detail", "termux_fs requires Termux. Use read_file/write_file for app files, or run_shell with ls/cat for native shell.")
+                .put("detail", "termux_fs requires Termux. The system already tried to start/recover the worker automatically. " +
+                    "If it still fails, use device_api(action=\"termux.restart\") and retry once, or device_api(action=\"termux.show_setup\") if setup is incomplete.")
         }
 
         val body = JSONObject().apply {
@@ -537,7 +534,30 @@ class ToolExecutor(
                 }
             }
         }
-        return proxyWorkerPost("/fs/$action", body)
+        val out = runTermuxWorkerCall { proxyWorkerPost("/fs/$action", body) }
+        if (out.optString("error") == "worker_unavailable") {
+            return JSONObject()
+                .put("status", "error")
+                .put("error", "termux_required")
+                .put("detail", "termux_fs requires Termux. The system already tried to start/recover the worker automatically. " +
+                    "If it still fails, use device_api(action=\"termux.restart\") and retry once, or device_api(action=\"termux.show_setup\") if setup is incomplete.")
+        }
+        return out
+    }
+
+    private fun runTermuxWorkerCall(call: () -> JSONObject): JSONObject {
+        ensureTermuxWorker?.invoke()
+        var out = call()
+        if (out.optString("error") != "worker_unavailable") return out
+        try {
+            Thread.sleep(350)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return out
+        }
+        ensureTermuxWorker?.invoke()
+        out = call()
+        return out
     }
 
     private fun proxyWorkerPost(path: String, body: JSONObject, readTimeoutMs: Int = 305_000): JSONObject {
