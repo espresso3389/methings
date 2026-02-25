@@ -93,9 +93,15 @@ class TermuxWorkerManager(private val context: Context) {
     }
 
     fun getStatus(): String {
-        synchronized(statusLock) {
-            return status
+        val current = synchronized(statusLock) { status }
+        if (current == "starting" || current == "stopping" || current == "permission_needed") {
+            return current
         }
+        val normalized = if (isWorkerResponding()) "ok" else "offline"
+        if (normalized != current) {
+            updateStatus(normalized)
+        }
+        return normalized
     }
 
     private fun isWorkerResponding(): Boolean {
@@ -154,7 +160,7 @@ class TermuxWorkerManager(private val context: Context) {
      * Returns true if worker is already running or was successfully started.
      */
     fun ensureWorkerForShell(): Boolean {
-        if (getStatus() == "ok" && isWorkerResponding()) return true
+        if (getStatus() == "ok") return true
         return startWorker()
     }
 
