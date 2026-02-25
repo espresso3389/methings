@@ -5753,6 +5753,7 @@
                     if (_thinking.el === existing) _thinking.el = null;
                     // Always reflect the latest assistant text for the same item_id.
                     existing.innerHTML = renderMarkdown(visibleText);
+                    try { existing.__msgText = String(visibleText || ""); } catch (_) {}
                     if (streaming && !activeAgentItemId && String(meta.error || "") === "brain_item_failed") {
                       streaming = false;
                       chatSend.disabled = false;
@@ -6131,6 +6132,9 @@
         if (meta && meta._ts) div.dataset.ts = String(meta._ts);
         const safeContent = (role === "assistant") ? sanitizeAssistantText(content) : String(content || "");
         if (role === "assistant" && !safeContent) return null;
+        // Keep canonical plain text on each bubble so long-tap actions always
+        // resolve against the correct balloon, independent of conversation[] index drift.
+        try { div.__msgText = String(safeContent || ""); } catch (_) {}
         if (role === "assistant" || role === "user") {
           div.innerHTML = renderMarkdown(safeContent);
           // Attachments should render for both user and assistant messages.
@@ -6381,6 +6385,7 @@
                     if (_thinking.el === existing) _thinking.el = null;
                     // Always keep the newest assistant content for the same item_id.
                     existing.innerHTML = renderMarkdown(visibleText);
+                    try { existing.__msgText = String(visibleText || ""); } catch (_) {}
                     // Clean up recovered-streaming state if applicable.
                     if (streaming && !activeAgentItemId) {
                     streaming = false;
@@ -6875,12 +6880,12 @@
         const selectOverlayText = document.getElementById("selectOverlayText");
 
         function getConvText(msgEl) {
-          // Match .msg DOM element to conversation[] entry via DOM index
+          // Prefer per-bubble canonical text captured at render/update time.
+          if (msgEl && typeof msgEl.__msgText === "string") return msgEl.__msgText;
+          // Fallback: match .msg DOM element to conversation[] entry via DOM index.
           const msgs = Array.from(chatMessages.querySelectorAll(".msg"));
           const idx = msgs.indexOf(msgEl);
-          if (idx >= 0 && idx < conversation.length && conversation[idx] && conversation[idx].content) {
-            return conversation[idx].content;
-          }
+          if (idx >= 0 && idx < conversation.length && conversation[idx] && conversation[idx].content) return conversation[idx].content;
           return msgEl.innerText || "";
         }
 
@@ -7504,6 +7509,7 @@
           if (cleaned) {
             if (_thinking.el === aDiv) _thinking.el = null;
             aDiv.innerHTML = renderMarkdown(cleaned);
+            try { aDiv.__msgText = String(cleaned || ""); } catch (_) {}
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
             try { renderInlineHtmlLinks(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
@@ -7584,6 +7590,7 @@
           if (cleaned) {
             if (_thinking.el === aDiv) _thinking.el = null;
             aDiv.innerHTML = renderMarkdown(cleaned);
+            try { aDiv.__msgText = String(cleaned || ""); } catch (_) {}
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
             try { renderInlineHtmlLinks(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
@@ -7730,6 +7737,7 @@
         // Update local echo bubble with final message so inline media renders.
         try {
           uDiv.innerHTML = renderMarkdown(finalText);
+          try { uDiv.__msgText = String(finalText || ""); } catch (_) {}
           try { renderInlineAttachments(uDiv, finalText); } catch (_) {}
           try { renderInlineHtmlLinks(uDiv, finalText); } catch (_) {}
         } catch (_) {}
