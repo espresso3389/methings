@@ -147,6 +147,16 @@ class AgentRuntime(
         return JSONObject().put("status", "ok").put("id", item.optString("id"))
     }
 
+    fun clearSession(sessionId: String) {
+        val sid = sessionId.trim().ifEmpty { return }
+        sessionNotes.remove(sid)
+        synchronized(lock) {
+            val filtered = queue.filter { sessionIdForItem(it) != sid }
+            queue.clear()
+            filtered.forEach { queue.addLast(it) }
+        }
+    }
+
     fun interrupt(itemId: String = "", sessionId: String = "", clearQueue: Boolean = false): JSONObject {
         val iid = itemId.trim()
         val sid = sessionId.trim()

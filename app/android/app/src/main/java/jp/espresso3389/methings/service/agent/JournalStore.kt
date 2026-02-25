@@ -162,6 +162,20 @@ class JournalStore(private val rootDir: File) {
             .put("limit", lim)
     }
 
+    fun deleteSession(sessionId: String): JSONObject {
+        val sid = sanitizeSessionId(sessionId)
+        val dir = File(rootDir, sid).canonicalFile
+        if (!dir.absolutePath.startsWith(rootDir.canonicalPath) || !dir.exists()) {
+            return JSONObject().put("status", "ok").put("deleted", false).put("reason", "not_found")
+        }
+        return try {
+            dir.deleteRecursively()
+            JSONObject().put("status", "ok").put("deleted", true).put("session_id", sid)
+        } catch (ex: Exception) {
+            JSONObject().put("status", "error").put("error", "delete_failed").put("detail", ex.message ?: "")
+        }
+    }
+
     fun renameSession(oldId: String, newId: String): JSONObject {
         val oldSid = sanitizeSessionId(oldId)
         val newSid = sanitizeSessionId(newId)

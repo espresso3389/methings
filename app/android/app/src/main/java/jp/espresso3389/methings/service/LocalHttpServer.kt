@@ -1721,6 +1721,8 @@ class LocalHttpServer(
                 val sessionId = body.optString("session_id", "").trim()
                 if (sessionId.isEmpty()) return jsonError(Response.Status.BAD_REQUEST, "missing_session_id")
                 val deleted = agentStorage.deleteChatSession(sessionId)
+                agentJournalStore.deleteSession(sessionId)
+                runtime.clearSession(sessionId)
                 jsonResponse(JSONObject().put("status", "ok").put("deleted", deleted))
             }
             uri == "/brain/session/rename" && session.method == Method.POST -> {
