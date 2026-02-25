@@ -63,7 +63,7 @@ object ToolDefinitions {
             put("limit", prop("integer"))
         }.withRequired())
 
-        tools.put(functionTool("run_js", "Execute JavaScript code using the built-in QuickJS engine with async/await support. Always available without Termux. Supports: `await fetch(url, options?)` for HTTP, `await connectWs(url)` for WebSocket, `await delay(ms)`, setTimeout/setInterval, `readFile`/`writeFile`/`readBinaryFile`/`writeBinaryFile` (Uint8Array), `listDir`/`mkdir`/`deleteFile`/`rmdir`, `await openFile(path, mode)` for RandomAccessFile handle (size/position/read/write/seek/truncate/close), and `device_api(action, payload)`. Top-level `await` supported. Full reference: `\$sys/docs/run_js.md`.") {
+        tools.put(functionTool("run_js", "Execute JavaScript code using the built-in QuickJS engine with async/await support. Always available without Termux. Supports: `await fetch(url, options?)` for HTTP, `await connectWs(url)` for WebSocket, `await connectTcp(host, port, options?)` for TCP client, `await listenTcp(host, port, options?)` for TCP server, `await delay(ms)`, setTimeout/setInterval, `readFile`/`writeFile`/`readBinaryFile`/`writeBinaryFile` (Uint8Array), `listDir`/`mkdir`/`deleteFile`/`rmdir`, `await openFile(path, mode)` for RandomAccessFile handle (size/position/read/write/seek/truncate/close), and `device_api(action, payload)`. Top-level `await` supported. Full reference: `\$sys/docs/run_js.md`.") {
             put("code", prop("string"))
             put("timeout_ms", prop("integer"))
         }.withRequired("code"))
@@ -292,6 +292,8 @@ object ToolDefinitions {
         "termux.status" to ActionSpec("GET", "/termux/status", false),
         "termux.restart" to ActionSpec("POST", "/termux/restart", true),
         "termux.show_setup" to ActionSpec("POST", "/termux/setup/show", false),
+        "termux.arduino_proxy.status" to ActionSpec("GET", "/termux/arduino_proxy/status", false),
+        "termux.arduino_proxy.enable" to ActionSpec("POST", "/termux/arduino_proxy/enable", false),
         "screen.status" to ActionSpec("GET", "/screen/status", false),
         "screen.keep_on" to ActionSpec("POST", "/screen/keep_on", true),
         "sshd.status" to ActionSpec("GET", "/sshd/status", false),

@@ -32,6 +32,16 @@ If the worker is still unavailable, these tools return `termux_required`. Recove
 
 **If Termux is needed but not set up**, call `device_api("termux.show_setup")` to open the setup wizard in the UI. The user can then install and bootstrap Termux without leaving the app.
 
+## Arduino CLI DNS Workaround (Termux module)
+
+Android/Termux DNS behavior can break `arduino-cli` downloads in some environments.
+Use the built-in Termux module:
+
+- `device_api(action="termux.arduino_proxy.enable", payload={"listen_port":38888,"downloads_ipv4":"104.18.11.21"})` — starts a local proxy (default `127.0.0.1:38888`), maps `downloads.arduino.cc` to a fixed IPv4 (default `104.18.11.21`), and runs `arduino-cli config set network.proxy http://127.0.0.1:<port>`. Both fields are optional.
+- `device_api(action="termux.arduino_proxy.status")` — returns module/proxy status.
+
+The Termux worker installs a lightweight `arduino-cli` wrapper in `~/methings/bin` so normal shell/session usage is transparent.
+
 ---
 
 ## `local_run_shell(command, cwd?, timeout_ms?, env?)`

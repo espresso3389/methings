@@ -110,6 +110,10 @@ paths:
     $ref: './paths/termux.yaml#/termuxSetupShow'
   /termux/eval:
     $ref: './paths/termux.yaml#/termuxEval'
+  /termux/arduino_proxy/status:
+    $ref: './paths/termux.yaml#/termuxArduinoProxyStatus'
+  /termux/arduino_proxy/enable:
+    $ref: './paths/termux.yaml#/termuxArduinoProxyEnable'
 
   # ── Shell ──
   /shell/exec:

@@ -2999,6 +2999,17 @@ class LocalHttpServer(
                 runtimeManager.startWorker()
                 jsonResponse(JSONObject().put("status", "ok"))
             }
+            uri == "/termux/arduino_proxy/status" && session.method == Method.GET -> {
+                ensureWorkerRunning()
+                proxyGetToWorker("/proxy/arduino/status")
+                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+            }
+            uri == "/termux/arduino_proxy/enable" && session.method == Method.POST -> {
+                ensureWorkerRunning()
+                val body = (postBody ?: "").ifBlank { "{}" }
+                proxyPostToWorker("/proxy/arduino/enable", body)
+                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+            }
             uri == "/termux/sshd/start" && session.method == Method.POST -> {
                 termuxManager.startSshd()
                 jsonResponse(JSONObject().put("status", "ok"))

@@ -49,6 +49,8 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 - `termux_fs(action, path, ...)` — Access Termux filesystem (outside app user root). Actions: `read`, `write`, `list`, `stat`, `mkdir`, `delete`. Requires Termux.
 - `run_python(args, cwd)` — Run Python locally. Requires Termux.
 - `run_pip(args, cwd)` — Run pip locally. Requires Termux.
+- `device_api(action="termux.arduino_proxy.enable")` — Enable the Termux Arduino DNS-bypass proxy module and configure `arduino-cli` proxy (`network.proxy`).
+- `device_api(action="termux.arduino_proxy.status")` — Inspect Arduino proxy module status.
 
 Full reference for Termux shell tools: `$sys/docs/termux_shell.md`.
 

@@ -12,6 +12,8 @@ Tool signature: `run_js(code, timeout_ms?)`. Default timeout: 30 s (max 120 s). 
 | `device_api(action, payload)` | sync | Call device API actions |
 | `await fetch(url, options?)` | async | HTTP request → `{status, ok, headers, body}` |
 | `await connectWs(url)` | async | WebSocket → handle with `receive()`, `send()`, `close()`, `isOpen` |
+| `await connectTcp(host, port, options?)` | async | TCP client → handle with `read()`, `readText()`, `write()`, `close()`, `isOpen` |
+| `await listenTcp(host, port, options?)` | async | TCP server → handle with `accept()`, `close()`, `isOpen`, `host`, `port` |
 | `await delay(ms)` | async | Sleep for ms milliseconds |
 | `setTimeout(fn, ms)` | fire-and-forget | Standard timer |
 | `setInterval(fn, ms)` | fire-and-forget | Repeating timer |
@@ -78,6 +80,34 @@ await ws.close();
 device_api("stt.stop", {});
 transcript;
 ```
+
+## TCP Client / Server
+
+TCP client:
+```javascript
+const c = await connectTcp("127.0.0.1", 9000, {timeout_ms: 5000});
+await c.write("ping\n");
+const r = await c.readText(4096, 5000);  // {status: "ok"|"timeout"|"eof", text?, bytes?}
+await c.close();
+JSON.stringify(r);
+```
+
+TCP server:
+```javascript
+const s = await listenTcp("127.0.0.1", 9100, {backlog: 20});
+const cli = await s.accept(10000); // null on timeout
+if (cli) {
+  const req = await cli.readText(4096, 10000);
+  await cli.write("hello\\n");
+  await cli.close();
+}
+await s.close();
+```
+
+Notes:
+- `read()` returns `{status, data}` where `data` is `Uint8Array` on `status="ok"`.
+- `readText()` returns `{status, text, bytes}` on `status="ok"` (UTF-8 decode).
+- `accept(timeoutMs)` returns a client handle or `null` on timeout.
 
 ## Delay and Timers
 

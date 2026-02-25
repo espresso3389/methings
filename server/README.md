@@ -177,6 +177,26 @@ All paths validated to be under Termux `$HOME`.
 - `POST /shell/fs/delete` — Delete file/dir. Body: `{path, recursive?}`.
 ```
 
+## Arduino Proxy Module (`:8776`)
+
+Termux worker includes a built-in Arduino DNS-bypass proxy module for environments
+where `arduino-cli` cannot resolve `downloads.arduino.cc`.
+
+- `GET /proxy/arduino/status`
+- `POST /proxy/arduino/enable`
+
+`/proxy/arduino/enable` ensures a local proxy is running at `127.0.0.1:38888`
+(default) and
+applies:
+
+```bash
+arduino-cli config set network.proxy http://127.0.0.1:38888
+```
+
+Optional JSON body on enable:
+- `listen_port` (1024-65535)
+- `downloads_ipv4` (default `104.18.11.21`)
+
 ## Auth and Permissions
 - Sensitive tool usage should go through permission requests.
 - Credentials are stored as ciphertext by the app with Android Keystore (AES-GCM).

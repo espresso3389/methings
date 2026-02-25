@@ -11,6 +11,7 @@ import os
 import pty
 import select
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -18,10 +19,15 @@ import time
 import uuid
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
+from urllib.parse import urlsplit
 
 PORT = 8776
 HOME = os.environ.get("HOME", "/data/data/com.termux/files/home")
 SESSION_IDLE_TIMEOUT = 1800  # 30 min
+ARDUINO_PROXY_HOST = "127.0.0.1"
+ARDUINO_PROXY_PORT = 38888
+ARDUINO_DOWNLOAD_HOST = "downloads.arduino.cc"
+ARDUINO_DOWNLOAD_IPV4 = "104.18.11.21"
 
 def _ensure_apt_noninteractive():
     """Drop an apt config that auto-confirms installs so non-interactive
@@ -36,6 +42,301 @@ def _ensure_apt_noninteractive():
             f.write('APT::Get::Assume-Yes "true";\n')
     except OSError:
         pass
+
+
+def _ensure_arduino_wrapper(proxy_url):
+    """Install a lightweight arduino-cli wrapper under ~/methings/bin.
+    The wrapper keeps arduino-cli proxy config in sync."""
+    bin_dir = os.path.join(HOME, "methings", "bin")
+    wrapper_path = os.path.join(bin_dir, "arduino-cli")
+    real_cli = "/data/data/com.termux/files/usr/bin/arduino-cli"
+    script = f"""#!/data/data/com.termux/files/usr/bin/bash
+set -e
+PROXY_URL="${{METHINGS_ARDUINO_PROXY_URL:-{proxy_url}}}"
+REAL_CLI="{real_cli}"
+if [ ! -x "$REAL_CLI" ]; then
+  REAL_CLI="$(command -v arduino-cli 2>/dev/null || true)"
+fi
+if [ "$REAL_CLI" = "$0" ]; then
+  REAL_CLI="{real_cli}"
+fi
+if [ ! -x "$REAL_CLI" ]; then
+  echo "arduino-cli not found" >&2
+  exit 127
+fi
+"$REAL_CLI" config set network.proxy "$PROXY_URL" >/dev/null 2>&1 || true
+exec "$REAL_CLI" "$@"
+"""
+    try:
+        os.makedirs(bin_dir, exist_ok=True)
+        with open(wrapper_path, "w", encoding="utf-8") as f:
+            f.write(script)
+        os.chmod(wrapper_path, 0o755)
+    except Exception:
+        pass
+
+
+class ArduinoProxyManager:
+    """Tiny localhost HTTP proxy with host->IPv4 override for Arduino downloads."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._server = None
+        self._thread = None
+        self._port = ARDUINO_PROXY_PORT
+        self._host_map = {ARDUINO_DOWNLOAD_HOST: ARDUINO_DOWNLOAD_IPV4}
+
+    def status(self):
+        with self._lock:
+            running = self._server is not None
+            return {
+                "running": running,
+                "listen_host": ARDUINO_PROXY_HOST,
+                "listen_port": self._port,
+                "proxy_url": f"http://{ARDUINO_PROXY_HOST}:{self._port}",
+                "host_map": dict(self._host_map),
+            }
+
+    def ensure_started(self):
+        with self._lock:
+            if self._server is not None:
+                return {
+                    "running": True,
+                    "listen_host": ARDUINO_PROXY_HOST,
+                    "listen_port": self._port,
+                    "proxy_url": f"http://{ARDUINO_PROXY_HOST}:{self._port}",
+                    "host_map": dict(self._host_map),
+                }
+            port = self._port
+            manager = self
+
+            class ProxyHandler(BaseHTTPRequestHandler):
+                protocol_version = "HTTP/1.1"
+
+                def log_message(self, _format, *_args):
+                    pass
+
+                def do_CONNECT(self):
+                    host, _, p = self.path.partition(":")
+                    host = host.strip()
+                    try:
+                        dst_port = int(p) if p else 443
+                    except ValueError:
+                        self.send_error(400, "invalid_port")
+                        return
+                    dst_ip = manager._resolve_target_ip(host)
+                    if not dst_ip:
+                        self.send_error(502, "dns_failed")
+                        return
+                    try:
+                        upstream = socket.create_connection((dst_ip, dst_port), timeout=15)
+                    except OSError:
+                        self.send_error(502, "connect_failed")
+                        return
+                    self.send_response(200, "Connection Established")
+                    self.end_headers()
+                    self.connection.setblocking(False)
+                    upstream.setblocking(False)
+                    sockets = [self.connection, upstream]
+                    try:
+                        while True:
+                            read_ready, _, _ = select.select(sockets, [], [], 30)
+                            if not read_ready:
+                                break
+                            for src in read_ready:
+                                try:
+                                    data = src.recv(65536)
+                                except OSError:
+                                    data = b""
+                                if not data:
+                                    return
+                                dst = upstream if src is self.connection else self.connection
+                                dst.sendall(data)
+                    finally:
+                        try:
+                            upstream.close()
+                        except Exception:
+                            pass
+
+                def do_GET(self):
+                    self._forward_http()
+
+                def do_POST(self):
+                    self._forward_http()
+
+                def do_PUT(self):
+                    self._forward_http()
+
+                def do_DELETE(self):
+                    self._forward_http()
+
+                def do_PATCH(self):
+                    self._forward_http()
+
+                def do_HEAD(self):
+                    self._forward_http()
+
+                def _forward_http(self):
+                    target = urlsplit(self.path)
+                    if target.scheme:
+                        host = target.hostname or ""
+                        dst_port = target.port or (443 if target.scheme == "https" else 80)
+                        req_path = target.path or "/"
+                        if target.query:
+                            req_path += "?" + target.query
+                    else:
+                        host_header = self.headers.get("Host", "").strip()
+                        host, _, p = host_header.partition(":")
+                        try:
+                            dst_port = int(p) if p else 80
+                        except ValueError:
+                            self.send_error(400, "invalid_host_header")
+                            return
+                        req_path = self.path or "/"
+                    if not host:
+                        self.send_error(400, "missing_target_host")
+                        return
+                    dst_ip = manager._resolve_target_ip(host)
+                    if not dst_ip:
+                        self.send_error(502, "dns_failed")
+                        return
+                    length = int(self.headers.get("Content-Length", 0))
+                    body = self.rfile.read(length) if length > 0 else b""
+                    upstream = None
+                    try:
+                        upstream = socket.create_connection((dst_ip, dst_port), timeout=15)
+                        upstream.settimeout(20)
+                        req = bytearray()
+                        req.extend(f"{self.command} {req_path} HTTP/1.1\r\n".encode("utf-8"))
+                        req.extend(f"Host: {host}\r\n".encode("utf-8"))
+                        for k, v in self.headers.items():
+                            kl = k.lower()
+                            if kl in ("host", "proxy-connection", "connection", "keep-alive"):
+                                continue
+                            req.extend(f"{k}: {v}\r\n".encode("utf-8"))
+                        req.extend(b"Connection: close\r\n\r\n")
+                        if body:
+                            req.extend(body)
+                        upstream.sendall(req)
+                        while True:
+                            chunk = upstream.recv(65536)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
+                        self.wfile.flush()
+                    except OSError:
+                        self.send_error(502, "upstream_failed")
+                    finally:
+                        try:
+                            if upstream is not None:
+                                upstream.close()
+                        except Exception:
+                            pass
+
+            proxy_server = ThreadedHTTPServer((ARDUINO_PROXY_HOST, port), ProxyHandler)
+            self._server = proxy_server
+            self._thread = threading.Thread(target=proxy_server.serve_forever, daemon=True)
+            self._thread.start()
+            _ensure_arduino_wrapper(f"http://{ARDUINO_PROXY_HOST}:{port}")
+            return {
+                "running": True,
+                "listen_host": ARDUINO_PROXY_HOST,
+                "listen_port": self._port,
+                "proxy_url": f"http://{ARDUINO_PROXY_HOST}:{self._port}",
+                "host_map": dict(self._host_map),
+            }
+
+    def stop(self):
+        with self._lock:
+            server = self._server
+            thread = self._thread
+            self._server = None
+            self._thread = None
+        if server is None:
+            return True
+        try:
+            server.shutdown()
+        except Exception:
+            pass
+        try:
+            server.server_close()
+        except Exception:
+            pass
+        if thread is not None and thread.is_alive():
+            try:
+                thread.join(timeout=1.0)
+            except Exception:
+                pass
+        return True
+
+    def set_port(self, port):
+        try:
+            p = int(port)
+        except (TypeError, ValueError):
+            return False
+        if p < 1024 or p > 65535:
+            return False
+        should_restart = False
+        with self._lock:
+            if self._port == p:
+                return True
+            self._port = p
+            should_restart = self._server is not None
+        if should_restart:
+            self.stop()
+        return True
+
+    def set_download_ip(self, ipv4):
+        if not ipv4:
+            return False
+        try:
+            socket.inet_aton(ipv4)
+        except OSError:
+            return False
+        with self._lock:
+            self._host_map[ARDUINO_DOWNLOAD_HOST] = ipv4
+        return True
+
+    def _resolve_target_ip(self, host):
+        with self._lock:
+            mapped = self._host_map.get(host.lower())
+        if mapped:
+            return mapped
+        try:
+            return socket.gethostbyname(host)
+        except OSError:
+            return None
+
+    def configure_arduino_cli(self):
+        proxy_url = f"http://{ARDUINO_PROXY_HOST}:{self._port}"
+        _ensure_arduino_wrapper(proxy_url)
+        cmd = (
+            "if command -v arduino-cli >/dev/null 2>&1; then "
+            f"arduino-cli config set network.proxy '{proxy_url}'; "
+            "echo configured; "
+            "else echo missing; fi"
+        )
+        try:
+            result = subprocess.run(
+                ["bash", "-lc", cmd],
+                capture_output=True,
+                timeout=20,
+                cwd=HOME,
+                env=os.environ.copy(),
+            )
+            out = result.stdout.decode("utf-8", errors="replace").strip()
+            return {
+                "status": "ok",
+                "configured": "configured" in out and result.returncode == 0,
+                "cli_found": "missing" not in out,
+                "stdout": out,
+                "stderr": result.stderr.decode("utf-8", errors="replace"),
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+
+
+arduino_proxy = ArduinoProxyManager()
 SESSION_REAP_INTERVAL = 60  # check every 60s
 
 # ─── PTY Session ──────────────────────────────────────────────────
@@ -66,6 +367,9 @@ class PtySession:
         spawn_env = os.environ.copy()
         spawn_env["TERM"] = "xterm-256color"
         spawn_env.setdefault("DEBIAN_FRONTEND", "noninteractive")
+        proxy = arduino_proxy.status().get("proxy_url", f"http://{ARDUINO_PROXY_HOST}:{ARDUINO_PROXY_PORT}")
+        spawn_env.setdefault("METHINGS_ARDUINO_PROXY_URL", proxy)
+        spawn_env["PATH"] = f"{HOME}/methings/bin:" + spawn_env.get("PATH", "")
         if env:
             spawn_env.update(env)
 
@@ -417,6 +721,11 @@ class WorkerHandler(BaseHTTPRequestHandler):
             sid = path.split("/")[2]
             return self._handle_session_status(sid)
 
+        if path == "/proxy/arduino/status":
+            status = arduino_proxy.status()
+            status["module"] = "arduino_proxy"
+            return self._send_json(200, status)
+
         self._send_json(404, {"error": "not_found"})
 
     # ── POST routes ──
@@ -451,6 +760,9 @@ class WorkerHandler(BaseHTTPRequestHandler):
             action = path[4:]  # strip "/fs/"
             return self._handle_fs(action)
 
+        if path == "/proxy/arduino/enable":
+            return self._handle_arduino_proxy_enable()
+
         self._send_json(404, {"error": "not_found"})
 
     # ── Exec ──
@@ -480,6 +792,10 @@ class WorkerHandler(BaseHTTPRequestHandler):
         spawn_env = os.environ.copy()
         # Non-interactive: suppress apt/dpkg prompts that would hang subprocess
         spawn_env.setdefault("DEBIAN_FRONTEND", "noninteractive")
+        arduino_proxy.ensure_started()
+        proxy = arduino_proxy.status().get("proxy_url", f"http://{ARDUINO_PROXY_HOST}:{ARDUINO_PROXY_PORT}")
+        spawn_env.setdefault("METHINGS_ARDUINO_PROXY_URL", proxy)
+        spawn_env["PATH"] = f"{HOME}/methings/bin:" + spawn_env.get("PATH", "")
         if env_extra and isinstance(env_extra, dict):
             spawn_env.update(env_extra)
 
@@ -506,6 +822,26 @@ class WorkerHandler(BaseHTTPRequestHandler):
             })
         except Exception as e:
             self._send_json(500, {"status": "error", "error": str(e)})
+
+    def _handle_arduino_proxy_enable(self):
+        params = self._parse_json()
+        if params is None:
+            return self._send_json(400, {"error": "invalid_json"})
+        requested_port = params.get("listen_port")
+        if requested_port is not None and requested_port != "":
+            if not arduino_proxy.set_port(requested_port):
+                return self._send_json(400, {"error": "invalid_listen_port"})
+        requested_ip = str(params.get("downloads_ipv4", "")).strip()
+        if requested_ip and not arduino_proxy.set_download_ip(requested_ip):
+            return self._send_json(400, {"error": "invalid_downloads_ipv4"})
+        status = arduino_proxy.ensure_started()
+        configured = arduino_proxy.configure_arduino_cli()
+        return self._send_json(200, {
+            "status": "ok",
+            "module": "arduino_proxy",
+            "proxy": status,
+            "arduino_cli": configured,
+        })
 
     # ── Sessions ──
 
@@ -655,6 +991,8 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 def main():
     _ensure_apt_noninteractive()
+    arduino_proxy.ensure_started()
+    arduino_proxy.configure_arduino_cli()
     # Start idle-session reaper
     threading.Thread(target=reap_idle_sessions, daemon=True).start()
 

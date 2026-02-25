@@ -17,6 +17,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.InetSocketAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
@@ -32,6 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger
  * - `setTimeout/setInterval` — implemented via delay + Promises
  * - `readFile/writeFile/readBinaryFile/writeBinaryFile` — whole-file I/O under user root
  * - `openFile(path, mode)` — RandomAccessFile handle with read/write/seek/truncate/close
+ * - `connectTcp(host, port, options?)` — TCP client handle with read/write/close
+ * - `listenTcp(host, port, options?)` — TCP server handle with accept/close
  * - `device_api(action, payload)` — sync device API bridge
  * - `console.log/warn/error/info` — captured to buffer
  */
@@ -51,6 +57,10 @@ class JsRuntime(
     private val nextWsId = AtomicInteger(0)
     private val openFiles = ConcurrentHashMap<Int, RandomAccessFile>()
     private val nextFileId = AtomicInteger(0)
+    private val tcpSockets = ConcurrentHashMap<Int, Socket>()
+    private val nextTcpSocketId = AtomicInteger(0)
+    private val tcpServers = ConcurrentHashMap<Int, ServerSocket>()
+    private val nextTcpServerId = AtomicInteger(0)
 
     suspend fun execute(code: String, timeoutMs: Long = 30_000): JsResult {
         return withContext(jsDispatcher) {
@@ -92,6 +102,7 @@ class JsRuntime(
             } finally {
                 cleanupWebSockets()
                 cleanupFiles()
+                cleanupTcp()
             }
         }
     }
@@ -103,6 +114,7 @@ class JsRuntime(
     fun close() {
         cleanupWebSockets()
         cleanupFiles()
+        cleanupTcp()
         try {
             quickJs?.close()
         } catch (_: Exception) {}
@@ -429,6 +441,33 @@ class JsRuntime(
                 }
             }
 
+            asyncFunction("readText") { args ->
+                val socketId = (args.getOrNull(0) as? Number)?.toInt()
+                    ?: throw Exception("readText requires socket id")
+                val maxBytes = ((args.getOrNull(1) as? Number)?.toInt() ?: 4096).coerceIn(1, 1_048_576)
+                val timeoutMs = ((args.getOrNull(2) as? Number)?.toInt() ?: 30_000).coerceIn(0, 120_000)
+                val socket = tcpSockets[socketId]
+                    ?: throw Exception("tcp socket $socketId not found or already closed")
+                withContext(Dispatchers.IO) {
+                    try {
+                        socket.soTimeout = timeoutMs
+                        val buf = ByteArray(maxBytes)
+                        val n = socket.getInputStream().read(buf)
+                        if (n < 0) {
+                            mapOf<String, Any?>("status" to "eof")
+                        } else {
+                            mapOf<String, Any?>(
+                                "status" to "ok",
+                                "text" to String(buf, 0, n, Charsets.UTF_8),
+                                "bytes" to n
+                            )
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        mapOf<String, Any?>("status" to "timeout")
+                    }
+                }
+            }
+
             asyncFunction("seek") { args ->
                 val fileId = (args.getOrNull(0) as? Number)?.toInt() ?: -1
                 val pos = (args.getOrNull(1) as? Number)?.toLong()
@@ -480,6 +519,157 @@ class JsRuntime(
             }
         }
 
+        // --- __tcp: TCP client/server ---
+        js.define("__tcp") {
+            asyncFunction("connect") { args ->
+                val host = args.getOrNull(0)?.toString() ?: ""
+                val port = (args.getOrNull(1) as? Number)?.toInt()
+                    ?: throw Exception("connectTcp requires numeric port")
+                val optionsJson = args.getOrNull(2)?.toString() ?: "{}"
+                val options = try { JSONObject(optionsJson) } catch (_: Exception) { JSONObject() }
+                val timeoutMs = options.optInt("timeout_ms", 10_000).coerceIn(500, 120_000)
+                val noDelay = options.optBoolean("no_delay", true)
+                val keepAlive = options.optBoolean("keep_alive", true)
+                val socket = withContext(Dispatchers.IO) {
+                    Socket().apply {
+                        tcpNoDelay = noDelay
+                        this.keepAlive = keepAlive
+                        connect(InetSocketAddress(host, port), timeoutMs)
+                    }
+                }
+                val socketId = nextTcpSocketId.getAndIncrement()
+                tcpSockets[socketId] = socket
+                socketId
+            }
+
+            asyncFunction("listen") { args ->
+                val host = args.getOrNull(0)?.toString() ?: "127.0.0.1"
+                val port = (args.getOrNull(1) as? Number)?.toInt()
+                    ?: throw Exception("listenTcp requires numeric port")
+                val optionsJson = args.getOrNull(2)?.toString() ?: "{}"
+                val options = try { JSONObject(optionsJson) } catch (_: Exception) { JSONObject() }
+                val backlog = options.optInt("backlog", 50).coerceIn(1, 512)
+                val reuseAddr = options.optBoolean("reuse_address", true)
+                val server = withContext(Dispatchers.IO) {
+                    ServerSocket().apply {
+                        this.reuseAddress = reuseAddr
+                        bind(InetSocketAddress(host, port), backlog)
+                    }
+                }
+                val serverId = nextTcpServerId.getAndIncrement()
+                tcpServers[serverId] = server
+                mapOf<String, Any?>(
+                    "serverId" to serverId,
+                    "boundHost" to (server.inetAddress?.hostAddress ?: host),
+                    "boundPort" to server.localPort
+                )
+            }
+
+            asyncFunction("accept") { args ->
+                val serverId = (args.getOrNull(0) as? Number)?.toInt()
+                    ?: throw Exception("accept requires server id")
+                val timeoutMs = ((args.getOrNull(1) as? Number)?.toInt() ?: 0).coerceIn(0, 120_000)
+                val server = tcpServers[serverId]
+                    ?: throw Exception("tcp server $serverId not found or already closed")
+                withContext(Dispatchers.IO) {
+                    try {
+                        server.soTimeout = timeoutMs
+                        val client = server.accept()
+                        val socketId = nextTcpSocketId.getAndIncrement()
+                        tcpSockets[socketId] = client
+                        mapOf<String, Any?>(
+                            "status" to "ok",
+                            "socketId" to socketId,
+                            "remoteHost" to (client.inetAddress?.hostAddress ?: ""),
+                            "remotePort" to client.port
+                        )
+                    } catch (_: SocketTimeoutException) {
+                        mapOf<String, Any?>("status" to "timeout")
+                    }
+                }
+            }
+
+            asyncFunction("read") { args ->
+                val socketId = (args.getOrNull(0) as? Number)?.toInt()
+                    ?: throw Exception("read requires socket id")
+                val maxBytes = ((args.getOrNull(1) as? Number)?.toInt() ?: 4096).coerceIn(1, 1_048_576)
+                val timeoutMs = ((args.getOrNull(2) as? Number)?.toInt() ?: 30_000).coerceIn(0, 120_000)
+                val socket = tcpSockets[socketId]
+                    ?: throw Exception("tcp socket $socketId not found or already closed")
+                withContext(Dispatchers.IO) {
+                    try {
+                        socket.soTimeout = timeoutMs
+                        val buf = ByteArray(maxBytes)
+                        val n = socket.getInputStream().read(buf)
+                        if (n < 0) {
+                            mapOf<String, Any?>("status" to "eof")
+                        } else {
+                            mapOf<String, Any?>(
+                                "status" to "ok",
+                                "data" to buf.copyOf(n).asUByteArray()
+                            )
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        mapOf<String, Any?>("status" to "timeout")
+                    }
+                }
+            }
+
+            asyncFunction("write") { args ->
+                val socketId = (args.getOrNull(0) as? Number)?.toInt()
+                    ?: throw Exception("write requires socket id")
+                val socket = tcpSockets[socketId]
+                    ?: throw Exception("tcp socket $socketId not found or already closed")
+                val data = args.getOrNull(1)
+                withContext(Dispatchers.IO) {
+                    val bytes = when (data) {
+                        is UByteArray -> data.asByteArray()
+                        is ByteArray -> data
+                        is String -> data.toByteArray(Charsets.UTF_8)
+                        else -> throw Exception("write requires string, Uint8Array, or Int8Array data")
+                    }
+                    val out = socket.getOutputStream()
+                    out.write(bytes)
+                    out.flush()
+                    bytes.size
+                }
+            }
+
+            asyncFunction("closeSocket") { args ->
+                val socketId = (args.getOrNull(0) as? Number)?.toInt()
+                    ?: throw Exception("closeSocket requires socket id")
+                val socket = tcpSockets.remove(socketId)
+                    ?: return@asyncFunction null
+                withContext(Dispatchers.IO) {
+                    try { socket.close() } catch (_: Exception) {}
+                    null
+                }
+            }
+
+            asyncFunction("closeServer") { args ->
+                val serverId = (args.getOrNull(0) as? Number)?.toInt()
+                    ?: throw Exception("closeServer requires server id")
+                val server = tcpServers.remove(serverId)
+                    ?: return@asyncFunction null
+                withContext(Dispatchers.IO) {
+                    try { server.close() } catch (_: Exception) {}
+                    null
+                }
+            }
+
+            function("isSocketOpen") { args ->
+                val socketId = (args.getOrNull(0) as? Number)?.toInt() ?: -1
+                val s = tcpSockets[socketId] ?: return@function false
+                s.isConnected && !s.isClosed
+            }
+
+            function("isServerOpen") { args ->
+                val serverId = (args.getOrNull(0) as? Number)?.toInt() ?: -1
+                val s = tcpServers[serverId] ?: return@function false
+                !s.isClosed
+            }
+        }
+
         // --- JS bootstrap: global wrappers ---
         js.evaluate<Any?>(JS_BOOTSTRAP)
     }
@@ -511,9 +701,21 @@ class JsRuntime(
         openFiles.clear()
     }
 
+    private fun cleanupTcp() {
+        for ((_, s) in tcpSockets) {
+            try { s.close() } catch (_: Exception) {}
+        }
+        tcpSockets.clear()
+        for ((_, s) in tcpServers) {
+            try { s.close() } catch (_: Exception) {}
+        }
+        tcpServers.clear()
+    }
+
     private fun cleanupAfterError() {
         cleanupWebSockets()
         cleanupFiles()
+        cleanupTcp()
         try {
             quickJs?.close()
         } catch (_: Exception) {}
@@ -628,6 +830,62 @@ class JsRuntime(
                         write: function(data) { return __file.write(fid, data); },
                         truncate: function(size) { return __file.truncate(fid, size); },
                         close: function() { return __file.close(fid); }
+                    };
+                });
+            };
+
+            // --- TCP client/server ---
+            globalThis.connectTcp = function(host, port, options) {
+                var optStr = '{}';
+                if (options && typeof options === 'object') {
+                    optStr = JSON.stringify(options);
+                }
+                return __tcp.connect(String(host || '127.0.0.1'), Number(port), optStr).then(function(sockId) {
+                    return {
+                        read: function(maxBytes, timeoutMs) {
+                            return __tcp.read(sockId, Number(maxBytes || 4096), Number(timeoutMs || 30000));
+                        },
+                        readText: function(maxBytes, timeoutMs) {
+                            return __tcp.readText(sockId, Number(maxBytes || 4096), Number(timeoutMs || 30000));
+                        },
+                        write: function(data) { return __tcp.write(sockId, data); },
+                        close: function() { return __tcp.closeSocket(sockId); },
+                        get isOpen() { return __tcp.isSocketOpen(sockId); }
+                    };
+                });
+            };
+
+            globalThis.listenTcp = function(host, port, options) {
+                var optStr = '{}';
+                if (options && typeof options === 'object') {
+                    optStr = JSON.stringify(options);
+                }
+                return __tcp.listen(String(host || '127.0.0.1'), Number(port), optStr).then(function(info) {
+                    var serverId = info.serverId;
+                    return {
+                        host: info.boundHost,
+                        port: info.boundPort,
+                        accept: function(timeoutMs) {
+                            return __tcp.accept(serverId, Number(timeoutMs || 0)).then(function(r) {
+                                if (!r || r.status !== 'ok') return null;
+                                var sockId = r.socketId;
+                                return {
+                                    remoteHost: r.remoteHost,
+                                    remotePort: r.remotePort,
+                                    read: function(maxBytes, timeoutMs2) {
+                                        return __tcp.read(sockId, Number(maxBytes || 4096), Number(timeoutMs2 || 30000));
+                                    },
+                                    readText: function(maxBytes, timeoutMs2) {
+                                        return __tcp.readText(sockId, Number(maxBytes || 4096), Number(timeoutMs2 || 30000));
+                                    },
+                                    write: function(data) { return __tcp.write(sockId, data); },
+                                    close: function() { return __tcp.closeSocket(sockId); },
+                                    get isOpen() { return __tcp.isSocketOpen(sockId); }
+                                };
+                            });
+                        },
+                        close: function() { return __tcp.closeServer(serverId); },
+                        get isOpen() { return __tcp.isServerOpen(serverId); }
                     };
                 });
             };
