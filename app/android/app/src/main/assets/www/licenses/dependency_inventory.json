@@ -217,13 +217,6 @@
       "version": "",
       "license": "",
       "source_path": "third_party/dropbear"
-    },
-    {
-      "ecosystem": "vendored-native",
-      "name": "serial-discovery",
-      "version": "",
-      "license": "LGPL",
-      "source_path": "third_party/serial-discovery"
     }
   ],
   "ignore_config": {

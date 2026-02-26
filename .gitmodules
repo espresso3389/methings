@@ -11,7 +11,3 @@
 [submodule "third_party/arduino-cli"]
 	path = third_party/arduino-cli
 	url = https://github.com/espresso3389/arduino-cli.git
-[submodule "third_party/serial-discovery"]
-	path = third_party/serial-discovery
-	url = https://github.com/espresso3389/serial-discovery.git
-	branch = methings/android-compat

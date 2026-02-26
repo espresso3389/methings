@@ -41,14 +41,14 @@ build_tool() {
   chmod 0755 "$OUT_DIR/$ABI/$out_name"
 }
 
-SERIAL_DISCOVERY_SUBMODULE="$ROOT_DIR/third_party/serial-discovery"
-if [[ ! -f "$SERIAL_DISCOVERY_SUBMODULE/go.mod" ]]; then
-  echo "build_arduino_builtin_tools_android: missing submodule at $SERIAL_DISCOVERY_SUBMODULE" >&2
+SERIAL_DISCOVERY_SRC="$ROOT_DIR/tools/methings-serial-discovery"
+if [[ ! -f "$SERIAL_DISCOVERY_SRC/go.mod" ]]; then
+  echo "build_arduino_builtin_tools_android: missing source at $SERIAL_DISCOVERY_SRC" >&2
   exit 1
 fi
-echo "Building patched serial-discovery from submodule ($SERIAL_DISCOVERY_VERSION target) for Android arm64..." >&2
+echo "Building methings serial-discovery for Android arm64..." >&2
 (
-  cd "$SERIAL_DISCOVERY_SUBMODULE"
+  cd "$SERIAL_DISCOVERY_SRC"
   GOTOOLCHAIN="$GOTOOLCHAIN" GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
     go build -o "$OUT_DIR/$ABI/libserial-discovery.so" .
 )
