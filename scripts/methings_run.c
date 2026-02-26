@@ -8,7 +8,6 @@
  *   npm               → execv libnode.so npm-cli.js ...
  *   npx               → execv libnode.so npx-cli.js ...
  *   corepack          → execv libnode.so corepack.js ...
- *   bun               → alias for node (execv libnode.so)
  *   curl              → execv libcurl-cli.so
  *
  * Symlinks in binDir point here (which lives in nativeLibDir, so SELinux
@@ -274,8 +273,7 @@ static int dispatch(const char *cmd, int argc, char **argv) {
 
     /* Node-based commands need node_root */
     char node_root[PATH_MAX];
-    if (strcmp(cmd, "node") == 0 || strcmp(cmd, "node20") == 0 ||
-        strcmp(cmd, "bun") == 0) {
+    if (strcmp(cmd, "node") == 0 || strcmp(cmd, "node20") == 0) {
         if (resolve_node_root(node_root, sizeof(node_root)) != 0) {
             fprintf(stderr, "methings_run: cannot resolve node root. "
                             "Set METHINGS_NODE_ROOT.\n");
@@ -316,7 +314,7 @@ static void usage(void) {
         "Usage: methings_run <command> [args...]\n"
         "       <command> [args...]   (via symlink)\n"
         "\n"
-        "Commands: python python3 pip pip3 node node20 npm npx corepack bun curl\n");
+        "Commands: python python3 pip pip3 node node20 npm npx corepack curl\n");
 }
 
 int main(int argc, char **argv) {

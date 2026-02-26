@@ -70,6 +70,7 @@ class AgentService : LifecycleService() {
         val extractor = AssetExtractor(this)
         extractor.extractUiAssetsIfMissing()
         extractor.extractUserDefaultsIfMissing()
+        extractor.extractNodeAssetsIfMissing()
         extractor.extractServerAssets()
         jp.espresso3389.methings.db.PlainDbProvider.get(this)
         CaBundleManager(this).ensureSeeded()
