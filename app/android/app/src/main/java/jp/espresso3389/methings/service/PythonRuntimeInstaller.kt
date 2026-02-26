@@ -361,6 +361,7 @@ class PythonRuntimeInstaller(private val context: Context) {
             val target = "$nativeLibDir/libmethingsrun.so"
             for (name in listOf("python3", "python", "pip", "pip3",
                                 "node", "node20", "npm", "npx", "corepack",
+                                "arduino-cli",
                                 "curl", "bash", "jq", "rg",
                                 "methings-sh")) {
                 val link = File(binDir, name)

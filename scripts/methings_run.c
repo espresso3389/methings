@@ -8,6 +8,7 @@
  *   npm               → execv libnode.so npm-cli.js ...
  *   npx               → execv libnode.so npx-cli.js ...
  *   corepack          → execv libnode.so corepack.js ...
+ *   arduino-cli       → execv libarduino-cli.so
  *   bash              → execv libbash.so (with LD_LIBRARY_PATH for readline)
  *   jq                → execv libjq-cli.so (with LD_LIBRARY_PATH)
  *   rg                → execv librg.so (with LD_LIBRARY_PATH for pcre2)
@@ -29,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /* Resolve native library directory. */
@@ -236,6 +238,38 @@ static int do_corepack(int argc, char **argv, const char *nativelib,
     new_argv[new_argc] = NULL;
     execv(exe, new_argv);
     perror("methings_run: execv corepack");
+    return 127;
+}
+
+/* Exec arduino-cli via libarduino-cli.so. */
+static int do_arduino_cli(int argc, char **argv, const char *nativelib) {
+    const char *home = getenv("HOME");
+    if (home && home[0]) {
+        char data[PATH_MAX];
+        char dl[PATH_MAX];
+        char tmp[PATH_MAX];
+        char user[PATH_MAX];
+        snprintf(data, sizeof(data), "%s/.arduino15", home);
+        snprintf(dl, sizeof(dl), "%s/.arduino15/staging", home);
+        snprintf(tmp, sizeof(tmp), "%s/.tmp", home);
+        snprintf(user, sizeof(user), "%s/Arduino", home);
+        mkdir(data, 0700);
+        mkdir(dl, 0700);
+        mkdir(tmp, 0700);
+        mkdir(user, 0700);
+        setenv("TMPDIR", tmp, 1);
+        setenv("TMP", tmp, 1);
+        setenv("TEMP", tmp, 1);
+        setenv("ARDUINO_DIRECTORIES_DATA", data, 0);
+        setenv("ARDUINO_DIRECTORIES_DOWNLOADS", dl, 0);
+        setenv("ARDUINO_DIRECTORIES_USER", user, 0);
+    }
+
+    char exe[PATH_MAX];
+    snprintf(exe, sizeof(exe), "%s/libarduino-cli.so", nativelib);
+    argv[0] = "arduino-cli";
+    execv(exe, argv);
+    perror("methings_run: execv arduino-cli");
     return 127;
 }
 
@@ -505,6 +539,9 @@ static int dispatch(const char *cmd, int argc, char **argv) {
     if (strcmp(cmd, "curl") == 0) {
         return do_curl(argc, argv, nativelib);
     }
+    if (strcmp(cmd, "arduino-cli") == 0) {
+        return do_arduino_cli(argc, argv, nativelib);
+    }
     if (strcmp(cmd, "methings-sh") == 0) {
         return do_methings_sh(argc, argv);
     }
@@ -561,7 +598,7 @@ static void usage(void) {
         "Usage: methings_run <command> [args...]\n"
         "       <command> [args...]   (via symlink)\n"
         "\n"
-        "Commands: python python3 pip pip3 node node20 npm npx corepack\n"
+        "Commands: python python3 pip pip3 node node20 npm npx corepack arduino-cli\n"
         "          curl bash jq rg\n");
 }
 
