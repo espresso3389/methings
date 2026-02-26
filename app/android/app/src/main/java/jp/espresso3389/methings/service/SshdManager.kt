@@ -504,11 +504,11 @@ class SshdManager(private val context: Context) {
                 "  done\n" +
                 "  if [ \"${'$'}want_y\" -eq 1 ]; then set -- -y \"${'$'}@\"; fi\n" +
                 "  if [ \"${'$'}want_t\" -eq 1 ]; then set -- -t \"${'$'}@\"; fi\n" +
-                "  exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" \"${'$'}@\"\n" +
+                "  \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" \"${'$'}@\"\n" +
                 "}\n" +
                 "dbclient() { ssh \"${'$'}@\"; }\n" +
                 "scp() {\n" +
-                "  exec \"${'$'}METHINGS_NATIVELIB/libscp.so\" -S \"${'$'}METHINGS_BINDIR/methings-dbclient\" \"${'$'}@\"\n" +
+                "  \"${'$'}METHINGS_NATIVELIB/libscp.so\" -S \"${'$'}METHINGS_BINDIR/methings-dbclient\" \"${'$'}@\"\n" +
                 "}\n"
         val needsWrite = !envFile.exists() || envFile.readText() != content
         if (needsWrite) {
