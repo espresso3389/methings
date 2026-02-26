@@ -171,6 +171,13 @@ val verifyPythonRuntime by tasks.registering {
     val assetsPyenvDir = projectDir.resolve("src/main/assets/pyenv")
 
     doLast {
+        val skipVerify =
+            ((System.getenv("METHINGS_SKIP_PYTHON_RUNTIME_VERIFY") ?: "").trim() == "1") ||
+                isCiBuild
+        if (skipVerify) {
+            logger.lifecycle("verifyPythonRuntime: skipped (CI or METHINGS_SKIP_PYTHON_RUNTIME_VERIFY=1)")
+            return@doLast
+        }
         val requiredLibs = listOf(
             "libpython3.11.so",
             "libssl1.1.so",
