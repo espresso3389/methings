@@ -50,3 +50,15 @@ scripts/me_sync_adb_regression.sh \
   --exporter-serial <serial-a> \
   --importer-serial <serial-b>
 ```
+
+## esp32_build_and_flash.sh
+Compiles an ESP32 sketch on host Linux and flashes it through the app's on-device
+`/mcu/flash` API.
+
+Usage:
+```bash
+scripts/esp32_build_and_flash.sh \
+  --sketch /path/to/BlinkSimple \
+  --fqbn esp32:esp32:m5stack_atom \
+  --serial <adb-serial>
+```
