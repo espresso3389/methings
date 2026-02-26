@@ -8,3 +8,6 @@
 [submodule "third_party/libuvc"]
 	path = third_party/libuvc
 	url = https://github.com/libuvc/libuvc.git
+[submodule "third_party/arduino-cli"]
+	path = third_party/arduino-cli
+	url = https://github.com/espresso3389/arduino-cli.git
