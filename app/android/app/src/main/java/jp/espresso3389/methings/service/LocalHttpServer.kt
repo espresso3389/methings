@@ -487,6 +487,7 @@ class LocalHttpServer(
             "/shell" -> routeShell(session, uri, postBody)
             "/web" -> routeWeb(session, uri, postBody)
             "/pip" -> routePip(session, uri, postBody)
+            "/arduino" -> routeArduino(session, uri, postBody)
             "/auth" -> routeAuth(session, uri, postBody)
             "/cloud" -> routeCloud(session, uri, postBody)
             "/file_transfer" -> routeFileTransfer(session, uri, postBody)
@@ -2005,6 +2006,23 @@ class LocalHttpServer(
         }
     }
 
+    private fun routeArduino(session: IHTTPSession, uri: String, postBody: String?): Response {
+        return when {
+            (uri == "/arduino/curated/status" || uri == "/arduino/curated/status/") && session.method == Method.GET -> {
+                handleArduinoCuratedStatus()
+            }
+            (uri == "/arduino/curated/index.json" || uri == "/arduino/curated/index.json/") && session.method == Method.GET -> {
+                serveArduinoCuratedIndex()
+            }
+            uri.startsWith("/arduino/curated/files/") && session.method == Method.GET -> {
+                val rel = decodePathSuffix(uri, "/arduino/curated/files/")
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
+                serveArduinoCuratedFile(rel)
+            }
+            else -> notFound()
+        }
+    }
+
     private fun routeCloud(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
             (uri == "/cloud/request" || uri == "/cloud/request/") -> {
@@ -3373,6 +3391,58 @@ class LocalHttpServer(
         }
         val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
         if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+        val stream: InputStream = FileInputStream(file)
+        val response = newChunkedResponse(Response.Status.OK, mime, stream)
+        response.addHeader("Cache-Control", "no-cache")
+        response.addHeader("X-Content-Type-Options", "nosniff")
+        return response
+    }
+
+    private fun curatedArduinoRoot(): File {
+        return File(context.filesDir, "user/arduino-curated")
+    }
+
+    private fun handleArduinoCuratedStatus(): Response {
+        val root = curatedArduinoRoot().canonicalFile
+        val index = File(root, "package_methings_index.json").canonicalFile
+        val filesDir = File(root, "files").canonicalFile
+        val filesCount = if (filesDir.exists() && filesDir.isDirectory) {
+            filesDir.walkTopDown().count { it.isFile }.toLong()
+        } else {
+            0L
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("enabled", index.exists() && index.isFile)
+                .put("index_path", "user/arduino-curated/package_methings_index.json")
+                .put("index_url", "http://127.0.0.1:${PORT}/arduino/curated/index.json")
+                .put("files_dir", "user/arduino-curated/files")
+                .put("files_count", filesCount)
+        )
+    }
+
+    private fun serveArduinoCuratedIndex(): Response {
+        val file = File(curatedArduinoRoot(), "package_methings_index.json").canonicalFile
+        return serveArduinoCuratedDiskFile(file, "application/json; charset=utf-8")
+    }
+
+    private fun serveArduinoCuratedFile(relPath: String): Response {
+        val clean = relPath.trim().replace('\\', '/').trimStart('/')
+        if (clean.isBlank() || clean.contains("..")) {
+            return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+        }
+        val root = File(curatedArduinoRoot(), "files").canonicalFile
+        val file = File(root, clean).canonicalFile
+        if (!file.path.startsWith(root.path + "/") && file.path != root.path) {
+            return jsonError(Response.Status.BAD_REQUEST, "path_outside_curated_root")
+        }
+        return serveArduinoCuratedDiskFile(file, null)
+    }
+
+    private fun serveArduinoCuratedDiskFile(file: File, forcedMime: String?): Response {
+        if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+        val mime = forcedMime ?: (URLConnection.guessContentTypeFromName(file.name) ?: mimeTypeFor(file.name))
         val stream: InputStream = FileInputStream(file)
         val response = newChunkedResponse(Response.Status.OK, mime, stream)
         response.addHeader("Cache-Control", "no-cache")

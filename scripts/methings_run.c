@@ -26,11 +26,13 @@
  * Build: see scripts/build_methingsrun_android.sh
  */
 #include <errno.h>
+#include <dirent.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 /* Resolve native library directory. */
@@ -118,6 +120,174 @@ static void ensure_builtin_tool_symlink(
     snprintf(link_path, sizeof(link_path), "%s/%s", tool_dir, tool_name);
     unlink(link_path);
     symlink(native_path, link_path);
+}
+
+static int read_file_all(const char *path, char **out_buf, size_t *out_len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return -1;
+    }
+    long sz = ftell(f);
+    if (sz < 0) {
+        fclose(f);
+        return -1;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return -1;
+    }
+    char *buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) {
+        fclose(f);
+        return -1;
+    }
+    size_t n = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (n != (size_t)sz) {
+        free(buf);
+        return -1;
+    }
+    buf[n] = '\0';
+    *out_buf = buf;
+    if (out_len) *out_len = n;
+    return 0;
+}
+
+static int write_file_all(const char *path, const char *buf, size_t len) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    size_t n = fwrite(buf, 1, len, f);
+    if (fclose(f) != 0) return -1;
+    return n == len ? 0 : -1;
+}
+
+static char *replace_all(const char *src, const char *old_s, const char *new_s, int *changed) {
+    if (!src || !old_s || !new_s || !old_s[0]) return NULL;
+    size_t src_len = strlen(src);
+    size_t old_len = strlen(old_s);
+    size_t new_len = strlen(new_s);
+
+    size_t count = 0;
+    const char *p = src;
+    while ((p = strstr(p, old_s)) != NULL) {
+        count++;
+        p += old_len;
+    }
+    if (count == 0) {
+        char *copy = strdup(src);
+        if (changed) *changed = 0;
+        return copy;
+    }
+
+    size_t out_len = src_len;
+    if (new_len >= old_len) {
+        out_len += count * (new_len - old_len);
+    } else {
+        out_len -= count * (old_len - new_len);
+    }
+    char *out = (char *)malloc(out_len + 1);
+    if (!out) return NULL;
+
+    const char *in = src;
+    char *w = out;
+    while ((p = strstr(in, old_s)) != NULL) {
+        size_t head = (size_t)(p - in);
+        memcpy(w, in, head);
+        w += head;
+        memcpy(w, new_s, new_len);
+        w += new_len;
+        in = p + old_len;
+    }
+    size_t tail = strlen(in);
+    memcpy(w, in, tail);
+    w += tail;
+    *w = '\0';
+
+    if (changed) *changed = 1;
+    return out;
+}
+
+static int patch_platform_txt_file(const char *path) {
+    char *orig = NULL;
+    size_t orig_len = 0;
+    if (read_file_all(path, &orig, &orig_len) != 0) return 0;
+
+    int changed_any = 0;
+    int changed = 0;
+    char *s1 = replace_all(orig, "/usr/bin/env bash -c", "/system/bin/sh -c", &changed);
+    free(orig);
+    if (!s1) return 0;
+    changed_any |= changed;
+
+    char *s2 = replace_all(s1, "/usr/bin/env sh -c", "/system/bin/sh -c", &changed);
+    free(s1);
+    if (!s2) return 0;
+    changed_any |= changed;
+
+    char *s3 = replace_all(s2, "/usr/bin/env bash", "/system/bin/sh", &changed);
+    free(s2);
+    if (!s3) return 0;
+    changed_any |= changed;
+
+    char *s4 = replace_all(s3, "/usr/bin/env", "/system/bin/env", &changed);
+    free(s3);
+    if (!s4) return 0;
+    changed_any |= changed;
+
+    int rc = 0;
+    if (changed_any) {
+        rc = write_file_all(path, s4, strlen(s4));
+    }
+    free(s4);
+    return rc == 0 ? changed_any : 0;
+}
+
+static void patch_installed_esp32_platform_txts(const char *home) {
+    if (!home || !home[0]) return;
+    char base[PATH_MAX];
+    snprintf(base, sizeof(base), "%s/.arduino15/packages/esp32/hardware/esp32", home);
+
+    DIR *dir = opendir(base);
+    if (!dir) return;
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL) {
+        if (ent->d_name[0] == '.') continue;
+        char path[PATH_MAX];
+        snprintf(path, sizeof(path), "%s/%s/platform.txt", base, ent->d_name);
+        if (access(path, R_OK | W_OK) != 0) continue;
+        patch_platform_txt_file(path);
+    }
+    closedir(dir);
+}
+
+static void maybe_set_arduino_additional_urls(const char *home) {
+    if (getenv("ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS") &&
+        getenv("ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS")[0]) {
+        return;
+    }
+
+    const char *env_urls = getenv("METHINGS_ARDUINO_ADDITIONAL_URLS");
+    if (env_urls && env_urls[0]) {
+        setenv("ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS", env_urls, 1);
+        return;
+    }
+
+    if (!home || !home[0]) return;
+    char cfg[PATH_MAX];
+    snprintf(cfg, sizeof(cfg), "%s/.arduino15/additional_urls.txt", home);
+    FILE *f = fopen(cfg, "r");
+    if (!f) return;
+    char line[4096];
+    if (!fgets(line, sizeof(line), f)) {
+        fclose(f);
+        return;
+    }
+    fclose(f);
+    line[strcspn(line, "\r\n")] = '\0';
+    if (!line[0]) return;
+    setenv("ARDUINO_BOARD_MANAGER_ADDITIONAL_URLS", line, 1);
 }
 
 /* Prepend dir to LD_LIBRARY_PATH (or set it). */
@@ -321,14 +491,41 @@ static int do_arduino_cli(int argc, char **argv, const char *nativelib) {
             home, nativelib, "mdns-discovery", mdns_discovery_version, "libmdns-discovery.so");
         ensure_builtin_tool_symlink(
             home, nativelib, "serial-monitor", serial_monitor_version, "libserial-monitor.so");
+
+        // Curated package index hook for Android-native toolchains.
+        maybe_set_arduino_additional_urls(home);
+
+        // Best-effort patch for existing esp32 core installs.
+        patch_installed_esp32_platform_txts(home);
     }
 
     char exe[PATH_MAX];
     snprintf(exe, sizeof(exe), "%s/libarduino-cli.so", nativelib);
     argv[0] = "arduino-cli";
-    execv(exe, argv);
-    perror("methings_run: execv arduino-cli");
-    return 127;
+    pid_t pid = fork();
+    if (pid == 0) {
+        execv(exe, argv);
+        perror("methings_run: execv arduino-cli");
+        _exit(127);
+    }
+    if (pid < 0) {
+        perror("methings_run: fork arduino-cli");
+        return 127;
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        perror("methings_run: waitpid arduino-cli");
+        return 127;
+    }
+
+    // Patch again after installs/upgrades performed by this invocation.
+    if (home && home[0]) {
+        patch_installed_esp32_platform_txts(home);
+    }
+
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
+    return 1;
 }
 
 /* Resolve termux-tools lib directory ($HOME/../termux-tools/lib). */
