@@ -362,7 +362,7 @@ class PythonRuntimeInstaller(private val context: Context) {
             for (name in listOf("python3", "python", "pip", "pip3",
                                 "node", "node20", "npm", "npx", "corepack")) {
                 val link = File(binDir, name)
-                if (link.exists()) link.delete()
+                link.delete() // unconditional: File.exists() follows symlinks, misses broken ones
                 Os.symlink(target, link.absolutePath)
             }
         } catch (ex: Exception) {
