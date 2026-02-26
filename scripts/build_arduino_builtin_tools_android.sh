@@ -41,7 +41,18 @@ build_tool() {
   chmod 0755 "$OUT_DIR/$ABI/$out_name"
 }
 
-build_tool "github.com/arduino/serial-discovery" "$SERIAL_DISCOVERY_VERSION" "serial-discovery" "libserial-discovery.so"
+SERIAL_DISCOVERY_SUBMODULE="$ROOT_DIR/third_party/serial-discovery"
+if [[ ! -f "$SERIAL_DISCOVERY_SUBMODULE/go.mod" ]]; then
+  echo "build_arduino_builtin_tools_android: missing submodule at $SERIAL_DISCOVERY_SUBMODULE" >&2
+  exit 1
+fi
+echo "Building patched serial-discovery from submodule ($SERIAL_DISCOVERY_VERSION target) for Android arm64..." >&2
+(
+  cd "$SERIAL_DISCOVERY_SUBMODULE"
+  GOTOOLCHAIN="$GOTOOLCHAIN" GOOS=android GOARCH=arm64 CGO_ENABLED=0 \
+    go build -o "$OUT_DIR/$ABI/libserial-discovery.so" .
+)
+chmod 0755 "$OUT_DIR/$ABI/libserial-discovery.so"
 build_tool "github.com/arduino/mdns-discovery" "$MDNS_DISCOVERY_VERSION" "mdns-discovery" "libmdns-discovery.so"
 build_tool "github.com/arduino/serial-monitor" "$SERIAL_MONITOR_VERSION" "serial-monitor" "libserial-monitor.so"
 
