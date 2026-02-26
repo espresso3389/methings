@@ -76,6 +76,50 @@ static int resolve_node_root(char *out, size_t len) {
     return -1;
 }
 
+static void ensure_dir_recursive(const char *path) {
+    char buf[PATH_MAX];
+    size_t n = snprintf(buf, sizeof(buf), "%s", path);
+    if (n == 0 || n >= sizeof(buf)) return;
+    for (char *p = buf + 1; *p; p++) {
+        if (*p != '/') continue;
+        *p = '\0';
+        mkdir(buf, 0700);
+        *p = '/';
+    }
+    mkdir(buf, 0700);
+}
+
+static void ensure_builtin_tool_symlink(
+    const char *home,
+    const char *nativelib,
+    const char *tool_name,
+    const char *tool_version,
+    const char *native_binary
+) {
+    if (!home || !home[0] || !nativelib || !nativelib[0] ||
+        !tool_name || !tool_name[0] || !tool_version || !tool_version[0] ||
+        !native_binary || !native_binary[0]) {
+        return;
+    }
+
+    char native_path[PATH_MAX];
+    snprintf(native_path, sizeof(native_path), "%s/%s", nativelib, native_binary);
+    if (access(native_path, R_OK) != 0) return;
+
+    char tool_dir[PATH_MAX];
+    snprintf(
+        tool_dir, sizeof(tool_dir),
+        "%s/.arduino15/packages/builtin/tools/%s/%s",
+        home, tool_name, tool_version
+    );
+    ensure_dir_recursive(tool_dir);
+
+    char link_path[PATH_MAX];
+    snprintf(link_path, sizeof(link_path), "%s/%s", tool_dir, tool_name);
+    unlink(link_path);
+    symlink(native_path, link_path);
+}
+
 /* Prepend dir to LD_LIBRARY_PATH (or set it). */
 static void prepend_ld_path(const char *dir, const char *extra) {
     char buf[PATH_MAX * 4];
@@ -263,6 +307,20 @@ static int do_arduino_cli(int argc, char **argv, const char *nativelib) {
         setenv("ARDUINO_DIRECTORIES_DATA", data, 0);
         setenv("ARDUINO_DIRECTORIES_DOWNLOADS", dl, 0);
         setenv("ARDUINO_DIRECTORIES_USER", user, 0);
+
+        const char *serial_discovery_version = getenv("METHINGS_ARDUINO_SERIAL_DISCOVERY_VERSION");
+        const char *mdns_discovery_version = getenv("METHINGS_ARDUINO_MDNS_DISCOVERY_VERSION");
+        const char *serial_monitor_version = getenv("METHINGS_ARDUINO_SERIAL_MONITOR_VERSION");
+        if (!serial_discovery_version || !serial_discovery_version[0]) serial_discovery_version = "1.4.3";
+        if (!mdns_discovery_version || !mdns_discovery_version[0]) mdns_discovery_version = "1.0.12";
+        if (!serial_monitor_version || !serial_monitor_version[0]) serial_monitor_version = "0.15.0";
+
+        ensure_builtin_tool_symlink(
+            home, nativelib, "serial-discovery", serial_discovery_version, "libserial-discovery.so");
+        ensure_builtin_tool_symlink(
+            home, nativelib, "mdns-discovery", mdns_discovery_version, "libmdns-discovery.so");
+        ensure_builtin_tool_symlink(
+            home, nativelib, "serial-monitor", serial_monitor_version, "libserial-monitor.so");
     }
 
     char exe[PATH_MAX];
