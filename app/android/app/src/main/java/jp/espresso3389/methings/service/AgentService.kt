@@ -71,6 +71,7 @@ class AgentService : LifecycleService() {
         extractor.extractUiAssetsIfMissing()
         extractor.extractUserDefaultsIfMissing()
         extractor.extractNodeAssetsIfMissing()
+        extractor.extractTermuxToolsIfMissing()
         extractor.extractServerAssets()
         jp.espresso3389.methings.db.PlainDbProvider.get(this)
         CaBundleManager(this).ensureSeeded()

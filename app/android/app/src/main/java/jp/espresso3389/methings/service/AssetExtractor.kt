@@ -20,6 +20,33 @@ class AssetExtractor(private val context: Context) {
         }
     }
 
+    fun extractTermuxToolsIfMissing(): File? {
+        return try {
+            val assetRoot = "termux-tools"
+            if (!assetDirExists(assetRoot)) {
+                return null
+            }
+            val targetDir = File(context.filesDir, "termux-tools")
+            if (targetDir.exists()) {
+                val localVersion = File(targetDir, ".version").takeIf { it.exists() }?.readText()?.trim()
+                val assetVersion = readAssetText("$assetRoot/.version")?.trim()
+                if (assetVersion != null && assetVersion.isNotBlank() && assetVersion != localVersion) {
+                    targetDir.deleteRecursively()
+                }
+                val entries = targetDir.list()
+                if (entries != null && entries.isNotEmpty()) {
+                    return targetDir
+                }
+            }
+            targetDir.mkdirs()
+            copyAssetDir(assetRoot, targetDir)
+            targetDir
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to extract Termux tools", ex)
+            null
+        }
+    }
+
     fun extractNodeAssetsIfMissing(): File? {
         return try {
             val assetRoot = "node"

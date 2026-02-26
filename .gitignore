@@ -14,6 +14,8 @@ app/android/app/src/main/assets/server/
 app/android/app/src/main/assets/system/
 app/android/app/src/main/assets/user_defaults/
 app/android/app/src/main/assets/node/
+app/android/app/src/main/assets/termux-tools/
+third_party/
 .dropbear-build/
 .native-build/
 gradle-cli.jar
@@ -31,3 +33,6 @@ app/android/app/google-services.json
 
 # logs
 logs/
+
+.curl-build/
+

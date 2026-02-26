@@ -8,6 +8,9 @@
  *   npm               → execv libnode.so npm-cli.js ...
  *   npx               → execv libnode.so npx-cli.js ...
  *   corepack          → execv libnode.so corepack.js ...
+ *   bash              → execv libbash.so (with LD_LIBRARY_PATH for readline)
+ *   jq                → execv libjq-cli.so (with LD_LIBRARY_PATH)
+ *   rg                → execv librg.so (with LD_LIBRARY_PATH for pcre2)
  *   curl              → execv libcurl-cli.so
  *
  * Symlinks in binDir point here (which lives in nativeLibDir, so SELinux
@@ -20,6 +23,7 @@
  *
  * Build: see scripts/build_methingsrun_android.sh
  */
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -222,6 +226,44 @@ static int do_corepack(int argc, char **argv, const char *nativelib,
     return 127;
 }
 
+/* Resolve termux-tools lib directory ($HOME/../termux-tools/lib). */
+static int resolve_termux_tools_lib(char *out, size_t len) {
+    const char *env = getenv("METHINGS_TERMUX_TOOLS_LIB");
+    if (env && env[0]) {
+        snprintf(out, len, "%s", env);
+        return 0;
+    }
+    const char *home = getenv("HOME");
+    if (home && home[0]) {
+        char tmp[PATH_MAX];
+        snprintf(tmp, sizeof(tmp), "%s", home);
+        char *slash = strrchr(tmp, '/');
+        if (slash) {
+            *slash = '\0';
+            snprintf(out, len, "%s/termux-tools/lib", tmp);
+            if (access(out, F_OK) == 0) return 0;
+        }
+    }
+    return -1;
+}
+
+/* Exec a Termux-sourced tool (bash, jq, rg). Needs LD_LIBRARY_PATH for deps. */
+static int do_termux_tool(int argc, char **argv, const char *nativelib,
+                          const char *so_name, const char *argv0_name) {
+    char tools_lib[PATH_MAX];
+    if (resolve_termux_tools_lib(tools_lib, sizeof(tools_lib)) == 0)
+        prepend_ld_path(tools_lib, nativelib);
+    else
+        prepend_ld_path(nativelib, NULL);
+
+    char exe[PATH_MAX];
+    snprintf(exe, sizeof(exe), "%s/%s", nativelib, so_name);
+    argv[0] = (char *)argv0_name;
+    execv(exe, argv);
+    fprintf(stderr, "methings_run: execv %s: %s\n", argv0_name, strerror(errno));
+    return 127;
+}
+
 /* Exec curl via libcurl-cli.so. Sets CURL_CA_BUNDLE if not already set. */
 static int do_curl(int argc, char **argv, const char *nativelib) {
     /* Provide CA bundle path so TLS verification works out of the box.
@@ -270,6 +312,15 @@ static int dispatch(const char *cmd, int argc, char **argv) {
     if (strcmp(cmd, "curl") == 0) {
         return do_curl(argc, argv, nativelib);
     }
+    if (strcmp(cmd, "bash") == 0) {
+        return do_termux_tool(argc, argv, nativelib, "libbash.so", "bash");
+    }
+    if (strcmp(cmd, "jq") == 0) {
+        return do_termux_tool(argc, argv, nativelib, "libjq-cli.so", "jq");
+    }
+    if (strcmp(cmd, "rg") == 0) {
+        return do_termux_tool(argc, argv, nativelib, "librg.so", "rg");
+    }
 
     /* Node-based commands need node_root */
     char node_root[PATH_MAX];
@@ -314,7 +365,8 @@ static void usage(void) {
         "Usage: methings_run <command> [args...]\n"
         "       <command> [args...]   (via symlink)\n"
         "\n"
-        "Commands: python python3 pip pip3 node node20 npm npx corepack curl\n");
+        "Commands: python python3 pip pip3 node node20 npm npx corepack\n"
+        "          curl bash jq rg\n");
 }
 
 int main(int argc, char **argv) {
