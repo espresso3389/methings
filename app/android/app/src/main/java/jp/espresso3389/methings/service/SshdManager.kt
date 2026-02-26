@@ -120,6 +120,7 @@ class SshdManager(private val context: Context) {
             val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
 
             ensureSshClientWrappers(binDir, userHome)
+            ensureNpmPrefixBinExecutable(userHome)
             val mkshEnv = ensureMkshEnvFile(userHome)
 
             val pb = ProcessBuilder(args)
@@ -509,7 +510,49 @@ class SshdManager(private val context: Context) {
                 "dbclient() { ssh \"${'$'}@\"; }\n" +
                 "scp() {\n" +
                 "  \"${'$'}METHINGS_NATIVELIB/libscp.so\" -S \"${'$'}METHINGS_BINDIR/methings-dbclient\" \"${'$'}@\"\n" +
-                "}\n"
+                "}\n" +
+                // SELinux blocks direct execution of npm shims from app_data_file.
+                // Register aliases for all npm-prefix/bin entries and dispatch by shebang.
+                "_methings_npm_run() {\n" +
+                "  _cmd=\"${'$'}1\"; shift\n" +
+                "  [ -r \"${'$'}_cmd\" ] || { echo \"not found: ${'$'}_cmd\" 1>&2; return 127; }\n" +
+                "  IFS= read -r _head < \"${'$'}_cmd\" || _head=''\n" +
+                "  case \"${'$'}_head\" in\n" +
+                "    '#!'*'env node'*|'#!'*'/node'*)\n" +
+                "      _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
+                "      LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}{LD_LIBRARY_PATH:-}\" \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}_cmd\" \"${'$'}@\"\n" +
+                "      ;;\n" +
+                "    '#!'*'env python3'*|'#!'*'/python3'*|'#!'*'/python'*)\n" +
+                "      \"${'$'}METHINGS_NATIVELIB/libmethingspy.so\" \"${'$'}_cmd\" \"${'$'}@\"\n" +
+                "      ;;\n" +
+                "    '#!'*'/bin/sh'*|'#!'*'/bin/bash'*)\n" +
+                "      /system/bin/sh \"${'$'}_cmd\" \"${'$'}@\"\n" +
+                "      ;;\n" +
+                "    *)\n" +
+                "      _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
+                "      LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}{LD_LIBRARY_PATH:-}\" \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}_cmd\" \"${'$'}@\"\n" +
+                "      ;;\n" +
+                "  esac\n" +
+                "}\n" +
+                "_methings_register_npm_bins() {\n" +
+                "  _dir=\"${'$'}HOME/npm-prefix/bin\"\n" +
+                "  [ -d \"${'$'}_dir\" ] || return 0\n" +
+                "  for _p in \"${'$'}_dir\"/*; do\n" +
+                "    [ -f \"${'$'}_p\" ] || continue\n" +
+                "    _n=\"${'$'}{_p##*/}\"\n" +
+                "    case \"${'$'}_n\" in\n" +
+                "      *[!A-Za-z0-9._+-]*|'') continue;;\n" +
+                "    esac\n" +
+                "    eval \"alias ${'$'}_n='_methings_npm_run \\\"${'$'}HOME/npm-prefix/bin/${'$'}_n\\\"'\"\n" +
+                "  done\n" +
+                "}\n" +
+                "npm() {\n" +
+                "  command npm \"${'$'}@\"\n" +
+                "  _rc=\"${'$'}?\"\n" +
+                "  [ \"${'$'}_rc\" -eq 0 ] && _methings_register_npm_bins\n" +
+                "  return \"${'$'}_rc\"\n" +
+                "}\n" +
+                "_methings_register_npm_bins\n"
         val needsWrite = !envFile.exists() || envFile.readText() != content
         if (needsWrite) {
             envFile.writeText(content)
@@ -526,6 +569,25 @@ class SshdManager(private val context: Context) {
             envFile.writeText("# me.things mksh env\n")
         }
         return envFile
+    }
+
+    /**
+     * npm-installed CLI shims under user/npm-prefix/bin may occasionally lose +x,
+     * which causes "Permission denied" when invoked from SSH sessions.
+     */
+    private fun ensureNpmPrefixBinExecutable(userHome: File) {
+        try {
+            val npmBin = File(userHome, "npm-prefix/bin")
+            val entries = npmBin.listFiles() ?: return
+            for (entry in entries) {
+                if (!entry.isFile) continue
+                entry.setReadable(true, true)
+                entry.setWritable(true, true)
+                entry.setExecutable(true, true)
+            }
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to normalize npm-prefix/bin permissions", ex)
+        }
     }
 
     data class SshdStatus(
