@@ -206,6 +206,13 @@
     },
     {
       "ecosystem": "vendored-native",
+      "name": "arduino-cli",
+      "version": "",
+      "license": "LGPL",
+      "source_path": "third_party/arduino-cli"
+    },
+    {
+      "ecosystem": "vendored-native",
       "name": "dropbear",
       "version": "",
       "license": "",
