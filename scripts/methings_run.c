@@ -8,6 +8,8 @@
  *   npm               → execv libnode.so npm-cli.js ...
  *   npx               → execv libnode.so npx-cli.js ...
  *   corepack          → execv libnode.so corepack.js ...
+ *   bun               → alias for node (execv libnode.so)
+ *   curl              → execv libcurl-cli.so
  *
  * Symlinks in binDir point here (which lives in nativeLibDir, so SELinux
  * allows execution).
@@ -221,6 +223,35 @@ static int do_corepack(int argc, char **argv, const char *nativelib,
     return 127;
 }
 
+/* Exec curl via libcurl-cli.so. Sets CURL_CA_BUNDLE if not already set. */
+static int do_curl(int argc, char **argv, const char *nativelib) {
+    /* Provide CA bundle path so TLS verification works out of the box.
+     * CaBundleManager maintains cacert.pem at $HOME/../protected/ca/cacert.pem.
+     * SSH sessions already set SSL_CERT_FILE, but direct invocations may not. */
+    if (!getenv("CURL_CA_BUNDLE") && !getenv("SSL_CERT_FILE")) {
+        const char *home = getenv("HOME");
+        if (home && home[0]) {
+            char ca[PATH_MAX];
+            snprintf(ca, sizeof(ca), "%s", home);
+            char *slash = strrchr(ca, '/');
+            if (slash) {
+                *slash = '\0';
+                char ca_path[PATH_MAX];
+                snprintf(ca_path, sizeof(ca_path),
+                         "%s/protected/ca/cacert.pem", ca);
+                if (access(ca_path, R_OK) == 0)
+                    setenv("CURL_CA_BUNDLE", ca_path, 0);
+            }
+        }
+    }
+    char exe[PATH_MAX];
+    snprintf(exe, sizeof(exe), "%s/libcurl-cli.so", nativelib);
+    argv[0] = "curl";
+    execv(exe, argv);
+    perror("methings_run: execv curl");
+    return 127;
+}
+
 /* Dispatch a command name to the appropriate handler.
  * Returns -1 if the command is not recognized. */
 static int dispatch(const char *cmd, int argc, char **argv) {
@@ -237,10 +268,14 @@ static int dispatch(const char *cmd, int argc, char **argv) {
     if (strcmp(cmd, "pip") == 0 || strcmp(cmd, "pip3") == 0) {
         return do_pip(argc, argv, nativelib);
     }
+    if (strcmp(cmd, "curl") == 0) {
+        return do_curl(argc, argv, nativelib);
+    }
 
     /* Node-based commands need node_root */
     char node_root[PATH_MAX];
-    if (strcmp(cmd, "node") == 0 || strcmp(cmd, "node20") == 0) {
+    if (strcmp(cmd, "node") == 0 || strcmp(cmd, "node20") == 0 ||
+        strcmp(cmd, "bun") == 0) {
         if (resolve_node_root(node_root, sizeof(node_root)) != 0) {
             fprintf(stderr, "methings_run: cannot resolve node root. "
                             "Set METHINGS_NODE_ROOT.\n");
@@ -281,7 +316,7 @@ static void usage(void) {
         "Usage: methings_run <command> [args...]\n"
         "       <command> [args...]   (via symlink)\n"
         "\n"
-        "Commands: python python3 pip pip3 node node20 npm npx corepack\n");
+        "Commands: python python3 pip pip3 node node20 npm npx corepack bun curl\n");
 }
 
 int main(int argc, char **argv) {
