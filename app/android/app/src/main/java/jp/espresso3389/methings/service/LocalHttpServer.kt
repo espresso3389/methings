@@ -251,11 +251,9 @@ class LocalHttpServer(
         if (cmd !in allowed) {
             return JSONObject().put("status", "error").put("error", "command_not_allowed").put("cmd", cmd)
         }
-        val env = shellExecutor.buildEnv()
-        val nativeLibDir = env["METHINGS_NATIVELIB"] ?: ""
         val command = when (cmd) {
-            "python" -> "$nativeLibDir/libmethingspy.so $args"
-            "pip" -> "$nativeLibDir/libmethingspy.so -m pip $args"
+            "python" -> "python3 $args"
+            "pip" -> "pip3 $args"
             else -> "$cmd $args"
         }
         return shellExecutor.exec(command, cwd, 300_000)

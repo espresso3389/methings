@@ -62,10 +62,9 @@ class ToolExecutor(
                     if (cmd !in allowed) {
                         JSONObject().put("status", "error").put("error", "command_not_allowed").put("cmd", cmd)
                     } else {
-                        val nativeLibDir = shellExecutor.buildEnv()["METHINGS_NATIVELIB"] ?: ""
                         val command = when (cmd) {
-                            "python" -> "$nativeLibDir/libmethingspy.so $cmdArgs"
-                            "pip" -> "$nativeLibDir/libmethingspy.so -m pip $cmdArgs"
+                            "python" -> "python3 $cmdArgs"
+                            "pip" -> "pip3 $cmdArgs"
                             else -> "$cmd $cmdArgs"
                         }
                         shellExecutor.exec(command, cwd, 300_000)
@@ -342,17 +341,13 @@ class ToolExecutor(
     private fun executeRunPython(args: JSONObject): JSONObject {
         val cmdArgs = args.optString("args", "")
         val cwd = args.optString("cwd", "")
-        val nativeLibDir = shellExecutor.buildEnv()["METHINGS_NATIVELIB"] ?: ""
-        val pythonExe = "$nativeLibDir/libmethingspy.so"
-        return shellExecutor.exec("$pythonExe $cmdArgs", cwd, 300_000)
+        return shellExecutor.exec("python3 $cmdArgs", cwd, 300_000)
     }
 
     private fun executeRunPip(args: JSONObject): JSONObject {
         val cmdArgs = args.optString("args", "")
         val cwd = args.optString("cwd", "")
-        val nativeLibDir = shellExecutor.buildEnv()["METHINGS_NATIVELIB"] ?: ""
-        val pythonExe = "$nativeLibDir/libmethingspy.so"
-        return shellExecutor.exec("$pythonExe -m pip $cmdArgs", cwd, 300_000)
+        return shellExecutor.exec("pip3 $cmdArgs", cwd, 300_000)
     }
 
     private fun executeRunShell(args: JSONObject): JSONObject {

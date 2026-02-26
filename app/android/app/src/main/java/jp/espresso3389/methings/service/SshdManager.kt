@@ -489,14 +489,6 @@ class SshdManager(private val context: Context) {
         wrapper.setReadable(true, true)
         wrapper.setWritable(true, true)
 
-        listOf("node", "npm", "npx", "corepack", "bun").forEach { name ->
-            try {
-                val f = File(binDir, name)
-                if (f.exists()) f.delete()
-            } catch (_: Exception) {
-            }
-        }
-
         val envFile = File(userHome, ".mkshrc")
         val content =
             "# me.things mksh env (auto-generated)\n" +
@@ -517,31 +509,6 @@ class SshdManager(private val context: Context) {
                 "dbclient() { ssh \"${'$'}@\"; }\n" +
                 "scp() {\n" +
                 "  exec \"${'$'}METHINGS_NATIVELIB/libscp.so\" -S \"${'$'}METHINGS_BINDIR/methings-dbclient\" \"${'$'}@\"\n" +
-                "}\n" +
-                "node() {\n" +
-                "  _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
-                "  LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}METHINGS_NATIVELIB:${'$'}{LD_LIBRARY_PATH:-}\" \\\n" +
-                "    \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}@\"\n" +
-                "}\n" +
-                "npm() {\n" +
-                "  _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
-                "  LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}METHINGS_NATIVELIB:${'$'}{LD_LIBRARY_PATH:-}\" \\\n" +
-                "    NPM_CONFIG_PREFIX=\"${'$'}HOME/npm-prefix\" NPM_CONFIG_CACHE=\"${'$'}HOME/npm-cache\" \\\n" +
-                "    \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}_nr/usr/lib/node_modules/npm/bin/npm-cli.js\" \"${'$'}@\"\n" +
-                "}\n" +
-                "npx() {\n" +
-                "  _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
-                "  LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}METHINGS_NATIVELIB:${'$'}{LD_LIBRARY_PATH:-}\" \\\n" +
-                "    NPM_CONFIG_PREFIX=\"${'$'}HOME/npm-prefix\" NPM_CONFIG_CACHE=\"${'$'}HOME/npm-cache\" \\\n" +
-                "    \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}_nr/usr/lib/node_modules/npm/bin/npx-cli.js\" \"${'$'}@\"\n" +
-                "}\n" +
-                "corepack() {\n" +
-                "  _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
-                "  LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}METHINGS_NATIVELIB:${'$'}{LD_LIBRARY_PATH:-}\" \\\n" +
-                "    \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}_nr/usr/lib/node_modules/corepack/dist/corepack.js\" \"${'$'}@\"\n" +
-                "}\n" +
-                "bun() {\n" +
-                "  node \"${'$'}@\"\n" +
                 "}\n"
         val needsWrite = !envFile.exists() || envFile.readText() != content
         if (needsWrite) {

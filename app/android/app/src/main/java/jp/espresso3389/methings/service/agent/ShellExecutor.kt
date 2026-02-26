@@ -60,10 +60,6 @@ class ShellExecutor(private val context: Context) {
         env["METHINGS_NATIVELIB"] = nativeLibDir
         env["METHINGS_BINDIR"] = binDir.absolutePath
         env["METHINGS_NODE_ROOT"] = nodeRoot.absolutePath
-        val methingspyPath = File(nativeLibDir, "libmethingspy.so")
-        if (methingspyPath.exists()) {
-            env["METHINGS_PYTHON_EXE"] = methingspyPath.absolutePath
-        }
         try {
             env["METHINGS_IDENTITY"] = jp.espresso3389.methings.perm.InstallIdentity(context).get()
         } catch (_: Throwable) {}

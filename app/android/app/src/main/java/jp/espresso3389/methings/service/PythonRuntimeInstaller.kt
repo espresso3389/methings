@@ -2,6 +2,7 @@ package jp.espresso3389.methings.service
 
 import android.content.Context
 import android.util.Log
+import android.system.Os
 import java.io.File
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -35,7 +36,7 @@ class PythonRuntimeInstaller(private val context: Context) {
             ensureSiteCustomize(pythonHome)
             ensureLibDynloadFromModules(pythonHome)
             ensureSysconfigDataStub(pythonHome)
-            ensurePythonBinaries()
+            ensureMulticallSymlinks()
             ensureWheelhouse(currentVersion)
             return true
         }
@@ -59,7 +60,7 @@ class PythonRuntimeInstaller(private val context: Context) {
                 ensureSiteCustomize(pythonHome)
                 ensureLibDynloadFromModules(pythonHome)
                 ensureSysconfigDataStub(pythonHome)
-                ensurePythonBinaries()
+                ensureMulticallSymlinks()
                 ensureWheelhouse(currentVersion)
             }
             ok
@@ -348,21 +349,24 @@ class PythonRuntimeInstaller(private val context: Context) {
     }
 
     /**
-     * Ensure the bin/ directory exists for other tools (dropbear, methingssh).
-     * python3/pip commands are handled by dropbear shell function injection
-     * (avoids SELinux app_data_file execution restrictions).
+     * Create multicall symlinks in bin/ pointing to libmethingsrun.so in
+     * nativeLibDir.  Symlinks to .so files in nativeLibDir inherit the
+     * executable SELinux context, bypassing app_data_file restrictions.
      */
-    private fun ensurePythonBinaries() {
+    private fun ensureMulticallSymlinks() {
         try {
             val binDir = File(context.filesDir, "bin")
             binDir.mkdirs()
-            // Clean up any stale python/pip entries from previous versions
-            for (name in listOf("python3", "python", "pip", "pip3")) {
-                val f = File(binDir, name)
-                if (f.exists()) f.delete()
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir
+            val target = "$nativeLibDir/libmethingsrun.so"
+            for (name in listOf("python3", "python", "pip", "pip3",
+                                "node", "node20", "npm", "npx", "corepack")) {
+                val link = File(binDir, name)
+                if (link.exists()) link.delete()
+                Os.symlink(target, link.absolutePath)
             }
         } catch (ex: Exception) {
-            Log.w(TAG, "Failed to set up bin directory", ex)
+            Log.w(TAG, "Failed to create multicall symlinks", ex)
         }
     }
 
