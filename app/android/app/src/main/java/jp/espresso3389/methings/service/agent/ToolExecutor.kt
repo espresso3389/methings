@@ -7,18 +7,15 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.nio.file.Files
 
 class ToolExecutor(
     private val userDir: File,
     private val sysDir: File,
     private val journalStore: JournalStore,
     private val deviceBridge: DeviceToolBridge,
-    private val shellExec: ((cmd: String, args: String, cwd: String) -> JSONObject)?,
     private val sessionIdProvider: () -> String,
     private val jsRuntime: JsRuntime,
-    private val nativeShell: NativeShellExecutor? = null,
-    private val ensureWorker: (() -> Unit)? = null,
+    private val shellExecutor: ShellExecutor,
 ) {
     /** Media types the current provider supports natively (e.g. "image", "audio").
      *  Set by AgentRuntime before the tool execution loop each turn. */
@@ -52,16 +49,27 @@ class ToolExecutor(
                 "journal_append" -> executeJournalAppend(args)
                 "journal_list" -> executeJournalList(args)
                 "run_js" -> executeRunJs(args)
-                "run_python" -> executeShellExec("python", args)
-                "run_pip" -> executeShellExec("pip", args)
-                "local_run_shell" -> executeLocalRunShell(args)
+                "run_python" -> executeRunPython(args)
+                "run_pip" -> executeRunPip(args)
                 "run_shell" -> executeRunShell(args)
-                "local_shell_session" -> executeLocalShellSession(args)
                 "shell_session" -> executeShellSession(args)
                 "run_curl" -> executeRunCurl(args)
                 "shell_exec" -> {
                     val cmd = args.optString("cmd", "")
-                    executeShellExec(cmd, args)
+                    val cmdArgs = args.optString("args", "")
+                    val cwd = args.optString("cwd", "")
+                    val allowed = setOf("python", "pip", "curl")
+                    if (cmd !in allowed) {
+                        JSONObject().put("status", "error").put("error", "command_not_allowed").put("cmd", cmd)
+                    } else {
+                        val nativeLibDir = shellExecutor.buildEnv()["METHINGS_NATIVELIB"] ?: ""
+                        val command = when (cmd) {
+                            "python" -> "$nativeLibDir/libmethingspy.so $cmdArgs"
+                            "pip" -> "$nativeLibDir/libmethingspy.so -m pip $cmdArgs"
+                            else -> "$cmd $cmdArgs"
+                        }
+                        shellExecutor.exec(command, cwd, 300_000)
+                    }
                 }
                 "web_search" -> executeWebSearch(args)
                 "cloud_request" -> executeCloudRequest(args)
@@ -271,7 +279,11 @@ class ToolExecutor(
         val url = args.optString("url", "")
         if (url.isEmpty()) {
             // Legacy fallback: if "args" field is present, delegate to shell curl
-            if (args.has("args")) return executeShellExec("curl", args)
+            if (args.has("args")) {
+                val cmdArgs = args.optString("args", "")
+                val cwd = args.optString("cwd", "")
+                return shellExecutor.exec("curl $cmdArgs", cwd, 300_000)
+            }
             return JSONObject().put("status", "error").put("error", "missing_url")
         }
 
@@ -327,29 +339,20 @@ class ToolExecutor(
         }
     }
 
-    private fun executeShellExec(cmd: String, args: JSONObject): JSONObject {
-        val allowed = setOf("python", "pip", "curl")
-        if (cmd !in allowed) {
-            return JSONObject().put("status", "error").put("error", "command_not_allowed").put("cmd", cmd)
-        }
-        val exec = shellExec
-            ?: return JSONObject().put("status", "error").put("error", "shell_unavailable")
-                .put("detail", "Python worker is not running.")
+    private fun executeRunPython(args: JSONObject): JSONObject {
         val cmdArgs = args.optString("args", "")
         val cwd = args.optString("cwd", "")
-        return exec(cmd, cmdArgs, cwd)
+        val nativeLibDir = shellExecutor.buildEnv()["METHINGS_NATIVELIB"] ?: ""
+        val pythonExe = "$nativeLibDir/libmethingspy.so"
+        return shellExecutor.exec("$pythonExe $cmdArgs", cwd, 300_000)
     }
 
-    private fun executeLocalRunShell(args: JSONObject): JSONObject {
-        val command = args.optString("command", "")
-        if (command.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_command")
+    private fun executeRunPip(args: JSONObject): JSONObject {
+        val cmdArgs = args.optString("args", "")
         val cwd = args.optString("cwd", "")
-        val timeoutMs = args.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
-        val env = args.optJSONObject("env")
-
-        val native = nativeShell
-            ?: return JSONObject().put("status", "error").put("error", "native_shell_unavailable")
-        return native.exec(command, cwd, timeoutMs, env)
+        val nativeLibDir = shellExecutor.buildEnv()["METHINGS_NATIVELIB"] ?: ""
+        val pythonExe = "$nativeLibDir/libmethingspy.so"
+        return shellExecutor.exec("$pythonExe -m pip $cmdArgs", cwd, 300_000)
     }
 
     private fun executeRunShell(args: JSONObject): JSONObject {
@@ -358,37 +361,20 @@ class ToolExecutor(
         val cwd = args.optString("cwd", "")
         val timeoutMs = args.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
         val env = args.optJSONObject("env")
-
-        val body = JSONObject().apply {
-            put("command", command)
-            if (cwd.isNotEmpty()) put("cwd", cwd)
-            put("timeout_ms", timeoutMs)
-            if (env != null) put("env", env)
-        }
-        val workerResult = runWorkerCall { proxyWorkerPost("/exec", body) }
-        if (workerResult.optString("error") == "worker_unavailable") {
-            return JSONObject()
-                .put("status", "error")
-                .put("error", "worker_required")
-                .put("detail", "Worker (port 8776) is not responding. " +
-                    "The system already tried to start/recover it automatically. " +
-                    "If it still fails, call device_api(action=\"worker.restart\") and retry once.")
-        }
-        return workerResult
+        return shellExecutor.exec(command, cwd, timeoutMs, env)
     }
 
-    private fun executeLocalShellSession(args: JSONObject): JSONObject {
+    private fun executeShellSession(args: JSONObject): JSONObject {
         val action = args.optString("action", "")
         if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
-
-        val native = nativeShell
-            ?: return JSONObject().put("status", "error").put("error", "native_shell_unavailable")
 
         return when (action) {
             "start" -> {
                 val cwd = args.optString("cwd", "")
+                val rows = args.optInt("rows", 24)
+                val cols = args.optInt("cols", 80)
                 val env = args.optJSONObject("env")
-                native.sessionStart(cwd, env)
+                shellExecutor.sessionStart(cwd, env, rows, cols)
             }
             "exec" -> {
                 val sid = args.optString("session_id", "")
@@ -396,156 +382,34 @@ class ToolExecutor(
                 val command = args.optString("command", "")
                 if (command.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_command")
                 val timeout = args.optInt("timeout", 30)
-                native.sessionExec(sid, command, timeout)
+                shellExecutor.sessionExec(sid, command, timeout)
             }
             "write" -> {
                 val sid = args.optString("session_id", "")
                 if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
                 val input = args.optString("input", "")
                 if (input.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_input")
-                native.sessionWrite(sid, input)
+                shellExecutor.sessionWrite(sid, input)
             }
             "read" -> {
                 val sid = args.optString("session_id", "")
                 if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
-                native.sessionRead(sid)
-            }
-            "resize" -> {
-                JSONObject().put("status", "ok")
-                    .put("detail", "resize is not supported in native pipe-based sessions (no PTY)")
-                    .put("backend", "native")
-            }
-            "kill" -> {
-                val sid = args.optString("session_id", "")
-                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
-                native.sessionKill(sid)
-            }
-            "list" -> native.sessionList()
-            else -> JSONObject().put("status", "error").put("error", "unknown_action").put("action", action)
-        }
-    }
-
-    private fun executeShellSession(args: JSONObject): JSONObject {
-        val action = args.optString("action", "")
-        if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
-
-        val workerResult = runWorkerCall { executeShellSessionViaWorker(action, args) }
-        if (workerResult.optString("error") == "worker_unavailable") {
-            return JSONObject()
-                .put("status", "error")
-                .put("error", "worker_required")
-                .put("detail", "Worker (port 8776) is not responding. " +
-                    "The system already tried to start/recover it automatically. " +
-                    "If it still fails, call device_api(action=\"worker.restart\") and retry once.")
-        }
-        return workerResult
-    }
-
-    private fun executeShellSessionViaWorker(action: String, args: JSONObject): JSONObject {
-        return when (action) {
-            "start" -> {
-                val body = JSONObject().apply {
-                    val cwd = args.optString("cwd", "")
-                    if (cwd.isNotEmpty()) put("cwd", cwd)
-                    if (args.has("rows")) put("rows", args.optInt("rows", 24))
-                    if (args.has("cols")) put("cols", args.optInt("cols", 80))
-                    val env = args.optJSONObject("env")
-                    if (env != null) put("env", env)
-                }
-                proxyWorkerPost("/session/start", body)
-            }
-            "exec" -> {
-                val sid = args.optString("session_id", "")
-                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
-                val command = args.optString("command", "")
-                if (command.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_command")
-                val body = JSONObject().put("command", command)
-                if (args.has("timeout")) body.put("timeout", args.optInt("timeout", 30))
-                proxyWorkerPost("/session/$sid/exec", body)
-            }
-            "write" -> {
-                val sid = args.optString("session_id", "")
-                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
-                val input = args.optString("input", "")
-                if (input.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_input")
-                proxyWorkerPost("/session/$sid/write", JSONObject().put("input", input))
-            }
-            "read" -> {
-                val sid = args.optString("session_id", "")
-                if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
-                proxyWorkerPost("/session/$sid/read", JSONObject())
+                shellExecutor.sessionRead(sid)
             }
             "resize" -> {
                 val sid = args.optString("session_id", "")
                 if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
-                val body = JSONObject()
-                if (args.has("rows")) body.put("rows", args.optInt("rows", 24))
-                if (args.has("cols")) body.put("cols", args.optInt("cols", 80))
-                proxyWorkerPost("/session/$sid/resize", body)
+                val rows = args.optInt("rows", 24)
+                val cols = args.optInt("cols", 80)
+                shellExecutor.sessionResize(sid, rows, cols)
             }
             "kill" -> {
                 val sid = args.optString("session_id", "")
                 if (sid.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_session_id")
-                proxyWorkerPost("/session/$sid/kill", JSONObject())
+                shellExecutor.sessionKill(sid)
             }
-            "list" -> proxyWorkerGet("/session/list")
+            "list" -> shellExecutor.sessionList()
             else -> JSONObject().put("status", "error").put("error", "unknown_action").put("action", action)
-        }
-    }
-
-    private fun runWorkerCall(call: () -> JSONObject): JSONObject {
-        ensureWorker?.invoke()
-        var out = call()
-        if (out.optString("error") != "worker_unavailable") return out
-        try {
-            Thread.sleep(350)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            return out
-        }
-        ensureWorker?.invoke()
-        out = call()
-        return out
-    }
-
-    private fun proxyWorkerPost(path: String, body: JSONObject, readTimeoutMs: Int = 305_000): JSONObject {
-        return try {
-            val url = URL("http://127.0.0.1:8776$path")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 2000
-            conn.readTimeout = readTimeoutMs
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
-            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            conn.disconnect()
-            try { JSONObject(responseBody) } catch (_: Exception) {
-                JSONObject().put("status", "error").put("raw", responseBody)
-            }
-        } catch (ex: Exception) {
-            JSONObject().put("status", "error").put("error", "worker_unavailable")
-                .put("detail", ex.message ?: "Cannot reach worker on port 8776.")
-        }
-    }
-
-    private fun proxyWorkerGet(path: String): JSONObject {
-        return try {
-            val url = URL("http://127.0.0.1:8776$path")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 2000
-            conn.readTimeout = 5000
-            val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
-            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            conn.disconnect()
-            try { JSONObject(responseBody) } catch (_: Exception) {
-                JSONObject().put("status", "error").put("raw", responseBody)
-            }
-        } catch (ex: Exception) {
-            JSONObject().put("status", "error").put("error", "worker_unavailable")
-                .put("detail", ex.message ?: "Cannot reach worker on port 8776.")
         }
     }
 

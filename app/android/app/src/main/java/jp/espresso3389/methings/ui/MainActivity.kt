@@ -52,7 +52,7 @@ import jp.espresso3389.methings.device.UsbPermissionWaiter
 import jp.espresso3389.methings.device.WebViewBrowserManager
 import jp.espresso3389.methings.device.WebViewConsoleBuffer
 import jp.espresso3389.methings.service.AgentService
-import jp.espresso3389.methings.service.PythonRuntimeManager
+// PythonRuntimeManager removed — worker replaced by in-process ShellExecutor
 import jp.espresso3389.methings.service.LocalHttpServer
 import jp.espresso3389.methings.ui.WebAppBridge
 import jp.espresso3389.methings.perm.DevicePermissionPolicy
@@ -154,7 +154,7 @@ class MainActivity : AppCompatActivity() {
         }
     private val workerHealthReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val status = intent?.getStringExtra(PythonRuntimeManager.EXTRA_STATUS) ?: return
+            val status = intent?.getStringExtra("status") ?: return
             publishStatusToWeb(status)
         }
     }
@@ -1173,7 +1173,7 @@ pre code.hljs{padding:12px;font-size:12px;line-height:1.5;background:#0e0e10}
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
                 workerHealthReceiver,
-                IntentFilter(PythonRuntimeManager.ACTION_WORKER_HEALTH),
+                IntentFilter("jp.espresso3389.methings.WORKER_HEALTH"),
                 Context.RECEIVER_NOT_EXPORTED
             )
             registerReceiver(
@@ -1222,7 +1222,7 @@ pre code.hljs{padding:12px;font-size:12px;line-height:1.5;background:#0e0e10}
                 Context.RECEIVER_NOT_EXPORTED
             )
         } else {
-            registerReceiver(workerHealthReceiver, IntentFilter(PythonRuntimeManager.ACTION_WORKER_HEALTH))
+            registerReceiver(workerHealthReceiver, IntentFilter("jp.espresso3389.methings.WORKER_HEALTH"))
             registerReceiver(permissionPromptReceiver, IntentFilter(LocalHttpServer.ACTION_PERMISSION_PROMPT))
             registerReceiver(uiReloadReceiver, IntentFilter(LocalHttpServer.ACTION_UI_RELOAD))
             registerReceiver(uiChatCacheClearReceiver, IntentFilter(LocalHttpServer.ACTION_UI_CHAT_CACHE_CLEAR))
@@ -1552,32 +1552,6 @@ pre code.hljs{padding:12px;font-size:12px;line-height:1.5;background:#0e0e10}
             } catch (_: Exception) {
             }
         }.start()
-    }
-
-    private fun startWorker() {
-        val intent = Intent(this, AgentService::class.java)
-        intent.action = AgentService.ACTION_START_WORKER
-        startForegroundService(intent)
-        webView.post {
-            webView.evaluateJavascript(
-                "window.onWorkerRestartRequested && window.onWorkerRestartRequested()",
-                null
-            )
-        }
-        Toast.makeText(this, "Start request sent…", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun restartService() {
-        val intent = Intent(this, AgentService::class.java)
-        intent.action = AgentService.ACTION_RESTART_WORKER
-        startForegroundService(intent)
-        webView.post {
-            webView.evaluateJavascript(
-                "window.onWorkerRestartRequested && window.onWorkerRestartRequested()",
-                null
-            )
-        }
-        Toast.makeText(this, "Restart request sent…", Toast.LENGTH_SHORT).show()
     }
 
     private fun ensureStartupPermissions() {

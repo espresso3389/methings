@@ -34,31 +34,24 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 - `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine with **async/await support**. Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`. Top-level `await` is supported. Full API reference: `$sys/docs/run_js.md`.
 - `run_curl(url, method?, headers?, body?, timeout_ms?)` — Make HTTP requests natively. Parameters: `url` (required), `method` (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), `headers` (JSON object), `body` (string), `timeout_ms` (default 30000). Returns `{status, http_status, headers, body}`.
 
-### Local Shell (always available)
+### Shell
 
-- `local_run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in the native Android shell (`/system/bin/sh`). Always available. Cannot access worker files or packages. Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s.
-- `local_shell_session(action, session_id?, command?, ...)` — Persistent native Android shell sessions (pipe-based, no PTY). Actions: `start`, `exec`, `write`, `read`, `resize` (no-op), `kill`, `list`. Maintains state across commands.
+- `run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in the embedded Linux environment (full bash + packages). Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s.
+- `shell_session(action, session_id?, command?, ...)` — Persistent PTY sessions (full ANSI, resize). Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`.
 
-### Worker Shell (requires worker)
+### Python
 
-- `run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in the embedded Linux environment (full shell + packages). Requires embedded worker (port 8776). Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s. The runtime auto-starts/auto-recovers the worker before execution; only persistent failure returns `worker_required`.
-- `shell_session(action, session_id?, command?, ...)` — Persistent PTY sessions (full ANSI, resize). Requires embedded worker. Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. The runtime auto-starts/auto-recovers the worker; only persistent failure returns `worker_required`.
-
-### Worker tools
-
-- `run_python(args, cwd)` — Run Python locally. Requires embedded worker.
-- `run_pip(args, cwd)` — Run pip locally. Requires embedded worker.
-- `device_api(action="worker.arduino_proxy.enable")` — Enable the Arduino DNS-bypass proxy module and configure `arduino-cli` proxy (`network.proxy`).
-- `device_api(action="worker.arduino_proxy.status")` — Inspect Arduino proxy module status.
+- `run_python(args, cwd)` — Run Python locally.
+- `run_pip(args, cwd)` — Run pip locally.
 
 Full reference for shell tools: `$sys/docs/shell.md`.
 
 Notes:
 - Prefer `run_js` over `run_python` — it supports fetch, WebSocket, file I/O, and timers natively.
-- Prefer `local_run_shell` or `run_shell` over `run_python` for general commands — they can run any program, not just Python.
-- `run_curl` works natively without the worker. Legacy `run_curl(args, cwd)` form is still supported for backward compatibility.
+- Prefer `run_shell` over `run_python` for general commands — it can run any program, not just Python.
+- `run_curl` works natively. Legacy `run_curl(args, cwd)` form is still supported for backward compatibility.
 - `python -` (stdin) is not supported (no interactive stdin). Use `python -c "..."` or write a script file and run it.
-- For interactive/stateful workflows (e.g., virtual envs, build systems), use `local_shell_session` or `shell_session` to keep state between commands.
+- For interactive/stateful workflows (e.g., virtual envs, build systems), use `shell_session` to keep state between commands.
 
 ## Media Analysis Tools (Built-in Multimodal)
 
@@ -94,7 +87,7 @@ Notes:
 Used for allowlisted device control-plane actions. Some actions require user approval and will return `permission_required`.
 
 Only `device_api` HTTP actions are documented in OpenAPI (`$sys/docs/openapi/openapi.yaml`).
-Agent tools such as `local_run_shell`, `run_shell`, `run_js`, and `run_curl` are tool-runtime capabilities and are not OpenAPI paths.
+Agent tools such as `run_shell`, `run_js`, and `run_curl` are tool-runtime capabilities and are not OpenAPI paths.
 
 ## Remote Access via SSH Tunnel
 
@@ -118,7 +111,6 @@ Use `run_shell` for outbound SSH/SCP operations:
 - `run_shell(command="scp user@host:<remote_file> <local_path>")`
 
 Notes:
-- SSH/SCP require the embedded worker. If the worker is unavailable, the tool returns `worker_required`.
 - SSH is provided by embedded Dropbear (not OpenSSH).
 
 ### SSHD Management
@@ -282,12 +274,8 @@ Schedule types:
 - `periodic`: fires on pattern (minutely, hourly, daily, weekly:Mon..Sun, monthly:1..28). 1-minute resolution.
 - `one_time`: fires once at next tick, then auto-disables.
 
-Runtimes: `run_js` (built-in QuickJS with async/await support, always available), `run_python` (requires embedded worker).
+Runtimes: `run_js` (built-in QuickJS with async/await support, always available), `run_python`.
 Limits: max 50 schedules, 200 log entries per schedule, 2000 global log entries.
-
-### Worker
-- `worker.status`: worker status, bootstrap phase, setup readiness. No payload needed.
-- `worker.restart`: restart the embedded worker. Permission-gated.
 
 ### Intent (Android)
 - `intent.send`: launch an Android intent. Payload: `{"action": "android.intent.action.VIEW", "data": "https://..."}`.
@@ -486,9 +474,7 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 
 - `permission_required`: user needs to approve on device UI, then retry.
 - `path_outside_user_dir`: path must be under app user root (use app-local relative path).
-- `worker_unavailable`: embedded worker is not reachable on port 8776.
-- `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `local_run_shell`/`run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without the worker).
-- `worker_required`: embedded worker is not reachable on port 8776 even after automatic recovery attempts. Retry the same tool once, then call `device_api(action="worker.restart")` and retry once. If it still fails, call `device_api(action="worker.status")` to check worker health. Use `local_run_shell`/`local_shell_session` for native Android shell (no worker needed).
+- `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP.
 
 ## Package Name Gotchas
 
@@ -523,7 +509,7 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 
 Tool-specific references (under `$sys/docs/`):
 - `$sys/docs/run_js.md` — run_js async API: fetch, WebSocket, file I/O, timers, device_api
-- `$sys/docs/shell.md` — local_run_shell, run_shell, local_shell_session, shell_session: shell access
+- `$sys/docs/shell.md` — run_shell, shell_session: shell access
 
 Conceptual guides (under `$sys/docs/`):
 - `$sys/docs/agent_tools.md` — agent tool conventions, filesystem helpers, chat shortcuts

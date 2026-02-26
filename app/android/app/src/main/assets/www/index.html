@@ -2194,21 +2194,6 @@
           </div>
         </section>
 
-        <!-- Worker Status -->
-        <section class="card" id="settings-section-worker">
-          <div class="card-header">
-            <div class="card-icon amber">&#9881;</div>
-            <div class="card-title">Worker</div>
-            <div id="workerStatusBadge" class="status-badge starting" style="margin-left:auto;">checking</div>
-          </div>
-          <p class="muted" id="workerDetail" style="margin-top:8px;">Embedded Python runtime for shell tools and file access.</p>
-          <div class="btn-group" style="margin-top:8px;">
-            <button class="btn" id="workerStartBtn">Start</button>
-            <button class="btn" id="workerStopBtn">Stop</button>
-            <button class="btn" id="workerRestartBtn">Restart</button>
-          </div>
-        </section>
-
         <!-- SSHD -->
         <section class="card" id="settings-section-sshd">
           <div class="card-header">
@@ -2263,8 +2248,6 @@
             <button class="btn" id="openSshKeysModalBtn">Authorized Keys</button>
           </div>
         </section>
-
-        <!-- Agent Service section removed — worker runs on-demand -->
 
         <!-- Packages section removed (agent can install via pip as needed) -->
 
@@ -3464,7 +3447,6 @@
         { id: "memory", domId: "settings-section-memory", label: "Memory" },
         { id: "task_notifications", domId: "settings-section-task_notifications", label: "Task Notifications" },
         { id: "media_recording", domId: "settings-section-audio_recording", label: "Media Recording" },
-        { id: "worker", domId: "settings-section-worker", label: "Worker" },
         { id: "sshd", domId: "settings-section-sshd", label: "SSHD" },
         { id: "user_interface", domId: "settings-section-user_interface", label: "User Interface" },
         { id: "reset_restore", domId: "settings-section-reset_restore", label: "Reset & Restore" },
@@ -8623,9 +8605,8 @@
       });
 
       // ==============================
-      // Settings: SSHD, Worker, etc.
+      // Settings: SSHD, App Update, etc.
       // ==============================
-      // Agent Service section removed — workerStatus/workerDetail no longer needed
       const appUpdateStatus = $("appUpdateStatus");
       const appUpdateDetail = $("appUpdateDetail");
       const appUpdateDownloadIndicator = $("appUpdateDownloadIndicator");
@@ -9859,10 +9840,6 @@
         }
       }
 
-      async function refreshWorker() {
-        // Agent Service section removed; Worker card shows status
-      }
-
       async function refreshSsh() {
         try {
           const res = await fetch(API + "/sshd/status");
@@ -10314,8 +10291,6 @@
           showToast("Failed to save video recording settings", 1800);
         }
       });
-
-      // Agent Service restart/stop buttons removed (worker runs on-demand)
 
       $("openAppSettings").addEventListener("click", () => {
         try {
@@ -11785,10 +11760,6 @@
       // Agent console initial load (stubs removed; kept as no-ops for safety).
       refreshSshKeys();
 
-      window.onWorkerStatus = function(status) {
-        // Agent Service section removed; no-op
-      };
-
       // When viewed in a normal browser (not Android WebView), open external
       // links in a new tab so the UI page is not navigated away.
       if (!isEmbeddedClientWebView()) {
@@ -11810,7 +11781,6 @@
       loadAudioRecSettings();
       loadVideoRecSettings();
       loadBrowserPrefs();
-      refreshWorker();
       updateAppUpdateButtons();
       refreshAppUpdate(true);
       refreshAppUpdateWorkStatus();
@@ -11820,43 +11790,8 @@
       refreshSsh();
       refreshPin();
       refreshNoAuth();
-      setInterval(refreshWorker, 5000);
       setInterval(refreshSsh, 5000);
 
-      // --- Worker Status ---
-      (function() {
-        const badge = $("workerStatusBadge");
-
-        async function refreshWorkerStatus() {
-          try {
-            var res = await fetch(API + "/worker/status");
-            if (!res.ok) throw 0;
-            var d = await res.json();
-            var st = d.worker_status || "offline";
-            setStatus(badge, st);
-            badge.textContent = st === "ok" ? "running" : st;
-          } catch (_) {
-            setStatus(badge, "offline");
-            badge.textContent = "error";
-          }
-        }
-
-        $("workerStartBtn").addEventListener("click", function() {
-          fetch(API + "/worker/start", { method: "POST" }).catch(function() {});
-          setStatus(badge, "starting"); badge.textContent = "starting";
-        });
-        $("workerStopBtn").addEventListener("click", function() {
-          fetch(API + "/worker/stop", { method: "POST" }).catch(function() {});
-          setStatus(badge, "stopping"); badge.textContent = "stopping";
-        });
-        $("workerRestartBtn").addEventListener("click", function() {
-          fetch(API + "/worker/restart", { method: "POST" }).catch(function() {});
-          setStatus(badge, "starting"); badge.textContent = "restarting";
-        });
-
-        refreshWorkerStatus();
-        setInterval(refreshWorkerStatus, 3000);
-      })();
 
       setInterval(refreshMeMeStatus, 8000);
       setInterval(refreshMeSyncStatus, 1000);

@@ -44,33 +44,6 @@ class WebAppBridge(private val activity: MainActivity) {
     private val settingsUnlockTimeoutMs = 30_000L
 
     @JavascriptInterface
-    fun startWorker() {
-        handler.post {
-            val intent = Intent(activity, AgentService::class.java)
-            intent.action = AgentService.ACTION_START_WORKER
-            activity.startForegroundService(intent)
-        }
-    }
-
-    @JavascriptInterface
-    fun restartWorker() {
-        handler.post {
-            val intent = Intent(activity, AgentService::class.java)
-            intent.action = AgentService.ACTION_RESTART_WORKER
-            activity.startForegroundService(intent)
-        }
-    }
-
-    @JavascriptInterface
-    fun stopWorker() {
-        handler.post {
-            val intent = Intent(activity, AgentService::class.java)
-            intent.action = AgentService.ACTION_STOP_WORKER
-            activity.startForegroundService(intent)
-        }
-    }
-
-    @JavascriptInterface
     fun stopService() {
         handler.post {
             val intent = Intent(activity, AgentService::class.java)

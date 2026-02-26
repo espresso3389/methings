@@ -56,9 +56,7 @@ This file documents how the on-device AI agent should operate. It is referenced 
 ## Execution
 
 - Built-in tools (always available): `run_js` (QuickJS engine), `run_curl` (native HTTP).
-- Worker-dependent tools: `run_python`, `run_pip` (require the embedded Python worker).
-- Shell tools (`run_shell`, `shell_session`) already auto-start/auto-recover the worker internally. Call them directly; do not pre-check `worker.status` in normal flow.
-- Only if a worker tool still returns `worker_required`: retry once, then call `device_api("worker.restart")`, and diagnose with `device_api("worker.status")` only when failure persists.
+- Shell tools (`run_shell`, `shell_session`, `run_python`, `run_pip`) use the embedded Linux environment directly.
 - Prefer `run_js` for data processing, calculations, and general programming tasks.
 - Do not request a generic shell for arbitrary commands.
 

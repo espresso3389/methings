@@ -3,15 +3,14 @@
 This document describes the current on-device APIs.
 
 ## Ports
-- `127.0.0.1:33389`: App local server (entry point for app/UI and adb port-forwarding). Handles all endpoints including `/brain/*`.
-- `127.0.0.1:8776`: Embedded worker (Python runtime for shell tools).
+- `127.0.0.1:33389`: App local server (entry point for app/UI and adb port-forwarding). Handles all endpoints including `/brain/*`, `/shell/*`.
 
 ## Core Endpoints (`:33389`)
 - `GET /health`
 - `GET /ui/version`
-- `POST /shell/exec` (requires worker — general shell commands)
-- `POST /shell/session/*` (requires worker — PTY sessions)
-- `POST /shell/fs/*` (requires worker — file access)
+- `POST /shell/exec` (shell commands)
+- `POST /shell/session/*` (PTY sessions)
+- `POST /shell/fs/*` (file access)
 - `GET /brain/status`
 - `GET /brain/config`
 - `POST /brain/config`
@@ -120,9 +119,9 @@ Lists chat sessions with message counts.
 SSE stream of agent events (tool calls, responses, errors).
 
 ## Shell API
-All shell endpoints require the embedded worker. The worker auto-starts when needed.
+Shell endpoints run directly in-process via the embedded Linux environment (JNI PTY).
 
-Note: `run_js` (QuickJS engine) and `run_curl` (native HTTP) are handled in-process by the app and do not use these endpoints.
+Note: `run_js` (QuickJS engine) and `run_curl` (native HTTP) are also handled in-process.
 
 ### `POST /shell/exec`
 Execute a one-shot shell command. Returns separate stdout/stderr.
@@ -167,7 +166,7 @@ Response:
 - `GET /shell/session/list` — List active sessions.
 
 ### File System Endpoints
-All paths validated to be under worker `$HOME`.
+All paths validated to be under `$HOME`.
 
 - `POST /shell/fs/read` — Read file. Body: `{path, max_bytes?, offset?}`.
 - `POST /shell/fs/write` — Write file. Body: `{path, content, encoding?}`.
@@ -176,26 +175,6 @@ All paths validated to be under worker `$HOME`.
 - `POST /shell/fs/mkdir` — Create directory. Body: `{path, parents?}`.
 - `POST /shell/fs/delete` — Delete file/dir. Body: `{path, recursive?}`.
 ```
-
-## Arduino Proxy Module (`:8776`)
-
-The embedded worker includes a built-in Arduino DNS-bypass proxy module for environments
-where `arduino-cli` cannot resolve `downloads.arduino.cc`.
-
-- `GET /proxy/arduino/status`
-- `POST /proxy/arduino/enable`
-
-`/proxy/arduino/enable` ensures a local proxy is running at `127.0.0.1:38888`
-(default) and
-applies:
-
-```bash
-arduino-cli config set network.proxy http://127.0.0.1:38888
-```
-
-Optional JSON body on enable:
-- `listen_port` (1024-65535)
-- `downloads_ipv4` (default `104.18.11.21`)
 
 ## Auth and Permissions
 - Sensitive tool usage should go through permission requests.

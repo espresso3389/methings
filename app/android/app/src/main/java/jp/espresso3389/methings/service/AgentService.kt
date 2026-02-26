@@ -24,7 +24,6 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class AgentService : LifecycleService() {
-    private lateinit var runtimeManager: PythonRuntimeManager
     private lateinit var sshdManager: SshdManager
     private lateinit var sshPinManager: SshPinManager
     private lateinit var sshNoAuthManager: SshNoAuthManager
@@ -74,14 +73,12 @@ class AgentService : LifecycleService() {
         extractor.extractServerAssets()
         jp.espresso3389.methings.db.PlainDbProvider.get(this)
         CaBundleManager(this).ensureSeeded()
-        runtimeManager = PythonRuntimeManager(this)
         sshdManager = SshdManager(this)
         sshPinManager = SshPinManager()
         sshNoAuthManager = SshNoAuthManager(this)
         localServer = LocalHttpServer(
             this,
             this,
-            runtimeManager,
             sshdManager,
             sshPinManager,
             sshNoAuthManager
@@ -108,17 +105,9 @@ class AgentService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START_WORKER -> {
-                android.util.Log.i("AgentService", "Start worker action received")
-                runtimeManager.startWorker()
-            }
-            ACTION_RESTART_WORKER -> {
-                android.util.Log.i("AgentService", "Restart worker action received")
-                runtimeManager.restartSoft()
-            }
-            ACTION_STOP_WORKER -> {
-                android.util.Log.i("AgentService", "Stop worker action received")
-                runtimeManager.requestShutdown()
+            ACTION_START_WORKER, ACTION_RESTART_WORKER, ACTION_STOP_WORKER -> {
+                // Worker removed; shell runs in-process via ShellExecutor
+                android.util.Log.i("AgentService", "Worker action ignored (worker removed): ${intent.action}")
             }
             ACTION_STOP_SERVICE -> {
                 android.util.Log.i("AgentService", "Stop service action received")
@@ -136,7 +125,6 @@ class AgentService : LifecycleService() {
         sshdManager.stop()
         localServer?.stopServer()
         localServer = null
-        runtimeManager.stop()
         super.onDestroy()
     }
 
@@ -156,9 +144,9 @@ class AgentService : LifecycleService() {
                 return
             }
 
-            // Query the worker brain status (best-effort).
+            // Query the in-process brain status (best-effort).
             val raw = try {
-                val url = java.net.URL("http://127.0.0.1:${PythonRuntimeManager.WORKER_PORT}/brain/status")
+                val url = java.net.URL("http://127.0.0.1:33389/brain/status")
                 val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 300

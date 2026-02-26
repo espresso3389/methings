@@ -107,7 +107,6 @@ import jp.espresso3389.methings.service.mcu.esp.EspSyncException
 class LocalHttpServer(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
-    private val runtimeManager: PythonRuntimeManager,
     private val sshdManager: SshdManager,
     private val sshPinManager: SshPinManager,
     private val sshNoAuthManager: SshNoAuthManager
@@ -193,7 +192,7 @@ class LocalHttpServer(
             executeRunJs = { code, timeoutMs ->
                 schedulerJsRuntime.executeBlocking(code, timeoutMs)
             },
-            executeShellExec = { cmd, args, cwd -> shellExecViaWorker(cmd, args, cwd) },
+            executeShellExec = { cmd, args, cwd -> shellExecViaShellExecutor(cmd, args, cwd) },
         )
     }
 
@@ -205,8 +204,8 @@ class LocalHttpServer(
     private val agentDeviceBridge by lazy {
         DeviceToolBridge(identity = { agentRuntime?.let { "default" } ?: "default" })
     }
-    private val nativeShellExecutor by lazy {
-        NativeShellExecutor(defaultCwd = File(context.filesDir, "user"))
+    private val shellExecutor by lazy {
+        ShellExecutor(context)
     }
     private val agentToolExecutor by lazy {
         ToolExecutor(
@@ -214,11 +213,9 @@ class LocalHttpServer(
             sysDir = File(context.filesDir, "system"),
             journalStore = agentJournalStore,
             deviceBridge = agentDeviceBridge,
-            shellExec = { cmd, args, cwd -> shellExecViaWorker(cmd, args, cwd) },
             sessionIdProvider = { "default" },
             jsRuntime = agentJsRuntime,
-            nativeShell = nativeShellExecutor,
-            ensureWorker = { ensureWorkerRunning() },
+            shellExecutor = shellExecutor,
         ).also { executor ->
             // Apply File Transfer image settings
             val ftPrefs = fileTransferPrefs
@@ -249,25 +246,19 @@ class LocalHttpServer(
             return runtime
         }
     }
-    private fun shellExecViaWorker(cmd: String, args: String, cwd: String): JSONObject {
-        // Delegate to worker via the existing /shell/exec endpoint (loopback)
-        return try {
-            val body = JSONObject().put("cmd", cmd).put("args", args).put("cwd", cwd)
-            val url = java.net.URL("http://127.0.0.1:$PORT/shell/exec")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 2000
-            conn.readTimeout = 300_000
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
-            val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
-            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            conn.disconnect()
-            try { JSONObject(responseBody) } catch (_: Exception) { JSONObject().put("status", "error").put("raw", responseBody) }
-        } catch (ex: Exception) {
-            JSONObject().put("status", "error").put("error", "shell_unavailable").put("detail", ex.message ?: "")
+    private fun shellExecViaShellExecutor(cmd: String, args: String, cwd: String): JSONObject {
+        val allowed = setOf("python", "pip", "curl")
+        if (cmd !in allowed) {
+            return JSONObject().put("status", "error").put("error", "command_not_allowed").put("cmd", cmd)
         }
+        val env = shellExecutor.buildEnv()
+        val nativeLibDir = env["METHINGS_NATIVELIB"] ?: ""
+        val command = when (cmd) {
+            "python" -> "$nativeLibDir/libmethingspy.so $args"
+            "pip" -> "$nativeLibDir/libmethingspy.so -m pip $args"
+            else -> "$cmd $args"
+        }
+        return shellExecutor.exec(command, cwd, 300_000)
     }
     // SSE event broadcasting for brain events
     private val brainSseClients = CopyOnWriteArrayList<java.io.PipedOutputStream>()
@@ -558,7 +549,7 @@ class LocalHttpServer(
                 JSONObject()
                     .put("status", "ok")
                     .put("service", "local")
-                    .put("worker", runtimeManager.getStatus())
+                    .put("worker", "not_applicable")
             )
             else -> notFound()
         }
@@ -1100,7 +1091,6 @@ class LocalHttpServer(
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val name = payload.optString("name", "task")
                 val task = createTask(name, payload)
-                runtimeManager.startWorker()
                 jsonResponse(
                     JSONObject()
                         .put("id", task.id)
@@ -1799,32 +1789,19 @@ class LocalHttpServer(
             }
             // Session endpoints: /shell/session/start, /shell/session/<id>/<action>, /shell/session/list
             uri.startsWith("/shell/session/") -> {
-                ensureWorkerRunning()
-                val subPath = uri.removePrefix("/shell")  // → /session/...
-                if (session.method == Method.GET) {
-                    return proxyWorkerRequest(subPath, "GET") ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
-                }
                 val body = postBody ?: "{}"
-                val timeoutMs = if (subPath.contains("/exec")) 305_000 else 10_000
-                return proxyWorkerRequest(subPath, "POST", body, readTimeoutMs = timeoutMs) ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
+                val payload = runCatching { JSONObject(body) }.getOrNull() ?: JSONObject()
+                return handleShellSession(uri, session.method, payload)
             }
             // File system endpoints: /shell/fs/<action>
             uri.startsWith("/shell/fs/") && session.method == Method.POST -> {
-                ensureWorkerRunning()
-                val subPath = uri.removePrefix("/shell")  // → /fs/...
                 val body = postBody ?: "{}"
-                return proxyWorkerRequest(subPath, "POST", body) ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
+                val payload = runCatching { JSONObject(body) }.getOrNull()
+                    ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                return handleShellFs(uri, payload)
             }
             else -> notFound()
         }
-    }
-
-    private fun ensureWorkerRunning() {
-        // ensureWorkerForShell() pings the worker and starts it if needed.
-        // Even if startWorker() returns true, the worker boots asynchronously,
-        // so always wait for the health endpoint to respond.
-        runtimeManager.ensureWorkerForShell()
-        waitForWorkerHealth(8000)
     }
 
     private fun handleShellExec(payload: JSONObject): Response {
@@ -1832,13 +1809,12 @@ class LocalHttpServer(
         val hasCommand = payload.has("command") && payload.optString("command", "").isNotEmpty()
 
         if (hasCommand) {
-            // Proxy to embedded worker — no native fallback
-            ensureWorkerRunning()
+            val command = payload.optString("command", "")
+            val cwd = payload.optString("cwd", "")
             val timeoutMs = payload.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
-            val readTimeout = (timeoutMs + 5_000).toInt()
-            val proxied = proxyWorkerRequest("/exec", "POST", payload.toString(), readTimeoutMs = readTimeout)
-            if (proxied != null) return proxied
-            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
+            val env = payload.optJSONObject("env")
+            val result = shellExecutor.exec(command, cwd, timeoutMs, env)
+            return jsonResponse(result)
         }
 
         // Legacy format: cmd + args
@@ -1849,12 +1825,140 @@ class LocalHttpServer(
             return jsonError(Response.Status.FORBIDDEN, "command_not_allowed")
         }
 
-        ensureWorkerRunning()
-        val proxied = proxyShellExecToWorker(cmd, args, cwd)
-        if (proxied != null) {
-            return proxied
+        val result = shellExecViaShellExecutor(cmd, args, cwd)
+        return jsonResponse(result)
+    }
+
+    private fun handleShellSession(uri: String, method: Method, payload: JSONObject): Response {
+        val subPath = uri.removePrefix("/shell/session/")
+
+        return when {
+            subPath == "start" && method == Method.POST -> {
+                val cwd = payload.optString("cwd", "")
+                val rows = payload.optInt("rows", 24)
+                val cols = payload.optInt("cols", 80)
+                val env = payload.optJSONObject("env")
+                jsonResponse(shellExecutor.sessionStart(cwd, env, rows, cols))
+            }
+            subPath == "list" -> {
+                jsonResponse(shellExecutor.sessionList())
+            }
+            subPath.contains("/") -> {
+                val parts = subPath.split("/", limit = 2)
+                val sessionId = parts[0]
+                val action = parts.getOrElse(1) { "" }
+                when (action) {
+                    "exec" -> {
+                        val command = payload.optString("command", "")
+                        val timeout = payload.optInt("timeout", 30)
+                        jsonResponse(shellExecutor.sessionExec(sessionId, command, timeout))
+                    }
+                    "write" -> {
+                        val input = payload.optString("input", "")
+                        jsonResponse(shellExecutor.sessionWrite(sessionId, input))
+                    }
+                    "read" -> jsonResponse(shellExecutor.sessionRead(sessionId))
+                    "resize" -> {
+                        val rows = payload.optInt("rows", 24)
+                        val cols = payload.optInt("cols", 80)
+                        jsonResponse(shellExecutor.sessionResize(sessionId, rows, cols))
+                    }
+                    "kill" -> jsonResponse(shellExecutor.sessionKill(sessionId))
+                    "status" -> {
+                        val result = shellExecutor.sessionRead(sessionId)
+                        jsonResponse(result)
+                    }
+                    else -> notFound()
+                }
+            }
+            else -> notFound()
         }
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
+    }
+
+    private fun handleShellFs(uri: String, payload: JSONObject): Response {
+        val action = uri.removePrefix("/shell/fs/").trimEnd('/')
+        val userDir = File(context.filesDir, "user")
+        return when (action) {
+            "read" -> {
+                val path = payload.optString("path", "")
+                val target = File(userDir, path).canonicalFile
+                if (!target.absolutePath.startsWith(userDir.canonicalPath)) {
+                    return jsonError(Response.Status.FORBIDDEN, "path_outside_base")
+                }
+                if (!target.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                val encoding = payload.optString("encoding", "utf-8")
+                if (encoding == "base64") {
+                    val data = android.util.Base64.encodeToString(target.readBytes(), android.util.Base64.NO_WRAP)
+                    jsonResponse(JSONObject().put("status", "ok").put("data", data).put("size", target.length()))
+                } else {
+                    jsonResponse(JSONObject().put("status", "ok").put("data", target.readText(Charsets.UTF_8)).put("size", target.length()))
+                }
+            }
+            "write" -> {
+                val path = payload.optString("path", "")
+                val data = payload.optString("data", "")
+                val target = File(userDir, path).canonicalFile
+                if (!target.absolutePath.startsWith(userDir.canonicalPath)) {
+                    return jsonError(Response.Status.FORBIDDEN, "path_outside_base")
+                }
+                target.parentFile?.mkdirs()
+                val encoding = payload.optString("encoding", "utf-8")
+                if (encoding == "base64") {
+                    target.writeBytes(android.util.Base64.decode(data, android.util.Base64.DEFAULT))
+                } else {
+                    target.writeText(data, Charsets.UTF_8)
+                }
+                jsonResponse(JSONObject().put("status", "ok").put("size", target.length()))
+            }
+            "list" -> {
+                val path = payload.optString("path", ".")
+                val target = File(userDir, path).canonicalFile
+                if (!target.absolutePath.startsWith(userDir.canonicalPath)) {
+                    return jsonError(Response.Status.FORBIDDEN, "path_outside_base")
+                }
+                if (!target.isDirectory) return jsonError(Response.Status.NOT_FOUND, "not_a_directory")
+                val items = JSONArray()
+                target.listFiles()?.sortedBy { it.name }?.forEach { f ->
+                    items.put(JSONObject().put("name", f.name).put("is_dir", f.isDirectory).put("size", if (f.isFile) f.length() else 0))
+                }
+                jsonResponse(JSONObject().put("status", "ok").put("items", items))
+            }
+            "stat" -> {
+                val path = payload.optString("path", "")
+                val target = File(userDir, path).canonicalFile
+                if (!target.absolutePath.startsWith(userDir.canonicalPath)) {
+                    return jsonError(Response.Status.FORBIDDEN, "path_outside_base")
+                }
+                if (!target.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+                jsonResponse(JSONObject()
+                    .put("status", "ok")
+                    .put("exists", true)
+                    .put("is_file", target.isFile)
+                    .put("is_dir", target.isDirectory)
+                    .put("size", target.length())
+                    .put("modified", target.lastModified()))
+            }
+            "mkdir" -> {
+                val path = payload.optString("path", "")
+                val target = File(userDir, path).canonicalFile
+                if (!target.absolutePath.startsWith(userDir.canonicalPath)) {
+                    return jsonError(Response.Status.FORBIDDEN, "path_outside_base")
+                }
+                target.mkdirs()
+                jsonResponse(JSONObject().put("status", "ok").put("exists", target.exists()))
+            }
+            "delete" -> {
+                val path = payload.optString("path", "")
+                val recursive = payload.optBoolean("recursive", false)
+                val target = File(userDir, path).canonicalFile
+                if (!target.absolutePath.startsWith(userDir.canonicalPath)) {
+                    return jsonError(Response.Status.FORBIDDEN, "path_outside_base")
+                }
+                val deleted = if (recursive) target.deleteRecursively() else target.delete()
+                jsonResponse(JSONObject().put("status", "ok").put("deleted", deleted))
+            }
+            else -> notFound()
+        }
     }
 
     private fun routeWeb(session: IHTTPSession, uri: String, postBody: String?): Response {
@@ -2826,30 +2930,13 @@ class LocalHttpServer(
             else -> uri
         }
         return when {
-            // File routes removed — all files are under /user/* now.
-            path == "/worker/write" || path.startsWith("/worker/write/") ||
-            path == "/worker/file" || path.startsWith("/worker/file/") ||
-            path == "/worker/file_info" || path.startsWith("/worker/file_info/") ||
-            path == "/worker/list" || path.startsWith("/worker/list/") -> {
-                jsonError(Response.Status.GONE, "use_user_routes")
-            }
-            path == "/worker/start" -> {
-                runtimeManager.startWorker()
-                jsonResponse(JSONObject().put("status", "starting"))
+            path == "/worker/status" -> {
+                jsonResponse(JSONObject().put("worker_status", "not_applicable"))
             }
             path == "/worker/stop" -> {
-                runtimeManager.requestShutdown()
-                jsonResponse(JSONObject().put("status", "stopping"))
-            }
-            path == "/worker/restart" -> {
-                runtimeManager.restartSoft()
-                jsonResponse(JSONObject().put("status", "starting"))
-            }
-            path == "/worker/status" -> {
-                jsonResponse(
-                    JSONObject()
-                        .put("worker_status", runtimeManager.getStatus())
-                )
+                // Emergency kill-all-sessions
+                shellExecutor.shutdown()
+                jsonResponse(JSONObject().put("status", "ok"))
             }
             path == "/worker/server.tar.gz" && session.method == Method.GET -> {
                 try {
@@ -2866,16 +2953,15 @@ class LocalHttpServer(
                     jsonError(Response.Status.INTERNAL_ERROR, ex.message ?: "tar_failed")
                 }
             }
-            path == "/worker/arduino_proxy/status" && session.method == Method.GET -> {
-                ensureWorkerRunning()
-                proxyGetToWorker("/proxy/arduino/status")
-                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
+            // Legacy routes return not_applicable
+            path == "/worker/start" || path == "/worker/restart" -> {
+                jsonResponse(JSONObject().put("status", "not_applicable"))
             }
-            path == "/worker/arduino_proxy/enable" && session.method == Method.POST -> {
-                ensureWorkerRunning()
-                val body = (postBody ?: "").ifBlank { "{}" }
-                proxyPostToWorker("/proxy/arduino/enable", body)
-                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
+            path == "/worker/arduino_proxy/status" -> {
+                jsonResponse(JSONObject().put("status", "not_applicable"))
+            }
+            path == "/worker/arduino_proxy/enable" -> {
+                jsonResponse(JSONObject().put("status", "not_applicable"))
             }
             else -> notFound()
         }
@@ -6757,36 +6843,6 @@ class LocalHttpServer(
         return if (f != null && f.exists() && f.isFile) Pair(true, f.length()) else Pair(false, 0L)
     }
 
-    private fun workerJsonRequest(
-        path: String,
-        method: String = "POST",
-        body: JSONObject? = null,
-        readTimeoutMs: Int = 5000,
-    ): Pair<Int, JSONObject>? {
-        return try {
-            val url = java.net.URL("http://127.0.0.1:8776$path")
-            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
-                requestMethod = method
-                connectTimeout = 2000
-                readTimeout = readTimeoutMs
-                if (method == "POST") {
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                }
-            }
-            if (method == "POST") {
-                conn.outputStream.use { it.write((body ?: JSONObject()).toString().toByteArray(Charsets.UTF_8)) }
-            }
-            val code = conn.responseCode
-            val stream = if (code in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
-            val txt = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            val json = runCatching { JSONObject(txt) }.getOrElse { JSONObject().put("raw", txt) }
-            Pair(code, json)
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     private fun listFsPath(path: String): Response {
         val ref = parseFsPathRef(path) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
         val root = File(context.filesDir, "user").canonicalFile
@@ -7638,13 +7694,8 @@ class LocalHttpServer(
         }
         args.addAll(pkgs)
 
-        if (runtimeManager.getStatus() != "ok") {
-            runtimeManager.startWorker()
-            waitForWorkerHealth(5000)
-        }
-        val proxied = proxyShellExecToWorker("pip", args.joinToString(" "), "")
-        if (proxied != null) return proxied
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
+        val result = shellExecViaShellExecutor("pip", args.joinToString(" "), "")
+        return jsonResponse(result)
     }
 
     private fun handlePipInstall(session: IHTTPSession, payload: JSONObject): Response {
@@ -7720,13 +7771,8 @@ class LocalHttpServer(
         }
         args.addAll(pkgs)
 
-        if (runtimeManager.getStatus() != "ok") {
-            runtimeManager.startWorker()
-            waitForWorkerHealth(5000)
-        }
-        val proxied = proxyShellExecToWorker("pip", args.joinToString(" "), "")
-        if (proxied != null) return proxied
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
+        val result = shellExecViaShellExecutor("pip", args.joinToString(" "), "")
+        return jsonResponse(result)
     }
 
     private fun handleWebSearch(session: IHTTPSession, payload: JSONObject): Response {
@@ -8600,48 +8646,6 @@ class LocalHttpServer(
         }
     }
 
-    private fun proxyShellExecToWorker(cmd: String, args: String, cwd: String): Response? {
-        val payload = JSONObject()
-            .put("cmd", cmd)
-            .put("args", args)
-            .put("cwd", cwd)
-        return proxyWorkerRequest("/shell/exec", "POST", payload.toString())
-    }
-
-    private fun proxyWorkerRequest(
-        path: String,
-        method: String,
-        body: String? = null,
-        query: String? = null,
-        readTimeoutMs: Int = 5000,
-    ): Response? {
-        return try {
-            val fullPath = if (!query.isNullOrBlank()) "$path?$query" else path
-            val url = java.net.URL("http://127.0.0.1:8776$fullPath")
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = method
-            conn.connectTimeout = 2000
-            conn.readTimeout = readTimeoutMs
-            if (method == "POST") {
-                conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/json")
-                val out = body ?: "{}"
-                conn.outputStream.use { it.write(out.toByteArray(Charsets.UTF_8)) }
-            }
-            // Some servers may not populate errorStream; fall back to inputStream so callers
-            // still receive a meaningful error body.
-            val stream = if (conn.responseCode in 200..299) conn.inputStream else (conn.errorStream ?: conn.inputStream)
-            val responseBody = stream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            newFixedLengthResponse(
-                Response.Status.lookup(conn.responseCode) ?: Response.Status.OK,
-                "application/json",
-                responseBody
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     // --- Brain config (SharedPreferences) ---
     private val brainPrefs by lazy {
         context.getSharedPreferences("brain_config", Context.MODE_PRIVATE)
@@ -8956,126 +8960,6 @@ class LocalHttpServer(
         return response
     }
 
-    private fun proxyGetToWorker(path: String): Response? {
-        return try {
-            val url = java.net.URL("http://127.0.0.1:8776$path")
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 3000
-            conn.readTimeout = 5000
-            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-            val body = stream.bufferedReader().use { it.readText() }
-            newFixedLengthResponse(
-                Response.Status.lookup(conn.responseCode) ?: Response.Status.OK,
-                "application/json",
-                body
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun proxyPostToWorker(path: String, body: String): Response? {
-        return try {
-            val url = java.net.URL("http://127.0.0.1:8776$path")
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 3000
-            conn.readTimeout = 5000
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
-            val responseBody = stream.bufferedReader().use { it.readText() }
-            newFixedLengthResponse(
-                Response.Status.lookup(conn.responseCode) ?: Response.Status.OK,
-                "application/json",
-                responseBody
-            )
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun proxyStreamToWorker(path: String, body: String): Response? {
-        return try {
-            val url = java.net.URL("http://127.0.0.1:8776$path")
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 5000
-            conn.readTimeout = 0
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "application/json")
-            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            if (conn.responseCode !in 200..299) {
-                val errorStream = conn.errorStream ?: conn.inputStream
-                val errorBody = errorStream.bufferedReader().use { it.readText() }
-                return newFixedLengthResponse(
-                    Response.Status.lookup(conn.responseCode) ?: Response.Status.INTERNAL_ERROR,
-                    "application/json",
-                    errorBody
-                )
-            }
-            val inputStream = conn.inputStream
-            val response = newChunkedResponse(Response.Status.OK, "text/event-stream", inputStream)
-            response.addHeader("Cache-Control", "no-cache")
-            response.addHeader("Connection", "keep-alive")
-            response
-        } catch (ex: Exception) {
-            Log.w(TAG, "Brain chat proxy failed", ex)
-            null
-        }
-    }
-
-    private fun proxyGetStreamFromWorker(path: String, query: String?): Response? {
-        return try {
-            val fullPath = if (!query.isNullOrBlank()) "$path?$query" else path
-            val url = java.net.URL("http://127.0.0.1:8776$fullPath")
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 5000
-            conn.readTimeout = 0 // infinite for SSE
-            if (conn.responseCode !in 200..299) {
-                val errorStream = conn.errorStream ?: conn.inputStream
-                val errorBody = errorStream.bufferedReader().use { it.readText() }
-                return newFixedLengthResponse(
-                    Response.Status.lookup(conn.responseCode) ?: Response.Status.INTERNAL_ERROR,
-                    "application/json",
-                    errorBody
-                )
-            }
-            val inputStream = conn.inputStream
-            val response = newChunkedResponse(Response.Status.OK, "text/event-stream", inputStream)
-            response.addHeader("Cache-Control", "no-cache")
-            response.addHeader("Connection", "keep-alive")
-            response
-        } catch (ex: Exception) {
-            Log.w(TAG, "Brain SSE proxy failed", ex)
-            null
-        }
-    }
-
-    private fun waitForWorkerHealth(timeoutMs: Long) {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            try {
-                val conn = java.net.URL("http://127.0.0.1:8776/health")
-                    .openConnection() as java.net.HttpURLConnection
-                conn.connectTimeout = 500
-                conn.readTimeout = 500
-                conn.requestMethod = "GET"
-                if (conn.responseCode in 200..299) {
-                    return
-                }
-            } catch (_: Exception) {
-            }
-            try {
-                Thread.sleep(250)
-            } catch (_: InterruptedException) {
-                return
-            }
-        }
-    }
 
     private fun resolveUserPath(root: File, path: String): File? {
         if (path.isBlank()) {
@@ -14294,7 +14178,7 @@ class LocalHttpServer(
             val restarted = if (restartApp) restartAppIfPossible() else false
             var restartedWorker = false
             if (!restarted) {
-                restartedWorker = runCatching { runtimeManager.restartSoft() }.getOrDefault(false)
+                restartedWorker = false // Worker removed; shell runs in-process
             }
             jsonResponse(
                 JSONObject()
@@ -14579,7 +14463,7 @@ class LocalHttpServer(
                     }
                     swappedUser = true
 
-                    runCatching { runtimeManager.requestShutdown() }
+                    runCatching { shellExecutor.shutdown() }
                     runCatching { Thread.sleep(250) }
                     protectedDir.mkdirs()
                     if (targetDb.exists() && targetDb.isFile) {
@@ -14615,7 +14499,7 @@ class LocalHttpServer(
                 }
 
                 if (!wipeExisting && importedProtectedDb.exists() && importedProtectedDb.isFile) {
-                    runtimeManager.requestShutdown()
+                    shellExecutor.shutdown()
                     Thread.sleep(250)
                     protectedDir.mkdirs()
                     copyFile(importedProtectedDb, targetDb) { n ->
@@ -14643,7 +14527,7 @@ class LocalHttpServer(
             }
 
             reportProgress("restarting_runtime", "Restarting local runtime...", force = true)
-            runCatching { runtimeManager.restartSoft() }
+            // Worker removed; shell runs in-process — no restart needed
             runCatching {
                 context.sendBroadcast(
                     Intent(ACTION_UI_CHAT_CACHE_CLEAR)
@@ -14693,17 +14577,7 @@ class LocalHttpServer(
 
     private fun readBrainActiveSessionId(): String {
         return try {
-            val conn = (java.net.URL("http://127.0.0.1:8776/brain/status").openConnection() as java.net.HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 1200
-                readTimeout = 2000
-            }
-            val body = if (conn.responseCode in 200..299) {
-                conn.inputStream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            } else {
-                conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "{}"
-            }
-            JSONObject(body).optString("current_session_id", "").trim()
+            agentRuntime?.status()?.optString("current_session_id", "")?.trim() ?: ""
         } catch (_: Exception) {
             ""
         }
@@ -14800,7 +14674,7 @@ class LocalHttpServer(
     }
 
     private fun wipeMeSyncLocalState(preserveSessionId: String = "") {
-        runCatching { runtimeManager.requestShutdown() }
+        runCatching { shellExecutor.shutdown() }
         runCatching { Thread.sleep(250) }
 
         val userRoot = File(context.filesDir, "user")
@@ -14817,7 +14691,7 @@ class LocalHttpServer(
     }
 
     private fun wipeAllLocalState(preserveSessionId: String = "") {
-        runCatching { runtimeManager.requestShutdown() }
+        runCatching { shellExecutor.shutdown() }
         runCatching { Thread.sleep(250) }
 
         runCatching { wipeMeSyncLocalState(preserveSessionId = preserveSessionId) }

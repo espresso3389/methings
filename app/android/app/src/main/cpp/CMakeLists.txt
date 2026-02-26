@@ -5,8 +5,8 @@ add_library(usbiso SHARED
     usb_iso_bridge.cpp
 )
 
-add_library(pythonbridge SHARED
-    python_bridge.cpp
+add_library(ptybridge SHARED
+    pty_bridge.cpp
 )
 
 find_library(log-lib log)
@@ -15,6 +15,6 @@ target_link_libraries(usbiso
     ${log-lib}
 )
 
-target_link_libraries(pythonbridge
+target_link_libraries(ptybridge
     ${log-lib}
 )

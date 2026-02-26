@@ -78,35 +78,14 @@ object ToolDefinitions {
             put("cwd", prop("string"))
         }.withRequired("args", "cwd"))
 
-        tools.put(functionTool("local_run_shell", "Execute a command in the native Android shell (/system/bin/sh). Always available. Cannot access worker files or packages. For the full Linux environment, use run_shell. For long-running or interactive commands, use local_shell_session instead.") {
+        tools.put(functionTool("run_shell", "Execute a command in the embedded Linux shell (full environment + packages). For long-running or interactive commands, use shell_session instead.") {
             put("command", prop("string"))
             put("cwd", prop("string"))
             put("timeout_ms", prop("integer"))
             put("env", JSONObject().put("type", "object").put("additionalProperties", true))
         }.withRequired("command"))
 
-        tools.put(functionTool("run_shell", "Execute a command in the embedded Linux shell (full environment + packages). Requires worker (port 8776). If unavailable (worker_required), call device_api(action='worker.restart') and retry once. For long-running or interactive commands, use shell_session instead.") {
-            put("command", prop("string"))
-            put("cwd", prop("string"))
-            put("timeout_ms", prop("integer"))
-            put("env", JSONObject().put("type", "object").put("additionalProperties", true))
-        }.withRequired("command"))
-
-        tools.put(functionTool("local_shell_session", "Manage persistent native Android shell sessions (pipe-based, no PTY). Always available. Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), kill (terminate), list (active sessions). resize is accepted but has no effect (no PTY).") {
-            put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
-                put("start"); put("exec"); put("write"); put("read"); put("resize"); put("kill"); put("list")
-            }))
-            put("session_id", prop("string"))
-            put("command", prop("string"))
-            put("input", prop("string"))
-            put("cwd", prop("string"))
-            put("rows", prop("integer"))
-            put("cols", prop("integer"))
-            put("timeout", prop("integer"))
-            put("env", JSONObject().put("type", "object").put("additionalProperties", true))
-        }.withRequired("action"))
-
-        tools.put(functionTool("shell_session", "Manage persistent PTY sessions (full ANSI, resize). Requires worker (port 8776). If unavailable (worker_required), call device_api(action='worker.restart') and retry once. Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions).") {
+        tools.put(functionTool("shell_session", "Manage persistent PTY sessions (full ANSI terminal, resize support). Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions).") {
             put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
                 put("start"); put("exec"); put("write"); put("read"); put("resize"); put("kill"); put("list")
             }))
@@ -275,10 +254,6 @@ object ToolDefinitions {
     }
 
     val ACTIONS: Map<String, ActionSpec> = mapOf(
-        "worker.status" to ActionSpec("GET", "/worker/status", false),
-        "worker.restart" to ActionSpec("POST", "/worker/restart", true),
-        "worker.arduino_proxy.status" to ActionSpec("GET", "/worker/arduino_proxy/status", false),
-        "worker.arduino_proxy.enable" to ActionSpec("POST", "/worker/arduino_proxy/enable", false),
         "screen.status" to ActionSpec("GET", "/screen/status", false),
         "screen.keep_on" to ActionSpec("POST", "/screen/keep_on", true),
         "sshd.status" to ActionSpec("GET", "/sshd/status", false),

@@ -91,12 +91,8 @@ data class AgentConfig(
             "Do not store agent-generated pages under `www/` unless the user explicitly asked to modify the UI itself; use another directory such as `apps/`. " +
             "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. " +
             "For code execution, prefer run_js (built-in QuickJS engine, always available) for data processing, calculations, and general programming. " +
-            "run_python/run_pip require the embedded worker; run_curl works natively. " +
-            "SHELL TOOLS: local_run_shell / local_shell_session use the native Android shell (/system/bin/sh) — limited commands, cannot access worker files. " +
-            "run_shell / shell_session use the embedded Linux environment (full bash + packages). " +
-            "If a shell tool returns worker_required, call device_api(action=\"worker.restart\") and retry that tool once. " +
-            "Only call device_api(action=\"worker.status\") when repeated worker failures need diagnosis. " +
-            "Do not repeatedly poll worker.status during normal execution. " +
+            "run_python/run_pip/run_shell/shell_session use the embedded Linux environment (full bash + packages); run_curl works natively. " +
+            "SHELL TOOLS: run_shell executes one-shot commands; shell_session provides persistent PTY sessions. " +
             "SSH POLICY: direct outbound SSH client actions via device_api are deprecated and may be unavailable. " +
             "For outbound SSH/SCP, use run_shell with ssh/scp commands instead. " +
             "If ssh/scp is unavailable in the shell environment, report that clearly and ask for the smallest unblock step. " +

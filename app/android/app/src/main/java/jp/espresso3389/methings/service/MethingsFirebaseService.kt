@@ -165,7 +165,7 @@ class MethingsFirebaseService : FirebaseMessagingService() {
 
     companion object {
         private const val TAG = "MethingsFirebaseService"
-        private const val BRAIN_BASE_URL = "http://127.0.0.1:8776"
+        private const val BRAIN_BASE_URL = "http://127.0.0.1:33389"
         private const val LOCAL_SERVER_URL = "http://127.0.0.1:33389"
     }
 }
