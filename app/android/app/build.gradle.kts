@@ -300,12 +300,42 @@ val syncDependencyInventoryAsset by tasks.registering {
 
 val syncGoogleServicesJson by tasks.registering {
     val dst = projectDir.resolve("google-services.json")
+    val ciFallback = """
+{
+  "project_info": {
+    "project_number": "000000000000",
+    "project_id": "ci-placeholder",
+    "storage_bucket": "ci-placeholder.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:000000000000:android:0000000000000000",
+        "android_client_info": {
+          "package_name": "jp.espresso3389.methings"
+        }
+      },
+      "api_key": [
+        {
+          "current_key": "ci-placeholder"
+        }
+      ]
+    }
+  ],
+  "configuration_version": "1"
+}
+""".trimIndent()
     doLast {
         // CI: decode from GOOGLE_SERVICES_JSON_BASE64 env var
         val b64 = (System.getenv("GOOGLE_SERVICES_JSON_BASE64") ?: "").trim()
         if (b64.isNotBlank()) {
             dst.writeBytes(org.apache.commons.codec.binary.Base64().decode(b64))
             logger.lifecycle("syncGoogleServicesJson: decoded from GOOGLE_SERVICES_JSON_BASE64")
+            return@doLast
+        }
+        if ((System.getenv("CI") ?: "").equals("true", ignoreCase = true)) {
+            dst.writeText(ciFallback)
+            logger.lifecycle("syncGoogleServicesJson: using CI placeholder google-services.json")
             return@doLast
         }
         // Local: copy from .local_config/
