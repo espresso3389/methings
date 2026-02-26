@@ -12,6 +12,7 @@
  *   jq                → execv libjq-cli.so (with LD_LIBRARY_PATH)
  *   rg                → execv librg.so (with LD_LIBRARY_PATH for pcre2)
  *   curl              → execv libcurl-cli.so
+ *   methings-sh       → smart shell wrapper for npm script execution
  *
  * Symlinks in binDir point here (which lives in nativeLibDir, so SELinux
  * allows execution).
@@ -100,6 +101,18 @@ static void set_npm_env(void) {
     setenv("NPM_CONFIG_PREFIX", buf, 0);
     snprintf(buf, sizeof(buf), "%s/npm-cache", home);
     setenv("NPM_CONFIG_CACHE", buf, 0);
+    /* Use methings-sh as script shell so npm/npx scripts that can't be exec'd
+     * (SELinux app_data_file) are run through the correct interpreter. */
+    char *filesdir = strdup(home);
+    if (filesdir) {
+        char *slash = strrchr(filesdir, '/');
+        if (slash) {
+            *slash = '\0';
+            snprintf(buf, sizeof(buf), "%s/bin/methings-sh", filesdir);
+            setenv("NPM_CONFIG_SCRIPT_SHELL", buf, 0);
+        }
+        free(filesdir);
+    }
 }
 
 /* Exec python via libmethingspy.so. */
@@ -293,6 +306,186 @@ static int do_curl(int argc, char **argv, const char *nativelib) {
     return 127;
 }
 
+/*
+ * methings-sh: A smart shell wrapper used as NPM_CONFIG_SCRIPT_SHELL.
+ *
+ * npm/npx runs scripts via: $SCRIPT_SHELL -c "command args..."
+ * On Android, scripts in filesDir can't be exec'd (SELinux app_data_file).
+ * This wrapper detects scripts with interpreter shebangs (e.g. #!/usr/bin/env node)
+ * and runs them through the interpreter via our multicall binary instead.
+ */
+
+/* Read the shebang from a file. Returns the interpreter name (e.g. "node")
+ * or NULL if not a shebang file. Caller must free the result. */
+static char *read_shebang_interp(const char *path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return NULL;
+    char line[512];
+    if (!fgets(line, sizeof(line), f)) { fclose(f); return NULL; }
+    fclose(f);
+    if (line[0] != '#' || line[1] != '!') return NULL;
+    /* Strip newline */
+    char *nl = strchr(line, '\n');
+    if (nl) *nl = '\0';
+    /* Parse: #!/usr/bin/env node  or  #!/path/to/node */
+    char *p = line + 2;
+    while (*p == ' ' || *p == '\t') p++;
+    /* If it ends with /env, the interpreter is the next token */
+    char *last_slash = strrchr(p, '/');
+    char *first_space = strchr(p, ' ');
+    if (first_space && last_slash) {
+        char *cmd_end = first_space;
+        char cmd_part[256];
+        size_t cmd_len = cmd_end - p;
+        if (cmd_len >= sizeof(cmd_part)) cmd_len = sizeof(cmd_part) - 1;
+        memcpy(cmd_part, p, cmd_len);
+        cmd_part[cmd_len] = '\0';
+        /* Check if command is /usr/bin/env or ends with /env */
+        char *env_slash = strrchr(cmd_part, '/');
+        if (env_slash && strcmp(env_slash + 1, "env") == 0) {
+            /* Interpreter is the next token after env */
+            p = first_space + 1;
+            while (*p == ' ' || *p == '\t') p++;
+            char *end = p;
+            while (*end && *end != ' ' && *end != '\t') end++;
+            size_t len = end - p;
+            if (len == 0) return NULL;
+            char *result = malloc(len + 1);
+            if (!result) return NULL;
+            memcpy(result, p, len);
+            result[len] = '\0';
+            return result;
+        }
+    }
+    /* Direct path: #!/path/to/node → extract "node" */
+    if (last_slash) {
+        char *interp = last_slash + 1;
+        /* Strip trailing spaces */
+        char *end = interp;
+        while (*end && *end != ' ' && *end != '\t') end++;
+        size_t len = end - interp;
+        if (len == 0) return NULL;
+        char *result = malloc(len + 1);
+        if (!result) return NULL;
+        memcpy(result, interp, len);
+        result[len] = '\0';
+        return result;
+    }
+    return NULL;
+}
+
+/* Extract the first token (the command path) from a shell command string.
+ * Handles simple quoting. Caller must free the result.
+ * If end_pos is non-NULL, *end_pos is set to the position in cmd right after
+ * the token (past the closing quote if quoted). */
+static char *extract_first_token(const char *cmd, const char **end_pos) {
+    const char *p = cmd;
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '"' || *p == '\'') {
+        char q = *p++;
+        const char *start = p;
+        while (*p && *p != q) p++;
+        size_t len = p - start;
+        if (*p == q) p++; /* skip closing quote */
+        if (end_pos) *end_pos = p;
+        char *r = malloc(len + 1);
+        if (!r) return NULL;
+        memcpy(r, start, len);
+        r[len] = '\0';
+        return r;
+    }
+    const char *start = p;
+    while (*p && *p != ' ' && *p != '\t') p++;
+    size_t len = p - start;
+    if (end_pos) *end_pos = p;
+    if (len == 0) return NULL;
+    char *r = malloc(len + 1);
+    if (!r) return NULL;
+    memcpy(r, start, len);
+    r[len] = '\0';
+    return r;
+}
+
+/* Resolve a command name through PATH. If the name contains '/', return a copy
+ * as-is. Otherwise search each PATH directory. Caller must free the result. */
+static char *resolve_in_path(const char *name) {
+    if (!name || !name[0]) return NULL;
+    if (strchr(name, '/')) return strdup(name);
+    const char *path_env = getenv("PATH");
+    if (!path_env) return NULL;
+    char *path_copy = strdup(path_env);
+    if (!path_copy) return NULL;
+    char *saveptr = NULL;
+    char *dir = strtok_r(path_copy, ":", &saveptr);
+    while (dir) {
+        char buf[PATH_MAX];
+        snprintf(buf, sizeof(buf), "%s/%s", dir, name);
+        if (access(buf, R_OK) == 0) {
+            free(path_copy);
+            return strdup(buf);
+        }
+        dir = strtok_r(NULL, ":", &saveptr);
+    }
+    free(path_copy);
+    return NULL;
+}
+
+static int do_methings_sh(int argc, char **argv) {
+    /* If called as "methings-sh -c 'command...'" (the npm script-shell pattern),
+     * check if the command is a script with a node/python shebang. */
+    if (argc >= 3 && strcmp(argv[1], "-c") == 0) {
+        const char *cmd_str = argv[2];
+        const char *token_end = NULL;
+        char *first = extract_first_token(cmd_str, &token_end);
+        if (first) {
+            /* Resolve through PATH if not absolute */
+            char *resolved = resolve_in_path(first);
+            if (resolved && access(resolved, R_OK) == 0) {
+                char *interp = read_shebang_interp(resolved);
+                if (interp) {
+                    /* Check if we can dispatch this interpreter */
+                    if (strcmp(interp, "node") == 0 ||
+                        strcmp(interp, "python3") == 0 ||
+                        strcmp(interp, "python") == 0 ||
+                        strcmp(interp, "bash") == 0 ||
+                        strcmp(interp, "sh") == 0) {
+                        /* Build: "interp resolved_path remaining_args" */
+                        const char *rest = token_end;
+                        while (*rest == ' ' || *rest == '\t') rest++;
+                        size_t new_len = strlen(interp) + 1 + strlen(resolved)
+                                       + (*rest ? 1 + strlen(rest) : 0) + 1;
+                        char *new_cmd = malloc(new_len);
+                        if (new_cmd) {
+                            if (*rest) {
+                                snprintf(new_cmd, new_len, "%s %s %s",
+                                         interp, resolved, rest);
+                            } else {
+                                snprintf(new_cmd, new_len, "%s %s",
+                                         interp, resolved);
+                            }
+                            free(interp);
+                            free(first);
+                            free(resolved);
+                            execl("/system/bin/sh", "sh", "-c", new_cmd, NULL);
+                            free(new_cmd);
+                            perror("methings_run: execl sh");
+                            return 127;
+                        }
+                    }
+                    free(interp);
+                }
+            }
+            free(resolved);
+            free(first);
+        }
+    }
+    /* Fallback: pass through to system shell */
+    argv[0] = "sh";
+    execv("/system/bin/sh", argv);
+    perror("methings_run: execv sh");
+    return 127;
+}
+
 /* Dispatch a command name to the appropriate handler.
  * Returns -1 if the command is not recognized. */
 static int dispatch(const char *cmd, int argc, char **argv) {
@@ -311,6 +504,9 @@ static int dispatch(const char *cmd, int argc, char **argv) {
     }
     if (strcmp(cmd, "curl") == 0) {
         return do_curl(argc, argv, nativelib);
+    }
+    if (strcmp(cmd, "methings-sh") == 0) {
+        return do_methings_sh(argc, argv);
     }
     if (strcmp(cmd, "bash") == 0) {
         return do_termux_tool(argc, argv, nativelib, "libbash.so", "bash");

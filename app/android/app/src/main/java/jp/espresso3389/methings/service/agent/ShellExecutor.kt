@@ -76,8 +76,8 @@ class ShellExecutor(private val context: Context) {
             "${pyenvDir.absolutePath}/stdlib.zip"
         ).joinToString(":")
 
-        // npm script shell
-        val scriptShell = File(nativeLibDir, "libmethingssh.so").absolutePath
+        // npm script shell — use methings-sh (smart shebang-aware wrapper)
+        val scriptShell = File(binDir, "methings-sh").absolutePath
         env["npm_config_script_shell"] = scriptShell
         env["NPM_CONFIG_SCRIPT_SHELL"] = scriptShell
 

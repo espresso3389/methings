@@ -361,7 +361,8 @@ class PythonRuntimeInstaller(private val context: Context) {
             val target = "$nativeLibDir/libmethingsrun.so"
             for (name in listOf("python3", "python", "pip", "pip3",
                                 "node", "node20", "npm", "npx", "corepack",
-                                "curl", "bash", "jq", "rg")) {
+                                "curl", "bash", "jq", "rg",
+                                "methings-sh")) {
                 val link = File(binDir, name)
                 link.delete() // unconditional: File.exists() follows symlinks, misses broken ones
                 Os.symlink(target, link.absolutePath)

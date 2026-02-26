@@ -138,7 +138,7 @@ class SshdManager(private val context: Context) {
             pb.environment()["METHINGS_NODE_ROOT"] = nodeRoot.absolutePath
             val nodeLibDir = File(nodeRoot, "lib").absolutePath
             pb.environment()["LD_LIBRARY_PATH"] = "$nodeLibDir:$nativeLibDir"
-            val scriptShell = File(nativeLibDir, "libmethingssh.so").absolutePath
+            val scriptShell = File(binDir, "methings-sh").absolutePath
             pb.environment()["npm_config_script_shell"] = scriptShell
             pb.environment()["NPM_CONFIG_SCRIPT_SHELL"] = scriptShell
             pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
