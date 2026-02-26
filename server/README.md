@@ -4,14 +4,14 @@ This document describes the current on-device APIs.
 
 ## Ports
 - `127.0.0.1:33389`: App local server (entry point for app/UI and adb port-forwarding). Handles all endpoints including `/brain/*`.
-- `127.0.0.1:8776`: Termux worker (optional, general-purpose Linux environment for shell tools).
+- `127.0.0.1:8776`: Embedded worker (Python runtime for shell tools).
 
 ## Core Endpoints (`:33389`)
 - `GET /health`
 - `GET /ui/version`
-- `POST /shell/exec` (requires Termux — general shell commands)
-- `POST /shell/session/*` (requires Termux — PTY sessions)
-- `POST /shell/fs/*` (requires Termux — file access)
+- `POST /shell/exec` (requires worker — general shell commands)
+- `POST /shell/session/*` (requires worker — PTY sessions)
+- `POST /shell/fs/*` (requires worker — file access)
 - `GET /brain/status`
 - `GET /brain/config`
 - `POST /brain/config`
@@ -120,9 +120,9 @@ Lists chat sessions with message counts.
 SSE stream of agent events (tool calls, responses, errors).
 
 ## Shell API
-All shell endpoints require Termux to be installed. The worker auto-starts when needed.
+All shell endpoints require the embedded worker. The worker auto-starts when needed.
 
-Note: `run_js` (QuickJS engine) and `run_curl` (native HTTP) are handled in-process by the app and do not use these endpoints or Termux.
+Note: `run_js` (QuickJS engine) and `run_curl` (native HTTP) are handled in-process by the app and do not use these endpoints.
 
 ### `POST /shell/exec`
 Execute a one-shot shell command. Returns separate stdout/stderr.
@@ -167,7 +167,7 @@ Response:
 - `GET /shell/session/list` — List active sessions.
 
 ### File System Endpoints
-All paths validated to be under Termux `$HOME`.
+All paths validated to be under worker `$HOME`.
 
 - `POST /shell/fs/read` — Read file. Body: `{path, max_bytes?, offset?}`.
 - `POST /shell/fs/write` — Write file. Body: `{path, content, encoding?}`.
@@ -179,7 +179,7 @@ All paths validated to be under Termux `$HOME`.
 
 ## Arduino Proxy Module (`:8776`)
 
-Termux worker includes a built-in Arduino DNS-bypass proxy module for environments
+The embedded worker includes a built-in Arduino DNS-bypass proxy module for environments
 where `arduino-cli` cannot resolve `downloads.arduino.cc`.
 
 - `GET /proxy/arduino/status`
@@ -202,7 +202,7 @@ Optional JSON body on enable:
 - Credentials are stored as ciphertext by the app with Android Keystore (AES-GCM).
 
 ## SSHD
-SSHD is managed by the app's control plane APIs on `:33389` (via Termux OpenSSH).
+SSHD is managed by the app's control plane APIs on `:33389` (via embedded Dropbear).
 
 ## Quick Curl Flow
 ```bash

@@ -10,7 +10,7 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - If you are unsure how to proceed, use `web_search` to research and then continue.
 - Keep responses concise and include relevant snippets from tool output when helpful.
 - When listing or referencing files you created/saved, always emit `rel_path: <path>` (or `html_path:`) for each file so the chat UI renders clickable preview cards. Never list bare filenames.
-- Path format rule: use plain relative paths for app-local files (for example `captures/photo.jpg`). Use `termux://<path>` (or full Termux absolute path) only when the file is in Termux.
+- Path format rule: use plain relative paths for all files (for example `captures/photo.jpg`).
 
 ## Posture (No Delegation + Permission-Optimistic)
 
@@ -22,9 +22,7 @@ This file documents how the on-device AI agent should operate. It is referenced 
 
 ## Filesystem
 
-- App user filesystem and Termux filesystem are different roots.
-- App-local files: plain relative paths under app user root (served by `/user/*` APIs).
-- Termux files: `termux://<path>` (maps to `/data/data/com.termux/files/home` via Termux worker), or full Termux absolute paths.
+- All files use plain relative paths under the user root (served by `/user/*` APIs).
 - **Web UI** (`www/`): the app's chat UI lives at `www/index.html`. You can read and modify it, then call `POST /ui/reload` to apply changes. Call `POST /ui/reset` to revert to the factory default. See TOOLS.md for details.
 - Do not place agent-generated apps/pages under `www/` unless the user explicitly asked to modify the app UI itself. Use another directory (for example `apps/`).
 - Runtime notices from the app are written to `AGENT_NOTICES.md` and auto-injected into context.
@@ -57,10 +55,10 @@ This file documents how the on-device AI agent should operate. It is referenced 
 
 ## Execution
 
-- Built-in tools (always available, no Termux): `run_js` (QuickJS engine), `run_curl` (native HTTP).
-- Termux-dependent tools: `run_python`, `run_pip`.
-- Termux shell tools (`termux_run_shell`, `termux_shell_session`, `termux_fs`) already auto-start/auto-recover the worker internally. Call them directly; do not pre-check `termux.status` in normal flow.
-- Only if a Termux tool still returns `termux_required`: retry once, then call `device_api("termux.restart")`, and diagnose with `device_api("termux.status")` only when failure persists.
+- Built-in tools (always available): `run_js` (QuickJS engine), `run_curl` (native HTTP).
+- Worker-dependent tools: `run_python`, `run_pip` (require the embedded Python worker).
+- Shell tools (`run_shell`, `shell_session`) already auto-start/auto-recover the worker internally. Call them directly; do not pre-check `worker.status` in normal flow.
+- Only if a worker tool still returns `worker_required`: retry once, then call `device_api("worker.restart")`, and diagnose with `device_api("worker.status")` only when failure persists.
 - Prefer `run_js` for data processing, calculations, and general programming tasks.
 - Do not request a generic shell for arbitrary commands.
 

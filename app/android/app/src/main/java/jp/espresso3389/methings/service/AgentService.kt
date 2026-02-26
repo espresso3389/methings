@@ -24,8 +24,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class AgentService : LifecycleService() {
-    private lateinit var runtimeManager: TermuxWorkerManager
-    private lateinit var termuxManager: TermuxManager
+    private lateinit var runtimeManager: PythonRuntimeManager
     private lateinit var sshdManager: SshdManager
     private lateinit var sshPinManager: SshPinManager
     private lateinit var sshNoAuthManager: SshNoAuthManager
@@ -75,16 +74,14 @@ class AgentService : LifecycleService() {
         extractor.extractServerAssets()
         jp.espresso3389.methings.db.PlainDbProvider.get(this)
         CaBundleManager(this).ensureSeeded()
-        termuxManager = TermuxManager(this)
-        runtimeManager = TermuxWorkerManager(this)
-        sshdManager = SshdManager(this, termuxManager)
+        runtimeManager = PythonRuntimeManager(this)
+        sshdManager = SshdManager(this)
         sshPinManager = SshPinManager()
         sshNoAuthManager = SshNoAuthManager(this)
         localServer = LocalHttpServer(
             this,
             this,
             runtimeManager,
-            termuxManager,
             sshdManager,
             sshPinManager,
             sshNoAuthManager
@@ -161,7 +158,7 @@ class AgentService : LifecycleService() {
 
             // Query the worker brain status (best-effort).
             val raw = try {
-                val url = java.net.URL("http://127.0.0.1:${TermuxManager.WORKER_PORT}/brain/status")
+                val url = java.net.URL("http://127.0.0.1:${PythonRuntimeManager.WORKER_PORT}/brain/status")
                 val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 300

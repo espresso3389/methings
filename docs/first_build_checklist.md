@@ -23,7 +23,8 @@
 - Start the agent and send a test chat message
 - Test SSH login (public-key, notification-based no-auth, or PIN auth)
 
-## 5) Optional: Termux setup
-- `run_js` (QuickJS) and `run_curl` (native HTTP) work out of the box — no Termux needed
-- Install Termux only if you need `run_python` or `run_pip`
-- Verify Termux status shows "ok" in Settings → Agent Service
+## 5) Verify embedded Python runtime
+- `run_js` (QuickJS) and `run_curl` (native HTTP) work out of the box — no extra setup needed
+- `run_python` and `run_pip` require the embedded Python worker (python-for-android p4a dist)
+- Verify the worker starts successfully: Settings → Agent Service should show worker status "ok"
+- If the p4a dist is missing or incomplete, rebuild with the p4a recipe and redeploy

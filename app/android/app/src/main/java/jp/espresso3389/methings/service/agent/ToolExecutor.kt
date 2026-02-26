@@ -18,7 +18,7 @@ class ToolExecutor(
     private val sessionIdProvider: () -> String,
     private val jsRuntime: JsRuntime,
     private val nativeShell: NativeShellExecutor? = null,
-    private val ensureTermuxWorker: (() -> Unit)? = null,
+    private val ensureWorker: (() -> Unit)? = null,
 ) {
     /** Media types the current provider supports natively (e.g. "image", "audio").
      *  Set by AgentRuntime before the tool execution loop each turn. */
@@ -55,10 +55,9 @@ class ToolExecutor(
                 "run_python" -> executeShellExec("python", args)
                 "run_pip" -> executeShellExec("pip", args)
                 "local_run_shell" -> executeLocalRunShell(args)
-                "termux_run_shell" -> executeTermuxRunShell(args)
+                "run_shell" -> executeRunShell(args)
                 "local_shell_session" -> executeLocalShellSession(args)
-                "termux_shell_session" -> executeTermuxShellSession(args)
-                "termux_fs" -> executeTermuxFs(args)
+                "shell_session" -> executeShellSession(args)
                 "run_curl" -> executeRunCurl(args)
                 "shell_exec" -> {
                     val cmd = args.optString("cmd", "")
@@ -268,7 +267,7 @@ class ToolExecutor(
     }
 
     private fun executeRunCurl(args: JSONObject): JSONObject {
-        // Native HTTP implementation — no Termux needed
+        // Native HTTP implementation
         val url = args.optString("url", "")
         if (url.isEmpty()) {
             // Legacy fallback: if "args" field is present, delegate to shell curl
@@ -335,7 +334,7 @@ class ToolExecutor(
         }
         val exec = shellExec
             ?: return JSONObject().put("status", "error").put("error", "shell_unavailable")
-                .put("detail", "Termux is not installed or not running. Install Termux for python/pip/curl support.")
+                .put("detail", "Python worker is not running.")
         val cmdArgs = args.optString("args", "")
         val cwd = args.optString("cwd", "")
         return exec(cmd, cmdArgs, cwd)
@@ -353,7 +352,7 @@ class ToolExecutor(
         return native.exec(command, cwd, timeoutMs, env)
     }
 
-    private fun executeTermuxRunShell(args: JSONObject): JSONObject {
+    private fun executeRunShell(args: JSONObject): JSONObject {
         val command = args.optString("command", "")
         if (command.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_command")
         val cwd = args.optString("cwd", "")
@@ -366,15 +365,14 @@ class ToolExecutor(
             put("timeout_ms", timeoutMs)
             if (env != null) put("env", env)
         }
-        val workerResult = runTermuxWorkerCall { proxyWorkerPost("/exec", body) }
+        val workerResult = runWorkerCall { proxyWorkerPost("/exec", body) }
         if (workerResult.optString("error") == "worker_unavailable") {
             return JSONObject()
                 .put("status", "error")
-                .put("error", "termux_required")
-                .put("detail", "Termux worker (port 8776) is not responding. " +
+                .put("error", "worker_required")
+                .put("detail", "Worker (port 8776) is not responding. " +
                     "The system already tried to start/recover it automatically. " +
-                    "If it still fails, call device_api(action=\"termux.restart\") and retry once. " +
-                    "Use device_api(action=\"termux.show_setup\") if Termux setup is incomplete.")
+                    "If it still fails, call device_api(action=\"worker.restart\") and retry once.")
         }
         return workerResult
     }
@@ -427,19 +425,18 @@ class ToolExecutor(
         }
     }
 
-    private fun executeTermuxShellSession(args: JSONObject): JSONObject {
+    private fun executeShellSession(args: JSONObject): JSONObject {
         val action = args.optString("action", "")
         if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
 
-        val workerResult = runTermuxWorkerCall { executeShellSessionViaWorker(action, args) }
+        val workerResult = runWorkerCall { executeShellSessionViaWorker(action, args) }
         if (workerResult.optString("error") == "worker_unavailable") {
             return JSONObject()
                 .put("status", "error")
-                .put("error", "termux_required")
-                .put("detail", "Termux worker (port 8776) is not responding. " +
+                .put("error", "worker_required")
+                .put("detail", "Worker (port 8776) is not responding. " +
                     "The system already tried to start/recover it automatically. " +
-                    "If it still fails, call device_api(action=\"termux.restart\") and retry once. " +
-                    "Use device_api(action=\"termux.show_setup\") if Termux setup is incomplete.")
+                    "If it still fails, call device_api(action=\"worker.restart\") and retry once.")
         }
         return workerResult
     }
@@ -496,57 +493,8 @@ class ToolExecutor(
         }
     }
 
-    private fun executeTermuxFs(args: JSONObject): JSONObject {
-        val action = args.optString("action", "")
-        if (action.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
-        val path = args.optString("path", "")
-        if (path.isEmpty() && action != "list") return JSONObject().put("status", "error").put("error", "missing_path")
-
-        // Check worker availability first and return a helpful message
-        val pingResult = runTermuxWorkerCall { proxyWorkerGet("/health") }
-        if (pingResult.optString("error") == "worker_unavailable") {
-            return JSONObject()
-                .put("status", "error")
-                .put("error", "termux_required")
-                .put("detail", "termux_fs requires Termux. The system already tried to start/recover the worker automatically. " +
-                    "If it still fails, use device_api(action=\"termux.restart\") and retry once, or device_api(action=\"termux.show_setup\") if setup is incomplete.")
-        }
-
-        val body = JSONObject().apply {
-            put("path", path)
-            when (action) {
-                "read" -> {
-                    if (args.has("max_bytes")) put("max_bytes", args.optInt("max_bytes"))
-                    if (args.has("offset")) put("offset", args.optInt("offset"))
-                }
-                "write" -> {
-                    put("content", args.optString("content", ""))
-                    if (args.has("encoding")) put("encoding", args.optString("encoding"))
-                }
-                "list" -> {
-                    if (args.has("show_hidden")) put("show_hidden", args.optBoolean("show_hidden", false))
-                }
-                "mkdir" -> {
-                    if (args.has("parents")) put("parents", args.optBoolean("parents", true))
-                }
-                "delete" -> {
-                    if (args.has("recursive")) put("recursive", args.optBoolean("recursive", false))
-                }
-            }
-        }
-        val out = runTermuxWorkerCall { proxyWorkerPost("/fs/$action", body) }
-        if (out.optString("error") == "worker_unavailable") {
-            return JSONObject()
-                .put("status", "error")
-                .put("error", "termux_required")
-                .put("detail", "termux_fs requires Termux. The system already tried to start/recover the worker automatically. " +
-                    "If it still fails, use device_api(action=\"termux.restart\") and retry once, or device_api(action=\"termux.show_setup\") if setup is incomplete.")
-        }
-        return out
-    }
-
-    private fun runTermuxWorkerCall(call: () -> JSONObject): JSONObject {
-        ensureTermuxWorker?.invoke()
+    private fun runWorkerCall(call: () -> JSONObject): JSONObject {
+        ensureWorker?.invoke()
         var out = call()
         if (out.optString("error") != "worker_unavailable") return out
         try {
@@ -555,7 +503,7 @@ class ToolExecutor(
             Thread.currentThread().interrupt()
             return out
         }
-        ensureTermuxWorker?.invoke()
+        ensureWorker?.invoke()
         out = call()
         return out
     }
@@ -578,7 +526,7 @@ class ToolExecutor(
             }
         } catch (ex: Exception) {
             JSONObject().put("status", "error").put("error", "worker_unavailable")
-                .put("detail", ex.message ?: "Cannot reach Termux worker on port 8776. Is Termux running?")
+                .put("detail", ex.message ?: "Cannot reach worker on port 8776.")
         }
     }
 
@@ -597,7 +545,7 @@ class ToolExecutor(
             }
         } catch (ex: Exception) {
             JSONObject().put("status", "error").put("error", "worker_unavailable")
-                .put("detail", ex.message ?: "Cannot reach Termux worker on port 8776. Is Termux running?")
+                .put("detail", ex.message ?: "Cannot reach worker on port 8776.")
         }
     }
 

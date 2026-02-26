@@ -203,6 +203,13 @@
       "version": "2.17.0",
       "source_path": "app/android/app/build.gradle.kts",
       "note": "implementation"
+    },
+    {
+      "ecosystem": "vendored-native",
+      "name": "dropbear",
+      "version": "",
+      "license": "",
+      "source_path": "third_party/dropbear"
     }
   ],
   "ignore_config": {

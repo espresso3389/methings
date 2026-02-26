@@ -29,37 +29,36 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 
 ## Execution Tools
 
-### Built-in (always available, no Termux)
+### Built-in (always available)
 
 - `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine with **async/await support**. Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`. Top-level `await` is supported. Full API reference: `$sys/docs/run_js.md`.
 - `run_curl(url, method?, headers?, body?, timeout_ms?)` — Make HTTP requests natively. Parameters: `url` (required), `method` (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), `headers` (JSON object), `body` (string), `timeout_ms` (default 30000). Returns `{status, http_status, headers, body}`.
 
 ### Local Shell (always available)
 
-- `local_run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in the native Android shell (`/system/bin/sh`). Always available. Cannot access Termux files or packages. Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s.
+- `local_run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in the native Android shell (`/system/bin/sh`). Always available. Cannot access worker files or packages. Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s.
 - `local_shell_session(action, session_id?, command?, ...)` — Persistent native Android shell sessions (pipe-based, no PTY). Actions: `start`, `exec`, `write`, `read`, `resize` (no-op), `kill`, `list`. Maintains state across commands.
 
-### Termux Shell (requires Termux)
+### Worker Shell (requires worker)
 
-- `termux_run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in Termux bash (full Linux environment + packages). Requires Termux worker (port 8776). Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s. The runtime auto-starts/auto-recovers the worker before execution; only persistent failure returns `termux_required`.
-- `termux_shell_session(action, session_id?, command?, ...)` — Persistent Termux PTY sessions (full ANSI, resize). Requires Termux worker. Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. The runtime auto-starts/auto-recovers the worker; only persistent failure returns `termux_required`.
+- `run_shell(command, cwd?, timeout_ms?, env?)` — Execute a command in the embedded Linux environment (full shell + packages). Requires embedded worker (port 8776). Returns `{status, exit_code, stdout, stderr}`. Default timeout 60s, max 300s. The runtime auto-starts/auto-recovers the worker before execution; only persistent failure returns `worker_required`.
+- `shell_session(action, session_id?, command?, ...)` — Persistent PTY sessions (full ANSI, resize). Requires embedded worker. Actions: `start`, `exec`, `write`, `read`, `resize`, `kill`, `list`. The runtime auto-starts/auto-recovers the worker; only persistent failure returns `worker_required`.
 
-### Termux-only (other)
+### Worker tools
 
-- `termux_fs(action, path, ...)` — Access Termux filesystem (outside app user root). Actions: `read`, `write`, `list`, `stat`, `mkdir`, `delete`. Requires Termux.
-- `run_python(args, cwd)` — Run Python locally. Requires Termux.
-- `run_pip(args, cwd)` — Run pip locally. Requires Termux.
-- `device_api(action="termux.arduino_proxy.enable")` — Enable the Termux Arduino DNS-bypass proxy module and configure `arduino-cli` proxy (`network.proxy`).
-- `device_api(action="termux.arduino_proxy.status")` — Inspect Arduino proxy module status.
+- `run_python(args, cwd)` — Run Python locally. Requires embedded worker.
+- `run_pip(args, cwd)` — Run pip locally. Requires embedded worker.
+- `device_api(action="worker.arduino_proxy.enable")` — Enable the Arduino DNS-bypass proxy module and configure `arduino-cli` proxy (`network.proxy`).
+- `device_api(action="worker.arduino_proxy.status")` — Inspect Arduino proxy module status.
 
-Full reference for Termux shell tools: `$sys/docs/termux_shell.md`.
+Full reference for shell tools: `$sys/docs/shell.md`.
 
 Notes:
 - Prefer `run_js` over `run_python` — it supports fetch, WebSocket, file I/O, and timers natively.
-- Prefer `local_run_shell` or `termux_run_shell` over `run_python` for general commands — they can run any program, not just Python.
-- `run_curl` now works natively without Termux. Legacy `run_curl(args, cwd)` form is still supported for backward compatibility.
+- Prefer `local_run_shell` or `run_shell` over `run_python` for general commands — they can run any program, not just Python.
+- `run_curl` works natively without the worker. Legacy `run_curl(args, cwd)` form is still supported for backward compatibility.
 - `python -` (stdin) is not supported (no interactive stdin). Use `python -c "..."` or write a script file and run it.
-- For interactive/stateful workflows (e.g., virtual envs, build systems), use `local_shell_session` or `termux_shell_session` to keep state between commands.
+- For interactive/stateful workflows (e.g., virtual envs, build systems), use `local_shell_session` or `shell_session` to keep state between commands.
 
 ## Media Analysis Tools (Built-in Multimodal)
 
@@ -95,11 +94,11 @@ Notes:
 Used for allowlisted device control-plane actions. Some actions require user approval and will return `permission_required`.
 
 Only `device_api` HTTP actions are documented in OpenAPI (`$sys/docs/openapi/openapi.yaml`).
-Agent tools such as `local_run_shell`, `termux_run_shell`, `run_js`, and `run_curl` are tool-runtime capabilities and are not OpenAPI paths.
+Agent tools such as `local_run_shell`, `run_shell`, `run_js`, and `run_curl` are tool-runtime capabilities and are not OpenAPI paths.
 
 ## Remote Access via SSH Tunnel
 
-If the device's SSH server is running, a remote user can forward the local API/UI port over SSH:
+If the device's SSH server (embedded Dropbear) is running, a remote user can forward the local API/UI port over SSH:
 
 ```bash
 ssh <user>@<device-ip> -p <ssh-port> -L 33389:127.0.0.1:33389
@@ -108,24 +107,24 @@ ssh <user>@<device-ip> -p <ssh-port> -L 33389:127.0.0.1:33389
 Then `http://127.0.0.1:33389` on the remote machine gives full access to the WebView UI and all local HTTP APIs.
 
 Direct outbound SSH client actions via `device_api` are deprecated and may be unavailable.
-Use `termux_run_shell` for outbound SSH/SCP commands instead.
+Use `run_shell` for outbound SSH/SCP commands instead.
 
 ## App SSH Shell Commands (Outbound)
 
-Use `termux_run_shell` for outbound SSH/SCP operations:
+Use `run_shell` for outbound SSH/SCP operations:
 
-- `termux_run_shell(command="ssh user@host <command>")`
-- `termux_run_shell(command="scp <local_file> user@host:<remote_path>")`
-- `termux_run_shell(command="scp user@host:<remote_file> <local_path>")`
+- `run_shell(command="ssh user@host <command>")`
+- `run_shell(command="scp <local_file> user@host:<remote_path>")`
+- `run_shell(command="scp user@host:<remote_file> <local_path>")`
 
 Notes:
-- SSH/SCP require Termux. If the Termux worker is unavailable, the tool returns `termux_required`.
-- If `ssh`/`scp` binaries are missing, call `device_api("termux.show_setup")` and ask the user to complete setup.
+- SSH/SCP require the embedded worker. If the worker is unavailable, the tool returns `worker_required`.
+- SSH is provided by embedded Dropbear (not OpenSSH).
 
 ### SSHD Management
 
-For on-device SSH server management, use the `/sshd/*` API endpoints (status/config/keys/pin/noauth).
-For outbound SSH client access to other machines, use `termux_run_shell` only.
+For on-device SSH server management (Dropbear), use the `/sshd/*` API endpoints (status/config/keys/pin/noauth).
+For outbound SSH client access to other machines, use `run_shell` only.
 
 ---
 
@@ -148,7 +147,7 @@ For full payload docs and all actions, see the OpenAPI spec at `$sys/docs/openap
 - `screen.keep_on`: keep screen awake. Payload: `{"keep_on": true/false}`.
 
 ### Camera — `$sys/docs/openapi/paths/camera.yaml`
-- `camera.capture`: take a still photo. Key payload: `lens` (back/front), `path` (app-local relative, `termux://...`, or absolute Termux path). Returns `rel_path`.
+- `camera.capture`: take a still photo. Key payload: `lens` (back/front), `path` (plain relative path under user root). Returns `rel_path`.
 - `camera.preview.start/stop`: JPEG preview stream via `/ws/camera/preview`.
 - Do not `pip install` camera bindings; use `device_api`.
 
@@ -283,13 +282,12 @@ Schedule types:
 - `periodic`: fires on pattern (minutely, hourly, daily, weekly:Mon..Sun, monthly:1..28). 1-minute resolution.
 - `one_time`: fires once at next tick, then auto-disables.
 
-Runtimes: `run_js` (built-in QuickJS with async/await support, always available), `run_python` (requires Termux).
+Runtimes: `run_js` (built-in QuickJS with async/await support, always available), `run_python` (requires embedded worker).
 Limits: max 50 schedules, 200 log entries per schedule, 2000 global log entries.
 
-### Termux
-- `termux.status`: worker status, bootstrap phase, setup readiness. No payload needed.
-- `termux.restart`: restart the Termux worker. Permission-gated.
-- `termux.show_setup`: prompt the user to open the Termux setup wizard in the UI. Use when a shell tool fails because Termux is not installed or not bootstrapped.
+### Worker
+- `worker.status`: worker status, bootstrap phase, setup readiness. No payload needed.
+- `worker.restart`: restart the embedded worker. Permission-gated.
 
 ### Intent (Android)
 - `intent.send`: launch an Android intent. Payload: `{"action": "android.intent.action.VIEW", "data": "https://..."}`.
@@ -320,7 +318,7 @@ Limits: max 50 schedules, 200 log entries per schedule, 2000 global log entries.
 - `webview.open`: open URL in agent-controlled browser. Key payload: `url`, `timeout_s`.
 - `webview.close`: close the browser.
 - `webview.status`: current URL, title, dimensions, loading state.
-- `webview.screenshot`: capture page as JPEG. Key payload: `path` (app-local relative, `termux://...`, or absolute Termux path), `quality`. Returns `rel_path`.
+- `webview.screenshot`: capture page as JPEG. Key payload: `path` (plain relative path under user root), `quality`. Returns `rel_path`.
 - `webview.js`: execute JavaScript. Key payload: `script`. Returns `result`.
 - `webview.tap`: simulate tap. Key payload: `x`, `y`.
 - `webview.scroll`: scroll page. Key payload: `dx`, `dy`.
@@ -386,11 +384,9 @@ rel_path: captures/latest.jpg
 ```
 
 Filesystem path convention:
-- `<relative-path>`: app-local files under user root (`/user/*` APIs).
-- `termux://<path>`: Termux HOME files (maps to `/data/data/com.termux/files/home`).
-- `/data/data/com.termux/files/home/...`: explicit Termux absolute path.
+- All file paths are plain relative paths under the user root (`/user/*` APIs).
 
-When you create, save, capture, or reference a file, you MUST include `rel_path: <path>` (or `html_path:` for HTML) in your assistant message. For app-local files, use plain relative paths. Use explicit Termux paths only for Termux files. This applies to:
+When you create, save, capture, or reference a file, you MUST include `rel_path: <path>` (or `html_path:` for HTML) in your assistant message. Use plain relative paths. This applies to:
 - Captured images/audio/video
 - Generated scripts, reports, or data files
 - **Listing files you created** — never list bare filenames; always emit a `rel_path:` line for each file so the user gets clickable, previewable cards instead of plain text
@@ -399,7 +395,7 @@ User UX notes:
 - Tapping an image opens a fullscreen viewer (swipe between images, pinch zoom).
 - Media cards include a Share icon.
 
-To fetch the image onto your dev machine (preferred): `GET /user/file/<relative-path>` or `GET /termux/file/<path-under-home>`.
+To fetch the image onto your dev machine (preferred): `GET /user/file/<relative-path>`.
 
 #### Marp Slide Navigation (`#page=N`)
 
@@ -424,7 +420,7 @@ html_path: agent_ui/sample.html
 
 Rules:
 - Prefer `html_path:` (use `open_html:` only for backward compatibility).
-- Viewer OPEN supports app-local relative paths and Termux paths (`termux://...` / absolute Termux path).
+- Viewer OPEN supports plain relative paths under user root.
 - Do not save agent-generated HTML under `www/` unless explicitly editing the app UI. Prefer `apps/` or another non-UI directory.
 - Do not tell the user to manually open a URL or endpoint.
 
@@ -454,7 +450,7 @@ Prefer the configured Brain provider (Settings -> Brain):
 Template placeholders (expanded server-side, never echoed back):
 - `${vault:<name>}`: credential stored in vault
 - `${config:brain.api_key|brain.base_url|brain.model|brain.vendor}`: brain config values
-- `${file:<path>:base64}`: base64 of a file (app-local relative path, `termux://...`, or absolute Termux path; auto-downscale applies to app-local image files)
+- `${file:<path>:base64}`: base64 of a file (plain relative path under user root; auto-downscale applies to image files)
 - `${file:<path>:base64_raw}`: base64 of original bytes
 - `${file:<path>:text}`: UTF-8 decode of file
 
@@ -470,10 +466,10 @@ Large uploads:
 File transfer prefs: see `$sys/docs/openapi/paths/cloud.yaml` (`/file_transfer/prefs`).
 
 Path-style file APIs:
-- Read: `/user/file/<path>`, `/termux/file/<path>`
-- Info: `/user/file/info/<path>`, `/termux/file_info/<path>`
-- List: `/user/list/<dir>`, `/termux/list/<dir>`
-- Write: `/user/write/<path>`, `/termux/write/<path>` (POST JSON: `content` or `data_b64`)
+- Read: `/user/file/<path>`
+- Info: `/user/file/info/<path>`
+- List: `/user/list/<dir>`
+- Write: `/user/write/<path>` (POST JSON: `content` or `data_b64`)
 
 ### Python Helper
 
@@ -490,11 +486,9 @@ dp.ensure_device("camera2", detail="capture a photo", scope="session")
 
 - `permission_required`: user needs to approve on device UI, then retry.
 - `path_outside_user_dir`: path must be under app user root (use app-local relative path).
-- `path_outside_termux_home`: path must be under Termux HOME (`/data/data/com.termux/files/home`).
-- `termux_unavailable`: Termux worker is not reachable.
-- `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `local_run_shell`/`termux_run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without Termux).
-- `termux_required`: Termux worker is not reachable on port 8776 even after automatic recovery attempts. Retry the same tool once, then call `device_api(action="termux.restart")` and retry once. If it still fails, call `device_api(action="termux.status")`; when setup is incomplete, call `device_api(action="termux.show_setup")`. Use `local_run_shell`/`local_shell_session` for native Android shell (no Termux needed).
-- `worker_unavailable`: Termux worker is not reachable on port 8776. Termux-dependent tools (`termux_run_shell`, `termux_shell_session`, `termux_fs`, `run_python`, `run_pip`) require Termux to be installed and running.
+- `worker_unavailable`: embedded worker is not reachable on port 8776.
+- `command_not_allowed`: only `python|pip` are permitted via the legacy `run_python`/`run_pip` tools. Use `local_run_shell`/`run_shell` for general shell commands, or `run_js` and `run_curl` for JS/HTTP (they work natively without the worker).
+- `worker_required`: embedded worker is not reachable on port 8776 even after automatic recovery attempts. Retry the same tool once, then call `device_api(action="worker.restart")` and retry once. If it still fails, call `device_api(action="worker.status")` to check worker health. Use `local_run_shell`/`local_shell_session` for native Android shell (no worker needed).
 
 ## Package Name Gotchas
 
@@ -529,7 +523,7 @@ API endpoint reference is in OpenAPI format under `$sys/docs/openapi/`. Read the
 
 Tool-specific references (under `$sys/docs/`):
 - `$sys/docs/run_js.md` — run_js async API: fetch, WebSocket, file I/O, timers, device_api
-- `$sys/docs/termux_shell.md` — local_run_shell, termux_run_shell, local_shell_session, termux_shell_session, termux_fs: shell & file access
+- `$sys/docs/shell.md` — local_run_shell, run_shell, local_shell_session, shell_session: shell access
 
 Conceptual guides (under `$sys/docs/`):
 - `$sys/docs/agent_tools.md` — agent tool conventions, filesystem helpers, chat shortcuts

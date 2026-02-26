@@ -37,7 +37,7 @@ object CapabilityMap {
         "shell"     to Triple("device.shell",     "shell",     "Shell execution"),
         "vision"    to Triple("device.camera",    "camera",    "Vision processing"),
         "intent"    to Triple("device.intent",    "intent",    "Send intent"),
-        "termux"    to Triple("device.termux",    "termux",    "Termux control"),
+        "worker"    to Triple("device.worker",    "worker",    "Worker control"),
         "screen"    to Triple("device.screen",    "screen",    "Screen control"),
     )
 

@@ -106,8 +106,7 @@ viewerOpen:
               path:
                 type: string
                 description: >
-                  File path (app-local relative path preferred, `termux://<path>`,
-                  or absolute Termux HOME path).
+                  File path (plain relative path under user root).
                   Append #page=N for Marp slide navigation (0-indexed).
           example:
             path: "presentations/demo.md#page=3"

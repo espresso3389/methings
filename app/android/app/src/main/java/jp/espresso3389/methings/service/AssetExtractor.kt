@@ -99,6 +99,39 @@ class AssetExtractor(private val context: Context) {
         }
     }
 
+    fun extractPythonRuntime(): File? {
+        return try {
+            val targetDir = File(context.filesDir, "pyenv")
+            targetDir.mkdirs()
+            if (!assetDirExists("pyenv")) return null
+            copyAssetDir("pyenv", targetDir)
+            targetDir
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to extract Python runtime", ex)
+            null
+        }
+    }
+
+    fun extractWheelhouseForCurrentAbi(): File? {
+        return try {
+            val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: return null
+            val paths = WheelhousePaths.forCurrentAbi(context) ?: return null
+            paths.ensureDirs()
+            // Copy common wheels
+            if (assetDirExists("wheels/common")) {
+                copyAssetDirOverwrite("wheels/common", paths.bundled)
+            }
+            // Copy ABI-specific wheels
+            if (assetDirExists("wheels/$abi")) {
+                copyAssetDirOverwrite("wheels/$abi", paths.bundled)
+            }
+            paths.bundled
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to extract wheelhouse", ex)
+            null
+        }
+    }
+
     fun extractSystemAssets(): File? {
         return try {
             val targetDir = File(context.filesDir, "system")

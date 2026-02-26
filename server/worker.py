@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-me.things Termux Worker — HTTP server for shell execution, PTY sessions, and file access.
+me.things Worker — HTTP server for shell execution, PTY sessions, and file access.
 
-Runs on port 8776 inside Termux. Stdlib only (no external deps).
+Runs on port 8776. Stdlib only (no external deps).
 """
 
 import errno
@@ -22,35 +22,21 @@ from socketserver import ThreadingMixIn
 from urllib.parse import urlsplit
 
 PORT = 8776
-HOME = os.environ.get("HOME", "/data/data/com.termux/files/home")
+HOME = os.environ.get("HOME", os.path.expanduser("~"))
 SESSION_IDLE_TIMEOUT = 1800  # 30 min
 ARDUINO_PROXY_HOST = "127.0.0.1"
 ARDUINO_PROXY_PORT = 38888
 ARDUINO_DOWNLOAD_HOST = "downloads.arduino.cc"
 ARDUINO_DOWNLOAD_IPV4 = "104.18.11.21"
 
-def _ensure_apt_noninteractive():
-    """Drop an apt config that auto-confirms installs so non-interactive
-    subprocess calls (apt install ...) never hang on a [Y/n] prompt."""
-    conf_dir = "/data/data/com.termux/files/usr/etc/apt/apt.conf.d"
-    conf_file = os.path.join(conf_dir, "99methings-noninteractive")
-    if os.path.exists(conf_file):
-        return
-    try:
-        os.makedirs(conf_dir, exist_ok=True)
-        with open(conf_file, "w") as f:
-            f.write('APT::Get::Assume-Yes "true";\n')
-    except OSError:
-        pass
-
-
 def _ensure_arduino_wrapper(proxy_url):
     """Install a lightweight arduino-cli wrapper under ~/methings/bin.
     The wrapper keeps arduino-cli proxy config in sync."""
     bin_dir = os.path.join(HOME, "methings", "bin")
     wrapper_path = os.path.join(bin_dir, "arduino-cli")
-    real_cli = "/data/data/com.termux/files/usr/bin/arduino-cli"
-    script = f"""#!/data/data/com.termux/files/usr/bin/bash
+    real_cli = os.environ.get("ARDUINO_CLI_PATH", "arduino-cli")
+    shell = os.environ.get("SHELL", "/system/bin/sh")
+    script = f"""#!{shell}
 set -e
 PROXY_URL="${{METHINGS_ARDUINO_PROXY_URL:-{proxy_url}}}"
 REAL_CLI="{real_cli}"
@@ -363,7 +349,7 @@ class PtySession:
         winsize = struct.pack("HHHH", rows, cols, 0, 0)
         fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, winsize)
 
-        shell = os.environ.get("SHELL", "/data/data/com.termux/files/usr/bin/bash")
+        shell = os.environ.get("SHELL", "/system/bin/sh")
         spawn_env = os.environ.copy()
         spawn_env["TERM"] = "xterm-256color"
         spawn_env.setdefault("DEBIAN_FRONTEND", "noninteractive")
@@ -990,7 +976,6 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 # ─── Main ─────────────────────────────────────────────────────────
 
 def main():
-    _ensure_apt_noninteractive()
     arduino_proxy.ensure_started()
     arduino_proxy.configure_arduino_cli()
     # Start idle-session reaper

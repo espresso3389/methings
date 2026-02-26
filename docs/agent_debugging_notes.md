@@ -7,17 +7,17 @@ Android, and the quickest ways to reproduce / debug them.
 
 The Android app exposes a loopback-only HTTP API. The agent runs
 in-process (`AgentRuntime`). Built-in tools `run_js` (QuickJS) and
-`run_curl` (native HTTP) work without Termux. Shell tools
-(`run_python`/`run_pip`) are delegated to Termux when installed.
+`run_curl` (native HTTP) work without the embedded worker. Shell tools
+(`run_python`/`run_pip`) are delegated to the embedded Python worker.
 
 Useful endpoints (via `adb forward`):
 
 - `GET /health`
-- `POST /shell/exec` with `{cmd:"python"|"pip", args:"...", cwd:"..."}` (requires Termux)
+- `POST /shell/exec` with `{cmd:"python"|"pip", args:"...", cwd:"..."}` (requires embedded worker)
 - `GET /brain/sessions`, `GET /brain/messages`
 - `POST /brain/debug/comment` (local-only) to inject debug/system notes into a session timeline
 
-## Common Shell Errors (Termux)
+## Common Shell Errors (Worker)
 
 ### `error: [Errno 2] No such file or directory: '/data/.../files/user/-'`
 

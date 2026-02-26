@@ -63,29 +63,29 @@ object ToolDefinitions {
             put("limit", prop("integer"))
         }.withRequired())
 
-        tools.put(functionTool("run_js", "Execute JavaScript code using the built-in QuickJS engine with async/await support. Always available without Termux. Supports: `await fetch(url, options?)` for HTTP, `await connectWs(url)` for WebSocket, `await connectTcp(host, port, options?)` for TCP client, `await listenTcp(host, port, options?)` for TCP server, `await delay(ms)`, setTimeout/setInterval, `readFile`/`writeFile`/`readBinaryFile`/`writeBinaryFile` (Uint8Array), `listDir`/`mkdir`/`deleteFile`/`rmdir`, `await openFile(path, mode)` for RandomAccessFile handle (size/position/read/write/seek/truncate/close), and `device_api(action, payload)`. Top-level `await` supported. Full reference: `\$sys/docs/run_js.md`.") {
+        tools.put(functionTool("run_js", "Execute JavaScript code using the built-in QuickJS engine with async/await support. Always available. Supports: `await fetch(url, options?)` for HTTP, `await connectWs(url)` for WebSocket, `await connectTcp(host, port, options?)` for TCP client, `await listenTcp(host, port, options?)` for TCP server, `await delay(ms)`, setTimeout/setInterval, `readFile`/`writeFile`/`readBinaryFile`/`writeBinaryFile` (Uint8Array), `listDir`/`mkdir`/`deleteFile`/`rmdir`, `await openFile(path, mode)` for RandomAccessFile handle (size/position/read/write/seek/truncate/close), and `device_api(action, payload)`. Top-level `await` supported. Full reference: `\$sys/docs/run_js.md`.") {
             put("code", prop("string"))
             put("timeout_ms", prop("integer"))
         }.withRequired("code"))
 
-        tools.put(functionTool("run_python", "Run Python locally (equivalent to: python <args>) within the user directory. Requires Termux.") {
+        tools.put(functionTool("run_python", "Run Python locally (equivalent to: python <args>) within the user directory.") {
             put("args", prop("string"))
             put("cwd", prop("string"))
         }.withRequired("args", "cwd"))
 
-        tools.put(functionTool("run_pip", "Run pip locally (equivalent to: pip <args>) within the user directory. Requires Termux.") {
+        tools.put(functionTool("run_pip", "Run pip locally (equivalent to: pip <args>) within the user directory.") {
             put("args", prop("string"))
             put("cwd", prop("string"))
         }.withRequired("args", "cwd"))
 
-        tools.put(functionTool("local_run_shell", "Execute a command in the native Android shell (/system/bin/sh). Always available. Cannot access Termux files or packages. For Termux, use termux_run_shell. For long-running or interactive commands, use local_shell_session instead.") {
+        tools.put(functionTool("local_run_shell", "Execute a command in the native Android shell (/system/bin/sh). Always available. Cannot access worker files or packages. For the full Linux environment, use run_shell. For long-running or interactive commands, use local_shell_session instead.") {
             put("command", prop("string"))
             put("cwd", prop("string"))
             put("timeout_ms", prop("integer"))
             put("env", JSONObject().put("type", "object").put("additionalProperties", true))
         }.withRequired("command"))
 
-        tools.put(functionTool("termux_run_shell", "Execute a command in Termux bash (full Linux environment + packages). Requires Termux worker (port 8776). If unavailable (termux_required), call device_api(action='termux.restart') and retry once. Check device_api(action='termux.status') only if failures continue. For long-running or interactive commands, use termux_shell_session instead.") {
+        tools.put(functionTool("run_shell", "Execute a command in the embedded Linux shell (full environment + packages). Requires worker (port 8776). If unavailable (worker_required), call device_api(action='worker.restart') and retry once. For long-running or interactive commands, use shell_session instead.") {
             put("command", prop("string"))
             put("cwd", prop("string"))
             put("timeout_ms", prop("integer"))
@@ -106,7 +106,7 @@ object ToolDefinitions {
             put("env", JSONObject().put("type", "object").put("additionalProperties", true))
         }.withRequired("action"))
 
-        tools.put(functionTool("termux_shell_session", "Manage persistent Termux PTY sessions (full ANSI, resize). Requires Termux worker (port 8776). If unavailable (termux_required), call device_api(action='termux.restart') and retry once. Check device_api(action='termux.status') only if failures continue. Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions).") {
+        tools.put(functionTool("shell_session", "Manage persistent PTY sessions (full ANSI, resize). Requires worker (port 8776). If unavailable (worker_required), call device_api(action='worker.restart') and retry once. Actions: start (create session), exec (send command and read output), write (raw stdin), read (buffered output), resize (terminal size), kill (terminate), list (active sessions).") {
             put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
                 put("start"); put("exec"); put("write"); put("read"); put("resize"); put("kill"); put("list")
             }))
@@ -120,21 +120,7 @@ object ToolDefinitions {
             put("env", JSONObject().put("type", "object").put("additionalProperties", true))
         }.withRequired("action"))
 
-        tools.put(functionTool("termux_fs", "Access files in the Termux filesystem (outside the app's user root). Actions: read, write, list, stat, mkdir, delete. Requires Termux.") {
-            put("action", JSONObject().put("type", "string").put("enum", JSONArray().apply {
-                put("read"); put("write"); put("list"); put("stat"); put("mkdir"); put("delete")
-            }))
-            put("path", prop("string"))
-            put("content", prop("string"))
-            put("encoding", prop("string"))
-            put("max_bytes", prop("integer"))
-            put("offset", prop("integer"))
-            put("show_hidden", prop("boolean"))
-            put("parents", prop("boolean"))
-            put("recursive", prop("boolean"))
-        }.withRequired("action", "path"))
-
-        tools.put(functionTool("run_curl", "Make an HTTP request. Works natively without Termux. Parameters: url (required), method (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), headers (JSON object), body (string), timeout_ms (default 30000).") {
+        tools.put(functionTool("run_curl", "Make an HTTP request. Works natively. Parameters: url (required), method (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), headers (JSON object), body (string), timeout_ms (default 30000).") {
             put("url", prop("string"))
             put("method", prop("string"))
             put("headers", JSONObject().put("type", "object").put("additionalProperties", true))
@@ -289,11 +275,10 @@ object ToolDefinitions {
     }
 
     val ACTIONS: Map<String, ActionSpec> = mapOf(
-        "termux.status" to ActionSpec("GET", "/termux/status", false),
-        "termux.restart" to ActionSpec("POST", "/termux/restart", true),
-        "termux.show_setup" to ActionSpec("POST", "/termux/setup/show", false),
-        "termux.arduino_proxy.status" to ActionSpec("GET", "/termux/arduino_proxy/status", false),
-        "termux.arduino_proxy.enable" to ActionSpec("POST", "/termux/arduino_proxy/enable", false),
+        "worker.status" to ActionSpec("GET", "/worker/status", false),
+        "worker.restart" to ActionSpec("POST", "/worker/restart", true),
+        "worker.arduino_proxy.status" to ActionSpec("GET", "/worker/arduino_proxy/status", false),
+        "worker.arduino_proxy.enable" to ActionSpec("POST", "/worker/arduino_proxy/enable", false),
         "screen.status" to ActionSpec("GET", "/screen/status", false),
         "screen.keep_on" to ActionSpec("POST", "/screen/keep_on", true),
         "sshd.status" to ActionSpec("GET", "/sshd/status", false),

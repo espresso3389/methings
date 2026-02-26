@@ -5,7 +5,7 @@ This document collects practical debugging tips for me.things app/agent behavior
 ## Quick Mental Model
 
 - App server + built-in agent runtime: `127.0.0.1:33389`
-- Termux worker (optional, general-purpose Linux environment for shell tasks): `127.0.0.1:8776`
+- Embedded worker (Python runtime for shell tasks): `127.0.0.1:8776`
 - All `/brain/*` endpoints are handled by the built-in `AgentRuntime` — no external process proxy.
 
 The agent loop records:
@@ -290,14 +290,14 @@ Important files:
 ## Common Failure Patterns
 
 ### Built-in tools (always available)
-- `run_js` (QuickJS engine) and `run_curl` (native HTTP) work without Termux.
+- `run_js` (QuickJS engine) and `run_curl` (native HTTP) are always available (no worker required).
 - `run_js` errors include `console_output` captured during execution.
 - `run_curl` returns `{status, http_status, headers, body}` for successful requests.
 
-### Shell tool errors (requires Termux)
-- If Termux is not installed, shell tools (`run_python`, `run_pip`) return `shell_unavailable`.
-- The agent can call `device_api("termux.show_setup")` to prompt the user to open the setup wizard in the UI.
-- `run_curl` no longer requires Termux — it uses native HTTP. Legacy `run_curl(args, cwd)` form falls back to Termux shell.
+### Shell tool errors (requires worker)
+- If the worker is not running, shell tools (`run_python`, `run_pip`) return `worker_required`.
+- The agent can call `device_api("worker.restart")` to restart the worker.
+- `run_curl` uses native HTTP and does not require the worker.
 - Shell errors are returned in the tool call output and stored in chat messages.
 - `python -` (stdin mode) is not supported in `shell_exec` (no interactive stdin). Use:
   - `python -c "..."`, or
@@ -355,7 +355,7 @@ Notes:
 - Permission-gated endpoints (create/update/delete/trigger) may return `permission_required` when called via `device_api`.
 - Daemon schedules restart automatically on service start.
 - One-time schedules auto-disable after firing.
-- `run_python` schedules require Termux installed.
+- `run_python` schedules require the embedded Python runtime.
 - Max 50 schedules, 200 log entries per schedule, 2000 global log entries.
 - Stale `running` log entries are marked `interrupted` on engine restart.
 

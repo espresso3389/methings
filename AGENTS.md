@@ -12,7 +12,7 @@ Build an Android 14+ app that provides an agentic device environment with:
 - Android 14+
 - WebView for UI rendering
 - Built-in agent runtime (zero-setup, no external dependencies for core functionality)
-- Termux optional — provides general-purpose Linux environment for agentic shell tasks and SSH
+- Embedded Python runtime (python-for-android), Dropbear SSH server, and shell — all self-hosted in the app sandbox
 - Background service required
 
 ## Core Tenets
@@ -36,15 +36,15 @@ Build an Android 14+ app that provides an agentic device environment with:
   - Background service for agent tasks
 - Agent orchestration (built-in)
   - `LlmClient`: SSE streaming to OpenAI Responses API and Anthropic Messages API
-  - `ToolExecutor`: tool dispatch (filesystem, device API, journal, memory, JS engine, native HTTP, shell execution, PTY sessions, Termux filesystem, web search, cloud requests)
-  - `JsRuntime`: built-in QuickJS JavaScript engine for `run_js` tool with async/await, `fetch()`, `connectWs()`, file I/O handles, timers, and `device_api()` bridge (no Termux dependency)
+  - `ToolExecutor`: tool dispatch (filesystem, device API, journal, memory, JS engine, native HTTP, shell execution, PTY sessions, web search, cloud requests)
+  - `JsRuntime`: built-in QuickJS JavaScript engine for `run_js` tool with async/await, `fetch()`, `connectWs()`, file I/O handles, timers, and `device_api()` bridge
   - `DeviceToolBridge`: calls device handlers via HTTP loopback
   - `AgentStorage`: chat persistence in SQLite (`agent/agent.db`)
   - `JournalStore`: JSONL session journal (`user/journal/`)
-- Optional Termux (general-purpose Linux environment for agentic shell tasks)
-  - Worker HTTP server on `127.0.0.1:8776` (`server/worker.py`, stdlib-only Python)
-  - General shell execution (`run_shell`), persistent PTY sessions (`shell_session`), Termux filesystem access (`termux_fs`)
-  - Python/pip execution (`run_python`, `run_pip`), SSH server (OpenSSH)
+- Embedded runtimes (self-hosted in app sandbox)
+  - Worker HTTP server on `127.0.0.1:8776` (`server/worker.py`, started via embedded Python)
+  - General shell execution (`run_shell`), persistent PTY sessions (`shell_session`)
+  - Python/pip execution (`run_python`, `run_pip`), SSH server (Dropbear)
 
 ## File Layout (planned)
 - app/                # Android project
@@ -70,8 +70,8 @@ Build an Android 14+ app that provides an agentic device environment with:
 - API docs policy: the canonical API reference is the OpenAPI 3.1.0 spec under `user/docs/openapi/`. When adding or changing endpoints, update the relevant `paths/*.yaml` file and `openapi.yaml`. Agent-side tool conventions (runtime helpers, chat shortcuts) are in `user/docs/agent_tools.md`.
 - Adding device APIs: when adding new `device_api` actions, follow the checklist in `docs/adding_device_apis.md` (ACTIONS map, CapabilityMap, route handler, OpenAPI spec).
 - API scope policy: the OpenAPI spec is agent-facing only. Include user/agent-invokable APIs (for example BLE device-operation APIs), but exclude internal plumbing/debug-only endpoints (for example me.me/me.sync internal transport wiring); document those in `docs/DEBUGGING.md` instead.
-- Built-in execution: `run_js` (QuickJS engine with async/await, fetch, WebSocket, file I/O) and `run_curl` (native HTTP) work without Termux.
-- On-device shell tooling (optional): `run_shell`/`shell_session`/`termux_fs`/`run_python`/`run_pip` require Termux. Host-side app development must use uv.
+- Built-in execution: `run_js` (QuickJS engine with async/await, fetch, WebSocket, file I/O) and `run_curl` (native HTTP) are always available.
+- On-device shell tooling: `run_shell`/`shell_session`/`run_python`/`run_pip` use the embedded worker (self-hosted Python runtime). Host-side app development must use uv.
 - WSL usage is allowed but only when the user explicitly opts in for that session.
 
 ## Security & Permissions
@@ -83,16 +83,16 @@ Build an Android 14+ app that provides an agentic device environment with:
 
 ## Background Execution
 - Background service runs local HTTP service and built-in agent runtime.
-- Agent runs in-process — no Termux required for core agent functionality.
-- `run_js` (QuickJS) and `run_curl` (native HTTP) work without Termux.
-- Termux is started on-demand when the agent invokes `run_shell`/`shell_session`/`termux_fs`/`run_python`/`run_pip` or SSH.
-- SSH (OpenSSH via Termux) is controlled via `/termux/sshd/start` and `/termux/sshd/stop` endpoints.
+- Agent runs in-process — no external dependencies for core agent functionality.
+- `run_js` (QuickJS) and `run_curl` (native HTTP) are always available.
+- The embedded Python worker is started on-demand when the agent invokes `run_shell`/`shell_session`/`run_python`/`run_pip`.
+- SSH (Dropbear) is controlled via `/sshd/start` and `/sshd/stop` endpoints.
 - **Code Scheduler**: in-process scheduler with 1-minute resolution for recurring code execution (daemon/periodic/one_time). Persists to `agent/scheduler.db`. Key files: `SchedulerStore.kt` (SQLite), `SchedulerEngine.kt` (ticker + execution). Agent accesses via `scheduler.*` device_api actions.
 
 ## Testing
 - Unit tests for permission broker and tool router.
 - Integration tests for WebView <-> local service <-> agent runtime.
-- Manual test checklist for agent functionality with and without Termux.
+- Manual test checklist for agent functionality.
 
 ## Device Provisioning (OAuth Sign-In)
 - Users sign in via Google or GitHub through the gateway's server-side OAuth flow (opened in CustomTabs from the app)
@@ -108,7 +108,7 @@ Build an Android 14+ app that provides an agentic device environment with:
   - `app/android/app/src/main/java/jp/espresso3389/methings/ui/WebAppBridge.kt` — `openInBrowser()` JS bridge method
 
 ## Current UI (2026-02)
-- Minimal control panel in WebView (agent status, Termux status, Wi-Fi IP, Reset UI).
+- Minimal control panel in WebView (agent status, worker status, Wi-Fi IP, Reset UI).
 - UI assets are served from `files/user/www` and can be reset from the UI or via `POST /ui/reset`.
 - No chat/terminal/shell UI at the moment (to be reconsidered later).
 

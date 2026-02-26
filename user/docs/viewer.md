@@ -4,7 +4,7 @@ Programmatic control of the WebView fullscreen viewer and file metadata inspecti
 
 ## File Info
 
-Preferred: `GET /user/file/info/<relative-path>` (or `GET /termux/file_info/<path-under-home>`).
+Preferred: `GET /user/file/info/<relative-path>` (or `GET /worker/file_info/<path-under-home>`).
 
 Returns file metadata without serving file bytes. Strips `#page=N` fragment from path before lookup.
 
@@ -61,7 +61,7 @@ All viewer endpoints are `POST`, return `{"status":"ok"}` immediately (fire-and-
 
 ### `/ui/viewer/open`
 
-- The `path` is validated against supported filesystems (app-local relative path, `termux://`, or absolute Termux HOME path); returns 404 if the file does not exist.
+- The `path` must be a plain relative path under the user root; returns 404 if the file does not exist.
 - Auto-detects file type by extension and opens the appropriate viewer (image, video, audio, text/code, HTML iframe).
 - For Marp markdown, the full slide deck is rendered with navigation controls.
 

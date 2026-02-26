@@ -1,0 +1,533 @@
+sshdStatus:
+  get:
+    operationId: getSshdStatus
+    summary: Get SSHD server status
+    tags: [SSHD]
+    responses:
+      '200':
+        description: Current SSH server status.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, running, port]
+              properties:
+                enabled:
+                  type: boolean
+                  description: Whether SSHD is enabled in config.
+                running:
+                  type: boolean
+                  description: Whether the SSH server process is running.
+                port:
+                  type: integer
+                  description: Configured SSH port.
+                noauth_enabled:
+                  type: boolean
+                  description: Whether no-auth mode is enabled.
+                auth_mode:
+                  type: string
+                  description: Current authentication mode.
+                  examples: [key, pin, notification]
+                host:
+                  type: string
+                  description: Host IP address.
+                client_key_fingerprint:
+                  type: string
+                  nullable: true
+                  description: Client key fingerprint (if available).
+                client_key_public:
+                  type: string
+                  nullable: true
+                  description: Client public key (if available).
+            example:
+              enabled: true
+              running: true
+              port: 2222
+              noauth_enabled: false
+              auth_mode: key
+              host: "192.168.1.100"
+              client_key_fingerprint: "SHA256:..."
+              client_key_public: null
+
+sshdConfig:
+  post:
+    operationId: postSshdConfig
+    summary: Update SSHD configuration
+    tags: [SSHD]
+    x-permission:
+      tool: device.ssh
+      capability: sshd
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    description: Enable or disable SSHD.
+                  port:
+                    type: integer
+                    description: SSH port number.
+                  auth_mode:
+                    type: string
+                    description: Authentication mode to set.
+                  noauth_enabled:
+                    type: boolean
+                    description: Enable or disable no-auth mode.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            enabled: true
+            port: 2222
+    responses:
+      '200':
+        description: Updated SSHD configuration.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:
+                  type: boolean
+                running:
+                  type: boolean
+                port:
+                  type: integer
+                noauth_enabled:
+                  type: boolean
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sshdKeysList:
+  get:
+    operationId: getSshdKeys
+    summary: List authorized SSH keys
+    tags: [SSHD]
+    responses:
+      '200':
+        description: Authorized keys list.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      fingerprint:
+                        type: string
+                        description: Key fingerprint.
+                      label:
+                        type: string
+                        description: Key label.
+                      expires_at:
+                        type: integer
+                        format: int64
+                        nullable: true
+                        description: Expiry timestamp (null if no expiry).
+                      created_at:
+                        type: integer
+                        format: int64
+                        description: Creation timestamp.
+
+sshdKeysAdd:
+  post:
+    operationId: postSshdKeysAdd
+    summary: Add an authorized SSH key
+    tags: [SSHD]
+    x-permission:
+      tool: device.ssh
+      capability: sshd
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [key]
+                properties:
+                  key:
+                    type: string
+                    description: SSH public key in OpenSSH format.
+                  label:
+                    type: string
+                    description: Optional label for the key.
+                  expires_at:
+                    type: integer
+                    format: int64
+                    description: Optional expiry timestamp (epoch millis).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            key: "ssh-ed25519 AAAA... user@host"
+            label: "My laptop"
+    responses:
+      '200':
+        description: Key added.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status, fingerprint]
+              properties:
+                status:
+                  type: string
+                  const: ok
+                fingerprint:
+                  type: string
+                  description: Fingerprint of the added key.
+      '400':
+        description: Invalid key or missing required fields.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            examples:
+              key_required:
+                value:
+                  status: error
+                  error: key_required
+              invalid_key:
+                value:
+                  status: error
+                  error: invalid_public_key
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sshdKeysDelete:
+  post:
+    operationId: postSshdKeysDelete
+    summary: Delete an authorized SSH key
+    tags: [SSHD]
+    x-permission:
+      tool: device.ssh
+      capability: sshd
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  fingerprint:
+                    type: string
+                    description: Key fingerprint to delete.
+                  key:
+                    type: string
+                    description: Public key to delete (used to look up fingerprint).
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            fingerprint: "SHA256:..."
+    responses:
+      '200':
+        description: Key deleted.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  const: ok
+      '400':
+        description: No fingerprint or key provided.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/ErrorResponse'
+            example:
+              status: error
+              error: fingerprint_or_key_required
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sshdKeysPolicyGet:
+  get:
+    operationId: getSshdKeysPolicy
+    summary: Get SSH key policy
+    tags: [SSHD]
+    responses:
+      '200':
+        description: Current key policy settings.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [require_biometric]
+              properties:
+                require_biometric:
+                  type: boolean
+                  description: Whether biometric verification is required for key operations.
+
+sshdKeysPolicySet:
+  post:
+    operationId: postSshdKeysPolicy
+    summary: Update SSH key policy
+    tags: [SSHD]
+    x-permission:
+      tool: device.ssh
+      capability: sshd
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  require_biometric:
+                    type: boolean
+                    description: Whether biometric verification is required.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Policy updated.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [require_biometric]
+              properties:
+                require_biometric:
+                  type: boolean
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sshdPinStatus:
+  get:
+    operationId: getSshdPinStatus
+    summary: Get PIN authentication status
+    tags: [SSHD]
+    responses:
+      '200':
+        description: Current PIN auth state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active:
+                  type: boolean
+                  description: Whether PIN auth is active.
+                pin:
+                  type: string
+                  description: Current PIN (empty if not active).
+                expires_at:
+                  type: integer
+                  format: int64
+                  nullable: true
+                  description: PIN expiry timestamp.
+
+sshdPinStart:
+  post:
+    operationId: postSshdPinStart
+    summary: Start PIN authentication mode
+    tags: [SSHD]
+    x-permission:
+      tool: device.ssh
+      capability: sshd
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  seconds:
+                    type: integer
+                    default: 10
+                    description: PIN validity duration in seconds.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            seconds: 30
+    responses:
+      '200':
+        description: PIN auth started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active, pin]
+              properties:
+                active:
+                  type: boolean
+                pin:
+                  type: string
+                  description: Generated PIN.
+                expires_at:
+                  type: integer
+                  format: int64
+                  nullable: true
+            example:
+              active: true
+              pin: "1234"
+              expires_at: 1700000030000
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sshdPinStop:
+  post:
+    operationId: postSshdPinStop
+    summary: Stop PIN authentication mode
+    tags: [SSHD]
+    x-permission:
+      tool: device.ssh
+      capability: sshd
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: PIN auth stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active:
+                  type: boolean
+                  const: false
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sshdNoauthStatus:
+  get:
+    operationId: getSshdNoauthStatus
+    summary: Get no-auth mode status
+    tags: [SSHD]
+    responses:
+      '200':
+        description: No-auth mode state.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active:
+                  type: boolean
+                  description: Whether no-auth mode is active.
+                expires_at:
+                  type: integer
+                  format: int64
+                  nullable: true
+                  description: No-auth mode expiry timestamp.
+
+sshdNoauthStart:
+  post:
+    operationId: postSshdNoauthStart
+    summary: Start no-auth (notification) mode
+    tags: [SSHD]
+    x-permission:
+      tool: device.ssh
+      capability: sshd
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  seconds:
+                    type: integer
+                    default: 30
+                    description: No-auth validity duration in seconds.
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+          example:
+            seconds: 60
+    responses:
+      '200':
+        description: No-auth mode started.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active:
+                  type: boolean
+                expires_at:
+                  type: integer
+                  format: int64
+                  nullable: true
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'
+
+sshdNoauthStop:
+  post:
+    operationId: postSshdNoauthStop
+    summary: Stop no-auth mode
+    tags: [SSHD]
+    x-permission:
+      tool: device.ssh
+      capability: sshd
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: No-auth mode stopped.
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active:
+                  type: boolean
+                  const: false
+      '403':
+        description: Permission required.
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas.yaml#/PermissionRequiredResponse'

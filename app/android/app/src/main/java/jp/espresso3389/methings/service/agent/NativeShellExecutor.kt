@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Native shell executor using ProcessBuilder with /system/bin/sh.
  * Provides one-shot command execution and pipe-based persistent sessions
- * as a fallback when Termux is unavailable.
+ * as a fallback when the embedded worker is unavailable.
  */
 class NativeShellExecutor(private val defaultCwd: File) {
 

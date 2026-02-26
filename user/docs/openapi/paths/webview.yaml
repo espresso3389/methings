@@ -119,8 +119,7 @@ webviewScreenshot:
                 type: string
                 default: "browser/screenshot_<timestamp>.jpg"
                 description: >
-                  Output path. Supports app-local relative path
-                  (preferred), `termux://<path>`, and absolute Termux HOME path.
+                  Output path (plain relative path under user root).
               quality:
                 type: integer
                 default: 80

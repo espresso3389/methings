@@ -17,8 +17,8 @@ tags:
     description: Screen keep-on control.
   - name: Location
     description: Device GPS / location provider access.
-  - name: Termux
-    description: Termux worker management.
+  - name: Worker
+    description: Embedded worker management.
   - name: Shell
     description: On-device shell command execution.
   - name: SSHD
@@ -101,19 +101,15 @@ paths:
   /location/get:
     $ref: './paths/location.yaml#/locationGet'
 
-  # ── Termux ──
-  /termux/status:
-    $ref: './paths/termux.yaml#/termuxStatus'
-  /termux/restart:
-    $ref: './paths/termux.yaml#/termuxRestart'
-  /termux/setup/show:
-    $ref: './paths/termux.yaml#/termuxSetupShow'
-  /termux/eval:
-    $ref: './paths/termux.yaml#/termuxEval'
-  /termux/arduino_proxy/status:
-    $ref: './paths/termux.yaml#/termuxArduinoProxyStatus'
-  /termux/arduino_proxy/enable:
-    $ref: './paths/termux.yaml#/termuxArduinoProxyEnable'
+  # ── Worker ──
+  /worker/status:
+    $ref: './paths/worker.yaml#/workerStatus'
+  /worker/restart:
+    $ref: './paths/worker.yaml#/workerRestart'
+  /worker/arduino_proxy/status:
+    $ref: './paths/worker.yaml#/workerArduinoProxyStatus'
+  /worker/arduino_proxy/enable:
+    $ref: './paths/worker.yaml#/workerArduinoProxyEnable'
 
   # ── Shell ──
   /shell/exec:
@@ -540,18 +536,6 @@ paths:
     $ref: './paths/files.yaml#/userList'
   /user/list/{path}:
     $ref: './paths/files.yaml#/userListByPath'
-  /termux/write:
-    $ref: './paths/files.yaml#/termuxWrite'
-  /termux/write/{path}:
-    $ref: './paths/files.yaml#/termuxWriteByPath'
-  /termux/file/{path}:
-    $ref: './paths/files.yaml#/termuxFileByPath'
-  /termux/file_info/{path}:
-    $ref: './paths/files.yaml#/termuxFileInfoByPath'
-  /termux/list:
-    $ref: './paths/files.yaml#/termuxList'
-  /termux/list/{path}:
-    $ref: './paths/files.yaml#/termuxListByPath'
   /sys/file/{path}:
     $ref: './paths/files.yaml#/sysFileByPath'
   /sys/list:

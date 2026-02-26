@@ -52,7 +52,7 @@ Response:
 
 ### list_dir
 
-Lists files in an app user directory or a Termux HOME directory.
+Lists files in an app user directory or a worker home directory.
 
 ## System Reference Docs ($sys/ prefix)
 
@@ -67,8 +67,7 @@ accesses them via the `$sys/` prefix in filesystem tools, which routes through
 
 Include `rel_path: <path>` in chat messages to trigger inline preview cards
 in the app UI. For Marp presentations, append `#page=N` to show a specific slide.
-Use plain relative paths for app-local files, and `termux://<path>` (or absolute
-Termux HOME path) for Termux files.
+Use plain relative paths under the user root.
 
 ### Settings Navigation
 

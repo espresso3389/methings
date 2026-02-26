@@ -3,14 +3,18 @@ package jp.espresso3389.methings.service
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import java.io.File
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.util.concurrent.atomic.AtomicReference
 import jp.espresso3389.methings.device.DeviceNetworkManager
+import jp.espresso3389.methings.perm.InstallIdentity
 
-class SshdManager(
-    private val context: Context,
-    private val termuxManager: TermuxManager
-) {
+class SshdManager(private val context: Context) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+    private val processRef = AtomicReference<Process?>(null)
+    private val installIdentity = InstallIdentity(context)
 
     fun startIfEnabled() {
         if (isEnabled()) {
@@ -18,28 +22,184 @@ class SshdManager(
         }
     }
 
+    /** Watchdog: restart SSHD if it was enabled but killed externally (e.g. Phantom Process Killer). */
+    fun ensureRunning() {
+        if (!isEnabled()) return
+        if (processRef.get()?.isAlive == true) return
+        if (isPortOpen(getPort())) return
+        Log.w(TAG, "SSHD not running but enabled; restarting")
+        start()
+    }
+
     fun start(): Boolean {
-        if (!termuxManager.isTermuxInstalled()) {
-            Log.w(TAG, "Termux not installed; cannot start sshd")
+        if (processRef.get()?.isAlive == true) {
+            return true
+        }
+        val binDir = File(context.filesDir, "bin")
+        val dropbear = resolveBinary("libdropbear.so", File(binDir, "dropbear"))
+        val dropbearkey = resolveBinary("libdropbearkey.so", File(binDir, "dropbearkey"))
+        val shellBin = ensureShellBinary(File(binDir, "methingssh"))
+        if (dropbear == null) {
+            Log.w(TAG, "Dropbear binary missing")
             return false
         }
-        if (!termuxManager.hasRunCommandPermission()) {
-            Log.w(TAG, "RUN_COMMAND permission not granted; cannot start sshd")
+        if (dropbearkey == null) {
+            Log.w(TAG, "Dropbearkey binary missing")
             return false
         }
-        configureSshd()
-        termuxManager.startSshd()
-        Log.i(TAG, "SSHD start requested on port ${getPort()}")
-        return true
+        if (shellBin == null) {
+            Log.w(TAG, "methings shell binary missing")
+        }
+        val userHome = File(context.filesDir, "user")
+        val sshDir = File(userHome, ".ssh")
+        val protectedDir = File(context.filesDir, "protected/ssh")
+        sshDir.mkdirs()
+        protectedDir.mkdirs()
+        val logFile = File(protectedDir, "dropbear.log")
+        val pidFile = File(protectedDir, "dropbear.pid")
+        val noauthDir = File(protectedDir, "noauth_prompts")
+        noauthDir.mkdirs()
+        val pinFile = File(protectedDir, "pin_auth")
+        val authMode = getAuthMode()
+        val authDir = when (authMode) {
+            AUTH_MODE_NOTIFICATION -> File(protectedDir, "noauth_keys")
+            AUTH_MODE_PIN -> File(protectedDir, "pin_keys")
+            else -> sshDir
+        }
+        authDir.mkdirs()
+
+        if (pidFile.exists()) {
+            try {
+                val pid = pidFile.readText().trim()
+                if (pid.isNotBlank()) {
+                    ProcessBuilder("kill", "-9", pid).start().waitFor()
+                }
+            } catch (_: Exception) {
+            } finally {
+                pidFile.delete()
+            }
+        }
+
+        val hostKey = File(protectedDir, "dropbear_host_key")
+        if (!hostKey.exists()) {
+            val ok = generateHostKey(dropbearkey, hostKey)
+            if (!ok) {
+                Log.w(TAG, "Failed to generate host key")
+                return false
+            }
+        }
+        val clientKey = File(sshDir, "id_dropbear")
+        val ok = ensureClientKey(dropbearkey, hostKey, clientKey)
+        if (!ok) {
+            Log.w(TAG, "Failed to prepare client key")
+        }
+        val authKeys = File(sshDir, "authorized_keys")
+        if (!authKeys.exists()) {
+            authKeys.writeText("")
+        }
+
+        val port = getPort()
+        val args = listOf(
+            dropbear.absolutePath,
+            "-F",
+            "-p",
+            port.toString(),
+            "-r",
+            hostKey.absolutePath,
+            "-D",
+            authDir.absolutePath,
+            "-P",
+            pidFile.absolutePath
+        )
+        return try {
+            PythonRuntimeInstaller(context).ensureInstalled()
+
+            val nativeLibDir = context.applicationInfo.nativeLibraryDir
+            val pyenvDir = File(context.filesDir, "pyenv")
+            val serverDir = File(context.filesDir, "server")
+            val wheelhouse = WheelhousePaths.forCurrentAbi(context)?.also { it.ensureDirs() }
+
+            ensureSshClientWrappers(binDir, userHome)
+            val mkshEnv = ensureMkshEnvFile(userHome)
+
+            val pb = ProcessBuilder(args)
+            pb.environment()["HOME"] = userHome.absolutePath
+            pb.environment()["METHINGS_HOME"] = userHome.absolutePath
+            pb.environment()["METHINGS_IDENTITY"] = installIdentity.get()
+            if (shellBin != null) {
+                pb.environment()["METHINGS_SHELL"] = shellBin.absolutePath
+            }
+            pb.environment()["USER"] = "methings"
+            pb.environment()["DROPBEAR_PIN_FILE"] = pinFile.absolutePath
+            pb.environment()["METHINGS_PYENV"] = pyenvDir.absolutePath
+            pb.environment()["METHINGS_NATIVELIB"] = nativeLibDir
+            pb.environment()["METHINGS_BINDIR"] = binDir.absolutePath
+            val nodeRoot = File(context.filesDir, "node")
+            pb.environment()["METHINGS_NODE_ROOT"] = nodeRoot.absolutePath
+            val nodeLibDir = File(nodeRoot, "lib").absolutePath
+            pb.environment()["LD_LIBRARY_PATH"] = "$nodeLibDir:$nativeLibDir"
+            val scriptShell = File(nativeLibDir, "libmethingssh.so").absolutePath
+            pb.environment()["npm_config_script_shell"] = scriptShell
+            pb.environment()["NPM_CONFIG_SCRIPT_SHELL"] = scriptShell
+            pb.environment()["PYTHONHOME"] = pyenvDir.absolutePath
+            pb.environment()["PYTHONPATH"] = listOf(
+                serverDir.absolutePath,
+                "${pyenvDir.absolutePath}/site-packages",
+                "${pyenvDir.absolutePath}/modules",
+                "${pyenvDir.absolutePath}/stdlib.zip"
+            ).joinToString(":")
+            if (wheelhouse != null) {
+                pb.environment()["METHINGS_WHEELHOUSE"] = wheelhouse.findLinksEnvValue()
+                pb.environment()["PIP_FIND_LINKS"] = wheelhouse.findLinksEnvValue()
+            }
+            val managedCa = File(context.filesDir, "protected/ca/cacert.pem")
+            val fallbackCertifi = File(pyenvDir, "site-packages/certifi/cacert.pem")
+            val caFile = when {
+                managedCa.exists() && managedCa.length() > 0 -> managedCa
+                fallbackCertifi.exists() -> fallbackCertifi
+                else -> null
+            }
+            if (caFile != null) {
+                pb.environment()["SSL_CERT_FILE"] = caFile.absolutePath
+                pb.environment()["PIP_CERT"] = caFile.absolutePath
+                pb.environment()["REQUESTS_CA_BUNDLE"] = caFile.absolutePath
+            }
+            val existingPath = pb.environment()["PATH"] ?: "/usr/bin:/bin"
+            val npmBin = File(userHome, "npm-prefix/bin").absolutePath
+            pb.environment()["PATH"] = "${binDir.absolutePath}:$nativeLibDir:$npmBin:$existingPath"
+            pb.environment()["ENV"] = mkshEnv.absolutePath
+            if (authMode == AUTH_MODE_NOTIFICATION) {
+                pb.environment()["DROPBEAR_NOAUTH_PROMPT_DIR"] = noauthDir.absolutePath
+                pb.environment()["DROPBEAR_NOAUTH_PROMPT_TIMEOUT"] = "10"
+            }
+            pb.redirectErrorStream(true)
+            pb.redirectOutput(logFile)
+            val proc = pb.start()
+            processRef.set(proc)
+            Log.i(TAG, "SSHD started on port $port")
+            true
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to start SSHD", ex)
+            false
+        }
     }
 
     fun stop() {
-        termuxManager.stopSshd()
-        Log.i(TAG, "SSHD stop requested")
+        val proc = processRef.getAndSet(null) ?: return
+        try {
+            proc.destroy()
+        } catch (_: Exception) {
+        }
     }
 
     fun isRunning(): Boolean {
-        return termuxManager.isSshdRunning()
+        return processRef.get()?.isAlive == true || isPortOpen(getPort())
+    }
+
+    fun restartIfRunning() {
+        if (processRef.get()?.isAlive != true && !isPortOpen(getPort())) return
+        stop()
+        start()
     }
 
     fun status(): SshdStatus {
@@ -72,7 +232,6 @@ class SshdManager(
         if (enabled) {
             if (needsRestart) {
                 stop()
-                Thread.sleep(500)
                 start()
             } else if (!wasRunning) {
                 start()
@@ -83,9 +242,9 @@ class SshdManager(
         return status()
     }
 
-    fun isEnabled(): Boolean = prefs.getBoolean(KEY_ENABLED, false)
+    fun isEnabled(): Boolean = prefs.getBoolean(KEY_ENABLED, true)
 
-    fun getPort(): Int = prefs.getInt(KEY_PORT, DEFAULT_PORT)
+    fun getPort(): Int = prefs.getInt(KEY_PORT, 2222)
 
     fun getAuthMode(): String =
         prefs.getString(KEY_AUTH_MODE, AUTH_MODE_PUBLIC_KEY) ?: AUTH_MODE_PUBLIC_KEY
@@ -103,6 +262,16 @@ class SshdManager(
         if (normalized != AUTH_MODE_NOTIFICATION) {
             prefs.edit().putString(KEY_AUTH_MODE_LAST_NON_NOTIFICATION, normalized).apply()
         }
+        if (normalized != AUTH_MODE_PIN) {
+            val pinFile = File(context.filesDir, "protected/ssh/pin_auth")
+            if (pinFile.exists()) {
+                pinFile.delete()
+            }
+        }
+        if (isEnabled()) {
+            stop()
+            start()
+        }
     }
 
     fun enterPinMode() {
@@ -112,12 +281,10 @@ class SshdManager(
         val snapshot = if (current == AUTH_MODE_PIN) lastNonPin else current
         prefs.edit().putString(KEY_AUTH_MODE_PRE_PIN, snapshot).apply()
         setAuthMode(AUTH_MODE_PIN)
-        restartIfRunning()
     }
 
     fun exitPinMode() {
         prefs.edit().remove(KEY_AUTH_MODE_PRE_PIN).apply()
-        // PIN mode is temporary; always return to default public_key mode on exit.
         setAuthMode(AUTH_MODE_PUBLIC_KEY)
         restartIfRunning()
     }
@@ -129,22 +296,12 @@ class SshdManager(
         val snapshot = if (current == AUTH_MODE_NOTIFICATION) lastNonNotif else current
         prefs.edit().putString(KEY_AUTH_MODE_PRE_NOTIFICATION, snapshot).apply()
         setAuthMode(AUTH_MODE_NOTIFICATION)
-        restartIfRunning()
     }
 
     fun exitNotificationMode() {
         prefs.edit().remove(KEY_AUTH_MODE_PRE_NOTIFICATION).apply()
-        // Notification mode is temporary; always return to default public_key mode on exit.
         setAuthMode(AUTH_MODE_PUBLIC_KEY)
         restartIfRunning()
-    }
-
-    fun restartIfRunning() {
-        if (isRunning()) {
-            stop()
-            Thread.sleep(500)
-            start()
-        }
     }
 
     fun getHostIp(): String {
@@ -157,96 +314,251 @@ class SshdManager(
     }
 
     /**
-     * Deploy helper scripts and patch sshd_config in Termux.
-     *
-     * Uses AuthorizedKeysFile (not AuthorizedKeysCommand) because Termux's
-     * OpenSSH 10.x sshd-auth rejects AuthorizedKeysCommand scripts that are
-     * not owned by root.
-     *
-     * Auth modes work via command= prefixes in the authorized_keys file:
-     * - public_key: plain keys (no command=)
-     * - pin: keys with command="methings-pin-check"
-     * - notification: keys with command="methings-notif-check"
-     */
-    private fun configureSshd() {
-        val port = getPort()
-
-        val cmd = """
-            cat > ${'$'}PREFIX/bin/methings-pin-check << 'SCRIPT_EOF'
-            #!/data/data/com.termux/files/usr/bin/bash
-            export PATH="/data/data/com.termux/files/usr/bin:${'$'}PATH"
-            if [ -n "${'$'}SSH_ORIGINAL_COMMAND" ]; then
-              echo "PIN auth only supports interactive sessions."
-              exit 1
-            fi
-            echo -n "PIN: "
-            read -r pin
-            result=${'$'}(curl -sf "http://127.0.0.1:33389/sshd/pin/verify?pin=${'$'}pin" 2>/dev/null)
-            if echo "${'$'}result" | grep -q '"valid":true'; then
-              exec bash -l
-            fi
-            echo "Invalid PIN"
-            exit 1
-            SCRIPT_EOF
-            chmod 755 ${'$'}PREFIX/bin/methings-pin-check && \
-            cat > ${'$'}PREFIX/bin/methings-notif-check << 'SCRIPT_EOF'
-            #!/data/data/com.termux/files/usr/bin/bash
-            export PATH="/data/data/com.termux/files/usr/bin:${'$'}PATH"
-            if [ -n "${'$'}SSH_ORIGINAL_COMMAND" ]; then
-              echo "Notification auth only supports interactive sessions."
-              exit 1
-            fi
-            echo "Waiting for approval on device..."
-            result=${'$'}(curl -sf --max-time 35 "http://127.0.0.1:33389/sshd/noauth/wait" 2>/dev/null)
-            if echo "${'$'}result" | grep -q '"approved":true'; then
-              exec bash -l
-            fi
-            echo "Connection denied."
-            exit 1
-            SCRIPT_EOF
-            chmod 755 ${'$'}PREFIX/bin/methings-notif-check && \
-            mkdir -p ${'$'}HOME/.ssh && \
-            touch ${'$'}HOME/.ssh/methings_keys && \
-            chmod 600 ${'$'}HOME/.ssh/methings_keys && \
-            SSHD_CONFIG="${'$'}PREFIX/etc/ssh/sshd_config" && \
-            sed -i '/^# methings-auth-start/,/^# methings-auth-end/d' "${'$'}SSHD_CONFIG" 2>/dev/null; \
-            sed -i '/^AuthorizedKeysCommand /d; /^AuthorizedKeysCommandUser /d' "${'$'}SSHD_CONFIG" 2>/dev/null; \
-            sed -i 's/^#\?PasswordAuthentication .*/PasswordAuthentication no/' "${'$'}SSHD_CONFIG" 2>/dev/null; \
-            sed -i 's/^AuthorizedKeysFile/#AuthorizedKeysFile/' "${'$'}SSHD_CONFIG" 2>/dev/null; \
-            grep -q '^Port ' "${'$'}SSHD_CONFIG" && sed -i 's/^Port .*/Port $port/' "${'$'}SSHD_CONFIG" || echo "Port $port" >> "${'$'}SSHD_CONFIG"; \
-            echo '' >> "${'$'}SSHD_CONFIG" && \
-            echo '# methings-auth-start' >> "${'$'}SSHD_CONFIG" && \
-            echo 'AuthorizedKeysFile .ssh/methings_keys' >> "${'$'}SSHD_CONFIG" && \
-            echo '# methings-auth-end' >> "${'$'}SSHD_CONFIG"
-        """.trimIndent()
-
-        termuxManager.runCommand(cmd)
-    }
-
-    /**
-     * Write the authorized_keys file in Termux based on current auth mode.
+     * Write authorized_keys to the appropriate Dropbear auth directory.
+     * For public_key mode: writes to ~/.ssh/authorized_keys
+     * For pin/notification modes: writes to the respective auth dir
      * Called when keys change or auth mode changes.
-     *
-     * @param keys list of public key strings from the DB
      */
     fun writeAuthorizedKeys(keys: List<String>) {
         val authMode = getAuthMode()
-        val lines = keys.filter { it.isNotBlank() }.map { key ->
-            when (authMode) {
-                AUTH_MODE_PIN -> "command=\"/data/data/com.termux/files/usr/bin/methings-pin-check\",restrict,pty $key"
-                AUTH_MODE_NOTIFICATION -> "command=\"/data/data/com.termux/files/usr/bin/methings-notif-check\",restrict,pty $key"
-                else -> key
+        val userHome = File(context.filesDir, "user")
+        val sshDir = File(userHome, ".ssh")
+        val protectedDir = File(context.filesDir, "protected/ssh")
+
+        val authDir = when (authMode) {
+            AUTH_MODE_NOTIFICATION -> File(protectedDir, "noauth_keys")
+            AUTH_MODE_PIN -> File(protectedDir, "pin_keys")
+            else -> sshDir
+        }
+        authDir.mkdirs()
+
+        val authKeysFile = File(authDir, "authorized_keys")
+        val content = keys.filter { it.isNotBlank() }.joinToString("\n") + "\n"
+        authKeysFile.writeText(content)
+        authKeysFile.setReadable(true, true)
+        authKeysFile.setWritable(true, true)
+        Log.i(TAG, "Wrote ${keys.size} keys to ${authKeysFile.absolutePath} (mode=$authMode)")
+    }
+
+    private fun getClientKeyInfo(): Pair<String, String> {
+        val clientKey = File(context.filesDir, "user/.ssh/id_dropbear")
+        if (!clientKey.exists()) return Pair("", "")
+        val binDir = File(context.filesDir, "bin")
+        val dropbearkey = resolveBinary("libdropbearkey.so", File(binDir, "dropbearkey"))
+            ?: return Pair("", "")
+        return try {
+            val proc = ProcessBuilder(
+                dropbearkey.absolutePath, "-y", "-f", clientKey.absolutePath
+            ).redirectErrorStream(true).start()
+            val output = proc.inputStream.bufferedReader().readText()
+            val rc = proc.waitFor()
+            if (rc != 0) return Pair("", "")
+            var fingerprint = ""
+            var pubKey = ""
+            for (line in output.lines()) {
+                if (line.startsWith("Fingerprint:")) {
+                    fingerprint = line.removePrefix("Fingerprint:").trim()
+                } else if (line.startsWith("ssh-")) {
+                    pubKey = line.trim()
+                }
+            }
+            Pair(fingerprint, pubKey)
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to read client key info", ex)
+            Pair("", "")
+        }
+    }
+
+    private fun generateHostKey(dropbearkey: File, hostKey: File): Boolean {
+        return try {
+            val proc = ProcessBuilder(
+                dropbearkey.absolutePath,
+                "-t",
+                "ed25519",
+                "-f",
+                hostKey.absolutePath
+            ).start()
+            val rc = proc.waitFor()
+            rc == 0 && hostKey.exists()
+        } catch (ex: Exception) {
+            Log.e(TAG, "dropbearkey failed", ex)
+            false
+        }
+    }
+
+    private fun ensureClientKey(dropbearkey: File, hostKey: File, clientKey: File): Boolean {
+        return try {
+            clientKey.parentFile?.mkdirs()
+            if (clientKey.exists()) {
+                if (hostKey.exists() && hostKey.readBytes().contentEquals(clientKey.readBytes())) {
+                    Log.w(TAG, "Client key matches host key; rotating client key")
+                } else {
+                    clientKey.setReadable(true, true)
+                    clientKey.setWritable(true, true)
+                    clientKey.setExecutable(false, false)
+                    return clientKey.length() > 0
+                }
+            }
+            if (clientKey.exists() && !clientKey.delete()) {
+                Log.w(TAG, "Failed to remove existing client key before regeneration")
+                return false
+            }
+            val proc = ProcessBuilder(
+                dropbearkey.absolutePath,
+                "-t",
+                "ed25519",
+                "-f",
+                clientKey.absolutePath
+            ).start()
+            val rc = proc.waitFor()
+            if (rc != 0 || !clientKey.exists()) {
+                return false
+            }
+            clientKey.setReadable(true, true)
+            clientKey.setWritable(true, true)
+            clientKey.setExecutable(false, false)
+            true
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to prepare client key", ex)
+            false
+        }
+    }
+
+    private fun resolveBinary(nativeName: String, fallback: File): File? {
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val nativeFile = File(nativeDir, nativeName)
+        if (nativeFile.exists()) {
+            return nativeFile
+        }
+        if (fallback.exists()) {
+            return fallback
+        }
+        return null
+    }
+
+    private fun isPortOpen(port: Int): Boolean {
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", port), 200)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun ensureShellBinary(target: File): File? {
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val nativeFile = File(nativeDir, "libmethingssh.so")
+        if (!nativeFile.exists()) {
+            if (target.exists()) return target
+            val oldTarget = File(target.parentFile, "methingssh")
+            return if (oldTarget.exists()) oldTarget else null
+        }
+        return try {
+            val needsRefresh = !target.exists() ||
+                target.length() != nativeFile.length() ||
+                target.lastModified() < nativeFile.lastModified()
+            if (needsRefresh) {
+                target.parentFile?.mkdirs()
+                nativeFile.inputStream().use { input ->
+                    target.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                target.setLastModified(nativeFile.lastModified())
+            }
+            target.setExecutable(true, true)
+            target
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to prepare methingssh binary", ex)
+            null
+        }
+    }
+
+    private fun ensureSshClientWrappers(binDir: File, userHome: File) {
+        val wrapper = File(binDir, "methings-dbclient")
+        if (!wrapper.exists() || wrapper.length() == 0L) {
+            wrapper.parentFile?.mkdirs()
+            wrapper.writeText(
+                "#!/system/bin/sh\n" +
+                    "exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" -y \"${'$'}@\"\n"
+            )
+        }
+        wrapper.setExecutable(true, true)
+        wrapper.setReadable(true, true)
+        wrapper.setWritable(true, true)
+
+        listOf("node", "npm", "npx", "corepack", "bun").forEach { name ->
+            try {
+                val f = File(binDir, name)
+                if (f.exists()) f.delete()
+            } catch (_: Exception) {
             }
         }
-        val content = lines.joinToString("\\n")
-        // Write via Termux since we can't access its filesystem directly
-        val cmd = if (content.isBlank()) {
-            "> \$HOME/.ssh/methings_keys"
-        } else {
-            "printf '%b\\n' '$content' > \$HOME/.ssh/methings_keys"
+
+        val envFile = File(userHome, ".mkshrc")
+        val content =
+            "# me.things mksh env (auto-generated)\n" +
+                "PS1='me.things> '\n" +
+                "ssh() {\n" +
+                "  want_t=1\n" +
+                "  want_y=1\n" +
+                "  for a in \"${'$'}@\"; do\n" +
+                "    case \"${'$'}a\" in\n" +
+                "      -t|-T) want_t=0;;\n" +
+                "      -y) want_y=0;;\n" +
+                "    esac\n" +
+                "  done\n" +
+                "  if [ \"${'$'}want_y\" -eq 1 ]; then set -- -y \"${'$'}@\"; fi\n" +
+                "  if [ \"${'$'}want_t\" -eq 1 ]; then set -- -t \"${'$'}@\"; fi\n" +
+                "  exec \"${'$'}METHINGS_NATIVELIB/libdbclient.so\" \"${'$'}@\"\n" +
+                "}\n" +
+                "dbclient() { ssh \"${'$'}@\"; }\n" +
+                "scp() {\n" +
+                "  exec \"${'$'}METHINGS_NATIVELIB/libscp.so\" -S \"${'$'}METHINGS_BINDIR/methings-dbclient\" \"${'$'}@\"\n" +
+                "}\n" +
+                "node() {\n" +
+                "  _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
+                "  LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}METHINGS_NATIVELIB:${'$'}{LD_LIBRARY_PATH:-}\" \\\n" +
+                "    \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}@\"\n" +
+                "}\n" +
+                "npm() {\n" +
+                "  _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
+                "  LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}METHINGS_NATIVELIB:${'$'}{LD_LIBRARY_PATH:-}\" \\\n" +
+                "    NPM_CONFIG_PREFIX=\"${'$'}HOME/npm-prefix\" NPM_CONFIG_CACHE=\"${'$'}HOME/npm-cache\" \\\n" +
+                "    \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}_nr/usr/lib/node_modules/npm/bin/npm-cli.js\" \"${'$'}@\"\n" +
+                "}\n" +
+                "npx() {\n" +
+                "  _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
+                "  LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}METHINGS_NATIVELIB:${'$'}{LD_LIBRARY_PATH:-}\" \\\n" +
+                "    NPM_CONFIG_PREFIX=\"${'$'}HOME/npm-prefix\" NPM_CONFIG_CACHE=\"${'$'}HOME/npm-cache\" \\\n" +
+                "    \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}_nr/usr/lib/node_modules/npm/bin/npx-cli.js\" \"${'$'}@\"\n" +
+                "}\n" +
+                "corepack() {\n" +
+                "  _nr=\"${'$'}{METHINGS_NODE_ROOT:-${'$'}HOME/../node}\"\n" +
+                "  LD_LIBRARY_PATH=\"${'$'}_nr/lib:${'$'}METHINGS_NATIVELIB:${'$'}{LD_LIBRARY_PATH:-}\" \\\n" +
+                "    \"${'$'}METHINGS_NATIVELIB/libnode.so\" \"${'$'}_nr/usr/lib/node_modules/corepack/dist/corepack.js\" \"${'$'}@\"\n" +
+                "}\n" +
+                "bun() {\n" +
+                "  node \"${'$'}@\"\n" +
+                "}\n"
+        val needsWrite = !envFile.exists() || envFile.readText() != content
+        if (needsWrite) {
+            envFile.writeText(content)
         }
-        termuxManager.runCommand(cmd)
-        Log.i(TAG, "Wrote ${lines.size} keys to methings_keys (mode=$authMode)")
+        envFile.setReadable(true, true)
+        envFile.setWritable(true, true)
+        envFile.setExecutable(false, false)
+    }
+
+    private fun ensureMkshEnvFile(userHome: File): File {
+        val envFile = File(userHome, ".mkshrc")
+        if (!envFile.exists()) {
+            envFile.parentFile?.mkdirs()
+            envFile.writeText("# me.things mksh env\n")
+        }
+        return envFile
     }
 
     data class SshdStatus(
@@ -270,6 +582,5 @@ class SshdManager(
         const val AUTH_MODE_PUBLIC_KEY = "public_key"
         const val AUTH_MODE_NOTIFICATION = "notification"
         const val AUTH_MODE_PIN = "pin"
-        const val DEFAULT_PORT = 8022
     }
 }

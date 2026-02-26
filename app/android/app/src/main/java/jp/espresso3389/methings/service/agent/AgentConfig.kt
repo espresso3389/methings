@@ -86,20 +86,20 @@ data class AgentConfig(
             "Do NOT pre-emptively tell the user \"please allow\" before attempting the tool call. " +
             "Never ask the user to approve the same action twice. " +
             "Prefer device_api for device controls exposed by the Kotlin control plane. " +
-            "When you create or reference files, use plain relative paths for app user files and `termux://<path>` for Termux files. " +
+            "When you create or reference files, use plain relative paths under the user root. " +
             "When you create an HTML app/page under app user files and want the user to open it, include `html_path: <relative_path>.html` in your response. " +
             "Do not store agent-generated pages under `www/` unless the user explicitly asked to modify the UI itself; use another directory such as `apps/`. " +
             "Use filesystem tools for file operations under the user root; do not use shell commands like `ls`/`cat` for files. " +
             "For code execution, prefer run_js (built-in QuickJS engine, always available) for data processing, calculations, and general programming. " +
-            "run_python/run_pip require Termux; run_curl works natively without Termux. " +
-            "SHELL TOOLS: local_run_shell / local_shell_session use the native Android shell (/system/bin/sh) — limited commands, cannot access Termux files. " +
-            "termux_run_shell / termux_shell_session use the Termux Linux environment (full bash + packages). " +
-            "If a Termux tool returns termux_required, call device_api(action=\"termux.restart\") and retry that tool once. " +
-            "Only call device_api(action=\"termux.status\") when repeated Termux failures need diagnosis. " +
-            "Do not repeatedly poll termux.status during normal execution. " +
+            "run_python/run_pip require the embedded worker; run_curl works natively. " +
+            "SHELL TOOLS: local_run_shell / local_shell_session use the native Android shell (/system/bin/sh) — limited commands, cannot access worker files. " +
+            "run_shell / shell_session use the embedded Linux environment (full bash + packages). " +
+            "If a shell tool returns worker_required, call device_api(action=\"worker.restart\") and retry that tool once. " +
+            "Only call device_api(action=\"worker.status\") when repeated worker failures need diagnosis. " +
+            "Do not repeatedly poll worker.status during normal execution. " +
             "SSH POLICY: direct outbound SSH client actions via device_api are deprecated and may be unavailable. " +
-            "For outbound SSH/SCP, use termux_run_shell with ssh/scp commands instead. " +
-            "If ssh/scp is unavailable in the shell environment, report that clearly and ask for the smallest unblock step (for example install/enable Termux packages). " +
+            "For outbound SSH/SCP, use run_shell with ssh/scp commands instead. " +
+            "If ssh/scp is unavailable in the shell environment, report that clearly and ask for the smallest unblock step. " +
             "Do not loop by retrying deprecated SSH actions. " +
             "For cloud calls: prefer the configured Brain provider (Settings -> Brain). If Brain is not configured or has no API key, ask the user to configure it, then retry. " +
             "User-root docs (`AGENTS.md`, `TOOLS.md`) are auto-injected into your context and reloaded if they change on disk; do not repeatedly read them via filesystem tools unless the user explicitly asks. " +
@@ -113,7 +113,7 @@ data class AgentConfig(
             "Always respond in the same language the user writes in. " +
             "You can create scheduled code execution using scheduler.* device_api actions. " +
             "Schedule types: daemon (runs on service start), periodic (minutely/hourly/daily/weekly/monthly), one_time. " +
-            "Runtimes: run_js (always available) and run_python (requires Termux). " +
+            "Runtimes: run_js (always available) and run_python (requires embedded worker). " +
             "CROSS-DEVICE MENTIONS: When the user's message contains @DeviceName or @device_id, " +
             "they want to route a request to that device's agent. " +
             "Use device_api(action=\"me.me.message.send\", payload={\"peer_device_id\": \"<device_id>\", \"type\": \"request\", \"payload\": {\"text\": \"<the user's message>\"}}) " +

@@ -113,7 +113,7 @@ Use `run_shell` for outbound ssh/scp commands only when available in the environ
 
 Notes:
 - Interactive `ssh user@host` may require PTY support in the active shell backend.
-- If `ssh/scp` are unavailable, install/setup Termux tooling first and retry.
+- `ssh/scp` are provided by the embedded Dropbear SSH runtime; no external setup required.
 ```
 
 ## Apply Prompt via API

@@ -1301,7 +1301,7 @@
         font-size: 12px;
       }
 
-      /* Termux setup stepper */
+      /* Setup stepper */
       .setup-stepper { margin-top: 12px; }
       .setup-step {
         display: flex;
@@ -2194,21 +2194,18 @@
           </div>
         </section>
 
-        <!-- Termux Setup (compact card; wizard lives in modal) -->
-        <section class="card" id="settings-section-termux_setup">
+        <!-- Worker Status -->
+        <section class="card" id="settings-section-worker">
           <div class="card-header">
             <div class="card-icon amber">&#9881;</div>
-            <div class="card-title">Termux Setup</div>
-            <div id="termuxSetupStatus" class="status-badge starting" style="margin-left:auto;">checking</div>
+            <div class="card-title">Worker</div>
+            <div id="workerStatusBadge" class="status-badge starting" style="margin-left:auto;">checking</div>
           </div>
-          <!-- Shown when NOT ready -->
-          <div id="termuxSetupPrompt" style="display:none; margin-top:8px;">
-            <p class="muted" style="font-size:13px; margin:0 0 10px;">Termux provides Python, pip, and shell tools for the agent.</p>
-            <button class="btn primary" id="txOpenSetupWizard">Set up Termux</button>
-          </div>
-          <!-- Shown when ready -->
-          <div id="termuxSetupCompactReady" class="setup-complete-banner" style="display:none;">
-            &#10003; Termux is set up and ready.
+          <p class="muted" id="workerDetail" style="margin-top:8px;">Embedded Python runtime for shell tools and file access.</p>
+          <div class="btn-group" style="margin-top:8px;">
+            <button class="btn" id="workerStartBtn">Start</button>
+            <button class="btn" id="workerStopBtn">Stop</button>
+            <button class="btn" id="workerRestartBtn">Restart</button>
           </div>
         </section>
 
@@ -2267,7 +2264,7 @@
           </div>
         </section>
 
-        <!-- Agent Service section removed — Termux runs on-demand; Termux Setup shows status -->
+        <!-- Agent Service section removed — worker runs on-demand -->
 
         <!-- Packages section removed (agent can install via pip as needed) -->
 
@@ -2811,56 +2808,6 @@
           <button class="btn" id="sshKeysRefresh">Refresh</button>
         </div>
         <div id="sshKeysList" style="margin-top:8px; flex:1 1 auto; min-height:140px; overflow:auto; border:1px solid var(--border); border-radius:var(--radius-sm); padding:8px; background:rgba(255,255,255,0.02);"></div>
-      </div>
-    </div>
-
-    <!-- Termux Setup Wizard Modal -->
-    <div class="modal" id="termuxSetupModal" role="dialog" aria-modal="true" aria-labelledby="termuxSetupModalTitle">
-      <div class="modal-card settings-detail" style="max-width:440px;">
-        <div class="card-header">
-          <div class="card-icon amber">&#9881;</div>
-          <div class="card-title" id="termuxSetupModalTitle" style="margin-bottom:0;">Termux Setup</div>
-          <button class="icon-btn secondary" id="termuxSetupModalClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close">&times;</button>
-        </div>
-        <div id="termuxSetupStepper" class="setup-stepper">
-          <div class="setup-step" data-step="0">
-            <div class="setup-step-num"><span>1</span><span class="done-check">&#10003;</span></div>
-            <div class="setup-step-body">
-              <div class="setup-step-title">Install Termux</div>
-              <div class="setup-step-desc">Download and install Termux from GitHub releases.</div>
-              <div class="setup-step-actions">
-                <button class="btn primary" id="txSetupInstall">Install Termux</button>
-                <button class="btn" id="txSetupDownload">Download manually</button>
-                <span id="txInstallIndicator" class="thinking-dots" style="display:none;">Downloading Termux<span></span><span></span><span></span></span>
-              </div>
-            </div>
-          </div>
-          <div class="setup-step" data-step="1">
-            <div class="setup-step-num"><span>2</span><span class="done-check">&#10003;</span></div>
-            <div class="setup-step-body">
-              <div class="setup-step-title">Run bootstrap</div>
-              <div class="setup-step-desc">Copy the command below, then paste and run it in Termux.</div>
-              <div class="setup-step-actions">
-                <code id="txSetupCmd">loading...</code>
-                <button class="btn primary" id="txSetupCopy">Copy Command</button>
-                <button class="btn" id="txSetupOpenTermux1">Open Termux</button>
-              </div>
-            </div>
-          </div>
-          <div class="setup-step" data-step="2">
-            <div class="setup-step-num"><span>3</span><span class="done-check">&#10003;</span></div>
-            <div class="setup-step-body">
-              <div class="setup-step-title">Setting up</div>
-              <div class="setup-step-desc">Installing packages and configuring the environment. If a permission dialog appears, tap Allow.</div>
-              <div class="setup-step-actions">
-                <span id="txSetupProgress" class="thinking-dots">Setting up<span></span><span></span><span></span></span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div id="termuxSetupComplete" class="setup-complete-banner" style="display:none;">
-          &#10003; Termux is set up and ready.
-        </div>
       </div>
     </div>
 
@@ -3517,7 +3464,7 @@
         { id: "memory", domId: "settings-section-memory", label: "Memory" },
         { id: "task_notifications", domId: "settings-section-task_notifications", label: "Task Notifications" },
         { id: "media_recording", domId: "settings-section-audio_recording", label: "Media Recording" },
-        { id: "termux_setup", domId: "settings-section-termux_setup", label: "Termux Setup" },
+        { id: "worker", domId: "settings-section-worker", label: "Worker" },
         { id: "sshd", domId: "settings-section-sshd", label: "SSHD" },
         { id: "user_interface", domId: "settings-section-user_interface", label: "User Interface" },
         { id: "reset_restore", domId: "settings-section-reset_restore", label: "Reset & Restore" },
@@ -4202,11 +4149,7 @@
       }
 
       function safeRelPath(p) {
-        // Normalize common rel_path/html_path variants.
-        // Policy:
-        // - Plain relative paths are local app files (user root).
-        // - termux:// and /data/data/com.termux/files/home/... are explicit Termux paths.
-        // - Any other URI-like scheme is rejected here.
+        // Normalize common rel_path/html_path variants to plain relative paths.
         //
         // Also normalize punctuation/wrappers:
         // - Trailing punctuation: "captures/latest.jpg." or "...jpg," breaks ext detection.
@@ -4221,11 +4164,8 @@
         s = s.replace(/["'`>\])]+$/, "");
         s = s.replace(/[.,;:]+$/, "");
         if (!s) return "";
-        const low = s.toLowerCase();
-        if (low.startsWith("termux://")) return s;
-        // Reject any other URI-like scheme to avoid ambiguous resolution.
+        // Reject any URI-like scheme to avoid ambiguous resolution.
         if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return "";
-        if (s.startsWith("/data/data/com.termux/files/home")) return s;
         s = s.replace(/^\/+/, "");
         if (s.split("/").some(seg => seg === "..")) return "";
         return s;
@@ -4235,27 +4175,7 @@
         let p = String(rel || "").trim();
         const encodeSegs = (s) => String(s || "").split("/").filter(x => x.length > 0).map(x => encodeURIComponent(x)).join("/");
         if (p.startsWith("$sys/")) return API + "/sys/file/" + encodeSegs(p.slice(5));
-        const low = p.toLowerCase();
-        if (low.startsWith("termux://")) {
-          let rest = p.slice("termux://".length);
-          if (rest === "~") rest = "";
-          else if (rest.startsWith("~/")) rest = rest.slice(2);
-          else if (rest.startsWith("/")) {
-            if (rest.startsWith("/data/data/com.termux/files/home/")) {
-              rest = rest.slice("/data/data/com.termux/files/home/".length);
-            } else if (rest === "/data/data/com.termux/files/home") {
-              rest = "";
-            }
-          }
-          return API + "/termux/file/" + encodeSegs(rest);
-        }
-        if (p.startsWith("/data/data/com.termux/files/home")) {
-          let rest = p.slice("/data/data/com.termux/files/home".length);
-          if (rest.startsWith("/")) rest = rest.slice(1);
-          return API + "/termux/file/" + encodeSegs(rest);
-        }
-        const relPath = p;
-        return API + "/user/file/" + encodeSegs(relPath);
+        return API + "/user/file/" + encodeSegs(p);
       }
 
       function openPreviewInNewTab(url) {
@@ -4303,11 +4223,8 @@
           // Dedup on clean path (fragment-stripped) but preserve raw form for page info.
           const p = safeRelPath(raw);
           if (!p) return;
-          const low = p.toLowerCase();
-          const hasTermuxScheme = low.startsWith("termux://");
-          const isTermuxAbs = p.startsWith("/data/data/com.termux/files/home/");
           const hasExt = /\.[a-z0-9]+$/.test(p);
-          if (!(hasTermuxScheme || isTermuxAbs || hasExt)) return;
+          if (!hasExt) return;
           if (!seen.has(p)) { out.push(raw.trim()); seen.add(p); }
         }
 
@@ -9943,7 +9860,7 @@
       }
 
       async function refreshWorker() {
-        // Agent Service section removed; Termux Setup wizard handles status display
+        // Agent Service section removed; Worker card shows status
       }
 
       async function refreshSsh() {
@@ -10398,7 +10315,7 @@
         }
       });
 
-      // Agent Service restart/stop buttons removed (Termux runs on-demand)
+      // Agent Service restart/stop buttons removed (worker runs on-demand)
 
       $("openAppSettings").addEventListener("click", () => {
         try {
@@ -11906,152 +11823,39 @@
       setInterval(refreshWorker, 5000);
       setInterval(refreshSsh, 5000);
 
-      // --- Termux Setup Wizard ---
+      // --- Worker Status ---
       (function() {
-        const modal = $("termuxSetupModal");
-        const stepper = $("termuxSetupStepper");
-        const badge = $("termuxSetupStatus");
-        const banner = $("termuxSetupComplete");
-        const steps = stepper.querySelectorAll(".setup-step");
-        const sshdCard = $("settings-section-sshd");
-        const prompt = $("termuxSetupPrompt");
-        const compactReady = $("termuxSetupCompactReady");
-        let txReleasesUrl = "";
-        let txBootstrapCmd = "";
+        const badge = $("workerStatusBadge");
 
-        // Wire modal open/close
-        wireSimpleModal(modal, $("txOpenSetupWizard"), $("termuxSetupModalClose"));
-
-        function deriveStep(d) {
-          if (!d.installed) return 0;
-          if (!d.bootstrap_phase || d.bootstrap_phase === "none") return 1;
-          if (d.bootstrap_phase === "done") return 3;
-          if (d.worker_status !== "ok") return 2;
-          return 3;
-        }
-
-        function renderWizard(d) {
-          const current = deriveStep(d);
-          const allDone = current >= steps.length;
-          steps.forEach(function(el) {
-            const idx = Number(el.getAttribute("data-step"));
-            el.classList.remove("done", "active");
-            if (idx < current) el.classList.add("done");
-            else if (idx === current) el.classList.add("active");
-          });
-
-          // Update compact card and modal stepper display
-          if (allDone) {
-            prompt.style.display = "none";
-            compactReady.style.display = "flex";
-            stepper.style.display = "none";
-            banner.style.display = "flex";
-            setStatus(badge, "ok");
-            badge.textContent = "ready";
-            // Auto-close modal after setup completes
-            if (modal.classList.contains("show")) {
-              setTimeout(function() { closeSimpleModal(modal); }, 1500);
-            }
-          } else {
-            prompt.style.display = "";
-            compactReady.style.display = "none";
-            stepper.style.display = "";
-            banner.style.display = "none";
-            if (current === 0) { setStatus(badge, "offline"); badge.textContent = "not installed"; }
-            else if (current <= 2) { setStatus(badge, "starting"); badge.textContent = "setup needed"; }
-            else { setStatus(badge, "starting"); badge.textContent = "starting"; }
-          }
-
-          // Dim dependent cards when setup incomplete
-          var dimVal = allDone ? "" : "0.5";
-          if (sshdCard) sshdCard.style.opacity = dimVal;
-
-          // Update bootstrap progress message
-          var progressEl = $("txSetupProgress");
-          if (progressEl) {
-            var msg = d.bootstrap_message || "Setting up";
-            progressEl.firstChild.textContent = msg;
-          }
-
-          if (d.releases_url) txReleasesUrl = d.releases_url;
-          if (d.bootstrap_command) {
-            txBootstrapCmd = d.bootstrap_command;
-            $("txSetupCmd").textContent = txBootstrapCmd;
-          }
-        }
-
-        async function refreshTermuxSetup() {
+        async function refreshWorkerStatus() {
           try {
-            var res = await fetch(API + "/termux/status");
+            var res = await fetch(API + "/worker/status");
             if (!res.ok) throw 0;
             var d = await res.json();
-            renderWizard(d);
-            // Auto-open modal when agent requests it
-            if (d.show_termux_setup) {
-              openSimpleModal(modal);
-            }
+            var st = d.worker_status || "offline";
+            setStatus(badge, st);
+            badge.textContent = st === "ok" ? "running" : st;
           } catch (_) {
             setStatus(badge, "offline");
             badge.textContent = "error";
           }
         }
 
-        var txInstallIndicator = $("txInstallIndicator");
-        var txInstallBtn = $("txSetupInstall");
-
-        txInstallBtn.addEventListener("click", async function() {
-          try {
-            var permitted = await ensureInstallPermissionBeforeInstall();
-            if (!permitted) return;
-            txInstallBtn.disabled = true;
-            txInstallIndicator.style.display = "";
-            var res = await fetch(API + "/termux/install", { method: "POST" });
-            var data = await res.json();
-            if (!res.ok) {
-              showToast("Install failed: " + (data.error || "unknown error"), 2400);
-              return;
-            }
-            if (data.status === "install_permission_required") {
-              showToast(data.message || "Install permission required", 2400);
-              return;
-            }
-            showToast("Installer opened — follow the prompts to install Termux", 3000);
-          } catch (ex) {
-            showToast("Install failed: " + (ex.message || ex), 2400);
-          } finally {
-            txInstallBtn.disabled = false;
-            txInstallIndicator.style.display = "none";
-          }
+        $("workerStartBtn").addEventListener("click", function() {
+          fetch(API + "/worker/start", { method: "POST" }).catch(function() {});
+          setStatus(badge, "starting"); badge.textContent = "starting";
+        });
+        $("workerStopBtn").addEventListener("click", function() {
+          fetch(API + "/worker/stop", { method: "POST" }).catch(function() {});
+          setStatus(badge, "stopping"); badge.textContent = "stopping";
+        });
+        $("workerRestartBtn").addEventListener("click", function() {
+          fetch(API + "/worker/restart", { method: "POST" }).catch(function() {});
+          setStatus(badge, "starting"); badge.textContent = "restarting";
         });
 
-        $("txSetupDownload").addEventListener("click", function() {
-          if (!txReleasesUrl) { showToast("Releases URL not available", 1600); return; }
-          if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInBrowser) {
-            AndroidBridge.openInBrowser(txReleasesUrl);
-          } else {
-            window.open(txReleasesUrl, "_blank");
-          }
-        });
-
-        $("txSetupCopy").addEventListener("click", function() {
-          if (!txBootstrapCmd) return;
-          if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(txBootstrapCmd).then(function() {
-              showToast("Copied to clipboard", 1200);
-            }).catch(function() { showToast("Copy failed", 1400); });
-          } else {
-            showToast("Clipboard not available", 1400);
-          }
-        });
-
-        $("txSetupOpenTermux1").addEventListener("click", function() {
-          fetch(API + "/termux/launch", { method: "POST" }).catch(function() {});
-        });
-
-        // Step 3 "Setting up" is fully automatic — no button handler needed.
-
-        refreshTermuxSetup();
-        setInterval(refreshTermuxSetup, 3000);
+        refreshWorkerStatus();
+        setInterval(refreshWorkerStatus, 3000);
       })();
 
       setInterval(refreshMeMeStatus, 8000);

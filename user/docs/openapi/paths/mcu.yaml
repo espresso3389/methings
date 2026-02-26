@@ -150,8 +150,7 @@ mcuFlash:
                   image_path:
                     type: string
                     description: >
-                      Flash image path. Supports app-local relative path
-                      (preferred), `termux://<path>`, and absolute Termux HOME path.
+                      Flash image path (plain relative path under user root).
                   segments:
                     type: array
                     description: Multi-segment flash list. If present, `image_path`/`offset` are ignored.
@@ -162,8 +161,7 @@ mcuFlash:
                         path:
                           type: string
                           description: >
-                            Segment binary path. Supports app-local relative path
-                            (preferred), `termux://<path>`, and absolute Termux HOME path.
+                            Segment binary path (plain relative path under user root).
                         offset:
                           type: integer
                           format: int32
@@ -291,8 +289,7 @@ mcuFlashPlan:
               plan_path:
                 type: string
                 description: >
-                  Path to flasher_args.json. Supports app-local relative path
-                  (preferred), `termux://<path>`, and absolute Termux HOME path.
+                  Path to flasher_args.json (plain relative path under user root).
               model:
                 type: string
                 enum: [esp32]

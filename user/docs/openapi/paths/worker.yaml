@@ -1,11 +1,11 @@
-termuxStatus:
+workerStatus:
   get:
-    operationId: getTermuxStatus
-    summary: Get Termux worker status
-    tags: [Termux]
+    operationId: getWorkerStatus
+    summary: Get embedded worker status
+    tags: [Worker]
     responses:
       '200':
-        description: Current Termux worker status.
+        description: Current embedded worker status.
         content:
           application/json:
             schema:
@@ -14,16 +14,16 @@ termuxStatus:
               properties:
                 status:
                   type: string
-                  enum: [ok, offline, starting, stopping, permission_needed]
-                  description: Status of the Termux worker.
+                  enum: [ok, offline, starting, stopping]
+                  description: Status of the embedded Python worker.
             example:
               status: ok
 
-termuxRestart:
+workerRestart:
   post:
-    operationId: postTermuxRestart
-    summary: Restart the Termux worker
-    tags: [Termux]
+    operationId: postWorkerRestart
+    summary: Restart the embedded worker
+    tags: [Worker]
     requestBody:
       required: false
       content:
@@ -45,85 +45,15 @@ termuxRestart:
             example:
               status: ok
 
-termuxSetupShow:
-  post:
-    operationId: postTermuxSetupShow
-    summary: Prompt the UI to open the Termux setup wizard
-    description: >
-      Sets a one-shot flag that the UI consumes on its next /termux/status poll
-      (every 3 s). The setup wizard modal auto-opens in the web UI. Use this
-      when a shell tool fails because Termux is not installed or bootstrapped.
-    tags: [Termux]
-    requestBody:
-      required: false
-      content:
-        application/json:
-          schema:
-            type: object
-    responses:
-      '200':
-        description: Flag set successfully.
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [status]
-              properties:
-                status:
-                  type: string
-                  const: ok
-            example:
-              status: ok
-
-termuxEval:
-  post:
-    operationId: postTermuxEval
-    summary: Evaluate code in Termux environment
-    tags: [Termux]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [code]
-            properties:
-              code:
-                type: string
-                description: Code to evaluate in the Termux environment.
-          example:
-            code: "print('hello')"
-    responses:
-      '200':
-        description: Evaluation result.
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [status]
-              properties:
-                status:
-                  type: string
-                stdout:
-                  type: string
-                stderr:
-                  type: string
-      '500':
-        description: Evaluation error.
-        content:
-          application/json:
-            schema:
-              $ref: '../components/schemas.yaml#/ErrorResponse'
-
-termuxArduinoProxyStatus:
+workerArduinoProxyStatus:
   get:
-    operationId: getTermuxArduinoProxyStatus
+    operationId: getWorkerArduinoProxyStatus
     summary: Get Arduino CLI DNS-bypass proxy status
     description: >
-      Returns status of the Termux-side Arduino proxy module.
+      Returns status of the worker-side Arduino proxy module.
       The proxy runs locally and maps `downloads.arduino.cc` to a fixed IPv4
-      to bypass Android DNS issues in some Termux environments.
-    tags: [Termux]
+      to bypass Android DNS issues.
+    tags: [Worker]
     responses:
       '200':
         description: Arduino proxy status.
@@ -149,15 +79,15 @@ termuxArduinoProxyStatus:
                   additionalProperties:
                     type: string
 
-termuxArduinoProxyEnable:
+workerArduinoProxyEnable:
   post:
-    operationId: postTermuxArduinoProxyEnable
+    operationId: postWorkerArduinoProxyEnable
     summary: Enable Arduino CLI DNS-bypass proxy module
     description: >
-      Ensures the Termux worker's Arduino proxy is running and applies
+      Ensures the embedded worker's Arduino proxy is running and applies
       `arduino-cli config set network.proxy http://127.0.0.1:38888`.
       Safe to call repeatedly.
-    tags: [Termux]
+    tags: [Worker]
     requestBody:
       required: false
       content:

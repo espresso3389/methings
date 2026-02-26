@@ -107,13 +107,13 @@ import jp.espresso3389.methings.service.mcu.esp.EspSyncException
 class LocalHttpServer(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
-    private val runtimeManager: TermuxWorkerManager,
-    private val termuxManager: TermuxManager,
+    private val runtimeManager: PythonRuntimeManager,
     private val sshdManager: SshdManager,
     private val sshPinManager: SshPinManager,
     private val sshNoAuthManager: SshNoAuthManager
 ) : NanoWSD(HOST, PORT) {
     private val uiRoot = File(context.filesDir, "user/www")
+
     private val permissionStore = PermissionStoreFacade(context)
     private val permissionPrefs = PermissionPrefs(context)
     private val installIdentity = InstallIdentity(context)
@@ -193,7 +193,7 @@ class LocalHttpServer(
             executeRunJs = { code, timeoutMs ->
                 schedulerJsRuntime.executeBlocking(code, timeoutMs)
             },
-            executeShellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
+            executeShellExec = { cmd, args, cwd -> shellExecViaWorker(cmd, args, cwd) },
         )
     }
 
@@ -214,11 +214,11 @@ class LocalHttpServer(
             sysDir = File(context.filesDir, "system"),
             journalStore = agentJournalStore,
             deviceBridge = agentDeviceBridge,
-            shellExec = { cmd, args, cwd -> shellExecViaTermux(cmd, args, cwd) },
+            shellExec = { cmd, args, cwd -> shellExecViaWorker(cmd, args, cwd) },
             sessionIdProvider = { "default" },
             jsRuntime = agentJsRuntime,
             nativeShell = nativeShellExecutor,
-            ensureTermuxWorker = { ensureWorkerRunning() },
+            ensureWorker = { ensureWorkerRunning() },
         ).also { executor ->
             // Apply File Transfer image settings
             val ftPrefs = fileTransferPrefs
@@ -249,8 +249,8 @@ class LocalHttpServer(
             return runtime
         }
     }
-    private fun shellExecViaTermux(cmd: String, args: String, cwd: String): JSONObject {
-        // Delegate to Termux via the existing /shell/exec endpoint (loopback)
+    private fun shellExecViaWorker(cmd: String, args: String, cwd: String): JSONObject {
+        // Delegate to worker via the existing /shell/exec endpoint (loopback)
         return try {
             val body = JSONObject().put("cmd", cmd).put("args", args).put("cwd", cwd)
             val url = java.net.URL("http://127.0.0.1:$PORT/shell/exec")
@@ -342,11 +342,6 @@ class LocalHttpServer(
         onConnectionStateChanged = { peerId, state -> handleMeMeP2pStateChange(peerId, state) },
         logger = { msg, ex -> if (ex != null) Log.w(TAG, msg, ex) else Log.d(TAG, msg) }
     )
-
-    @Volatile private var bootstrapPhase: String = "none"
-    @Volatile private var bootstrapMessage: String = ""
-    @Volatile private var showTermuxSetupFlag = false
-    private val bootstrapPrefs by lazy { context.getSharedPreferences("termux_bootstrap", Context.MODE_PRIVATE) }
 
     @Volatile private var keepScreenOnWakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepScreenOnExpiresAtMs: Long = 0L
@@ -489,7 +484,7 @@ class LocalHttpServer(
         return when (seg) {
             "/health" -> routeHealth(session, uri, postBody)
             "/debug" -> routeDebug(session, uri, postBody)
-            "/python", "/termux" -> routeTermux(session, uri, postBody)
+            "/python", "/worker" -> routeWorker(session, uri, postBody)
             "/service" -> routeService(session, uri, postBody)
             "/app" -> routeApp(session, uri, postBody)
             "/work" -> routeWork(session, uri, postBody)
@@ -563,7 +558,7 @@ class LocalHttpServer(
                 JSONObject()
                     .put("status", "ok")
                     .put("service", "local")
-                    .put("termux", runtimeManager.getStatus())
+                    .put("worker", runtimeManager.getStatus())
             )
             else -> notFound()
         }
@@ -1209,15 +1204,8 @@ class LocalHttpServer(
                     path
                 } else {
                     val ref = parseFsPathRef(filePath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
-                    if (ref.fs == "user") {
-                        val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-                        if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
-                    } else if (ref.fs == "termux") {
-                        val stat = statFsPath(ref)
-                        if (!stat.first) return jsonError(Response.Status.NOT_FOUND, "not_found")
-                    } else {
-                        return jsonError(Response.Status.BAD_REQUEST, "unsupported_filesystem")
-                    }
+                    val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                    if (!file.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
                     val frag = path.substringAfter('#', "")
                     if (frag.isNotBlank()) "${ref.displayPath}#$frag" else ref.displayPath
                 }
@@ -1814,18 +1802,18 @@ class LocalHttpServer(
                 ensureWorkerRunning()
                 val subPath = uri.removePrefix("/shell")  // → /session/...
                 if (session.method == Method.GET) {
-                    return proxyWorkerRequest(subPath, "GET") ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                    return proxyWorkerRequest(subPath, "GET") ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
                 }
                 val body = postBody ?: "{}"
                 val timeoutMs = if (subPath.contains("/exec")) 305_000 else 10_000
-                return proxyWorkerRequest(subPath, "POST", body, readTimeoutMs = timeoutMs) ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                return proxyWorkerRequest(subPath, "POST", body, readTimeoutMs = timeoutMs) ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
             }
             // File system endpoints: /shell/fs/<action>
             uri.startsWith("/shell/fs/") && session.method == Method.POST -> {
                 ensureWorkerRunning()
                 val subPath = uri.removePrefix("/shell")  // → /fs/...
                 val body = postBody ?: "{}"
-                return proxyWorkerRequest(subPath, "POST", body) ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                return proxyWorkerRequest(subPath, "POST", body) ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
             }
             else -> notFound()
         }
@@ -1836,7 +1824,7 @@ class LocalHttpServer(
         // Even if startWorker() returns true, the worker boots asynchronously,
         // so always wait for the health endpoint to respond.
         runtimeManager.ensureWorkerForShell()
-        waitForTermuxHealth(8000)
+        waitForWorkerHealth(8000)
     }
 
     private fun handleShellExec(payload: JSONObject): Response {
@@ -1844,13 +1832,13 @@ class LocalHttpServer(
         val hasCommand = payload.has("command") && payload.optString("command", "").isNotEmpty()
 
         if (hasCommand) {
-            // Proxy to Termux worker — no native fallback
+            // Proxy to embedded worker — no native fallback
             ensureWorkerRunning()
             val timeoutMs = payload.optLong("timeout_ms", 60_000).coerceIn(1_000, 300_000)
             val readTimeout = (timeoutMs + 5_000).toInt()
             val proxied = proxyWorkerRequest("/exec", "POST", payload.toString(), readTimeoutMs = readTimeout)
             if (proxied != null) return proxied
-            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+            return jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
         }
 
         // Legacy format: cmd + args
@@ -1866,7 +1854,7 @@ class LocalHttpServer(
         if (proxied != null) {
             return proxied
         }
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
     }
 
     private fun routeWeb(session: IHTTPSession, uri: String, postBody: String?): Response {
@@ -2496,34 +2484,11 @@ class LocalHttpServer(
                 val outPath = payload.optString("path", "captures/capture_${System.currentTimeMillis()}.jpg")
                 val lens = payload.optString("lens", "back")
                 val outRef = parseFsPathRef(outPath.trim()) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
-                val tempCaptureRef = if (outRef.fs == "user") {
-                    outRef
-                } else {
-                    parseFsPathRef("captures/.tmp_capture_${System.currentTimeMillis()}.jpg")
-                        ?: return jsonError(Response.Status.INTERNAL_ERROR, "temp_path_resolve_failed")
-                }
-                val file = tempCaptureRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                val file = outRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                file.parentFile?.mkdirs()
                 val q = payload.optInt("jpeg_quality", 95).coerceIn(40, 100)
                 val exp = if (payload.has("exposure_compensation")) payload.optInt("exposure_compensation") else null
                 val out = JSONObject(camera.captureStill(file, lens, jpegQuality = q, exposureCompensation = exp))
-                if (out.optString("status", "") == "ok" && outRef.fs == "termux") {
-                    val bytes = try {
-                        file.readBytes()
-                    } catch (ex: Exception) {
-                        return jsonError(Response.Status.INTERNAL_ERROR, "capture_temp_read_failed", JSONObject().put("detail", ex.message ?: ""))
-                    }
-                    try {
-                        writeFsPathBytes(outRef, bytes)
-                    } catch (ex: IllegalArgumentException) {
-                        return when (ex.message ?: "") {
-                            "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                            "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
-                            else -> jsonError(Response.Status.INTERNAL_ERROR, "termux_fs_write_failed")
-                        }
-                    } finally {
-                        runCatching { file.delete() }
-                    }
-                }
                 // Absolute path is useful for logs/debugging, but tools should prefer rel_path under user root.
                 out.put("rel_path", outRef.displayPath)
                 return jsonResponse(out)
@@ -2854,116 +2819,39 @@ class LocalHttpServer(
         }
     }
 
-    private fun routeTermux(session: IHTTPSession, uri: String, postBody: String?): Response {
-        // Accept both /termux/* (canonical) and /python/* (legacy alias)
-        val path = if (uri.startsWith("/python")) uri.replaceFirst("/python", "/termux") else uri
+    private fun routeWorker(session: IHTTPSession, uri: String, postBody: String?): Response {
+        // Accept /worker/* and /python/* (legacy) prefixes
+        val path = when {
+            uri.startsWith("/python") -> uri.replaceFirst("/python", "/worker")
+            else -> uri
+        }
         return when {
-            path == "/termux/write" && session.method == Method.POST -> {
-                handleFileWrite(postBody, forcedPath = null, expectedFs = "termux")
+            // File routes removed — all files are under /user/* now.
+            path == "/worker/write" || path.startsWith("/worker/write/") ||
+            path == "/worker/file" || path.startsWith("/worker/file/") ||
+            path == "/worker/file_info" || path.startsWith("/worker/file_info/") ||
+            path == "/worker/list" || path.startsWith("/worker/list/") -> {
+                jsonError(Response.Status.GONE, "use_user_routes")
             }
-            path.startsWith("/termux/write/") && session.method == Method.POST -> {
-                val p = decodePathSuffix(path, "/termux/write/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                handleFileWrite(postBody, forcedPath = normalized, expectedFs = "termux")
-            }
-            path == "/termux/file" && session.method == Method.GET -> {
-                jsonError(Response.Status.GONE, "use_path_style_route")
-            }
-            path.startsWith("/termux/file_info/") && session.method == Method.GET -> {
-                val p = decodePathSuffix(path, "/termux/file_info/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                handleFileInfoByPath(normalized)
-            }
-            path == "/termux/file_info" && session.method == Method.GET -> {
-                jsonError(Response.Status.GONE, "use_path_style_route")
-            }
-            path.startsWith("/termux/file/") && session.method == Method.GET -> {
-                val p = decodePathSuffix(path, "/termux/file/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                serveFileByPath(normalized)
-            }
-            path == "/termux/list" && session.method == Method.GET -> {
-                val raw = firstParam(session, "path").trim().ifBlank { "~" }
-                val normalized = normalizeTermuxRoutePath(raw) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                handleListByPath(normalized)
-            }
-            path.startsWith("/termux/list/") && session.method == Method.GET -> {
-                val p = decodePathSuffix(path, "/termux/list/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                val normalized = normalizeTermuxRoutePath(p) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                handleListByPath(normalized)
-            }
-            path == "/termux/worker/start" || path == "/termux/start" -> {
+            path == "/worker/start" -> {
                 runtimeManager.startWorker()
                 jsonResponse(JSONObject().put("status", "starting"))
             }
-            path == "/termux/worker/stop" || path == "/termux/stop" -> {
+            path == "/worker/stop" -> {
                 runtimeManager.requestShutdown()
                 jsonResponse(JSONObject().put("status", "stopping"))
             }
-            path == "/termux/worker/restart" || path == "/termux/restart" -> {
+            path == "/worker/restart" -> {
                 runtimeManager.restartSoft()
                 jsonResponse(JSONObject().put("status", "starting"))
             }
-            path == "/termux/bootstrap/notify" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val phase = payload.optString("phase", "")
-                if (phase in listOf("running", "done")) {
-                    bootstrapPhase = phase
-                }
-                val msg = payload.optString("message", "")
-                if (msg.isNotBlank()) bootstrapMessage = msg
-                // When bootstrap finishes, persist and auto-start the worker
-                if (phase == "done") {
-                    context.getSharedPreferences("termux_bootstrap", Context.MODE_PRIVATE)
-                        .edit().putBoolean("done", true).apply()
-                    runtimeManager.startWorker()
-                }
-                jsonResponse(JSONObject().put("status", "ok").put("phase", bootstrapPhase))
-            }
-            path == "/termux/status" -> {
-                val installed = termuxManager.isTermuxInstalled()
-                // Compute effective bootstrap phase:
-                // - If Termux is not installed, any persisted "done" is stale → reset.
-                // - If actively bootstrapping (in-memory "running"), use that.
-                // - Otherwise, fall back to the persisted flag.
-                val effectivePhase = if (!installed) {
-                    if (bootstrapPrefs.getBoolean("done", false)) {
-                        bootstrapPrefs.edit().remove("done").apply()
-                    }
-                    bootstrapPhase = "none"
-                    "none"
-                } else if (bootstrapPhase == "running") {
-                    "running"
-                } else if (bootstrapPrefs.getBoolean("done", false)) {
-                    "done"
-                } else {
-                    bootstrapPhase
-                }
+            path == "/worker/status" -> {
                 jsonResponse(
                     JSONObject()
-                        .put("installed", installed)
-                        .put("ready", termuxManager.isTermuxReady())
-                        .put("run_command_permitted", termuxManager.hasRunCommandPermission())
-                        .put("sshd_running", termuxManager.isSshdRunning())
-                        .put("sshd_port", TermuxManager.TERMUX_SSHD_PORT)
                         .put("worker_status", runtimeManager.getStatus())
-                        .put("releases_url", TermuxManager.TERMUX_RELEASES_URL)
-                        .put("bootstrap_command", "curl -so ~/b.sh http://127.0.0.1:$PORT/termux/bootstrap.sh && bash ~/b.sh")
-                        .put("bootstrap_phase", effectivePhase)
-                        .put("bootstrap_message", bootstrapMessage)
-                        .put("can_request_installs", termuxManager.canInstallPackages())
-                        .put("show_termux_setup", showTermuxSetupFlag.also { if (it) showTermuxSetupFlag = false })
                 )
             }
-            path == "/termux/setup/show" && session.method == Method.POST -> {
-                showTermuxSetupFlag = true
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/termux/bootstrap.sh" && session.method == Method.GET -> {
-                val script = termuxManager.getBootstrapScript()
-                newFixedLengthResponse(Response.Status.OK, "text/plain", script)
-            }
-            uri == "/termux/server.tar.gz" && session.method == Method.GET -> {
+            path == "/worker/server.tar.gz" && session.method == Method.GET -> {
                 try {
                     val serverDir = File(context.filesDir, "server")
                     if (!serverDir.exists()) return jsonError(Response.Status.NOT_FOUND, "server_dir_missing")
@@ -2978,69 +2866,16 @@ class LocalHttpServer(
                     jsonError(Response.Status.INTERNAL_ERROR, ex.message ?: "tar_failed")
                 }
             }
-            uri == "/termux/launch" && session.method == Method.POST -> {
-                termuxManager.launchTermux()
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/termux/run" && session.method == Method.POST -> {
-                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                val command = payload.optString("command", "").trim()
-                if (command.isBlank()) return badRequest("command_required")
-                val background = payload.optBoolean("background", true)
-                termuxManager.runCommand(command, background)
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/termux/update" && session.method == Method.POST -> {
-                termuxManager.stopWorker()
-                Thread.sleep(1000)
-                termuxManager.updateServerCode()
-                Thread.sleep(2000)
-                termuxManager.startWorker()
-                runtimeManager.startWorker()
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/termux/arduino_proxy/status" && session.method == Method.GET -> {
+            path == "/worker/arduino_proxy/status" && session.method == Method.GET -> {
                 ensureWorkerRunning()
                 proxyGetToWorker("/proxy/arduino/status")
-                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
             }
-            uri == "/termux/arduino_proxy/enable" && session.method == Method.POST -> {
+            path == "/worker/arduino_proxy/enable" && session.method == Method.POST -> {
                 ensureWorkerRunning()
                 val body = (postBody ?: "").ifBlank { "{}" }
                 proxyPostToWorker("/proxy/arduino/enable", body)
-                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
-            }
-            uri == "/termux/sshd/start" && session.method == Method.POST -> {
-                termuxManager.startSshd()
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/termux/sshd/stop" && session.method == Method.POST -> {
-                termuxManager.stopSshd()
-                jsonResponse(JSONObject().put("status", "ok"))
-            }
-            uri == "/termux/install/check" && session.method == Method.GET -> {
-                try {
-                    jsonResponse(termuxManager.checkTermuxRelease())
-                } catch (ex: Throwable) {
-                    Log.w(TAG, "Termux install check failed", ex)
-                    jsonError(
-                        Response.Status.INTERNAL_ERROR,
-                        "termux_install_check_failed",
-                        JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
-                    )
-                }
-            }
-            uri == "/termux/install" && session.method == Method.POST -> {
-                try {
-                    jsonResponse(termuxManager.downloadAndInstallTermux())
-                } catch (ex: Throwable) {
-                    Log.w(TAG, "Termux install failed", ex)
-                    jsonError(
-                        Response.Status.INTERNAL_ERROR,
-                        "termux_install_failed",
-                        JSONObject().put("detail", "${ex.javaClass.simpleName}:${ex.message ?: ""}")
-                    )
-                }
+                    ?: jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
             }
             else -> notFound()
         }
@@ -3179,11 +3014,11 @@ class LocalHttpServer(
     private fun routeUser(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
             uri == "/user/write" && session.method == Method.POST -> {
-                handleFileWrite(postBody, forcedPath = null, expectedFs = "user")
+                handleFileWrite(postBody, forcedPath = null)
             }
             uri.startsWith("/user/write/") && session.method == Method.POST -> {
                 val p = decodePathSuffix(uri, "/user/write/") ?: return jsonError(Response.Status.BAD_REQUEST, "path_required")
-                handleFileWrite(postBody, forcedPath = p, expectedFs = "user")
+                handleFileWrite(postBody, forcedPath = p)
             }
             uri == "/user/list" && session.method == Method.GET -> {
                 handleUserList(session)
@@ -3238,35 +3073,12 @@ class LocalHttpServer(
                 val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
                 val outPath = payload.optString("path", "browser/screenshot_${System.currentTimeMillis()}.jpg")
                 val outRef = parseFsPathRef(outPath.trim()) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
-                val tempOutRef = if (outRef.fs == "user") {
-                    outRef
-                } else {
-                    parseFsPathRef("browser/.tmp_screenshot_${System.currentTimeMillis()}.jpg")
-                        ?: return jsonError(Response.Status.INTERNAL_ERROR, "temp_path_resolve_failed")
-                }
-                val file = tempOutRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                val file = outRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+                file.parentFile?.mkdirs()
                 val quality = payload.optInt("quality", 80).coerceIn(10, 100)
                 val timeoutS = payload.optLong("timeout_s", 10).coerceIn(1, 60)
                 val result = jp.espresso3389.methings.device.WebViewBrowserManager.screenshot(file, quality, timeoutS)
                 if (result.optString("status") == "ok") {
-                    if (outRef.fs == "termux") {
-                        val bytes = try {
-                            file.readBytes()
-                        } catch (ex: Exception) {
-                            return jsonError(Response.Status.INTERNAL_ERROR, "screenshot_temp_read_failed", JSONObject().put("detail", ex.message ?: ""))
-                        }
-                        try {
-                            writeFsPathBytes(outRef, bytes)
-                        } catch (ex: IllegalArgumentException) {
-                            return when (ex.message ?: "") {
-                                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
-                                else -> jsonError(Response.Status.INTERNAL_ERROR, "termux_fs_write_failed")
-                            }
-                        } finally {
-                            runCatching { file.delete() }
-                        }
-                    }
                     result.put("rel_path", outRef.displayPath)
                 }
                 jsonResponse(result)
@@ -3464,14 +3276,9 @@ class LocalHttpServer(
 
     private fun serveFileByPath(raw: String): Response {
         val ref = parseFsPathRef(raw) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
-        val displayPath = ref.displayPath
-        val name = when {
-            ref.fs == "user" -> ref.userFile?.name ?: raw.substringAfterLast('/')
-            ref.fs == "termux" -> ref.termuxPath?.substringAfterLast('/') ?: raw.substringAfterLast('/')
-            else -> raw.substringAfterLast('/')
-        }
+        val name = ref.userFile?.name ?: raw.substringAfterLast('/')
 
-        val relLower = displayPath.lowercase()
+        val relLower = ref.displayPath.lowercase()
         val nameLower = name.lowercase()
         val isAudioRecordingWebm =
             (nameLower.endsWith(".webm") && (nameLower.startsWith("audio_recording") || relLower.contains("uploads/recordings/")))
@@ -3480,27 +3287,10 @@ class LocalHttpServer(
         } else {
             URLConnection.guessContentTypeFromName(name) ?: mimeTypeFor(name)
         }
-        if (ref.fs == "user") {
-            val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-            if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
-            val stream: InputStream = FileInputStream(file)
-            val response = newChunkedResponse(Response.Status.OK, mime, stream)
-            response.addHeader("Cache-Control", "no-cache")
-            response.addHeader("X-Content-Type-Options", "nosniff")
-            return response
-        }
-        val bytes = try {
-            readFsPathBytes(ref).first
-        } catch (ex: IllegalArgumentException) {
-            return when (ex.message ?: "") {
-                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
-                "not_found" -> jsonError(Response.Status.NOT_FOUND, "not_found")
-                "file_too_large" -> jsonError(Response.Status.BAD_REQUEST, "file_too_large")
-                else -> jsonError(Response.Status.INTERNAL_ERROR, "file_read_failed")
-            }
-        }
-        val response = newFixedLengthResponse(Response.Status.OK, mime, ByteArrayInputStream(bytes), bytes.size.toLong())
+        val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+        val stream: InputStream = FileInputStream(file)
+        val response = newChunkedResponse(Response.Status.OK, mime, stream)
         response.addHeader("Cache-Control", "no-cache")
         response.addHeader("X-Content-Type-Options", "nosniff")
         return response
@@ -3509,11 +3299,7 @@ class LocalHttpServer(
     private fun handleFileInfoByPath(rawPath: String): Response {
         val ref = parseFsPathRef(rawPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
         val displayPath = ref.displayPath
-        val fileName = when (ref.fs) {
-            "user" -> ref.userFile?.name ?: rawPath.substringAfterLast('/')
-            "termux" -> ref.termuxPath?.substringAfterLast('/') ?: rawPath.substringAfterLast('/')
-            else -> rawPath.substringAfterLast('/')
-        }
+        val fileName = ref.userFile?.name ?: rawPath.substringAfterLast('/')
 
         val ext = fileName.substringAfterLast('.', "").lowercase()
         val mime = URLConnection.guessContentTypeFromName(fileName) ?: mimeTypeFor(fileName)
@@ -3534,77 +3320,55 @@ class LocalHttpServer(
             .put("mime", mime)
             .put("kind", kind)
             .put("ext", ext)
-            .put("fs", ref.fs)
+            .put("fs", "user")
             .put("path", displayPath)
 
-        if (ref.fs == "user") {
-            val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-            if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
-            json.put("size", file.length())
-            json.put("mtime_ms", file.lastModified())
+        val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        if (!file.exists() || !file.isFile) return jsonError(Response.Status.NOT_FOUND, "not_found")
+        json.put("size", file.length())
+        json.put("mtime_ms", file.lastModified())
 
-            if (kind == "image" && ext != "svg") {
-                try {
-                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    BitmapFactory.decodeFile(file.absolutePath, bounds)
-                    if (bounds.outWidth > 0 && bounds.outHeight > 0) {
-                        json.put("width", bounds.outWidth)
-                        json.put("height", bounds.outHeight)
-                    }
-                } catch (_: Exception) {}
-            }
-
-            if (ext == "md") {
-                try {
-                    val head = file.inputStream().use { inp ->
-                        val buf = ByteArray(1024)
-                        val n = inp.read(buf)
-                        if (n > 0) String(buf, 0, n, Charsets.UTF_8) else ""
-                    }
-                    val fmMatch = Regex("^---\\s*\\n([\\s\\S]*?)\\n---").find(head)
-                    val isMarp = fmMatch != null && Regex("^marp\\s*:\\s*true\\s*$", RegexOption.MULTILINE).containsMatchIn(fmMatch.groupValues[1])
-                    json.put("is_marp", isMarp)
-                    if (isMarp) {
-                        val fullText = file.readText(Charsets.UTF_8)
-                        val stripped = fullText.replace(Regex("^---\\s*\\n[\\s\\S]*?\\n---\\n?"), "")
-                        val slideCount = stripped.split("\n---\n").size
-                        json.put("slide_count", slideCount)
-                    }
-                } catch (_: Exception) {
-                    json.put("is_marp", false)
+        if (kind == "image" && ext != "svg") {
+            try {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.absolutePath, bounds)
+                if (bounds.outWidth > 0 && bounds.outHeight > 0) {
+                    json.put("width", bounds.outWidth)
+                    json.put("height", bounds.outHeight)
                 }
+            } catch (_: Exception) {}
+        }
+
+        if (ext == "md") {
+            try {
+                val head = file.inputStream().use { inp ->
+                    val buf = ByteArray(1024)
+                    val n = inp.read(buf)
+                    if (n > 0) String(buf, 0, n, Charsets.UTF_8) else ""
+                }
+                val fmMatch = Regex("^---\\s*\\n([\\s\\S]*?)\\n---").find(head)
+                val isMarp = fmMatch != null && Regex("^marp\\s*:\\s*true\\s*$", RegexOption.MULTILINE).containsMatchIn(fmMatch.groupValues[1])
+                json.put("is_marp", isMarp)
+                if (isMarp) {
+                    val fullText = file.readText(Charsets.UTF_8)
+                    val stripped = fullText.replace(Regex("^---\\s*\\n[\\s\\S]*?\\n---\\n?"), "")
+                    val slideCount = stripped.split("\n---\n").size
+                    json.put("slide_count", slideCount)
+                }
+            } catch (_: Exception) {
+                json.put("is_marp", false)
             }
-        } else {
-            val stat = statFsPath(ref)
-            if (!stat.first) return jsonError(Response.Status.NOT_FOUND, "not_found")
-            json.put("size", stat.second)
         }
 
         return jsonResponse(json)
     }
 
-    private fun handleFileWrite(postBody: String?, forcedPath: String?, expectedFs: String): Response {
+    private fun handleFileWrite(postBody: String?, forcedPath: String?): Response {
         val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
         val inputPath = forcedPath ?: payload.optString("path", "").trim()
         if (inputPath.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
-        val normalizedPath = when {
-            forcedPath != null -> forcedPath
-            expectedFs == "termux" -> normalizeTermuxRoutePath(inputPath) ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-            else -> {
-                if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(inputPath) ||
-                    inputPath.startsWith("/") ||
-                    inputPath.startsWith("termux://", ignoreCase = true)) {
-                    return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-                } else inputPath.trimStart('/')
-            }
-        }
+        val normalizedPath = forcedPath ?: inputPath.trimStart('/')
         val ref = parseFsPathRef(normalizedPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
-        if (ref.fs != expectedFs) {
-            return jsonError(
-                Response.Status.BAD_REQUEST,
-                if (expectedFs == "user") "path_outside_user_dir" else "path_outside_termux_home"
-            )
-        }
 
         val hasDataB64 = payload.optString("data_b64", "").trim().isNotBlank()
         val hasContent = payload.has("content")
@@ -3640,9 +3404,7 @@ class LocalHttpServer(
             )
         } catch (ex: IllegalArgumentException) {
             when (ex.message ?: "") {
-                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
                 "path_outside_user_dir" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
                 else -> jsonError(Response.Status.INTERNAL_ERROR, "file_write_failed")
             }
         } catch (ex: Exception) {
@@ -3692,19 +3454,13 @@ class LocalHttpServer(
         val dirRaw = (parms["dir"]?.firstOrNull() ?: parms["path"]?.firstOrNull() ?: "").trim()
         val finalPath = if (dirRaw.isBlank()) {
             "uploads/$name"
-        } else if (dirRaw.startsWith("termux://", ignoreCase = true) ||
-            dirRaw.startsWith(TERMUX_HOME_PREFIX)
-        ) {
-            dirRaw.trimEnd('/') + "/" + name
-        } else if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(dirRaw)) {
+        } else if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(dirRaw) || dirRaw.startsWith("/")) {
             return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
         } else {
             dirRaw.trimStart('/').trimEnd('/') + "/" + name
         }
         val outRef = parseFsPathRef(finalPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
-        if (outRef.fs == "user") {
-            outRef.userFile?.parentFile?.mkdirs()
-        }
+        outRef.userFile?.parentFile?.mkdirs()
 
         return try {
             val bytes = File(tmp).readBytes()
@@ -3750,8 +3506,8 @@ class LocalHttpServer(
             )
         } catch (ex: IllegalArgumentException) {
             when (ex.message ?: "") {
-                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                "path_outside_worker_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_worker_home")
+                "worker_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
                 else -> jsonError(Response.Status.INTERNAL_ERROR, "upload_failed", JSONObject().put("detail", ex.message ?: ""))
             }
         } catch (ex: Exception) {
@@ -4221,8 +3977,8 @@ class LocalHttpServer(
             readFsPathBytes(planRef).first
         } catch (ex: IllegalArgumentException) {
             return when (ex.message ?: "") {
-                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                "path_outside_worker_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_worker_home")
+                "worker_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
                 "file_too_large" -> jsonError(Response.Status.BAD_REQUEST, "plan_too_large")
                 else -> jsonError(Response.Status.NOT_FOUND, "plan_not_found")
             }
@@ -4254,11 +4010,7 @@ class LocalHttpServer(
         }
 
         val userRoot = File(context.filesDir, "user").canonicalFile
-        val baseDir = when (planRef.fs) {
-            "user" -> planRef.userFile?.parentFile ?: userRoot
-            "termux" -> File(planRef.termuxPath ?: TERMUX_HOME_PREFIX).parentFile ?: File(TERMUX_HOME_PREFIX)
-            else -> userRoot
-        }
+        val baseDir = planRef.userFile?.parentFile ?: userRoot
         val sortedOffsets = flashFiles.keys().asSequence().toList().sortedBy {
             parseOffsetToInt(it)
         }
@@ -4277,20 +4029,8 @@ class LocalHttpServer(
             }
             if (path.isBlank()) continue
             val abs = File(baseDir, path).canonicalFile.path.replace('\\', '/')
-            val segmentPath = when (planRef.fs) {
-                "user" -> {
-                    val rel = toUserRelativePath(File(abs))
-                        ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir", JSONObject().put("path", path))
-                    rel
-                }
-                "termux" -> {
-                    if (!isAllowedTermuxPath(abs)) {
-                        return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home", JSONObject().put("path", path))
-                    }
-                    "termux://~${abs.removePrefix(TERMUX_HOME_PREFIX)}"
-                }
-                else -> path
-            }
+            val segmentPath = toUserRelativePath(File(abs))
+                ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir", JSONObject().put("path", path))
             val ref = parseFsPathRef(segmentPath)
                 ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path", JSONObject().put("path", segmentPath))
             val stat = statFsPath(ref)
@@ -4765,8 +4505,8 @@ class LocalHttpServer(
                 } catch (ex: IllegalArgumentException) {
                     throw IllegalArgumentException(
                         when (ex.message ?: "") {
-                            "path_outside_termux_home" -> "path_outside_termux_home"
-                            "termux_unavailable" -> "termux_unavailable"
+                            "path_outside_worker_home" -> "path_outside_worker_home"
+                            "worker_unavailable" -> "worker_unavailable"
                             "file_too_large" -> "segment_too_large"
                             else -> "segment_not_found"
                         }
@@ -4786,8 +4526,8 @@ class LocalHttpServer(
         } catch (ex: IllegalArgumentException) {
             throw IllegalArgumentException(
                 when (ex.message ?: "") {
-                    "path_outside_termux_home" -> "path_outside_termux_home"
-                    "termux_unavailable" -> "termux_unavailable"
+                    "path_outside_worker_home" -> "path_outside_worker_home"
+                    "worker_unavailable" -> "worker_unavailable"
                     "file_too_large" -> "image_too_large"
                     else -> "image_not_found"
                 }
@@ -6947,63 +6687,26 @@ class LocalHttpServer(
     }
 
     private data class FsPathRef(
-        val fs: String,
         val sourcePath: String,
         val displayPath: String,
         val userFile: File? = null,
         val userRelPath: String? = null,
-        val termuxPath: String? = null,
     )
 
     private fun parseFsPathRef(rawPath: String): FsPathRef? {
         val raw = rawPath.trim()
         if (raw.isBlank()) return null
 
-        // Reject malformed/unknown URI-like prefixes early.
-        // Only termux:// is accepted as a filesystem URI form.
-        if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(raw) &&
-            !raw.startsWith("termux://", ignoreCase = true)
-        ) {
-            return null
-        }
+        // Reject any URI-like prefixes — all paths are plain relative paths under user root.
+        if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(raw)) return null
 
-        if (raw.startsWith("termux://", ignoreCase = true)) {
-            val rest0 = raw.substringAfter("://").trim()
-            val abs = when {
-                rest0 == "~" -> TERMUX_HOME_PREFIX
-                rest0.startsWith("~/") -> TERMUX_HOME_PREFIX + "/" + rest0.removePrefix("~/")
-                rest0.startsWith("/") -> rest0
-                else -> TERMUX_HOME_PREFIX + "/" + rest0.trimStart('/')
-            }
-            val normalizedAbs = abs.replace('\\', '/')
-            if (!isAllowedTermuxPath(normalizedAbs)) return null
-            val display = "termux://${normalizedAbs.removePrefix(TERMUX_HOME_PREFIX).let { if (it.isBlank()) "~" else "~$it" }}"
-            return FsPathRef(
-                fs = "termux",
-                sourcePath = raw,
-                displayPath = display,
-                termuxPath = normalizedAbs
-            )
-        }
-
-        if (raw.startsWith(TERMUX_HOME_PREFIX + "/") || raw == TERMUX_HOME_PREFIX) {
-            val normalizedAbs = raw.replace('\\', '/')
-            if (!isAllowedTermuxPath(normalizedAbs)) return null
-            val display = "termux://${normalizedAbs.removePrefix(TERMUX_HOME_PREFIX).let { if (it.isBlank()) "~" else "~$it" }}"
-            return FsPathRef(
-                fs = "termux",
-                sourcePath = raw,
-                displayPath = display,
-                termuxPath = normalizedAbs
-            )
-        }
-
+        // Reject absolute paths.
         if (raw.startsWith("/")) return null
+
         val rel = raw.trimStart('/')
         if (rel.isBlank() || rel == ".") {
             val root = File(context.filesDir, "user").canonicalFile
             return FsPathRef(
-                fs = "user",
                 sourcePath = raw,
                 displayPath = ".",
                 userFile = root,
@@ -7012,7 +6715,6 @@ class LocalHttpServer(
         }
         val file = userPath(rel) ?: return null
         return FsPathRef(
-            fs = "user",
             sourcePath = raw,
             displayPath = rel,
             userFile = file,
@@ -7029,135 +6731,30 @@ class LocalHttpServer(
         return clean.ifBlank { null }
     }
 
-    private fun normalizeTermuxRoutePath(path: String): String? {
-        val p = path.trim()
-        if (p.isBlank()) return null
-        if (p.startsWith("termux://", ignoreCase = true)) {
-            val ref = parseFsPathRef(p) ?: return null
-            return ref.displayPath
-        }
-        if (p.startsWith(TERMUX_HOME_PREFIX) || p == "~" || p.startsWith("~/") || p.startsWith("/")) {
-            val asUri = "termux://$p"
-            val ref = parseFsPathRef(asUri) ?: return null
-            return ref.displayPath
-        }
-        val ref = parseFsPathRef("termux://~/$p") ?: return null
-        return ref.displayPath
-    }
-
-    private fun isAllowedTermuxPath(absPath: String): Boolean {
-        if (absPath.isBlank()) return false
-        val p = absPath.replace('\\', '/')
-        if (p == TERMUX_HOME_PREFIX) return true
-        return p.startsWith(TERMUX_HOME_PREFIX + "/")
-    }
 
     private fun readFsPathBytes(ref: FsPathRef, maxBytes: Int = 64 * 1024 * 1024): Pair<ByteArray, String> {
-        return when (ref.fs) {
-            "user" -> {
-                val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
-                if (!file.exists() || !file.isFile) throw IllegalArgumentException("not_found")
-                val bytes = file.readBytes()
-                Pair(bytes, ref.displayPath)
-            }
-            "termux" -> {
-                val absPath = ref.termuxPath ?: throw IllegalArgumentException("path_outside_termux_home")
-                val payload = JSONObject()
-                    .put("path", absPath)
-                    .put("offset", 0)
-                    .put("max_bytes", maxBytes.coerceIn(1, 128 * 1024 * 1024))
-                val rsp = workerJsonRequest("/fs/read", "POST", payload, readTimeoutMs = 30_000)
-                    ?: throw IllegalArgumentException("termux_unavailable")
-                val body = rsp.second
-                if (rsp.first !in 200..299) {
-                    val err = body.optString("error", "").trim()
-                    throw IllegalArgumentException(
-                        when (err) {
-                            "not_found" -> "not_found"
-                            "path_outside_home" -> "path_outside_termux_home"
-                            else -> "termux_fs_read_failed"
-                        }
-                    )
-                }
-                val encoding = body.optString("encoding", "utf-8").trim().lowercase(Locale.US)
-                val content = body.optString("content", "")
-                val truncated = body.optBoolean("truncated", false)
-                val bytes = when (encoding) {
-                    "base64" -> runCatching { Base64.decode(content, Base64.DEFAULT) }.getOrNull()
-                        ?: throw IllegalArgumentException("termux_fs_read_failed")
-                    else -> content.toByteArray(Charsets.UTF_8)
-                }
-                if (truncated) throw IllegalArgumentException("file_too_large")
-                Pair(bytes, ref.displayPath)
-            }
-            else -> throw IllegalArgumentException("unsupported_filesystem")
-        }
+        val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
+        if (!file.exists() || !file.isFile) throw IllegalArgumentException("not_found")
+        val bytes = file.readBytes()
+        return Pair(bytes, ref.displayPath)
     }
 
     private fun writeFsPathBytes(ref: FsPathRef, bytes: ByteArray): String {
-        return when (ref.fs) {
-            "user" -> {
-                val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
-                file.parentFile?.mkdirs()
-                file.writeBytes(bytes)
-                ref.displayPath
-            }
-            "termux" -> {
-                val absPath = ref.termuxPath ?: throw IllegalArgumentException("path_outside_termux_home")
-                val payload = JSONObject()
-                    .put("path", absPath)
-                    .put("content", Base64.encodeToString(bytes, Base64.NO_WRAP))
-                    .put("encoding", "base64")
-                val rsp = workerJsonRequest("/fs/write", "POST", payload, readTimeoutMs = 30_000)
-                    ?: throw IllegalArgumentException("termux_unavailable")
-                if (rsp.first !in 200..299) {
-                    val err = rsp.second.optString("error", "").trim()
-                    throw IllegalArgumentException(
-                        when (err) {
-                            "path_outside_home" -> "path_outside_termux_home"
-                            else -> "termux_fs_write_failed"
-                        }
-                    )
-                }
-                ref.displayPath
-            }
-            else -> throw IllegalArgumentException("unsupported_filesystem")
-        }
+        val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
+        file.parentFile?.mkdirs()
+        file.writeBytes(bytes)
+        return ref.displayPath
     }
 
     private fun materializeFsPathToLocalFile(ref: FsPathRef, prefix: String): Pair<File, Boolean> {
-        return when (ref.fs) {
-            "user" -> {
-                val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
-                if (!file.exists() || !file.isFile) throw IllegalArgumentException("not_found")
-                Pair(file, false)
-            }
-            "termux" -> {
-                val bytes = readFsPathBytes(ref).first
-                val ext = ref.termuxPath?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() } ?: "bin"
-                val tmp = File.createTempFile(prefix, ".$ext", context.cacheDir)
-                tmp.writeBytes(bytes)
-                Pair(tmp, true)
-            }
-            else -> throw IllegalArgumentException("unsupported_filesystem")
-        }
+        val file = ref.userFile ?: throw IllegalArgumentException("path_outside_user_dir")
+        if (!file.exists() || !file.isFile) throw IllegalArgumentException("not_found")
+        return Pair(file, false)
     }
 
     private fun statFsPath(ref: FsPathRef): Pair<Boolean, Long> {
-        return when (ref.fs) {
-            "user" -> {
-                val f = ref.userFile
-                if (f != null && f.exists() && f.isFile) Pair(true, f.length()) else Pair(false, 0L)
-            }
-            "termux" -> {
-                val absPath = ref.termuxPath ?: return Pair(false, 0L)
-                val payload = JSONObject().put("path", absPath).put("offset", 0).put("max_bytes", 1)
-                val rsp = workerJsonRequest("/fs/read", "POST", payload, readTimeoutMs = 5000) ?: return Pair(false, 0L)
-                if (rsp.first !in 200..299) return Pair(false, 0L)
-                Pair(true, rsp.second.optLong("size", 0L))
-            }
-            else -> Pair(false, 0L)
-        }
+        val f = ref.userFile
+        return if (f != null && f.exists() && f.isFile) Pair(true, f.length()) else Pair(false, 0L)
     }
 
     private fun workerJsonRequest(
@@ -7192,71 +6789,29 @@ class LocalHttpServer(
 
     private fun listFsPath(path: String): Response {
         val ref = parseFsPathRef(path) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
-        return when (ref.fs) {
-            "user" -> {
-                val root = File(context.filesDir, "user").canonicalFile
-                val dir = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-                if (!dir.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
-                if (!dir.isDirectory) return jsonError(Response.Status.BAD_REQUEST, "not_a_directory")
-                val arr = org.json.JSONArray()
-                val kids = dir.listFiles()?.sortedBy { it.name.lowercase() } ?: emptyList()
-                for (f in kids) {
-                    arr.put(
-                        JSONObject()
-                            .put("name", f.name)
-                            .put("is_dir", f.isDirectory)
-                            .put("size", if (f.isFile) f.length() else 0L)
-                            .put("mtime_ms", f.lastModified())
-                    )
-                }
-                val outRel = if (dir == root) "" else dir.relativeTo(root).path.replace("\\", "/")
-                jsonResponse(
-                    JSONObject()
-                        .put("status", "ok")
-                        .put("fs", "user")
-                        .put("path", outRel)
-                        .put("path_uri", if (outRel.isBlank()) "." else outRel)
-                        .put("items", arr)
-                )
-            }
-            "termux" -> {
-                val termuxPath = ref.termuxPath ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                val payload = JSONObject().put("path", termuxPath)
-                val rsp = workerJsonRequest("/fs/list", "POST", payload, readTimeoutMs = 10_000)
-                    ?: return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
-                val code = rsp.first
-                val body = rsp.second
-                if (code !in 200..299) {
-                    val err = body.optString("error", "")
-                    return when (err) {
-                        "not_a_directory" -> jsonError(Response.Status.BAD_REQUEST, "not_a_directory")
-                        "path_outside_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                        else -> jsonError(Response.Status.NOT_FOUND, "not_found")
-                    }
-                }
-                val entries = body.optJSONArray("entries") ?: JSONArray()
-                val out = JSONArray()
-                for (i in 0 until entries.length()) {
-                    val item = entries.optJSONObject(i) ?: continue
-                    out.put(
-                        JSONObject()
-                            .put("name", item.optString("name", ""))
-                            .put("is_dir", item.optBoolean("is_dir", false))
-                            .put("size", item.optLong("size", 0L))
-                            .put("mtime_ms", (item.optDouble("mtime", 0.0) * 1000.0).toLong())
-                    )
-                }
-                jsonResponse(
-                    JSONObject()
-                        .put("status", "ok")
-                        .put("fs", "termux")
-                        .put("path", termuxPath)
-                        .put("path_uri", ref.displayPath)
-                        .put("items", out)
-                )
-            }
-            else -> jsonError(Response.Status.BAD_REQUEST, "unsupported_filesystem")
+        val root = File(context.filesDir, "user").canonicalFile
+        val dir = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+        if (!dir.exists()) return jsonError(Response.Status.NOT_FOUND, "not_found")
+        if (!dir.isDirectory) return jsonError(Response.Status.BAD_REQUEST, "not_a_directory")
+        val arr = org.json.JSONArray()
+        val kids = dir.listFiles()?.sortedBy { it.name.lowercase() } ?: emptyList()
+        for (f in kids) {
+            arr.put(
+                JSONObject()
+                    .put("name", f.name)
+                    .put("is_dir", f.isDirectory)
+                    .put("size", if (f.isFile) f.length() else 0L)
+                    .put("mtime_ms", f.lastModified())
+            )
         }
+        val outRel = if (dir == root) "" else dir.relativeTo(root).path.replace("\\", "/")
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("path", outRel)
+                .put("path_uri", if (outRel.isBlank()) "." else outRel)
+                .put("items", arr)
+        )
     }
 
     private fun toUserRelativePath(abs: File): String? {
@@ -7329,8 +6884,8 @@ class LocalHttpServer(
             materializeFsPathToLocalFile(ref, "vision_model_")
         } catch (ex: IllegalArgumentException) {
             return when (ex.message ?: "") {
-                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                "path_outside_worker_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_worker_home")
+                "worker_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
                 "not_found" -> jsonError(Response.Status.NOT_FOUND, "not_found")
                 else -> jsonError(Response.Status.INTERNAL_ERROR, "file_read_failed")
             }
@@ -7405,8 +6960,8 @@ class LocalHttpServer(
             materializeFsPathToLocalFile(ref, "vision_image_")
         } catch (ex: IllegalArgumentException) {
             return when (ex.message ?: "") {
-                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+                "path_outside_worker_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_worker_home")
+                "worker_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
                 "not_found" -> jsonError(Response.Status.NOT_FOUND, "not_found")
                 else -> jsonError(Response.Status.INTERNAL_ERROR, "file_read_failed")
             }
@@ -7442,23 +6997,12 @@ class LocalHttpServer(
         val frame = visionFrames.get(id) ?: return jsonError(Response.Status.NOT_FOUND, "frame_not_found")
         val outRef = parseFsPathRef(outPath) ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
         return try {
-            if (outRef.fs == "user") {
-                val outFile = outRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
-                VisionImageIo.encodeRgbaToFile(frame, format, outFile, jpegQuality)
-            } else {
-                val tmp = File.createTempFile("vision_out_", ".${format.lowercase(Locale.US)}", context.cacheDir)
-                try {
-                    VisionImageIo.encodeRgbaToFile(frame, format, tmp, jpegQuality)
-                    writeFsPathBytes(outRef, tmp.readBytes())
-                } finally {
-                    runCatching { tmp.delete() }
-                }
-            }
+            val outFile = outRef.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "path_outside_user_dir")
+            outFile.parentFile?.mkdirs()
+            VisionImageIo.encodeRgbaToFile(frame, format, outFile, jpegQuality)
             jsonResponse(JSONObject().put("status", "ok").put("saved", true).put("path", outRef.displayPath))
         } catch (ex: IllegalArgumentException) {
             when (ex.message ?: "") {
-                "path_outside_termux_home" -> jsonError(Response.Status.BAD_REQUEST, "path_outside_termux_home")
-                "termux_unavailable" -> jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
                 else -> jsonError(Response.Status.BAD_REQUEST, "frame_save_failed", JSONObject().put("detail", ex.message ?: ""))
             }
         } catch (ex: Exception) {
@@ -7692,7 +7236,7 @@ class LocalHttpServer(
 
     private fun handleAppUpdateInstallPermissionOpenSettings(): Response {
         // No debug guard here — opening the "install unknown apps" settings page
-        // is needed for Termux installation regardless of build type.
+        // is needed for APK sideload installation regardless of build type.
         return try {
             appUpdateManager.openInstallPermissionSettings()
             jsonResponse(JSONObject().put("status", "ok"))
@@ -8096,11 +7640,11 @@ class LocalHttpServer(
 
         if (runtimeManager.getStatus() != "ok") {
             runtimeManager.startWorker()
-            waitForTermuxHealth(5000)
+            waitForWorkerHealth(5000)
         }
         val proxied = proxyShellExecToWorker("pip", args.joinToString(" "), "")
         if (proxied != null) return proxied
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
     }
 
     private fun handlePipInstall(session: IHTTPSession, payload: JSONObject): Response {
@@ -8178,11 +7722,11 @@ class LocalHttpServer(
 
         if (runtimeManager.getStatus() != "ok") {
             runtimeManager.startWorker()
-            waitForTermuxHealth(5000)
+            waitForWorkerHealth(5000)
         }
         val proxied = proxyShellExecToWorker("pip", args.joinToString(" "), "")
         if (proxied != null) return proxied
-        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "termux_unavailable")
+        return jsonError(Response.Status.SERVICE_UNAVAILABLE, "worker_unavailable")
     }
 
     private fun handleWebSearch(session: IHTTPSession, payload: JSONObject): Response {
@@ -8605,7 +8149,7 @@ class LocalHttpServer(
         //
         // ${vault:key} -> credentialStore (secret)
         // ${config:brain.api_key|brain.base_url|brain.model|brain.vendor} -> brain SharedPreferences
-        // ${file:path[:base64|text]} -> read from app-local relative or termux:// path
+        // ${file:path[:base64|text]} -> read from app-local relative path
         // ICU regex on Android treats a bare '}' as syntax error; escape both braces.
         val re = Regex("\\$\\{([^}]+)\\}")
         return re.replace(s) { m ->
@@ -8641,15 +8185,11 @@ class LocalHttpServer(
                         "base64_raw" -> bytes0
                         else -> {
                             // Default: base64. For common image types, downscale/compress to reduce upload size.
-                            val fileName = when (ref.fs) {
-                                "user" -> ref.userFile?.name ?: ""
-                                "termux" -> ref.termuxPath?.substringAfterLast('/') ?: ""
-                                else -> ""
-                            }
+                            val fileName = ref.userFile?.name ?: ""
                             val ext = fileName.substringAfterLast('.', "").lowercase()
                             val isImg = ext in setOf("jpg", "jpeg", "png", "webp")
                             val enabled = fileTransferPrefs.getBoolean("image_resize_enabled", true)
-                            if (mode == "base64" && enabled && isImg && ref.fs == "user") {
+                            if (mode == "base64" && enabled && isImg && ref.userFile != null) {
                                 downscaleImageToJpeg(
                                     ref.userFile!!,
                                     maxDimPx = fileTransferPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096),
@@ -9515,7 +9055,7 @@ class LocalHttpServer(
         }
     }
 
-    private fun waitForTermuxHealth(timeoutMs: Long) {
+    private fun waitForWorkerHealth(timeoutMs: Long) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             try {
@@ -9859,7 +9399,6 @@ class LocalHttpServer(
             if (streamRel != null) {
                 val ref = parseFsPathRef(streamRel)
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_stream_path")
-                if (ref.fs != "user") return jsonError(Response.Status.BAD_REQUEST, "intent_stream_must_be_user_path")
                 val file = ref.userFile ?: return jsonError(Response.Status.BAD_REQUEST, "stream_path_outside_user_dir")
                 if (!file.exists() || !file.isFile) {
                     return jsonError(Response.Status.BAD_REQUEST, "stream_file_not_found")
@@ -10081,7 +9620,7 @@ class LocalHttpServer(
                 jsonResponse(JSONObject().put("active", false))
             }
             uri == "/sshd/pin/verify" && session.method == Method.GET -> {
-                // Called by the methings-pin-check script running inside Termux SSH session
+                // Called by the methings-pin-check script running inside Dropbear SSH session
                 val pin = session.parms["pin"] ?: ""
                 val state = sshPinManager.status()
                 if (state.expired || (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_PIN)) {
@@ -10155,7 +9694,7 @@ class LocalHttpServer(
                 jsonResponse(JSONObject().put("approved", approved))
             }
             uri == "/sshd/auth/keys" && session.method == Method.GET -> {
-                // THE BRIDGE endpoint — called by AuthorizedKeysCommand script in Termux.
+                // THE BRIDGE endpoint — called by AuthorizedKeysCommand script in Dropbear.
                 // Returns authorized_keys-format lines based on current auth mode.
                 handleAuthKeysQuery(session)
             }
@@ -10164,7 +9703,7 @@ class LocalHttpServer(
     }
 
     /**
-     * Push current DB keys to Termux's authorized_keys file.
+     * Push current DB keys to the authorized_keys file.
      * Called after key add/delete and auth mode changes.
      */
     fun syncAuthorizedKeys() {
@@ -10214,7 +9753,8 @@ class LocalHttpServer(
                 if (offeredKey.isBlank()) {
                     return newFixedLengthResponse(Response.Status.OK, "text/plain", "")
                 }
-                val line = "command=\"/data/data/com.termux/files/usr/bin/methings-pin-check\" $offeredKey"
+                val pinCheckPath = File(context.filesDir, "bin/methings-pin-check").absolutePath
+                val line = "command=\"$pinCheckPath\" $offeredKey"
                 newFixedLengthResponse(Response.Status.OK, "text/plain", line + "\n")
             }
             SshdManager.AUTH_MODE_NOTIFICATION -> {
@@ -11688,7 +11228,7 @@ class LocalHttpServer(
 
     /**
      * If the payload contains `rel_path` but no `data_b64`, resolve the file
-     * from app-local relative path or termux:// path, read its bytes, and embed as `data_b64` + `mime_type`.
+     * from app-local relative path, read its bytes, and embed as `data_b64` + `mime_type`.
      * Images are compressed to fit within BLE transport limits.
      * This ensures the receiver gets actual file content instead of a sender-local path.
      */
@@ -11714,18 +11254,14 @@ class LocalHttpServer(
             Log.w(TAG, "embedMeMeFileContent: file is empty rel_path=$relPath")
             return payloadValue
         }
-        val fileName = when (ref.fs) {
-            "user" -> ref.userFile?.name ?: relPath.substringAfterLast('/')
-            "termux" -> ref.termuxPath?.substringAfterLast('/') ?: relPath.substringAfterLast('/')
-            else -> relPath.substringAfterLast('/')
-        }
+        val fileName = ref.userFile?.name ?: relPath.substringAfterLast('/')
         val mime = payloadValue.optString("mime_type", "").trim()
             .ifBlank { URLConnection.guessContentTypeFromName(fileName) ?: mimeTypeFor(fileName) }
         // For images, apply file transfer resize settings (same as cloud uploads)
         val ext = fileName.substringAfterLast('.', "").lowercase()
         val isImg = mime.startsWith("image/") && ext in setOf("jpg", "jpeg", "png", "webp")
         val imgResizeEnabled = fileTransferPrefs.getBoolean("image_resize_enabled", true)
-        val bytes = if (isImg && imgResizeEnabled && ref.fs == "user" && ref.userFile != null) {
+        val bytes = if (isImg && imgResizeEnabled && ref.userFile != null) {
             val maxDimPx = fileTransferPrefs.getInt("image_resize_max_dim_px", 512).coerceIn(64, 4096)
             val jpegQuality = fileTransferPrefs.getInt("image_resize_jpeg_quality", 70).coerceIn(30, 95)
             downscaleImageToJpeg(ref.userFile, maxDimPx, jpegQuality) ?: rawBytes
@@ -16499,7 +16035,6 @@ class LocalHttpServer(
         private const val TAG = "LocalHttpServer"
         private const val HOST = "127.0.0.1"
         private const val PORT = 33389
-        private const val TERMUX_HOME_PREFIX = "/data/data/com.termux/files/home"
         private const val ME_SYNC_LAN_PORT = 8766
         private const val ME_ME_LAN_PORT = 8767
         private const val ME_ME_BLE_MAX_MESSAGE_BYTES = 1_000_000

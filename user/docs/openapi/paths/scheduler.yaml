@@ -162,7 +162,7 @@ schedulerCreate:
                     enum: [run_js, run_python]
                     description: >
                       `run_js` — built-in QuickJS engine (always available).
-                      `run_python` — Termux shell (requires Termux installed).
+                      `run_python` — embedded worker shell.
                   code:
                     type: string
                     description: Source code to execute.

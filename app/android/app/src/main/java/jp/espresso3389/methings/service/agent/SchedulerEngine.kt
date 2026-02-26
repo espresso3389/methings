@@ -162,7 +162,7 @@ class SchedulerEngine(
                     val shellExec = executeShellExec
                     if (shellExec == null) {
                         status = "error"
-                        error = "shell_unavailable: Termux not available"
+                        error = "shell_unavailable: embedded worker not available"
                     } else {
                         val tempFile = File(userDir, ".scheduler_tmp_${schedule.id}.py")
                         try {

@@ -34,13 +34,6 @@
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Termux RUN_COMMAND permission: allows the app to execute commands in Termux. -->
-    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
-
-    <!-- Allow the app to query whether Termux is installed (Android 11+ package visibility). -->
-    <queries>
-        <package android:name="com.termux" />
-    </queries>
 
     <application
         android:name=".MethingsApp"

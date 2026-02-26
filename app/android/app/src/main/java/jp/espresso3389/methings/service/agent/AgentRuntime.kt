@@ -1005,7 +1005,6 @@ class AgentRuntime(
 
             for (path in pathsToCheck) {
                 val normalizedPath = when {
-                    path.startsWith("termux://", ignoreCase = true) -> ""
                     else -> path
                 }
                 if (normalizedPath.isBlank()) continue

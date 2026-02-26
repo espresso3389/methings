@@ -17,8 +17,8 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 | **Sensors** | Accelerometer, gyroscope, magnetometer, and more via real-time WebSocket streams |
 | **Location** | GPS, fused, network, passive providers |
 | **Vision / ML** | On-device TensorFlow Lite inference on camera frames |
-| **Code Execution** | Built-in QuickJS JavaScript engine (`run_js` with async/await, fetch, WebSocket, file I/O), native HTTP client (`run_curl`), general shell (`run_shell`), persistent PTY sessions (`shell_session`), Termux filesystem access (`termux_fs`), Python/pip via optional Termux |
-| **SSH** | SSH server (via Termux OpenSSH) with PIN/key/no-auth modes; SSH client for remote exec and SCP |
+| **Code Execution** | Built-in QuickJS JavaScript engine (`run_js` with async/await, fetch, WebSocket, file I/O), native HTTP client (`run_curl`), general shell (`run_shell`), persistent PTY sessions (`shell_session`), embedded Python/pip |
+| **SSH** | Embedded Dropbear SSH server with PIN/key/no-auth modes; SSH client for remote exec and SCP |
 | **Browser** | Agent-controllable WebView with screenshot, JS injection, tap/scroll simulation |
 | **Cloud** | API broker with automatic secret injection from encrypted vault |
 | **me.me** | Encrypted device-to-device messaging over WiFi/BLE/WebRTC P2P/relay, file transfer, auto-discovery, device provisioning via OAuth sign-in |
@@ -27,7 +27,7 @@ Your devices can also talk to each other. **me.me** connects your devices over W
 
 ## Architecture
 
-The app owns the entire control plane and built-in agent runtime. Code execution (`run_js`) and HTTP requests (`run_curl`) work natively. Termux is optional — it provides a general-purpose Linux environment for Python and SSH.
+The app owns the entire control plane, built-in agent runtime, and all embedded runtimes. Code execution (`run_js`) and HTTP requests (`run_curl`) work natively. Python, SSH, and shell are self-hosted in the app sandbox via embedded runtimes (python-for-android, Dropbear).
 
 ```
 Android App (Foreground Service)
@@ -37,7 +37,7 @@ Android App (Foreground Service)
  |    +-- Permission Broker (consent + audit)
  |    +-- Credential Vault (Android Keystore AES-GCM)
  |    +-- me.me Engine (BLE + WiFi + WebRTC P2P + relay transport)
- |    +-- SSH Server (via Termux OpenSSH)
+ |    +-- SSH Server (Dropbear)
  |
  +-- Agent Runtime (built-in)
  |    +-- LlmClient (OpenAI + Anthropic SSE streaming)
@@ -46,11 +46,10 @@ Android App (Foreground Service)
  |    +-- AgentStorage (SQLite)
  |    +-- Scheduler (daemon/periodic/one_time code execution)
  |
- +-- Termux (optional, on-demand)
-      +-- General shell (run_shell, shell_session, termux_fs)
+ +-- Embedded Runtimes (self-hosted, on-demand)
+      +-- General shell (run_shell, shell_session)
       +-- Python environment (run_python, run_pip)
       +-- Worker HTTP server (127.0.0.1:8776)
-      +-- SSH server (OpenSSH)
 ```
 
 Every device capability is exposed as an HTTP endpoint on `127.0.0.1:33389`. The built-in agent (or any local client) calls these endpoints to interact with hardware. All sensitive operations require user consent through the permission broker.
@@ -59,7 +58,7 @@ Every device capability is exposed as an HTTP endpoint on `127.0.0.1:33389`. The
 
 - **Outcome-first agents** -- the agent delivers the requested artifact or state change, not an explanation
 - **User consent required** -- every device/resource access goes through a permission broker with optional biometric enforcement
-- **Crash isolation** -- Termux can die without taking down the app or the agent; restarted on demand
+- **Crash isolation** -- embedded runtimes can die without taking down the app or the agent; restarted on demand
 - **Offline by default** -- everything runs locally except explicit cloud API calls
 - **Audit trail** -- all tool invocations and permission decisions are logged
 
@@ -95,11 +94,11 @@ Flow: App opens CustomTabs → gateway sign-in page → OAuth provider → callb
 **Android:**
 Gradle, Android SDK 34, NanoHTTPD, Room, CameraX, TFLite, AndroidX Credentials, Firebase Cloud Messaging, Stream WebRTC Android, quickjs-kt (in-process JS engine)
 
-**On-device (optional, via Termux):**
-Linux shell, Python, package management, OpenSSH
+**Embedded runtimes (self-hosted):**
+Python (python-for-android), Dropbear SSH, custom shell launchers
 
 **Native (NDK):**
-libusb, libuvc, custom C launchers
+libusb, libuvc, Dropbear, methingssh, methingspy
 
 ## Project Structure
 
@@ -109,7 +108,7 @@ server/                 On-device server code and tools
 user/                   User-modifiable defaults, docs, OpenAPI spec
 scripts/                Build scripts (native libs, utilities)
 docs/                   Design and debugging docs
-third_party/            Git submodules (libusb, libuvc)
+third_party/            Git submodules (libusb, libuvc, dropbear)
 ```
 
 ## Building

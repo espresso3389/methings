@@ -10,7 +10,7 @@ health:
           application/json:
             schema:
               type: object
-              required: [status, service, termux]
+              required: [status, service, worker]
               properties:
                 status:
                   type: string
@@ -18,11 +18,11 @@ health:
                 service:
                   type: string
                   const: local
-                termux:
+                worker:
                   type: string
                   enum: [ok, offline, starting, stopping]
-                  description: Status of the Termux worker.
+                  description: Status of the embedded worker.
             example:
               status: ok
               service: local
-              termux: ok
+              worker: ok
