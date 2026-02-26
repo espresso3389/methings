@@ -9,7 +9,7 @@ NDK_DIR=${NDK_DIR:-""}
 ARCH=${ARCH:-"arm64-v8a"}
 WORK_DIR=${WORK_DIR:-"/tmp/p4a_build_out"}
 DIST_NAME=${DIST_NAME:-"methings"}
-REQUIREMENTS=${REQUIREMENTS:-"python3,fastapi==0.129.0,starlette==0.47.2,pydantic==2.12.5,typing-extensions,typing-inspection,annotated-doc,anyio==4.12.1,sniffio,uvicorn==0.41.0,click,h11,requests,charset-normalizer,idna,urllib3,certifi"}
+REQUIREMENTS=${REQUIREMENTS:-"python3,pip,fastapi==0.129.0,starlette==0.47.2,pydantic==2.12.5,typing-extensions,typing-inspection,annotated-doc,anyio==4.12.1,sniffio,uvicorn==0.41.0,click,h11,requests,charset-normalizer,idna,urllib3,certifi"}
 ANDROID_API=${ANDROID_API:-"34"}
 
 if [[ -z "$SDK_DIR" || -z "$NDK_DIR" ]]; then
