@@ -386,44 +386,30 @@ static int cmd_python_or_pip(const char *cmd, const char *raw_args, const char *
     return 0;
 }
 
-static int run_shell_command_with_node_preamble(const char *cmd) {
+static int run_shell_command(const char *cmd) {
     if (!cmd) {
         return 2;
     }
-    const char *nlib = getenv("METHINGS_NATIVELIB");
-    if (!nlib || nlib[0] == '\0') {
-        // Fallback: run as plain sh.
-        execl("/system/bin/sh", "sh", "-c", cmd, (char *)NULL);
-        perror("exec sh");
-        return 127;
+    // Use methings-sh (shebang-aware wrapper) so that scripts in filesDir
+    // (blocked by SELinux app_data_file) are run through their interpreter.
+    // We exec libmethingsrun.so directly (in nativeLibDir = apk_data_file)
+    // with argv[0]="methings-sh" so the multicall dispatch picks it up.
+    // We can't exec the symlink in binDir because it has app_data_file context.
+    const char *nativelib = getenv("METHINGS_NATIVELIB");
+    if (nativelib && nativelib[0]) {
+        char exe[PATH_MAX];
+        snprintf(exe, sizeof(exe), "%s/libmethingsrun.so", nativelib);
+        execl(exe, "methings-sh", "-c", cmd, (char *)NULL);
+        // If exec failed, fall through to plain sh.
     }
-
-    // Prefix node/bun helpers so npm lifecycle scripts can run `bun <script> || node <script>`
-    // even when the underlying /system/bin/sh doesn't source $ENV.
-    const char *preamble =
-        "node(){ "
-            "_nr=\"${METHINGS_NODE_ROOT:-$HOME/../node}\"; "
-            "LD_LIBRARY_PATH=\"$_nr/lib:${METHINGS_NATIVELIB}:${LD_LIBRARY_PATH:-}\" "
-            "\"${METHINGS_NATIVELIB}/libnode.so\" \"$@\"; "
-        "}; "
-        "bun(){ node \"$@\"; }; ";
-
-    size_t need = strlen(preamble) + strlen(cmd) + 1;
-    char *wrapped = (char *)malloc(need);
-    if (!wrapped) {
-        print_error("out of memory");
-        return 1;
-    }
-    snprintf(wrapped, need, "%s%s", preamble, cmd);
-    execl("/system/bin/sh", "sh", "-c", wrapped, (char *)NULL);
+    execl("/system/bin/sh", "sh", "-c", cmd, (char *)NULL);
     perror("exec sh");
-    free(wrapped);
     return 127;
 }
 
 int main(int argc, char **argv) {
     if (argc >= 3 && (strcmp(argv[1], "-c") == 0 || strcmp(argv[1], "-lc") == 0)) {
-        return run_shell_command_with_node_preamble(argv[2]);
+        return run_shell_command(argv[2]);
     }
     const char *root_env = getenv("METHINGS_HOME");
     char root[PATH_MAX];
