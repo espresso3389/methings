@@ -106,10 +106,6 @@ paths:
     $ref: './paths/worker.yaml#/workerStatus'
   /worker/restart:
     $ref: './paths/worker.yaml#/workerRestart'
-  /worker/arduino_proxy/status:
-    $ref: './paths/worker.yaml#/workerArduinoProxyStatus'
-  /worker/arduino_proxy/enable:
-    $ref: './paths/worker.yaml#/workerArduinoProxyEnable'
 
   # ── Shell ──
   /shell/exec:
