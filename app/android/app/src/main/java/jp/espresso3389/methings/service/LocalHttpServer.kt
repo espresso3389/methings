@@ -9455,9 +9455,11 @@ class LocalHttpServer(
                 val state = sshPinManager.status()
                 if (state.expired) {
                     sshPinManager.stopPin()
+                    clearSshPinAuthFile()
                     sshdManager.exitPinMode()
                     syncAuthorizedKeys()
                 } else if (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_PIN) {
+                    clearSshPinAuthFile()
                     sshdManager.exitPinMode()
                     syncAuthorizedKeys()
                 }
@@ -9480,6 +9482,7 @@ class LocalHttpServer(
                 )
                 if (!perm.first) return perm.second!!
                 val state = sshPinManager.startPin(seconds)
+                writeSshPinAuthFile(state)
                 sshdManager.enterPinMode()
                 syncAuthorizedKeys()
                 jsonResponse(
@@ -9491,6 +9494,7 @@ class LocalHttpServer(
             }
             uri == "/sshd/pin/stop" && session.method == Method.POST -> {
                 sshPinManager.stopPin()
+                clearSshPinAuthFile()
                 sshdManager.exitPinMode()
                 syncAuthorizedKeys()
                 jsonResponse(JSONObject().put("active", false))
@@ -9501,6 +9505,7 @@ class LocalHttpServer(
                 val state = sshPinManager.status()
                 if (state.expired || (!state.active && sshdManager.getAuthMode() == SshdManager.AUTH_MODE_PIN)) {
                     sshPinManager.stopPin()
+                    clearSshPinAuthFile()
                     sshdManager.exitPinMode()
                     syncAuthorizedKeys()
                     return jsonResponse(JSONObject().put("valid", false).put("reason", "expired"))
@@ -9658,6 +9663,33 @@ class LocalHttpServer(
         val s = raw.trim().replace(Regex("\\s+"), " ")
         if (s.isBlank()) return null
         return s.take(120)
+    }
+
+    private fun sshPinAuthFile(): File {
+        return File(context.filesDir, "protected/ssh/pin_auth")
+    }
+
+    private fun writeSshPinAuthFile(state: SshPinManager.PinState) {
+        val pin = state.pin ?: return
+        val expiresAtMs = state.expiresAt ?: return
+        val expiresEpochSec = (expiresAtMs / 1000L).coerceAtLeast(1L)
+        try {
+            val file = sshPinAuthFile()
+            file.parentFile?.mkdirs()
+            file.writeText("$expiresEpochSec $pin\n")
+            file.setReadable(true, true)
+            file.setWritable(true, true)
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to write SSH pin auth file", ex)
+        }
+    }
+
+    private fun clearSshPinAuthFile() {
+        try {
+            val file = sshPinAuthFile()
+            if (file.exists()) file.delete()
+        } catch (_: Exception) {
+        }
     }
 
     private fun parseSshPublicKey(raw: String): ParsedSshPublicKey? {

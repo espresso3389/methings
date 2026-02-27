@@ -6,10 +6,14 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import jp.espresso3389.methings.R
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 class SshNoAuthManager(private val context: Context) {
@@ -20,18 +24,24 @@ class SshNoAuthManager(private val context: Context) {
     private val pendingRequests = ConcurrentHashMap<String, CountDownLatch>()
     private val responses = ConcurrentHashMap<String, Boolean>()
     private val recentApprovals = ConcurrentHashMap<String, Long>()
+    private val seenPromptIds = ConcurrentHashMap<String, Long>()
+    private val watcher = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var watcherTask: ScheduledFuture<*>? = null
 
     fun start(ttlSeconds: Int = DEFAULT_TTL): NoAuthState {
         val ttl = ttlSeconds.coerceIn(MIN_TTL, MAX_TTL)
         expiresAt = System.currentTimeMillis() + ttl * 1000L
         active = true
         instance = this
+        startPromptWatcher()
         return NoAuthState(active = true, expiresAt = expiresAt)
     }
 
     fun stop() {
         active = false
         expiresAt = 0L
+        watcherTask?.cancel(true)
+        watcherTask = null
         // Release any blocked requests
         for ((id, latch) in pendingRequests) {
             responses[id] = false
@@ -40,6 +50,7 @@ class SshNoAuthManager(private val context: Context) {
         pendingRequests.clear()
         responses.clear()
         recentApprovals.clear()
+        seenPromptIds.clear()
         if (instance === this) instance = null
     }
 
@@ -101,8 +112,51 @@ class SshNoAuthManager(private val context: Context) {
      */
     fun respond(requestId: String, allow: Boolean) {
         responses[requestId] = allow
+        writePromptResponse(context, requestId, allow)
         pendingRequests[requestId]?.countDown()
         cancelNotification(requestId)
+    }
+
+    private fun startPromptWatcher() {
+        if (watcherTask?.isCancelled == false && watcherTask?.isDone == false) return
+        watcherTask = watcher.scheduleWithFixedDelay(
+            { scanPromptDir() },
+            0L,
+            300L,
+            TimeUnit.MILLISECONDS
+        )
+    }
+
+    private fun scanPromptDir() {
+        if (!isActive()) return
+        val dir = promptDir(context)
+        dir.mkdirs()
+        val now = System.currentTimeMillis()
+        val files = dir.listFiles() ?: return
+        for (f in files) {
+            if (!f.isFile || !f.name.endsWith(".req")) continue
+            val firstLine = try {
+                f.bufferedReader().use { it.readLine()?.trim().orEmpty() }
+            } catch (_: Exception) {
+                ""
+            }
+            if (firstLine.isBlank()) continue
+            val parts = firstLine.split('\t')
+            if (parts.isEmpty()) continue
+            val reqId = parts[0].trim()
+            if (!reqId.matches(ID_RE)) continue
+            if (seenPromptIds.putIfAbsent(reqId, now) != null) continue
+            val user = parts.getOrNull(1)?.trim().orEmpty()
+            val addr = parts.getOrNull(2)?.trim().orEmpty()
+            val who = if (addr.isBlank()) user else "$user ($addr)"
+            showApprovalNotification(reqId, who)
+        }
+        // Prune old seen IDs to bound memory.
+        val it = seenPromptIds.entries.iterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            if (now - e.value > SEEN_PROMPT_TTL_MS) it.remove()
+        }
     }
 
     private fun showApprovalNotification(requestId: String, user: String) {
@@ -170,5 +224,26 @@ class SshNoAuthManager(private val context: Context) {
         private const val MIN_TTL = 5
         private const val MAX_TTL = 600
         private const val RECENT_APPROVAL_WINDOW_MS = 5_000L
+        private const val SEEN_PROMPT_TTL_MS = 2 * 60_000L
+        private const val TAG = "SshNoAuthManager"
+        private val ID_RE = Regex("^[A-Za-z0-9_:-]+$")
+
+        private fun promptDir(context: Context): File {
+            return File(context.filesDir, "protected/ssh/noauth_prompts")
+        }
+
+        fun writePromptResponse(context: Context, requestId: String, allow: Boolean) {
+            if (!requestId.matches(ID_RE)) return
+            try {
+                val dir = promptDir(context)
+                dir.mkdirs()
+                val resp = File(dir, "$requestId.resp")
+                resp.writeText(if (allow) "allow\n" else "deny\n")
+                resp.setReadable(true, true)
+                resp.setWritable(true, true)
+            } catch (ex: Exception) {
+                Log.w(TAG, "Failed writing noauth response for $requestId", ex)
+            }
+        }
     }
 }

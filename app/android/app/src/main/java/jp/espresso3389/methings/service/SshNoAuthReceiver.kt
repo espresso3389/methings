@@ -10,6 +10,9 @@ class SshNoAuthReceiver : BroadcastReceiver() {
         val reqId = intent.getStringExtra(EXTRA_ID) ?: return
         if (!isSafeId(reqId)) return
         val allow = intent.getBooleanExtra(EXTRA_ALLOW, false)
+        // Dropbear waits on <id>.resp files; always write one as a fallback even if
+        // manager instance is unavailable (e.g., service restart race).
+        SshNoAuthManager.writePromptResponse(context, reqId, allow)
         SshNoAuthManager.instance?.respond(reqId, allow)
     }
 
