@@ -2917,6 +2917,7 @@
         <button class="icon-btn secondary" id="viewerClose" title="Close" aria-label="Close"></button>
         <div class="viewer-title" id="viewerTitle"></div>
         <button class="icon-btn" id="viewerSourceToggle" title="View source" aria-label="View source" style="display:none;"></button>
+        <button class="icon-btn" id="viewerOpenExternal" title="Open in browser" aria-label="Open in browser" style="display:none;"></button>
         <button class="icon-btn" id="viewerShare" title="Share" aria-label="Share"></button>
       </div>
       <div class="viewer-body" id="viewerBody">
@@ -2974,6 +2975,7 @@
       try { $("backToSettingsFromLicenses").innerHTML = ICON.back; } catch (_) {}
       try { $("viewerClose").innerHTML = ICON.close; } catch (_) {}
       try { $("viewerShare").innerHTML = ICON.share; } catch (_) {}
+      try { $("viewerOpenExternal").innerHTML = ICON.externalLink; } catch (_) {}
       try { $("viewerSourceToggle").innerHTML = ICON.code; } catch (_) {}
       try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
       try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
@@ -4190,7 +4192,9 @@
 
       function openPreviewInNewTab(url) {
         try {
-          const w = window.open(String(url || ""), "_blank", "noopener,noreferrer");
+          const targetUrl = String(url || "");
+          if (!targetUrl) return false;
+          const w = window.open(targetUrl, "_blank", "noopener,noreferrer");
           return !!w;
         } catch (_) {
           return false;
@@ -4207,11 +4211,18 @@
         return false;
       }
 
-      function openPreviewByEnvironment(url) {
+      function openPreviewByEnvironment(url, relPath) {
         const u = String(url || "");
         if (!u) return;
         if (!isEmbeddedClientWebView()) {
-          openPreviewInNewTab(u);
+          const relRaw = String(relPath || "").trim();
+          if (relRaw) {
+            try {
+              window.uiViewerOpen(relRaw);
+              return;
+            } catch (_) {}
+          }
+          try { location.href = u; } catch (_) {}
           return;
         }
         try {
@@ -4250,119 +4261,17 @@
         const rePlainEol = /\brel_path\b\s*[:=]\s*([^\r\n]+)/gi;
         while ((m = rePlainEol.exec(t)) !== null) add(m[1]);
 
+        // Backward compatibility: treat html_path/open_html as rel_path entries.
+        const reHtmlPath = /\bhtml_path\b\s*[:=]\s*([^\r\n]+)/gi;
+        while ((m = reHtmlPath.exec(t)) !== null) add(m[1]);
+        const reOpenHtml = /\bopen_html\b\s*[:=]\s*([^\r\n]+)/gi;
+        while ((m = reOpenHtml.exec(t)) !== null) add(m[1]);
+
         // Loose fallback (common folders + media extensions).
         const reLoose = /\b(?:captures|uploads|downloads)\/[a-zA-Z0-9._\-\/]+\.(?:png|jpe?g|gif|webp|bmp|svg|mp4|webm|mkv|mov|m4v|3gp|mp3|wav|ogg|m4a|aac|flac|txt|md|json|log|py|js|ts|html|css|sh|yaml|yml|toml|xml|csv|cfg|ini|conf|kt|java|c|cpp|h|rs|go|rb|pl)\b(?:#page=\d+)?/gi;
         while ((m = reLoose.exec(t)) !== null) add(m[0]);
 
         return out.slice(0, 4);
-      }
-
-      function extractHtmlPathsFromText(text) {
-        const t = String(text || "");
-        const out = [];
-        const seen = new Set();
-        let m;
-
-        const re1 = /\bhtml_path\b\s*[:=]\s*([^\r\n]+)/gi;
-        while ((m = re1.exec(t)) !== null) {
-          const { path: rawPath, page } = parsePageFragment(m[1]);
-          const p = safeRelPath(rawPath);
-          if (!p || !p.toLowerCase().endsWith(".html")) continue;
-          const withPage = (page >= 0) ? (p + "#page=" + page) : p;
-          if (!seen.has(withPage)) { out.push(withPage); seen.add(withPage); }
-        }
-
-        const re2 = /\bopen_html\b\s*[:=]\s*([^\r\n]+)/gi;
-        while ((m = re2.exec(t)) !== null) {
-          const { path: rawPath, page } = parsePageFragment(m[1]);
-          const p = safeRelPath(rawPath);
-          if (!p || !p.toLowerCase().endsWith(".html")) continue;
-          const withPage = (page >= 0) ? (p + "#page=" + page) : p;
-          if (!seen.has(withPage)) { out.push(withPage); seen.add(withPage); }
-        }
-
-        return out.slice(0, 3);
-      }
-
-      function renderInlineHtmlLinks(msgDiv, rawText) {
-        const paths = extractHtmlPathsFromText(rawText);
-        if (!paths.length) return;
-
-        try {
-          const old = msgDiv.querySelector(".html-wrap");
-          if (old) old.remove();
-        } catch (_) {}
-
-        const wrap = document.createElement("div");
-        wrap.className = "html-wrap";
-        wrap.style.marginTop = "10px";
-
-        for (const p0 of paths) {
-          const { path: pCleanRaw, page: pPage } = parsePageFragment(p0);
-          const p = safeRelPath(pCleanRaw);
-          if (!p) continue;
-          const pWithPage = (pPage >= 0) ? (p + "#page=" + pPage) : p;
-          const card = document.createElement("div");
-          card.className = "attach-card";
-          card.style.cursor = "pointer";
-
-          const head = document.createElement("div");
-          head.className = "attach-head";
-          const pathEl = document.createElement("div");
-          pathEl.className = "attach-path";
-          pathEl.textContent = p;
-          const actions = document.createElement("div");
-          actions.className = "attach-actions";
-          const shareBtn = document.createElement("button");
-          shareBtn.className = "attach-icon-btn";
-          shareBtn.title = "Share";
-          shareBtn.setAttribute("aria-label", "Share");
-          shareBtn.innerHTML = ICON.share;
-          shareBtn.addEventListener("click", async (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            try {
-              if (typeof AndroidBridge !== "undefined" && AndroidBridge.shareUserFile) {
-                AndroidBridge.shareUserFile(p, mimeForPath(p));
-                return;
-              }
-              const url = fileUrl(p);
-              if (navigator.share) {
-                await navigator.share({ title: p, url });
-              } else if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(url);
-                showToast("Link copied", 1400);
-              } else {
-                showToast("Share not available", 1600);
-              }
-            } catch (_) {
-              showToast("Share failed", 1800);
-            }
-          });
-          const openBtn = document.createElement("button");
-          openBtn.className = "attach-icon-btn";
-          openBtn.title = "Open";
-          openBtn.setAttribute("aria-label", "Open");
-          openBtn.innerHTML = ICON.externalLink;
-          const open = () => {
-            const url = fileUrl(pWithPage);
-            openPreviewByEnvironment(url);
-          };
-          openBtn.addEventListener("click", (ev) => {
-            ev.preventDefault();
-            ev.stopPropagation();
-            open();
-          });
-          actions.appendChild(shareBtn);
-          actions.appendChild(openBtn);
-          head.appendChild(pathEl);
-          head.appendChild(actions);
-          card.appendChild(head);
-          card.addEventListener("click", open);
-          wrap.appendChild(card);
-        }
-
-        if (wrap.childNodes.length) msgDiv.appendChild(wrap);
       }
 
       function extractUrlsFromText(text) {
@@ -4427,7 +4336,7 @@
 
         // Tap card → open in split browser panel (no duplicate card)
         card.addEventListener("click", () => {
-          openPreviewByEnvironment(url);
+          openPreviewByEnvironment(url, "");
         });
 
         return card;
@@ -4586,7 +4495,7 @@
                 img.style.cursor = "zoom-in";
                 const open = () => {
                   if (!isEmbeddedClientWebView()) {
-                    openPreviewInNewTab(fileUrl(p));
+                    openPreviewByEnvironment(fileUrl(p), p);
                     return;
                   }
                   try { openViewerFor(p); } catch (_) {}
@@ -4635,7 +4544,7 @@
                   if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
                   if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
                   if (!isEmbeddedClientWebView()) {
-                    openPreviewInNewTab(fileUrl(p));
+                    openPreviewByEnvironment(fileUrl(p), p);
                     return;
                   }
                   try { openMediaViewer(p, "video"); } catch (_) {}
@@ -4655,7 +4564,7 @@
                   if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
                   if (ev.target && ev.target.closest && ev.target.closest("audio,video")) return;
                   if (!isEmbeddedClientWebView()) {
-                    openPreviewInNewTab(fileUrl(p));
+                    openPreviewByEnvironment(fileUrl(p), p);
                     return;
                   }
                   try { openMediaViewer(p, "audio"); } catch (_) {}
@@ -4757,14 +4666,15 @@
                   card.style.cursor = "pointer";
                   card.addEventListener("click", (ev) => {
                     if (ev.target && ev.target.closest && ev.target.closest(".attach-icon-btn")) return;
+                    if (ev.target && ev.target.closest && ev.target.closest("pre, code, .attach-md")) return;
                     if (ext === "html" || ext === "htm") {
                       const pWithPage = (p0Page >= 0) ? (p + "#page=" + p0Page) : p;
                       const url = fileUrl(pWithPage);
-                      openPreviewByEnvironment(url);
+                      openPreviewByEnvironment(url, pWithPage);
                       return;
                     }
                     if (!isEmbeddedClientWebView()) {
-                      openPreviewInNewTab(fileUrl(p));
+                      openPreviewByEnvironment(fileUrl(p), p);
                       return;
                     }
                     try { openTextViewer(p, content, ext, p0Page); } catch (_) {}
@@ -4797,6 +4707,7 @@
       const viewer = $("viewer");
       const viewerClose = $("viewerClose");
       const viewerSourceToggle = $("viewerSourceToggle");
+      const viewerOpenExternal = $("viewerOpenExternal");
       const viewerShare = $("viewerShare");
       const viewerTitle = $("viewerTitle");
       const viewerImg = $("viewerImg");
@@ -4887,6 +4798,8 @@
         viewerAudio.style.display = "none";
         viewerIframe.style.display = "none";
         viewerText.style.display = "none";
+        viewerOpenExternal.style.display = "none";
+        viewerOpenExternal.onclick = null;
       }
       function collectViewerPaths() {
         const imgs = Array.from(document.querySelectorAll('.attach-body img[data-rel-path]'));
@@ -4956,6 +4869,20 @@
         const src = fileUrl(rel) + (page >= 0 ? ("#page=" + page) : "");
         viewerIframe.src = src;
         viewerIframe.style.display = "";
+        viewerOpenExternal.style.display = "";
+        viewerOpenExternal.onclick = () => {
+          if (!isEmbeddedClientWebView()) {
+            openPreviewInNewTab(src);
+            return;
+          }
+          try {
+            if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInBrowser) {
+              AndroidBridge.openInBrowser(src);
+              return;
+            }
+          } catch (_) {}
+          openPreviewInNewTab(src);
+        };
         const srcPre = document.createElement("pre");
         const srcCode = document.createElement("code");
         srcCode.className = "language-html";
@@ -5688,7 +5615,6 @@
                     }
                   }
                   try { renderInlineAttachments(existing, visibleText); } catch (_) {}
-                  try { renderInlineHtmlLinks(existing, visibleText); } catch (_) {}
                   upsertConversationEntry(role, itemId, visibleText, meta, ts);
                   if (role === "assistant") clearWorkingByItemId(itemId);
                   return;
@@ -6066,7 +5992,6 @@
           div.innerHTML = renderMarkdown(safeContent);
           // Attachments should render for both user and assistant messages.
           try { renderInlineAttachments(div, safeContent); } catch (_) {}
-          try { renderInlineHtmlLinks(div, safeContent); } catch (_) {}
           try { renderInlineUrlCards(div, safeContent); } catch (_) {}
           try { renderInlineMentions(div); } catch (_) {}
           // Retry affordance for agent failures.
@@ -6322,7 +6247,6 @@
                 }
                 // Always refresh attachments and persist upgraded content for rotation recovery.
                 try { renderInlineAttachments(existing, visibleText); } catch (_) {}
-                try { renderInlineHtmlLinks(existing, visibleText); } catch (_) {}
                 upsertConversationEntry(msg.role, itemId, visibleText, meta, ts);
                 if (msg.role === "assistant") clearWorkingByItemId(itemId);
                 // Permission resume events: show working indicator for the resumed item id.
@@ -6805,6 +6729,10 @@
         const MOVE_THRESH = 10;
         const selectOverlay = document.getElementById("selectOverlay");
         const selectOverlayText = document.getElementById("selectOverlayText");
+        function isNativeSelectableTarget(el) {
+          if (!el || !el.closest) return false;
+          return !!el.closest("pre, code, .attach-md, textarea, input, [contenteditable='true']");
+        }
 
         function getConvText(msgEl) {
           // Prefer per-bubble canonical text captured at render/update time.
@@ -6844,6 +6772,7 @@
 
         // --- Touch events (delegated on chatMessages) ---
         chatMessages.addEventListener("touchstart", (e) => {
+          if (isNativeSelectableTarget(e.target)) return;
           const msg = e.target.closest(".msg");
           if (!msg) return;
           const t = e.touches[0];
@@ -6868,6 +6797,7 @@
 
         // Suppress default context menu and native text selection during long-press on .msg
         chatMessages.addEventListener("contextmenu", (e) => {
+          if (isNativeSelectableTarget(e.target)) return;
           const msg = e.target.closest(".msg");
           if (!msg) return;
           e.preventDefault();
@@ -7583,7 +7513,6 @@
             aDiv.innerHTML = renderMarkdown(cleaned);
             try { aDiv.__msgText = String(cleaned || ""); } catch (_) {}
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
-            try { renderInlineHtmlLinks(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
             if (/^Error:/i.test(String(cleaned || "").trim())) {
               attachAgentFailureActions(aDiv, itemId);
@@ -7664,7 +7593,6 @@
             aDiv.innerHTML = renderMarkdown(cleaned);
             try { aDiv.__msgText = String(cleaned || ""); } catch (_) {}
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
-            try { renderInlineHtmlLinks(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
             if (/^Error:/i.test(String(cleaned || "").trim())) {
               attachAgentFailureActions(aDiv, newId);
@@ -7813,7 +7741,6 @@
           uDiv.innerHTML = renderMarkdown(finalText);
           try { uDiv.__msgText = String(finalText || ""); } catch (_) {}
           try { renderInlineAttachments(uDiv, finalText); } catch (_) {}
-          try { renderInlineHtmlLinks(uDiv, finalText); } catch (_) {}
         } catch (_) {}
 
         uploadBusy = false;

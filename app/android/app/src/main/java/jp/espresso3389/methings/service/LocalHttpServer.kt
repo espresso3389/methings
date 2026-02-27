@@ -4727,23 +4727,49 @@ class LocalHttpServer(
         return try {
             val writeTimeoutMs = payload.optInt("write_timeout_ms", 2000).coerceIn(100, 60_000)
             val settleMs = payload.optInt("settle_ms", 250).coerceIn(0, 5000)
-            val readTimeoutMs = payload.optInt("read_timeout_ms", 1500).coerceIn(100, 60_000)
+            val firstByteTimeoutMs = payload.optInt("read_timeout_ms", 1500).coerceIn(100, 60_000)
+            val captureTimeoutMs = payload.optInt("capture_timeout_ms", 4000).coerceIn(100, 120_000)
+            val idleTimeoutMs = payload.optInt("idle_timeout_ms", 300).coerceIn(20, 10_000)
+            val drainBeforeReset = payload.optBoolean("drain_before_reset", true)
             val maxDumpBytes = payload.optInt("max_dump_bytes", 8192).coerceIn(64, 262_144)
             val buf = ByteArray(maxDumpBytes)
             val capture = ByteArrayOutputStream()
 
             synchronized(lease.serial.lock) {
-                drainSerialInput(lease.serial, perReadTimeoutMs = 40, maxRounds = 12)
+                if (drainBeforeReset) {
+                    drainSerialInput(lease.serial, perReadTimeoutMs = 40, maxRounds = 12)
+                }
                 writeSerialAll(lease.serial, byteArrayOf(0x03, 0x04), writeTimeoutMs)
                 if (settleMs > 0) Thread.sleep(settleMs.toLong())
+                val startedAt = System.currentTimeMillis()
+                val firstDeadline = startedAt + firstByteTimeoutMs.toLong()
+                val overallDeadline = startedAt + captureTimeoutMs.toLong()
+                var sawAny = false
                 while (capture.size() < maxDumpBytes) {
+                    val now = System.currentTimeMillis()
+                    if (now >= overallDeadline) break
+                    val remainOverall = (overallDeadline - now).coerceAtLeast(1L).toInt()
+                    val timeoutForRead = if (!sawAny) {
+                        val remainFirst = (firstDeadline - now).coerceAtLeast(1L).toInt()
+                        minOf(remainOverall, remainFirst)
+                    } else {
+                        minOf(remainOverall, idleTimeoutMs)
+                    }
+                    if (timeoutForRead <= 0) break
                     val readRemaining = maxDumpBytes - capture.size()
                     if (readRemaining <= 0) break
                     val want = minOf(buf.size, readRemaining)
-                    val n = lease.serial.port.read(buf, readTimeoutMs)
-                    if (n <= 0) break
+                    val n = try {
+                        lease.serial.port.read(buf, timeoutForRead)
+                    } catch (_: Exception) {
+                        0
+                    }
+                    if (n <= 0) {
+                        if (!sawAny && System.currentTimeMillis() < firstDeadline) continue
+                        break
+                    }
+                    sawAny = true
                     capture.write(buf, 0, minOf(n, want))
-                    if (n < want) break
                 }
             }
             val out = capture.toByteArray()
@@ -4756,6 +4782,10 @@ class LocalHttpServer(
                     .put("ephemeral_session", lease.ephemeral)
                     .put("soft_reset_sent", true)
                     .put("bytes_read", out.size)
+                    .put("drain_before_reset", drainBeforeReset)
+                    .put("first_byte_timeout_ms", firstByteTimeoutMs)
+                    .put("capture_timeout_ms", captureTimeoutMs)
+                    .put("idle_timeout_ms", idleTimeoutMs)
                     .put("output_b64", Base64.encodeToString(out, Base64.NO_WRAP))
                     .put("output_ascii", bytesToAsciiPreview(out))
             )

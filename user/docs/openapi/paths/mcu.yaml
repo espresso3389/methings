@@ -729,6 +729,23 @@ mcuMicroPythonSoftReset:
                     minimum: 100
                     maximum: 60000
                     default: 1500
+                    description: Timeout waiting for first output byte after reset.
+                  capture_timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 120000
+                    default: 4000
+                    description: Total capture window after reset signal is sent.
+                  idle_timeout_ms:
+                    type: integer
+                    minimum: 20
+                    maximum: 10000
+                    default: 300
+                    description: Stop capture when no new bytes arrive for this long after output started.
+                  drain_before_reset:
+                    type: boolean
+                    default: true
+                    description: Drain stale serial input before sending Ctrl-C/Ctrl-D.
                   max_dump_bytes:
                     type: integer
                     minimum: 64
