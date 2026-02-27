@@ -684,14 +684,22 @@ mcuMicroPythonWriteFile:
 mcuMicroPythonSoftReset:
   post:
     operationId: postMcuMicroPythonSoftReset
-    summary: Send MicroPython soft reset (Ctrl-D)
+    summary: Send MicroPython soft reset (Ctrl-C/Ctrl-D) and capture output
     tags: [MCU]
     x-permission:
       tool: device.usb
       capability: usb
     description: >
-      Send Ctrl-D soft reset to MicroPython. Reset may temporarily drop the serial link; callers
-      should tolerate transient disconnects and reopen/retry if needed.
+      Sends Ctrl-C followed by Ctrl-D to the active MicroPython serial session, then captures boot/output bytes.
+      If `drain_before_reset=true`, stale input is drained first.
+      Capture flow:
+      1) Wait up to `read_timeout_ms` for the first byte.
+      2) After first byte arrives, continue reading until one of:
+         - `idle_timeout_ms` of silence,
+         - `capture_timeout_ms` total elapsed since capture start,
+         - `max_dump_bytes` reached.
+      If no first byte arrives before `read_timeout_ms`, response is still `status=ok` with empty output.
+      Reset may temporarily drop the serial link; callers should tolerate transient disconnects and reopen/retry if needed.
     requestBody:
       required: true
       content:
@@ -729,28 +737,29 @@ mcuMicroPythonSoftReset:
                     minimum: 100
                     maximum: 60000
                     default: 1500
-                    description: Timeout waiting for first output byte after reset.
+                    description: First-byte wait timeout (ms) after Ctrl-C/Ctrl-D is sent.
                   capture_timeout_ms:
                     type: integer
                     minimum: 100
                     maximum: 120000
                     default: 4000
-                    description: Total capture window after reset signal is sent.
+                    description: Total capture budget (ms), including first-byte wait and post-first-byte reads.
                   idle_timeout_ms:
                     type: integer
                     minimum: 20
                     maximum: 10000
                     default: 300
-                    description: Stop capture when no new bytes arrive for this long after output started.
+                    description: Post-first-byte idle cutoff (ms). Ignored until at least one byte is received.
                   drain_before_reset:
                     type: boolean
                     default: true
-                    description: Drain stale serial input before sending Ctrl-C/Ctrl-D.
+                    description: Drain buffered/stale serial input before sending Ctrl-C/Ctrl-D.
                   max_dump_bytes:
                     type: integer
                     minimum: 64
                     maximum: 262144
                     default: 8192
+                    description: Maximum bytes to capture before stopping.
               - $ref: '../components/schemas.yaml#/PermissionFields'
     responses:
       '200':
