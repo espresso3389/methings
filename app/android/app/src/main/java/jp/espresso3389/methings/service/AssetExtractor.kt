@@ -437,7 +437,7 @@ class AssetExtractor(private val context: Context) {
     private fun assetDirExists(assetPath: String): Boolean {
         return try {
             val entries = context.assets.list(assetPath)
-            entries != null
+            entries != null && entries.isNotEmpty()
         } catch (_: Exception) {
             false
         }

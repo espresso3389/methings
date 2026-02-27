@@ -520,6 +520,8 @@ paths:
     $ref: './paths/android.yaml#/androidDevice'
   /android/permissions:
     $ref: './paths/android.yaml#/androidPermissions'
+  /android/permissions/status:
+    $ref: './paths/android.yaml#/androidPermissionsStatus'
   /android/permissions/request:
     $ref: './paths/android.yaml#/androidPermissionsRequest'
 

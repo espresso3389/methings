@@ -279,6 +279,26 @@
       }
       .chat-search-clear:hover:not(:disabled) { color: var(--ink); background: var(--bg-overlay); }
       .chat-search-clear:disabled { opacity: 0.3; cursor: default; }
+      .system-perm-banner {
+        display: none;
+        margin: 8px 12px 0;
+        padding: 9px 11px;
+        border-radius: var(--radius-sm);
+        border: 1px solid rgba(251, 191, 36, 0.68);
+        background: #3a2a0b;
+        color: var(--ink);
+        font-size: 12px;
+        line-height: 1.45;
+        flex-shrink: 0;
+      }
+      .system-perm-banner.show { display: block; }
+      .system-perm-banner.done {
+        border-color: rgba(34, 197, 94, 0.52);
+        background: #102c1b;
+      }
+      .system-perm-banner .spb-title { font-weight: 700; letter-spacing: 0.15px; }
+      .system-perm-banner .spb-sub { color: var(--ink-secondary); margin-top: 2px; }
+      .system-perm-banner .spb-meta { color: var(--ink-muted); margin-top: 3px; font-size: 11px; }
       mark.search-hit { background: #facc15; color: #000; border-radius: 2px; }
       mark.search-hit.current { background: var(--amber); color: #000; }
       .sr-only {
@@ -2016,6 +2036,7 @@
         <button class="icon-btn small" id="chatSearchPrev" title="Previous" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
         <button class="icon-btn small" id="chatSearchNext" title="Next" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
       </div>
+      <div class="system-perm-banner" id="systemPermBanner"></div>
       <div class="chat-messages" id="chatMessages">
         <div class="chat-welcome" id="chatWelcome">
           <strong>me.things — it thinks, it does</strong>
@@ -4139,9 +4160,16 @@
         // - Fragment like #page=3 (used for Marp slide navigation) is stripped here;
         //   callers needing the page should use parsePageFragment() before safeRelPath().
         let s = String(p || "").trim();
+        // Allow markdown-link form in rel_path lines:
+        // rel_path: [label](captures/foo.jpg)
+        const mdLink = s.match(/^\[[^\]]*\]\(([^)]+)\)$/);
+        if (mdLink && mdLink[1]) s = String(mdLink[1]).trim();
         // Strip zero-width/invisible separators that can break ext detection.
         s = s.replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g, "");
         s = s.replace(/#.*$/, "");
+        // Accept file references that include line/column suffixes.
+        // Example: captures/foo.py:42 or captures/foo.py:42:7
+        s = s.replace(/:\d+(?::\d+)?$/, "");
         s = s.replace(/^["'`<(\[]+/, "");
         s = s.replace(/["'`>\])]+$/, "");
         s = s.replace(/[.,;:]+$/, "");
@@ -6937,6 +6965,142 @@
       }
 
       // ==============================
+      // Android permission timing banner (external browser mode)
+      // ==============================
+      const _systemPermBannerState = { renderKey: "" };
+
+      function formatElapsed(ms) {
+        const n = Math.max(0, Number(ms) || 0);
+        if (n < 1000) return n + "ms";
+        if (n < 60_000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "s";
+        const sec = Math.round(n / 1000);
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        return m + "m " + s + "s";
+      }
+
+      function hideSystemPermBanner() {
+        const el = $("systemPermBanner");
+        if (!el) return;
+        el.classList.remove("show", "done");
+        el.textContent = "";
+        _systemPermBannerState.renderKey = "";
+      }
+
+      function renderSystemPermBanner(title, sub, meta, done) {
+        const el = $("systemPermBanner");
+        if (!el) return;
+        const key = [title, sub, meta, done ? "1" : "0"].join("|");
+        if (_systemPermBannerState.renderKey === key) return;
+        _systemPermBannerState.renderKey = key;
+        el.textContent = "";
+        const t = document.createElement("div");
+        t.className = "spb-title";
+        t.textContent = title;
+        el.appendChild(t);
+        const s = document.createElement("div");
+        s.className = "spb-sub";
+        s.textContent = sub;
+        el.appendChild(s);
+        if (meta) {
+          const m = document.createElement("div");
+          m.className = "spb-meta";
+          m.textContent = meta;
+          el.appendChild(m);
+        }
+        el.classList.add("show");
+        el.classList.toggle("done", !!done);
+      }
+
+      function normalizeRuntimeOutcome(item) {
+        if (item && item.timed_out) return "timed out";
+        const results = item && item.results && typeof item.results === "object" ? item.results : null;
+        if (!results) return "responded";
+        const vals = Object.values(results);
+        if (!vals.length) return "responded";
+        return vals.every(Boolean) ? "granted" : "partial/denied";
+      }
+
+      async function pollSystemPermissionTimingBanner() {
+        if (isEmbeddedClientWebView()) {
+          hideSystemPermBanner();
+          return;
+        }
+        try {
+          const res = await fetch(API + "/android/permissions/status", { cache: "no-store" });
+          if (!res.ok) {
+            hideSystemPermBanner();
+            return;
+          }
+          const data = await res.json().catch(() => ({}));
+          const nowMs = Number(data.now_ms || Date.now());
+          const runtimePending = Array.isArray(data.pending_permission_requests) ? data.pending_permission_requests : [];
+          const usbPending = Array.isArray(data.usb_pending_permission_requests) ? data.usb_pending_permission_requests : [];
+          const runtimeRecentRaw = Array.isArray(data.recent_permission_requests) ? data.recent_permission_requests : [];
+          const usbRecentRaw = Array.isArray(data.usb_recent_permission_requests) ? data.usb_recent_permission_requests : [];
+
+          const pendingCount = runtimePending.length + usbPending.length;
+          let oldestRequestMs = nowMs;
+          for (const p of runtimePending) oldestRequestMs = Math.min(oldestRequestMs, Number(p.requested_at_ms || nowMs));
+          for (const p of usbPending) oldestRequestMs = Math.min(oldestRequestMs, Number(p.requested_at_ms || nowMs));
+
+          const recent = [];
+          for (const r of runtimeRecentRaw) {
+            const completedAt = Number(r.completed_at_ms || 0);
+            if (completedAt <= 0 || (nowMs - completedAt) > 20_000) continue;
+            const requestedAt = Number(r.requested_at_ms || completedAt);
+            const perms = Array.isArray(r.permissions) ? r.permissions : [];
+            recent.push({
+              completedAtMs: completedAt,
+              durationMs: Math.max(0, completedAt - requestedAt),
+              label: perms.length ? ("Runtime: " + perms.slice(0, 2).join(", ")) : "Runtime permission",
+              outcome: normalizeRuntimeOutcome(r),
+            });
+          }
+          for (const r of usbRecentRaw) {
+            const completedAt = Number(r.completed_at_ms || 0);
+            if (completedAt <= 0 || (nowMs - completedAt) > 20_000) continue;
+            const requestedAt = Number(r.requested_at_ms || completedAt);
+            const name = String(r.device_name || "").trim();
+            const granted = r.granted === true ? "granted" : (r.granted === false ? "denied" : "responded");
+            recent.push({
+              completedAtMs: completedAt,
+              durationMs: Math.max(0, completedAt - requestedAt),
+              label: name ? ("USB: " + name) : "USB permission",
+              outcome: granted,
+            });
+          }
+          recent.sort((a, b) => b.completedAtMs - a.completedAtMs);
+          const latest = recent.length ? recent[0] : null;
+
+          if (pendingCount <= 0 && !latest) {
+            hideSystemPermBanner();
+            return;
+          }
+
+          if (pendingCount > 0) {
+            const title = "Android permission dialog in progress";
+            const elapsed = formatElapsed(nowMs - oldestRequestMs);
+            const sub = pendingCount + " pending (runtime " + runtimePending.length + ", USB " + usbPending.length + ") - elapsed " + elapsed;
+            const meta = latest
+              ? ("Last response: " + latest.label + " - " + latest.outcome + " in " + formatElapsed(latest.durationMs))
+              : "";
+            renderSystemPermBanner(title, sub, meta, false);
+            return;
+          }
+
+          renderSystemPermBanner(
+            "Android permission dialog finished",
+            "No active permission dialogs.",
+            "Last response: " + latest.label + " - " + latest.outcome + " in " + formatElapsed(latest.durationMs),
+            true
+          );
+        } catch (_) {
+          hideSystemPermBanner();
+        }
+      }
+
+      // ==============================
       // Permission cards (inline in chat)
       // ==============================
       const BIOMETRIC_TOOLS = new Set(["credentials", "ssh_keys", "ssh_pin"]);
@@ -7298,10 +7462,14 @@
       }
 
       async function sendChat() {
-        if (streaming) return;
+        const now = Date.now();
+        if (streaming || sendInFlight) return;
+        if (now - lastSendAtMs < 700) return;
         const text = chatInput.value.trim();
         const hasAtt = pendingAttachments.length > 0;
         if (!text && !hasAtt) return;
+        sendInFlight = true;
+        lastSendAtMs = now;
         const settingsPrefix = (!hasAtt && /^\s*settings\s*:/i.test(text))
           ? normalizeSettingsSectionToken(text.replace(/^\s*settings\s*:/i, ""))
           : "";
@@ -7315,6 +7483,7 @@
           } else {
             showToast("Unknown settings section: " + settingsPrefix, 2200);
           }
+          sendInFlight = false;
           return;
         }
         stickToBottom = true;
@@ -7337,8 +7506,12 @@
         const uDiv = addMsg("user", previewText, { local_echo: true, uploading: hasAtt });
 
         // Upload attachments (if any) then send a final message with rel_path lines.
-        const finalText = await finalizeAndUploadAttachments(text, uDiv);
-        await sendAgentChat(finalText, uDiv);
+        try {
+          const finalText = await finalizeAndUploadAttachments(text, uDiv);
+          await sendAgentChat(finalText, uDiv);
+        } finally {
+          sendInFlight = false;
+        }
       }
 
       async function sendAgentChat(text, uDiv) {
@@ -7521,6 +7694,8 @@
       let pendingAttachments = [];
       let uploadBusy = false;
       let recordingBusy = false;
+      let sendInFlight = false;
+      let lastSendAtMs = 0;
 
       function fmtBytes(n) {
         const v = Number(n || 0);
@@ -11803,6 +11978,8 @@
       setInterval(refreshNoAuth, 1000);
       setInterval(updateNoAuthCountdown, 1000);
       setInterval(refreshAppUpdateWorkStatus, 15000);
+      pollSystemPermissionTimingBanner();
+      setInterval(pollSystemPermissionTimingBanner, 1200);
 
       // me.me BLE onboarding: auto-show on first launch if permissions not yet granted
       try {

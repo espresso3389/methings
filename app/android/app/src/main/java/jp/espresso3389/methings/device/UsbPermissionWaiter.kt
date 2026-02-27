@@ -60,6 +60,7 @@ object UsbPermissionWaiter {
                 completedAtMs = null,
                 timedOut = false,
             )
+            trimLast()
         }
         return created
     }
@@ -81,6 +82,7 @@ object UsbPermissionWaiter {
             completedAtMs = now,
             timedOut = false,
         )
+        trimLast()
     }
 
     fun await(deviceName: String, timeoutMs: Long): Boolean {
@@ -101,6 +103,7 @@ object UsbPermissionWaiter {
                         completedAtMs = null,
                         timedOut = true,
                     )
+                    trimLast()
                 }
             }
         } catch (_: InterruptedException) {
@@ -153,5 +156,24 @@ object UsbPermissionWaiter {
         // Stable ordering: oldest first.
         out.sortBy { it.requestedAtMs }
         return out
+    }
+
+    fun recentSnapshots(limit: Int = 8): List<Snapshot> {
+        if (limit <= 0) return emptyList()
+        return last.values
+            .sortedByDescending { it.completedAtMs ?: it.requestedAtMs }
+            .take(limit)
+    }
+
+    private fun trimLast(maxEntries: Int = 64) {
+        if (last.size <= maxEntries) return
+        val keep = last.values
+            .sortedByDescending { it.completedAtMs ?: it.requestedAtMs }
+            .take(maxEntries)
+            .map { it.deviceName }
+            .toHashSet()
+        for (id in last.keys) {
+            if (!keep.contains(id)) last.remove(id)
+        }
     }
 }

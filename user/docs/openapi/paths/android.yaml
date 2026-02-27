@@ -137,6 +137,146 @@ androidPermissions:
                 - name: android.permission.CAMERA
                   granted: false
 
+androidPermissionsStatus:
+  get:
+    operationId: getAndroidPermissionsStatus
+    summary: Get Android permission dialog timing status
+    tags: [Android]
+    description: >
+      Returns timing snapshots for in-flight and recent Android system permission
+      dialogs, including runtime permission requests and USB OS permission prompts.
+      Use this to display request-to-response timing in UI.
+    responses:
+      '200':
+        description: Permission timing status.
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+                - now_ms
+                - pending_permission_requests
+                - recent_permission_requests
+                - usb_pending_permission_requests
+                - usb_recent_permission_requests
+              properties:
+                status:
+                  type: string
+                  const: ok
+                now_ms:
+                  type: integer
+                  format: int64
+                pending_permission_requests:
+                  type: array
+                  items:
+                    type: object
+                    required: [request_id, permissions, requested_at_ms, age_ms, timed_out]
+                    properties:
+                      request_id:
+                        type: string
+                      permissions:
+                        type: array
+                        items: { type: string }
+                      requested_at_ms:
+                        type: integer
+                        format: int64
+                      age_ms:
+                        type: integer
+                        format: int64
+                      timed_out:
+                        type: boolean
+                recent_permission_requests:
+                  type: array
+                  items:
+                    type: object
+                    required: [request_id, permissions, requested_at_ms, responded, timed_out]
+                    properties:
+                      request_id:
+                        type: string
+                      permissions:
+                        type: array
+                        items: { type: string }
+                      requested_at_ms:
+                        type: integer
+                        format: int64
+                      responded:
+                        type: boolean
+                      results:
+                        nullable: true
+                        type: object
+                        additionalProperties: { type: boolean }
+                      completed_at_ms:
+                        nullable: true
+                        type: integer
+                        format: int64
+                      timed_out:
+                        type: boolean
+                usb_pending_permission_requests:
+                  type: array
+                  items:
+                    type: object
+                    required: [device_name, requested_at_ms, age_ms, timed_out]
+                    properties:
+                      device_name:
+                        type: string
+                      requested_at_ms:
+                        type: integer
+                        format: int64
+                      age_ms:
+                        type: integer
+                        format: int64
+                      timed_out:
+                        type: boolean
+                usb_recent_permission_requests:
+                  type: array
+                  items:
+                    type: object
+                    required: [device_name, requested_at_ms, responded, timed_out]
+                    properties:
+                      device_name:
+                        type: string
+                      requested_at_ms:
+                        type: integer
+                        format: int64
+                      responded:
+                        type: boolean
+                      granted:
+                        nullable: true
+                        type: boolean
+                      completed_at_ms:
+                        nullable: true
+                        type: integer
+                        format: int64
+                      timed_out:
+                        type: boolean
+            example:
+              status: ok
+              now_ms: 1767609200000
+              pending_permission_requests:
+                - request_id: req_123
+                  permissions: [android.permission.CAMERA]
+                  requested_at_ms: 1767609197000
+                  age_ms: 3000
+                  timed_out: false
+              recent_permission_requests:
+                - request_id: req_122
+                  permissions: [android.permission.RECORD_AUDIO]
+                  requested_at_ms: 1767609185000
+                  responded: true
+                  results:
+                    android.permission.RECORD_AUDIO: true
+                  completed_at_ms: 1767609187900
+                  timed_out: false
+              usb_pending_permission_requests: []
+              usb_recent_permission_requests:
+                - device_name: /dev/bus/usb/001/003
+                  requested_at_ms: 1767609173000
+                  responded: true
+                  granted: false
+                  completed_at_ms: 1767609176800
+                  timed_out: false
+
 androidPermissionsRequest:
   post:
     operationId: postAndroidPermissionsRequest

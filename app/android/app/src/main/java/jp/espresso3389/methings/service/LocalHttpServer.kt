@@ -16319,6 +16319,73 @@ class LocalHttpServer(
                 jsonResponse(JSONObject().put("status", "ok").put("permissions", arr))
             }
 
+            // GET /android/permissions/status — runtime permission request timing snapshots
+            (uri == "/android/permissions/status" || uri == "/android/permissions/status/") && session.method == Method.GET -> {
+                val now = System.currentTimeMillis()
+                val pending = JSONArray()
+                for (snap in AndroidPermissionWaiter.pendingSnapshots()) {
+                    pending.put(
+                        JSONObject()
+                            .put("request_id", snap.requestId)
+                            .put("permissions", JSONArray(snap.permissions))
+                            .put("requested_at_ms", snap.requestedAtMs)
+                            .put("age_ms", (now - snap.requestedAtMs).coerceAtLeast(0L))
+                            .put("timed_out", snap.timedOut)
+                    )
+                }
+                val recent = JSONArray()
+                for (snap in AndroidPermissionWaiter.recentSnapshots(limit = 8)) {
+                    val resultsJson = if (snap.results == null) {
+                        JSONObject.NULL
+                    } else {
+                        JSONObject().apply {
+                            for ((perm, granted) in snap.results) put(perm, granted)
+                        }
+                    }
+                    recent.put(
+                        JSONObject()
+                            .put("request_id", snap.requestId)
+                            .put("permissions", JSONArray(snap.permissions))
+                            .put("requested_at_ms", snap.requestedAtMs)
+                            .put("responded", snap.responded)
+                            .put("results", resultsJson)
+                            .put("completed_at_ms", if (snap.completedAtMs == null) JSONObject.NULL else snap.completedAtMs)
+                            .put("timed_out", snap.timedOut)
+                    )
+                }
+                val usbPending = JSONArray()
+                for (snap in UsbPermissionWaiter.pendingSnapshots()) {
+                    usbPending.put(
+                        JSONObject()
+                            .put("device_name", snap.deviceName)
+                            .put("requested_at_ms", snap.requestedAtMs)
+                            .put("age_ms", (now - snap.requestedAtMs).coerceAtLeast(0L))
+                            .put("timed_out", snap.timedOut)
+                    )
+                }
+                val usbRecent = JSONArray()
+                for (snap in UsbPermissionWaiter.recentSnapshots(limit = 8)) {
+                    usbRecent.put(
+                        JSONObject()
+                            .put("device_name", snap.deviceName)
+                            .put("requested_at_ms", snap.requestedAtMs)
+                            .put("responded", snap.responded)
+                            .put("granted", if (snap.granted == null) JSONObject.NULL else snap.granted)
+                            .put("completed_at_ms", if (snap.completedAtMs == null) JSONObject.NULL else snap.completedAtMs)
+                            .put("timed_out", snap.timedOut)
+                    )
+                }
+                jsonResponse(
+                    JSONObject()
+                        .put("status", "ok")
+                        .put("now_ms", now)
+                        .put("pending_permission_requests", pending)
+                        .put("recent_permission_requests", recent)
+                        .put("usb_pending_permission_requests", usbPending)
+                        .put("usb_recent_permission_requests", usbRecent)
+                )
+            }
+
             // POST /android/permissions/request — request runtime permissions via system dialog
             (uri == "/android/permissions/request" || uri == "/android/permissions/request/") && session.method == Method.POST -> {
                 val payload = try {

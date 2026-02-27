@@ -433,11 +433,17 @@ class AgentRuntime(
         val journalBlob = buildJournalBlob(journalCurrent, sessionId, persistentMemory)
 
         var pendingInput = buildInitialInput(providerKind, filteredDialogue, journalBlob, curText, item, supportedMediaTypes)
+        // Reset Responses API per-turn state.
+        lastResponsesOutputItems = JSONArray()
+        lastResponsesResponseId = ""
         var forcedRounds = 0
         var roundsUsed = 0
         var toolCallsRequested = 0
         var toolCallsExecuted = 0
         val toolUsageCounts = linkedMapOf<String, Int>()
+        var lastRoundFingerprint = ""
+        var consecutiveStallRounds = 0
+        var stoppedForStall = false
         var lastToolName = ""
         var lastToolStatus = ""
         var lastToolError = ""
@@ -453,6 +459,9 @@ class AgentRuntime(
             })
 
             val body = buildRequestBody(providerKind, model, tools, pendingInput, systemPrompt, toolRequiredUnsatisfied)
+            if (providerKind == ProviderKind.OPENAI_RESPONSES && roundIdx > 0 && lastResponsesResponseId.isNotBlank()) {
+                body.put("previous_response_id", lastResponsesResponseId)
+            }
 
             // Debug: log input structure for troubleshooting
             try {
@@ -579,13 +588,16 @@ class AgentRuntime(
             }
 
             // Execute tool calls
-            // Responses API is stateful — reset and echo back only new items.
             // Chat Completions and Anthropic are stateless — keep accumulating
             // the full conversation history so multi-round tool loops retain context.
             if (providerKind == ProviderKind.OPENAI_RESPONSES) {
                 pendingInput = JSONArray()
-                for (ci in 0 until lastResponsesOutputItems.length()) {
-                    pendingInput.put(lastResponsesOutputItems.get(ci))
+                // When previous_response_id is used, do not re-send prior output items.
+                // Re-sending + previous_response_id triggers duplicate-item errors.
+                if (lastResponsesResponseId.isBlank()) {
+                    for (ci in 0 until lastResponsesOutputItems.length()) {
+                        pendingInput.put(lastResponsesOutputItems.get(ci))
+                    }
                 }
             }
 
@@ -735,6 +747,36 @@ class AgentRuntime(
                 appendToolResult(providerKind, pendingInput, callId, textResult, name, mediaData)
             }
 
+            // Detect repetitive rounds (same tool/status/error pattern) and stop early to avoid
+            // exhausting max rounds with little progress.
+            val roundCallsFingerprint = buildString {
+                val limit = calls.length().coerceAtMost(maxActions)
+                for (i in 0 until limit) {
+                    val c = calls.optJSONObject(i) ?: continue
+                    val n = c.optString("name", "")
+                    append(n)
+                    append(';')
+                }
+                append("last=")
+                append(lastToolName)
+                append(':')
+                append(lastToolStatus)
+                if (lastToolError.isNotBlank()) {
+                    append(':')
+                    append(lastToolError.take(80))
+                }
+            }
+            if (roundCallsFingerprint.isNotBlank() && roundCallsFingerprint == lastRoundFingerprint) {
+                consecutiveStallRounds += 1
+            } else {
+                consecutiveStallRounds = 0
+            }
+            lastRoundFingerprint = roundCallsFingerprint
+            if (consecutiveStallRounds >= 2) {
+                stoppedForStall = true
+                break
+            }
+
             // Nudge to stop
             pendingInput = appendUserNudge(providerKind, pendingInput,
                 "Tool outputs have been provided. If the user's request is fully satisfied, respond with the final answer and STOP. " +
@@ -745,6 +787,9 @@ class AgentRuntime(
         try {
             val finalPrompt = (systemPrompt + "\n\nFINALIZATION:\n- Do NOT call any tools.\n- Produce the best possible final answer now.").trim()
             val finalBody = buildRequestBody(providerKind, model, JSONArray(), pendingInput, finalPrompt, false)
+            if (providerKind == ProviderKind.OPENAI_RESPONSES && lastResponsesResponseId.isNotBlank()) {
+                finalBody.put("previous_response_id", lastResponsesResponseId)
+            }
             finalBody.put("tool_choice", "none")
 
             val finalPayload = try {
@@ -785,7 +830,7 @@ class AgentRuntime(
             "$lastToolName -> $lastToolStatus$errPart"
         }
         recordMessage("assistant",
-            "Reached maximum tool rounds ($maxRounds).\n" +
+            (if (stoppedForStall) "Stopped due to repetitive tool-call loop.\n" else "Reached maximum tool rounds ($maxRounds).\n") +
                 "Progress summary:\n" +
                 "- Rounds used: $roundsUsed/$maxRounds\n" +
                 "- Tool calls requested by model: $toolCallsRequested\n" +
@@ -856,8 +901,10 @@ class AgentRuntime(
     /** All non-message output items from the last Responses API call (reasoning + function_call).
      *  Must be echoed back in the input when sending function_call_output items. */
     private var lastResponsesOutputItems = JSONArray()
+    private var lastResponsesResponseId = ""
 
     private fun parseOpenAiResponsesResponse(payload: JSONObject): Pair<List<String>, JSONArray> {
+        lastResponsesResponseId = payload.optString("id", "")
         val outputItems = payload.optJSONArray("output") ?: JSONArray()
         val messageTexts = mutableListOf<String>()
         val calls = JSONArray()
@@ -871,12 +918,20 @@ class AgentRuntime(
                     val parts = mutableListOf<String>()
                     for (j in 0 until contentArr.length()) {
                         val part = contentArr.optJSONObject(j) ?: continue
-                        if (part.optString("type") == "output_text") {
+                        val pType = part.optString("type")
+                        if (pType == "output_text" || pType == "text") {
                             val t = part.optString("text", "").trim()
                             if (t.isNotEmpty()) parts.add(t)
                         }
                     }
                     if (parts.isNotEmpty()) messageTexts.add(parts.joinToString("\n"))
+                }
+                // Some Responses-compatible models emit top-level text items instead of
+                // wrapping text inside a "message" output item.
+                "output_text", "text" -> {
+                    val t = out.optString("text", "").trim()
+                    if (t.isNotEmpty()) messageTexts.add(t)
+                    echoItems.put(out)
                 }
                 "function_call" -> {
                     calls.put(out)

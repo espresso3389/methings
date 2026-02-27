@@ -545,6 +545,10 @@ mcuMicroPythonExec:
     x-permission:
       tool: device.usb
       capability: usb
+    description: >
+      Execute Python in MicroPython raw REPL over USB serial. If you already opened a
+      serial session with `/serial/open`, pass `serial_handle` and reuse it. Avoid mixing
+      `handle` and `serial_handle` for the same active session to prevent double-open conflicts.
     requestBody:
       required: true
       content:
@@ -611,6 +615,9 @@ mcuMicroPythonWriteFile:
     x-permission:
       tool: device.usb
       capability: usb
+    description: >
+      Upload content to the target MicroPython filesystem over raw REPL. For stable multi-step
+      workflows, open serial once and pass `serial_handle` for each call.
     requestBody:
       required: true
       content:
@@ -682,6 +689,9 @@ mcuMicroPythonSoftReset:
     x-permission:
       tool: device.usb
       capability: usb
+    description: >
+      Send Ctrl-D soft reset to MicroPython. Reset may temporarily drop the serial link; callers
+      should tolerate transient disconnects and reopen/retry if needed.
     requestBody:
       required: true
       content:

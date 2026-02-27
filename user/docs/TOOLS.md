@@ -216,6 +216,10 @@ WebSocket event examples:
 - `mcu.micropython.write_file`: upload `main.py`/modules to device filesystem.
 - `mcu.micropython.soft_reset`: send Ctrl-D soft reset and capture boot output.
 
+MicroPython session caution:
+- Prefer opening serial once (`serial.open`) and then calling MicroPython APIs with `serial_handle`.
+- Do not mix `handle` and `serial_handle` while a serial session is already open for the same device, or the runtime may attempt a second open and fail.
+
 Current implementation note:
 - `esp32` is the first supported model. API names and workflow are intentionally model-generic so additional MCU families can be added without renaming.
 
