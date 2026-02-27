@@ -180,6 +180,88 @@ class MethingsClient:
         }
         return self.device_api("mcu.serial_monitor", payload, detail=f"MCU serial monitor ({payload['model']})")
 
+    def mcu_micropython_exec(
+        self,
+        *,
+        code: str = "",
+        code_b64: str = "",
+        model: str = "esp32",
+        serial_handle: str = "",
+        handle: str = "",
+        port_index: int = 0,
+        baud_rate: int = 115200,
+        timeout_ms: int = 20000,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": str(model).strip().lower(),
+            "port_index": int(port_index),
+            "baud_rate": int(baud_rate),
+            "timeout_ms": int(timeout_ms),
+        }
+        if code:
+            payload["code"] = str(code)
+        if code_b64:
+            payload["code_b64"] = str(code_b64)
+        if serial_handle:
+            payload["serial_handle"] = str(serial_handle).strip()
+        if handle:
+            payload["handle"] = str(handle).strip()
+        return self.device_api("mcu.micropython.exec", payload, detail="MCU MicroPython exec")
+
+    def mcu_micropython_write_file(
+        self,
+        *,
+        path: str,
+        content: str = "",
+        content_b64: str = "",
+        model: str = "esp32",
+        serial_handle: str = "",
+        handle: str = "",
+        port_index: int = 0,
+        baud_rate: int = 115200,
+        make_dirs: bool = True,
+        chunk_size: int = 768,
+        timeout_ms: int = 20000,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": str(model).strip().lower(),
+            "path": str(path).strip(),
+            "port_index": int(port_index),
+            "baud_rate": int(baud_rate),
+            "make_dirs": bool(make_dirs),
+            "chunk_size": int(chunk_size),
+            "timeout_ms": int(timeout_ms),
+        }
+        if content_b64:
+            payload["content_b64"] = str(content_b64)
+        else:
+            payload["content"] = str(content)
+        if serial_handle:
+            payload["serial_handle"] = str(serial_handle).strip()
+        if handle:
+            payload["handle"] = str(handle).strip()
+        return self.device_api("mcu.micropython.write_file", payload, detail="MCU MicroPython write_file")
+
+    def mcu_micropython_soft_reset(
+        self,
+        *,
+        model: str = "esp32",
+        serial_handle: str = "",
+        handle: str = "",
+        port_index: int = 0,
+        baud_rate: int = 115200,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "model": str(model).strip().lower(),
+            "port_index": int(port_index),
+            "baud_rate": int(baud_rate),
+        }
+        if serial_handle:
+            payload["serial_handle"] = str(serial_handle).strip()
+        if handle:
+            payload["handle"] = str(handle).strip()
+        return self.device_api("mcu.micropython.soft_reset", payload, detail="MCU MicroPython soft reset")
+
     def stt_record(self, *, locale: str = "", partial: bool = True, max_results: int = 5) -> Dict[str, Any]:
         payload: Dict[str, Any] = {}
         if locale:

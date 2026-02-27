@@ -536,3 +536,203 @@ mcuSerialMonitor:
         description: Permission required.
       '500':
         description: Serial monitor failed.
+
+mcuMicroPythonExec:
+  post:
+    operationId: postMcuMicroPythonExec
+    summary: Execute Python in MicroPython raw REPL
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  model:
+                    type: string
+                    enum: [esp32, micropython]
+                    default: esp32
+                  serial_handle:
+                    type: string
+                    description: Existing serial session handle from `serial.open`.
+                  handle:
+                    type: string
+                    description: USB handle from `usb.open` when creating an ephemeral serial session.
+                  port_index:
+                    type: integer
+                    default: 0
+                  baud_rate:
+                    type: integer
+                    default: 115200
+                  code:
+                    type: string
+                    description: UTF-8 Python source.
+                  code_b64:
+                    type: string
+                    description: Base64-encoded Python source.
+                  timeout_ms:
+                    type: integer
+                    minimum: 500
+                    maximum: 180000
+                    default: 20000
+                  write_timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+                    default: 2000
+                  settle_ms:
+                    type: integer
+                    minimum: 0
+                    maximum: 2000
+                    default: 80
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Raw REPL execution result.
+      '400':
+        description: Invalid request.
+      '403':
+        description: Permission required.
+      '404':
+        description: Device/session not found.
+      '500':
+        description: Raw REPL operation failed.
+
+mcuMicroPythonWriteFile:
+  post:
+    operationId: postMcuMicroPythonWriteFile
+    summary: Upload a file to MicroPython filesystem over raw REPL
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                required: [path]
+                properties:
+                  model:
+                    type: string
+                    enum: [esp32, micropython]
+                    default: esp32
+                  serial_handle:
+                    type: string
+                  handle:
+                    type: string
+                  port_index:
+                    type: integer
+                    default: 0
+                  baud_rate:
+                    type: integer
+                    default: 115200
+                  path:
+                    type: string
+                    description: Destination path on target filesystem (for example `main.py`).
+                  content:
+                    type: string
+                    description: UTF-8 content to upload.
+                  content_b64:
+                    type: string
+                    description: Base64 content to upload (binary-safe).
+                  make_dirs:
+                    type: boolean
+                    default: true
+                  chunk_size:
+                    type: integer
+                    minimum: 64
+                    maximum: 2048
+                    default: 768
+                  timeout_ms:
+                    type: integer
+                    minimum: 500
+                    maximum: 180000
+                    default: 20000
+                  write_timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+                    default: 2000
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: File upload result.
+      '400':
+        description: Invalid request.
+      '403':
+        description: Permission required.
+      '404':
+        description: Device/session not found.
+      '500':
+        description: Upload failed.
+
+mcuMicroPythonSoftReset:
+  post:
+    operationId: postMcuMicroPythonSoftReset
+    summary: Send MicroPython soft reset (Ctrl-D)
+    tags: [MCU]
+    x-permission:
+      tool: device.usb
+      capability: usb
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            allOf:
+              - type: object
+                properties:
+                  model:
+                    type: string
+                    enum: [esp32, micropython]
+                    default: esp32
+                  serial_handle:
+                    type: string
+                  handle:
+                    type: string
+                  port_index:
+                    type: integer
+                    default: 0
+                  baud_rate:
+                    type: integer
+                    default: 115200
+                  write_timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+                    default: 2000
+                  settle_ms:
+                    type: integer
+                    minimum: 0
+                    maximum: 5000
+                    default: 250
+                  read_timeout_ms:
+                    type: integer
+                    minimum: 100
+                    maximum: 60000
+                    default: 1500
+                  max_dump_bytes:
+                    type: integer
+                    minimum: 64
+                    maximum: 262144
+                    default: 8192
+              - $ref: '../components/schemas.yaml#/PermissionFields'
+    responses:
+      '200':
+        description: Soft reset signal result and captured output.
+      '400':
+        description: Invalid request.
+      '403':
+        description: Permission required.
+      '404':
+        description: Device/session not found.
+      '500':
+        description: Soft reset failed.

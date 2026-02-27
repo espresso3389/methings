@@ -212,6 +212,9 @@ WebSocket event examples:
 - `mcu.serial_monitor`: passive serial capture after boot or reset.
 - `mcu.serial_lines`: explicit DTR/RTS line control and reset scripts.
 - `mcu.diag.serial`: active serial diagnostics (includes sync probe).
+- `mcu.micropython.exec`: execute Python code in raw REPL.
+- `mcu.micropython.write_file`: upload `main.py`/modules to device filesystem.
+- `mcu.micropython.soft_reset`: send Ctrl-D soft reset and capture boot output.
 
 Current implementation note:
 - `esp32` is the first supported model. API names and workflow are intentionally model-generic so additional MCU families can be added without renaming.

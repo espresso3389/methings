@@ -2344,6 +2344,33 @@ class LocalHttpServer(
                     jsonError(Response.Status.INTERNAL_ERROR, "mcu_serial_monitor_handler_failed")
                 }
             }
+            (uri == "/mcu/micropython/exec" || uri == "/mcu/micropython/exec/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuMicroPythonExec(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU MicroPython exec handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_exec_handler_failed")
+                }
+            }
+            (uri == "/mcu/micropython/write_file" || uri == "/mcu/micropython/write_file/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuMicroPythonWriteFile(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU MicroPython write_file handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_write_file_handler_failed")
+                }
+            }
+            (uri == "/mcu/micropython/soft_reset" || uri == "/mcu/micropython/soft_reset/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleMcuMicroPythonSoftReset(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "MCU MicroPython soft_reset handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_soft_reset_handler_failed")
+                }
+            }
             else -> notFound()
         }
     }
@@ -4548,6 +4575,456 @@ class LocalHttpServer(
         } catch (ex: Exception) {
             jsonError(Response.Status.INTERNAL_ERROR, "mcu_serial_monitor_failed", JSONObject().put("detail", ex.message ?: ""))
         }
+    }
+
+    private data class MicroPythonSessionLease(
+        val serial: SerialSessionState,
+        val ephemeral: Boolean,
+        val model: String,
+        val handle: String?,
+    )
+
+    private data class MicroPythonRawExecResult(
+        val stdout: ByteArray,
+        val stderr: ByteArray,
+        val raw: ByteArray,
+    )
+
+    private fun handleMcuMicroPythonExec(session: IHTTPSession, payload: JSONObject): Response {
+        val leaseResult = acquireMicroPythonSession(
+            session,
+            payload,
+            detail = "MCU MicroPython exec"
+        )
+        if (leaseResult.second != null) return leaseResult.second!!
+        val lease = leaseResult.first!!
+
+        return try {
+            val code = extractMicroPythonCode(payload) ?: return jsonError(Response.Status.BAD_REQUEST, "code_required")
+            val timeoutMs = payload.optInt("timeout_ms", 20_000).coerceIn(500, 180_000)
+            val writeTimeoutMs = payload.optInt("write_timeout_ms", 2000).coerceIn(100, 60_000)
+            val settleMs = payload.optInt("settle_ms", 80).coerceIn(0, 2000)
+            val includeRaw = payload.optBoolean("include_raw", false)
+
+            val t0 = System.currentTimeMillis()
+            val result = runMicroPythonRawExec(lease.serial, code, timeoutMs, writeTimeoutMs, settleMs)
+            val elapsedMs = (System.currentTimeMillis() - t0).coerceAtLeast(0L)
+            val stdoutText = String(result.stdout, StandardCharsets.UTF_8)
+            val stderrText = String(result.stderr, StandardCharsets.UTF_8)
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("model", lease.model)
+                    .put("serial_handle", lease.serial.id)
+                    .put("handle", lease.handle ?: JSONObject.NULL)
+                    .put("ephemeral_session", lease.ephemeral)
+                    .put("elapsed_ms", elapsedMs)
+                    .put("stdout", stdoutText)
+                    .put("stderr", stderrText)
+                    .put("stdout_b64", Base64.encodeToString(result.stdout, Base64.NO_WRAP))
+                    .put("stderr_b64", Base64.encodeToString(result.stderr, Base64.NO_WRAP))
+                    .put("raw_b64", if (includeRaw) Base64.encodeToString(result.raw, Base64.NO_WRAP) else JSONObject.NULL)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_exec_failed", JSONObject().put("detail", ex.message ?: ""))
+        } finally {
+            releaseMicroPythonSession(lease)
+        }
+    }
+
+    private fun handleMcuMicroPythonWriteFile(session: IHTTPSession, payload: JSONObject): Response {
+        val leaseResult = acquireMicroPythonSession(
+            session,
+            payload,
+            detail = "MCU MicroPython write_file"
+        )
+        if (leaseResult.second != null) return leaseResult.second!!
+        val lease = leaseResult.first!!
+
+        return try {
+            val path = payload.optString("path", "").trim()
+            if (path.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "path_required")
+            if (path.contains("\u0000")) return jsonError(Response.Status.BAD_REQUEST, "invalid_path")
+            val content = extractMicroPythonContent(payload) ?: return jsonError(Response.Status.BAD_REQUEST, "content_required")
+            val chunkSize = payload.optInt("chunk_size", 768).coerceIn(64, 2048)
+            val timeoutMs = payload.optInt("timeout_ms", 20_000).coerceIn(500, 180_000)
+            val writeTimeoutMs = payload.optInt("write_timeout_ms", 2000).coerceIn(100, 60_000)
+            val settleMs = payload.optInt("settle_ms", 80).coerceIn(0, 2000)
+            val makeDirs = payload.optBoolean("make_dirs", true)
+
+            if (makeDirs) {
+                val parent = path.substringBeforeLast('/', "")
+                if (parent.isNotBlank()) {
+                    val mkdirScript =
+                        "import os\n" +
+                            "_p='${pythonSingleQuoted(parent)}'\n" +
+                            "_d=''\n" +
+                            "for _n in _p.split('/'):\n" +
+                            "    if not _n:\n" +
+                            "        continue\n" +
+                            "    _d = _n if not _d else _d + '/' + _n\n" +
+                            "    try:\n" +
+                            "        os.mkdir(_d)\n" +
+                            "    except OSError:\n" +
+                            "        pass\n"
+                    runMicroPythonRawExec(lease.serial, mkdirScript, timeoutMs, writeTimeoutMs, settleMs)
+                }
+            }
+
+            val chunks = (content.size + chunkSize - 1) / chunkSize
+            var offset = 0
+            var written = 0
+            for (i in 0 until chunks) {
+                val end = minOf(offset + chunkSize, content.size)
+                val piece = content.copyOfRange(offset, end)
+                val mode = if (i == 0) "wb" else "ab"
+                val pieceB64 = Base64.encodeToString(piece, Base64.NO_WRAP)
+                val code =
+                    "import ubinascii\n" +
+                        "with open('${pythonSingleQuoted(path)}', '$mode') as _f:\n" +
+                        "    _f.write(ubinascii.a2b_base64('${pythonSingleQuoted(pieceB64)}'))\n"
+                val result = runMicroPythonRawExec(lease.serial, code, timeoutMs, writeTimeoutMs, settleMs)
+                if (result.stderr.isNotEmpty()) {
+                    return jsonError(
+                        Response.Status.INTERNAL_ERROR,
+                        "mcu_micropython_write_file_failed",
+                        JSONObject()
+                            .put("detail", String(result.stderr, StandardCharsets.UTF_8))
+                            .put("chunk_index", i)
+                    )
+                }
+                offset = end
+                written += piece.size
+            }
+
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("model", lease.model)
+                    .put("serial_handle", lease.serial.id)
+                    .put("handle", lease.handle ?: JSONObject.NULL)
+                    .put("ephemeral_session", lease.ephemeral)
+                    .put("path", path)
+                    .put("bytes_written", written)
+                    .put("chunks_written", chunks)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_write_file_failed", JSONObject().put("detail", ex.message ?: ""))
+        } finally {
+            releaseMicroPythonSession(lease)
+        }
+    }
+
+    private fun handleMcuMicroPythonSoftReset(session: IHTTPSession, payload: JSONObject): Response {
+        val leaseResult = acquireMicroPythonSession(
+            session,
+            payload,
+            detail = "MCU MicroPython soft_reset"
+        )
+        if (leaseResult.second != null) return leaseResult.second!!
+        val lease = leaseResult.first!!
+
+        return try {
+            val writeTimeoutMs = payload.optInt("write_timeout_ms", 2000).coerceIn(100, 60_000)
+            val settleMs = payload.optInt("settle_ms", 250).coerceIn(0, 5000)
+            val readTimeoutMs = payload.optInt("read_timeout_ms", 1500).coerceIn(100, 60_000)
+            val maxDumpBytes = payload.optInt("max_dump_bytes", 8192).coerceIn(64, 262_144)
+            val buf = ByteArray(maxDumpBytes)
+            val capture = ByteArrayOutputStream()
+
+            synchronized(lease.serial.lock) {
+                drainSerialInput(lease.serial, perReadTimeoutMs = 40, maxRounds = 12)
+                writeSerialAll(lease.serial, byteArrayOf(0x03, 0x04), writeTimeoutMs)
+                if (settleMs > 0) Thread.sleep(settleMs.toLong())
+                while (capture.size() < maxDumpBytes) {
+                    val readRemaining = maxDumpBytes - capture.size()
+                    if (readRemaining <= 0) break
+                    val want = minOf(buf.size, readRemaining)
+                    val n = lease.serial.port.read(buf, readTimeoutMs)
+                    if (n <= 0) break
+                    capture.write(buf, 0, minOf(n, want))
+                    if (n < want) break
+                }
+            }
+            val out = capture.toByteArray()
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("model", lease.model)
+                    .put("serial_handle", lease.serial.id)
+                    .put("handle", lease.handle ?: JSONObject.NULL)
+                    .put("ephemeral_session", lease.ephemeral)
+                    .put("soft_reset_sent", true)
+                    .put("bytes_read", out.size)
+                    .put("output_b64", Base64.encodeToString(out, Base64.NO_WRAP))
+                    .put("output_ascii", bytesToAsciiPreview(out))
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_soft_reset_failed", JSONObject().put("detail", ex.message ?: ""))
+        } finally {
+            releaseMicroPythonSession(lease)
+        }
+    }
+
+    private fun acquireMicroPythonSession(
+        session: IHTTPSession,
+        payload: JSONObject,
+        detail: String,
+    ): Pair<MicroPythonSessionLease?, Response?> {
+        val model = payload.optString("model", "esp32").trim().lowercase(Locale.US).ifBlank { "esp32" }
+        if (model != "esp32" && model != "micropython") {
+            return Pair(
+                null,
+                jsonError(
+                    Response.Status.BAD_REQUEST,
+                    "unsupported_model",
+                    JSONObject()
+                        .put("model", model)
+                        .put("supported_models", JSONArray().put("esp32").put("micropython"))
+                )
+            )
+        }
+
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = detail
+        )
+        if (!perm.first) return Pair(null, perm.second)
+
+        val serialHandle = payload.optString("serial_handle", "").trim()
+        if (serialHandle.isNotBlank()) {
+            val st = serialSessions[serialHandle]
+                ?: return Pair(null, jsonError(Response.Status.NOT_FOUND, "serial_handle_not_found"))
+            return Pair(MicroPythonSessionLease(st, ephemeral = false, model = model, handle = st.usbHandle), null)
+        }
+
+        val usbHandle = payload.optString("handle", "").trim()
+        if (usbHandle.isBlank()) return Pair(null, jsonError(Response.Status.BAD_REQUEST, "serial_handle_or_handle_required"))
+        val dev = usbDevicesByHandle[usbHandle] ?: return Pair(null, jsonError(Response.Status.NOT_FOUND, "device_not_found"))
+        if (!usbConnections.containsKey(usbHandle)) return Pair(null, jsonError(Response.Status.NOT_FOUND, "handle_not_found"))
+
+        if (!runCatching { usbManager.hasPermission(dev) }.getOrDefault(false)) {
+            return Pair(null, jsonError(Response.Status.FORBIDDEN, "usb_permission_required"))
+        }
+
+        val portIndex = payload.optInt("port_index", 0)
+        if (portIndex < 0) return Pair(null, jsonError(Response.Status.BAD_REQUEST, "invalid_port_index"))
+        val baudRate = payload.optInt("baud_rate", 115200).coerceIn(300, 3_500_000)
+        val dataBits = payload.optInt("data_bits", UsbSerialPort.DATABITS_8)
+        val stopBits = payload.optInt("stop_bits", UsbSerialPort.STOPBITS_1)
+        val parity = payload.optInt("parity", UsbSerialPort.PARITY_NONE)
+        val dtr = if (payload.has("dtr")) payload.optBoolean("dtr") else null
+        val rts = if (payload.has("rts")) payload.optBoolean("rts") else null
+
+        val serialConn = usbManager.openDevice(dev)
+            ?: return Pair(null, jsonError(Response.Status.INTERNAL_ERROR, "serial_open_failed"))
+        return try {
+            val driver = UsbSerialProber.getDefaultProber().probeDevice(dev)
+            if (driver == null) {
+                runCatching { serialConn.close() }
+                return Pair(null, jsonError(Response.Status.BAD_REQUEST, "serial_driver_not_found"))
+            }
+            val ports = driver.ports
+            if (portIndex >= ports.size) {
+                runCatching { serialConn.close() }
+                return Pair(
+                    null,
+                    jsonError(
+                        Response.Status.BAD_REQUEST,
+                        "serial_port_not_found",
+                        JSONObject().put("available_ports", ports.size)
+                    )
+                )
+            }
+            val port = ports[portIndex]
+            port.open(serialConn)
+            port.setParameters(baudRate, dataBits, stopBits, parity)
+            if (dtr != null) runCatching { port.setDTR(dtr) }
+            if (rts != null) runCatching { port.setRTS(rts) }
+
+            val newSerialHandle = UUID.randomUUID().toString()
+            val st = SerialSessionState(
+                id = newSerialHandle,
+                usbHandle = usbHandle,
+                deviceName = dev.deviceName,
+                portIndex = portIndex,
+                baudRate = baudRate,
+                dataBits = dataBits,
+                stopBits = stopBits,
+                parity = parity,
+                connection = serialConn,
+                port = port,
+                openedAtMs = System.currentTimeMillis(),
+            )
+            serialSessions[newSerialHandle] = st
+            Pair(MicroPythonSessionLease(st, ephemeral = true, model = model, handle = usbHandle), null)
+        } catch (ex: Exception) {
+            runCatching { serialConn.close() }
+            Pair(
+                null,
+                jsonError(Response.Status.INTERNAL_ERROR, "serial_open_failed", JSONObject().put("detail", ex.message ?: ""))
+            )
+        }
+    }
+
+    private fun releaseMicroPythonSession(lease: MicroPythonSessionLease) {
+        if (!lease.ephemeral) return
+        val st = serialSessions.remove(lease.serial.id)
+        if (st != null) closeSerialSessionInternal(st)
+    }
+
+    private fun extractMicroPythonCode(payload: JSONObject): String? {
+        val code = payload.optString("code", "")
+        if (code.isNotBlank()) return code
+        val codeB64 = payload.optString("code_b64", "").trim()
+        if (codeB64.isBlank()) return null
+        return try {
+            val bytes = Base64.decode(codeB64, Base64.DEFAULT)
+            String(bytes, StandardCharsets.UTF_8)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun extractMicroPythonContent(payload: JSONObject): ByteArray? {
+        val contentB64 = payload.optString("content_b64", "").trim()
+        if (contentB64.isNotBlank()) {
+            return try {
+                Base64.decode(contentB64, Base64.DEFAULT)
+            } catch (_: Exception) {
+                null
+            }
+        }
+        if (payload.has("content")) {
+            return payload.optString("content", "").toByteArray(StandardCharsets.UTF_8)
+        }
+        return null
+    }
+
+    private fun runMicroPythonRawExec(
+        st: SerialSessionState,
+        code: String,
+        timeoutMs: Int,
+        writeTimeoutMs: Int,
+        settleMs: Int,
+    ): MicroPythonRawExecResult {
+        val codeBytes = code.toByteArray(StandardCharsets.UTF_8)
+        if (codeBytes.size > 1024 * 1024) throw IllegalArgumentException("code_too_large")
+
+        synchronized(st.lock) {
+            drainSerialInput(st, perReadTimeoutMs = 40, maxRounds = 16)
+            writeSerialAll(st, byteArrayOf(0x03, 0x03, 0x01), writeTimeoutMs)
+            if (settleMs > 0) Thread.sleep(settleMs.toLong())
+            drainSerialInput(st, perReadTimeoutMs = 30, maxRounds = 12)
+            writeSerialAll(st, codeBytes, writeTimeoutMs)
+            writeSerialAll(st, byteArrayOf(0x04), writeTimeoutMs)
+
+            val raw = ByteArrayOutputStream()
+            val deadline = System.currentTimeMillis() + timeoutMs.toLong()
+            val buf = ByteArray(2048)
+            while (System.currentTimeMillis() < deadline) {
+                val remainMs = (deadline - System.currentTimeMillis()).coerceAtLeast(20L).toInt().coerceAtMost(500)
+                val n = try {
+                    st.port.read(buf, remainMs)
+                } catch (_: Exception) {
+                    0
+                }
+                if (n <= 0) continue
+                raw.write(buf, 0, n)
+                val snapshot = raw.toByteArray()
+                if (hasMicroPythonRawDelimiters(snapshot)) break
+            }
+            writeSerialAll(st, byteArrayOf(0x02), writeTimeoutMs)
+
+            val parsed = parseMicroPythonRawExec(raw.toByteArray())
+            return parsed
+        }
+    }
+
+    private fun hasMicroPythonRawDelimiters(raw: ByteArray): Boolean {
+        val okIdx = indexOfBytes(raw, byteArrayOf('O'.code.toByte(), 'K'.code.toByte()))
+        if (okIdx < 0) return false
+        val firstEot = indexOfByte(raw, 0x04, okIdx + 2)
+        if (firstEot < 0) return false
+        val secondEot = indexOfByte(raw, 0x04, firstEot + 1)
+        return secondEot >= 0
+    }
+
+    private fun parseMicroPythonRawExec(raw: ByteArray): MicroPythonRawExecResult {
+        val okIdx = indexOfBytes(raw, byteArrayOf('O'.code.toByte(), 'K'.code.toByte()))
+        if (okIdx < 0) throw IllegalStateException("micropython_raw_ok_not_found")
+        val body = raw.copyOfRange(okIdx + 2, raw.size)
+        val firstEot = indexOfByte(body, 0x04, 0)
+        if (firstEot < 0) throw IllegalStateException("micropython_raw_stdout_eot_not_found")
+        val secondEot = indexOfByte(body, 0x04, firstEot + 1)
+        if (secondEot < 0) throw IllegalStateException("micropython_raw_stderr_eot_not_found")
+        val stdout = body.copyOfRange(0, firstEot)
+        val stderr = body.copyOfRange(firstEot + 1, secondEot)
+        return MicroPythonRawExecResult(stdout = stdout, stderr = stderr, raw = raw)
+    }
+
+    private fun drainSerialInput(st: SerialSessionState, perReadTimeoutMs: Int, maxRounds: Int) {
+        val buf = ByteArray(1024)
+        repeat(maxRounds.coerceAtLeast(1)) {
+            val n = try {
+                st.port.read(buf, perReadTimeoutMs.coerceIn(0, 5000))
+            } catch (_: Exception) {
+                0
+            }
+            if (n <= 0) return
+        }
+    }
+
+    private fun writeSerialAll(st: SerialSessionState, data: ByteArray, timeoutMs: Int) {
+        if (data.isEmpty()) return
+        var offset = 0
+        while (offset < data.size) {
+            val chunk = data.copyOfRange(offset, data.size)
+            st.port.write(chunk, timeoutMs)
+            offset = data.size
+        }
+    }
+
+    private fun indexOfByte(src: ByteArray, target: Int, start: Int): Int {
+        val from = start.coerceAtLeast(0)
+        for (i in from until src.size) {
+            if ((src[i].toInt() and 0xFF) == (target and 0xFF)) return i
+        }
+        return -1
+    }
+
+    private fun indexOfBytes(src: ByteArray, needle: ByteArray): Int {
+        if (needle.isEmpty()) return 0
+        if (needle.size > src.size) return -1
+        for (i in 0..(src.size - needle.size)) {
+            var ok = true
+            for (j in needle.indices) {
+                if (src[i + j] != needle[j]) {
+                    ok = false
+                    break
+                }
+            }
+            if (ok) return i
+        }
+        return -1
+    }
+
+    private fun pythonSingleQuoted(text: String): String {
+        val sb = StringBuilder(text.length + 8)
+        for (ch in text) {
+            when (ch) {
+                '\\' -> sb.append("\\\\")
+                '\'' -> sb.append("\\'")
+                '\n' -> sb.append("\\n")
+                '\r' -> sb.append("\\r")
+                '\t' -> sb.append("\\t")
+                else -> sb.append(ch)
+            }
+        }
+        return sb.toString()
     }
 
     private fun bytesToAsciiPreview(bytes: ByteArray): String {

@@ -320,6 +320,12 @@ paths:
     $ref: './paths/mcu.yaml#/mcuReset'
   /mcu/serial_monitor:
     $ref: './paths/mcu.yaml#/mcuSerialMonitor'
+  /mcu/micropython/exec:
+    $ref: './paths/mcu.yaml#/mcuMicroPythonExec'
+  /mcu/micropython/write_file:
+    $ref: './paths/mcu.yaml#/mcuMicroPythonWriteFile'
+  /mcu/micropython/soft_reset:
+    $ref: './paths/mcu.yaml#/mcuMicroPythonSoftReset'
 
   # ── UVC ──
   /uvc/mjpeg/capture:
