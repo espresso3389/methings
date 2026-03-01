@@ -31,7 +31,7 @@ Paths starting with `$sys/` read from **system-protected reference docs** (read-
 
 ### Built-in (always available)
 
-- `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine with **async/await support**. Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`. Top-level `await` is supported. Full API reference: `$sys/docs/run_js.md`.
+- `run_js(code, timeout_ms?)` — Execute JavaScript via the built-in QuickJS engine with **async/await support**. Includes `cv.*` for OpenCV image processing (imread/imwrite, resize, cvtColor, GaussianBlur, Canny, findContours, drawContours, matchTemplate, detectORB, and more). Default timeout: 30 s (max 120 s). Returns `{status, result, console_output, error}`. Top-level `await` is supported. Full API reference: `$sys/docs/run_js.md`.
 - `run_curl(url, method?, headers?, body?, timeout_ms?)` — Make HTTP requests natively. Parameters: `url` (required), `method` (GET/POST/PUT/DELETE/PATCH/HEAD, default GET), `headers` (JSON object), `body` (string), `timeout_ms` (default 30000). Returns `{status, http_status, headers, body}`.
 
 ### Shell

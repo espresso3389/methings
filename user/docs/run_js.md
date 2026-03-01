@@ -27,6 +27,7 @@ Tool signature: `run_js(code, timeout_ms?)`. Default timeout: 30 s (max 120 s). 
 | `await deleteFile(path)` | async | Delete a file |
 | `await rmdir(path, recursive?)` | async | Remove directory (recursive=false by default) |
 | `await openFile(path, mode?)` | async | Open file handle (see File Handle API below) |
+| `cv.*` | sync | OpenCV image processing — full reference: `$sys/docs/cv.md` |
 
 File paths are relative to the user root. `$sys/` prefix reads from system docs (read-only).
 

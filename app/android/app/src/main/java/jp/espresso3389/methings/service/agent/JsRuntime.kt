@@ -61,6 +61,7 @@ class JsRuntime(
     private val nextTcpSocketId = AtomicInteger(0)
     private val tcpServers = ConcurrentHashMap<Int, ServerSocket>()
     private val nextTcpServerId = AtomicInteger(0)
+    private val cvBridge = JsCvBridge(userDir)
 
     suspend fun execute(code: String, timeoutMs: Long = 30_000): JsResult {
         return withContext(jsDispatcher) {
@@ -103,6 +104,7 @@ class JsRuntime(
                 cleanupWebSockets()
                 cleanupFiles()
                 cleanupTcp()
+                cvBridge.cleanup()
             }
         }
     }
@@ -115,6 +117,7 @@ class JsRuntime(
         cleanupWebSockets()
         cleanupFiles()
         cleanupTcp()
+        cvBridge.cleanup()
         try {
             quickJs?.close()
         } catch (_: Exception) {}
@@ -670,8 +673,12 @@ class JsRuntime(
             }
         }
 
+        // --- __cv: OpenCV image processing ---
+        cvBridge.registerBindings(js)
+
         // --- JS bootstrap: global wrappers ---
         js.evaluate<Any?>(JS_BOOTSTRAP)
+        js.evaluate<Any?>(JS_CV_BOOTSTRAP)
     }
 
     private fun resolveBase(path: String): Pair<File, String> {
@@ -716,6 +723,7 @@ class JsRuntime(
         cleanupWebSockets()
         cleanupFiles()
         cleanupTcp()
+        cvBridge.cleanup()
         try {
             quickJs?.close()
         } catch (_: Exception) {}
@@ -889,6 +897,310 @@ class JsRuntime(
                     };
                 });
             };
+        """.trimIndent()
+
+        private val JS_CV_BOOTSTRAP = """
+            globalThis.cv = (function() {
+                function Mat(handle) { this._h = handle; }
+                Mat.prototype.release = function() { __cv.release(this._h); };
+                Mat.prototype.clone = function() { return __cv.clone(this._h).then(wrapMat); };
+                Object.defineProperty(Mat.prototype, 'info', {
+                    get: function() { return __cv.info(this._h); }
+                });
+                Object.defineProperty(Mat.prototype, 'rows', {
+                    get: function() { return __cv.info(this._h).rows; }
+                });
+                Object.defineProperty(Mat.prototype, 'cols', {
+                    get: function() { return __cv.info(this._h).cols; }
+                });
+                Object.defineProperty(Mat.prototype, 'channels', {
+                    get: function() { return __cv.info(this._h).channels; }
+                });
+                Mat.prototype.toBytes = function() { return __cv.matToBytes(this._h); };
+                Mat.prototype.toBase64 = function(ext) { return __cv.matToBase64(this._h, ext || '.jpg'); };
+
+                function wrapMat(id) { return new Mat(id); }
+                function h(mat) { return mat._h; }
+
+                return {
+                    Mat: Mat,
+
+                    // ── Color conversion codes ──
+                    COLOR_BGR2GRAY: 6,
+                    COLOR_BGR2RGB: 4,
+                    COLOR_RGB2BGR: 4,
+                    COLOR_BGR2HSV: 40,
+                    COLOR_HSV2BGR: 54,
+                    COLOR_BGR2HLS: 52,
+                    COLOR_BGR2Lab: 44,
+                    COLOR_BGR2YCrCb: 36,
+                    COLOR_GRAY2BGR: 8,
+                    COLOR_RGBA2BGR: 3,
+                    COLOR_BGR2RGBA: 2,
+
+                    // ── Interpolation ──
+                    INTER_NEAREST: 0,
+                    INTER_LINEAR: 1,
+                    INTER_CUBIC: 2,
+                    INTER_AREA: 3,
+                    INTER_LANCZOS4: 4,
+
+                    // ── Threshold types ──
+                    THRESH_BINARY: 0,
+                    THRESH_BINARY_INV: 1,
+                    THRESH_TRUNC: 2,
+                    THRESH_TOZERO: 3,
+                    THRESH_TOZERO_INV: 4,
+                    THRESH_OTSU: 8,
+                    THRESH_TRIANGLE: 16,
+
+                    // ── Morphology ──
+                    MORPH_ERODE: 0,
+                    MORPH_DILATE: 1,
+                    MORPH_OPEN: 2,
+                    MORPH_CLOSE: 3,
+                    MORPH_GRADIENT: 4,
+                    MORPH_TOPHAT: 5,
+                    MORPH_BLACKHAT: 6,
+                    MORPH_RECT: 0,
+                    MORPH_CROSS: 1,
+                    MORPH_ELLIPSE: 2,
+
+                    // ── Contour modes ──
+                    RETR_EXTERNAL: 0,
+                    RETR_LIST: 1,
+                    RETR_CCOMP: 2,
+                    RETR_TREE: 3,
+                    CHAIN_APPROX_NONE: 1,
+                    CHAIN_APPROX_SIMPLE: 2,
+
+                    // ── Template matching ──
+                    TM_SQDIFF: 0,
+                    TM_SQDIFF_NORMED: 1,
+                    TM_CCORR: 2,
+                    TM_CCORR_NORMED: 3,
+                    TM_CCOEFF: 4,
+                    TM_CCOEFF_NORMED: 5,
+
+                    // ── Rotation codes ──
+                    ROTATE_90_CLOCKWISE: 0,
+                    ROTATE_180: 1,
+                    ROTATE_90_COUNTERCLOCKWISE: 2,
+
+                    // ── Font faces ──
+                    FONT_HERSHEY_SIMPLEX: 0,
+                    FONT_HERSHEY_PLAIN: 1,
+                    FONT_HERSHEY_DUPLEX: 2,
+                    FONT_HERSHEY_COMPLEX: 3,
+                    FONT_HERSHEY_TRIPLEX: 4,
+                    FONT_ITALIC: 16,
+
+                    // ── Read flags ──
+                    IMREAD_UNCHANGED: -1,
+                    IMREAD_GRAYSCALE: 0,
+                    IMREAD_COLOR: 1,
+
+                    // ── CvType ──
+                    CV_8UC1: 0,
+                    CV_8UC3: 16,
+                    CV_8UC4: 24,
+                    CV_16SC1: 3,
+                    CV_32FC1: 5,
+                    CV_64FC1: 6,
+
+                    // ── Adaptive threshold ──
+                    ADAPTIVE_THRESH_MEAN_C: 0,
+                    ADAPTIVE_THRESH_GAUSSIAN_C: 1,
+
+                    // ── Image I/O (async) ──
+                    imread: function(path, flags) {
+                        return __cv.imread(path, flags === undefined ? 1 : flags).then(wrapMat);
+                    },
+                    imwrite: function(mat, path) {
+                        return __cv.imwrite(h(mat), path);
+                    },
+                    imdecode: function(data, flags) {
+                        return __cv.imdecode(data, flags === undefined ? 1 : flags).then(wrapMat);
+                    },
+                    imencode: function(mat, ext) {
+                        return __cv.imencode(h(mat), ext || '.jpg');
+                    },
+
+                    // ── Mat creation (sync) ──
+                    zeros: function(rows, cols, type) {
+                        return wrapMat(__cv.zeros(rows, cols, type === undefined ? 16 : type));
+                    },
+                    ones: function(rows, cols, type) {
+                        return wrapMat(__cv.ones(rows, cols, type === undefined ? 16 : type));
+                    },
+
+                    // ── Mat data transfer (async) ──
+                    fromBytes: function(data, rows, cols, type) {
+                        return __cv.matFromBytes(data, rows, cols, type === undefined ? 16 : type).then(wrapMat);
+                    },
+                    fromBase64: function(b64, flags) {
+                        return __cv.matFromBase64(b64, flags === undefined ? 1 : flags).then(wrapMat);
+                    },
+
+                    // ── Color (async) ──
+                    cvtColor: function(mat, code) {
+                        return __cv.cvtColor(h(mat), code).then(wrapMat);
+                    },
+
+                    // ── Geometric transforms (async) ──
+                    resize: function(mat, w, hh, interp) {
+                        return __cv.resize(h(mat), w, hh, interp === undefined ? 1 : interp).then(wrapMat);
+                    },
+                    crop: function(mat, x, y, w, hh) {
+                        return __cv.crop(h(mat), x, y, w, hh).then(wrapMat);
+                    },
+                    rotate: function(mat, code) {
+                        return __cv.rotate(h(mat), code).then(wrapMat);
+                    },
+                    flip: function(mat, code) {
+                        return __cv.flip(h(mat), code).then(wrapMat);
+                    },
+                    warpAffine: function(mat, matrix, dstW, dstH) {
+                        return __cv.warpAffine(h(mat), h(matrix), dstW, dstH).then(wrapMat);
+                    },
+                    warpPerspective: function(mat, matrix, dstW, dstH) {
+                        return __cv.warpPerspective(h(mat), h(matrix), dstW, dstH).then(wrapMat);
+                    },
+                    getRotationMatrix2D: function(cx, cy, angle, scale) {
+                        return __cv.getRotationMatrix2D(cx, cy, angle, scale === undefined ? 1.0 : scale).then(wrapMat);
+                    },
+                    getPerspectiveTransform: function(src, dst) {
+                        return __cv.getPerspectiveTransform(
+                            src[0][0], src[0][1], src[1][0], src[1][1],
+                            src[2][0], src[2][1], src[3][0], src[3][1],
+                            dst[0][0], dst[0][1], dst[1][0], dst[1][1],
+                            dst[2][0], dst[2][1], dst[3][0], dst[3][1]
+                        ).then(wrapMat);
+                    },
+
+                    // ── Filtering (async) ──
+                    blur: function(mat, kw, kh) {
+                        return __cv.blur(h(mat), kw, kh === undefined ? kw : kh).then(wrapMat);
+                    },
+                    GaussianBlur: function(mat, kw, kh, sigmaX) {
+                        return __cv.gaussianBlur(h(mat), kw, kh === undefined ? kw : kh, sigmaX || 0).then(wrapMat);
+                    },
+                    medianBlur: function(mat, ksize) {
+                        return __cv.medianBlur(h(mat), ksize).then(wrapMat);
+                    },
+                    bilateralFilter: function(mat, d, sigmaColor, sigmaSpace) {
+                        return __cv.bilateralFilter(h(mat), d || 9, sigmaColor || 75, sigmaSpace || 75).then(wrapMat);
+                    },
+
+                    // ── Edge detection (async) ──
+                    Canny: function(mat, t1, t2, apertureSize) {
+                        return __cv.canny(h(mat), t1, t2, apertureSize || 3).then(wrapMat);
+                    },
+                    Laplacian: function(mat, ddepth, ksize) {
+                        return __cv.laplacian(h(mat), ddepth === undefined ? 3 : ddepth, ksize || 1).then(wrapMat);
+                    },
+                    Sobel: function(mat, ddepth, dx, dy, ksize) {
+                        return __cv.sobel(h(mat), ddepth === undefined ? 3 : ddepth, dx || 1, dy || 0, ksize || 3).then(wrapMat);
+                    },
+
+                    // ── Thresholding (async) ──
+                    threshold: function(mat, thresh, maxval, type) {
+                        return __cv.threshold(h(mat), thresh || 127, maxval || 255, type || 0).then(function(r) {
+                            return { mat: wrapMat(r.matId), threshold: r.threshold };
+                        });
+                    },
+                    adaptiveThreshold: function(mat, maxval, adaptiveMethod, threshType, blockSize, C) {
+                        return __cv.adaptiveThreshold(h(mat), maxval || 255, adaptiveMethod || 1, threshType || 0, blockSize || 11, C || 2).then(wrapMat);
+                    },
+
+                    // ── Morphology (async) ──
+                    erode: function(mat, kw, kh, iterations) {
+                        return __cv.erode(h(mat), kw || 3, kh === undefined ? (kw || 3) : kh, iterations || 1).then(wrapMat);
+                    },
+                    dilate: function(mat, kw, kh, iterations) {
+                        return __cv.dilate(h(mat), kw || 3, kh === undefined ? (kw || 3) : kh, iterations || 1).then(wrapMat);
+                    },
+                    morphologyEx: function(mat, op, kw, kh, shape, iterations) {
+                        return __cv.morphologyEx(h(mat), op, kw || 3, kh === undefined ? (kw || 3) : kh, shape || 0, iterations || 1).then(wrapMat);
+                    },
+
+                    // ── Contours (async) ──
+                    findContours: function(mat, mode, method) {
+                        return __cv.findContours(h(mat), mode === undefined ? 0 : mode, method === undefined ? 2 : method);
+                    },
+                    drawContours: function(mat, contours, idx, r, g, b, thickness) {
+                        return __cv.drawContours(h(mat), contours, idx === undefined ? -1 : idx, r || 0, g === undefined ? 255 : g, b || 0, thickness || 2).then(function() { return mat; });
+                    },
+
+                    // ── Drawing (async, mutates in-place) ──
+                    rectangle: function(mat, x, y, w, hh, r, g, b, thickness) {
+                        return __cv.rectangle(h(mat), x, y, w, hh, r || 0, g === undefined ? 255 : g, b || 0, thickness || 2).then(function() { return mat; });
+                    },
+                    circle: function(mat, cx, cy, radius, r, g, b, thickness) {
+                        return __cv.circle(h(mat), cx, cy, radius, r || 0, g === undefined ? 255 : g, b || 0, thickness || 2).then(function() { return mat; });
+                    },
+                    line: function(mat, x1, y1, x2, y2, r, g, b, thickness) {
+                        return __cv.line(h(mat), x1, y1, x2, y2, r || 0, g === undefined ? 255 : g, b || 0, thickness || 2).then(function() { return mat; });
+                    },
+                    putText: function(mat, text, x, y, fontFace, fontScale, r, g, b, thickness) {
+                        return __cv.putText(h(mat), text, x, y, fontFace || 0, fontScale || 1, r === undefined ? 255 : r, g === undefined ? 255 : g, b === undefined ? 255 : b, thickness || 1).then(function() { return mat; });
+                    },
+
+                    // ── Features (async) ──
+                    goodFeaturesToTrack: function(mat, maxCorners, qualityLevel, minDistance) {
+                        return __cv.goodFeaturesToTrack(h(mat), maxCorners || 100, qualityLevel || 0.01, minDistance || 10);
+                    },
+                    matchTemplate: function(mat, tmpl, method) {
+                        return __cv.matchTemplate(h(mat), h(tmpl), method === undefined ? 5 : method).then(function(r) {
+                            return { mat: wrapMat(r.matId), minVal: r.minVal, maxVal: r.maxVal, minLoc: r.minLoc, maxLoc: r.maxLoc };
+                        });
+                    },
+                    detectORB: function(mat, maxFeatures) {
+                        return __cv.detectORB(h(mat), maxFeatures || 500).then(function(r) {
+                            return { keypoints: r.keypoints, descriptors: r.descriptorsMatId >= 0 ? wrapMat(r.descriptorsMatId) : null };
+                        });
+                    },
+
+                    // ── Histograms (async) ──
+                    calcHist: function(mat, channel, bins) {
+                        return __cv.calcHist(h(mat), channel || 0, bins || 256);
+                    },
+                    equalizeHist: function(mat) {
+                        return __cv.equalizeHist(h(mat)).then(wrapMat);
+                    },
+
+                    // ── Arithmetic (async) ──
+                    convertTo: function(mat, rtype, alpha, beta) {
+                        return __cv.convertTo(h(mat), rtype, alpha === undefined ? 1 : alpha, beta || 0).then(wrapMat);
+                    },
+                    absdiff: function(mat1, mat2) {
+                        return __cv.absdiff(h(mat1), h(mat2)).then(wrapMat);
+                    },
+                    addWeighted: function(mat1, alpha, mat2, beta, gamma) {
+                        return __cv.addWeighted(h(mat1), alpha, h(mat2), beta, gamma || 0).then(wrapMat);
+                    },
+                    bitwiseAnd: function(mat1, mat2) {
+                        return __cv.bitwiseAnd(h(mat1), h(mat2)).then(wrapMat);
+                    },
+                    bitwiseOr: function(mat1, mat2) {
+                        return __cv.bitwiseOr(h(mat1), h(mat2)).then(wrapMat);
+                    },
+                    bitwiseNot: function(mat) {
+                        return __cv.bitwiseNot(h(mat)).then(wrapMat);
+                    },
+                    inRange: function(mat, lower, upper) {
+                        return __cv.inRange(h(mat), lower[0], lower[1], lower[2], upper[0], upper[1], upper[2]).then(wrapMat);
+                    },
+
+                    // ── Denoising (async) ──
+                    fastNlMeansDenoising: function(mat, hParam, templateWindowSize, searchWindowSize) {
+                        return __cv.fastNlMeansDenoising(h(mat), hParam || 3, templateWindowSize || 7, searchWindowSize || 21).then(wrapMat);
+                    },
+                    fastNlMeansDenoisingColored: function(mat, hParam, hColor, templateWindowSize, searchWindowSize) {
+                        return __cv.fastNlMeansDenoisingColored(h(mat), hParam || 3, hColor || 3, templateWindowSize || 7, searchWindowSize || 21).then(wrapMat);
+                    },
+                };
+            })();
         """.trimIndent()
     }
 }

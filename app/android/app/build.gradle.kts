@@ -424,4 +424,6 @@ dependencies {
     implementation("org.java-websocket:Java-WebSocket:1.5.7")
     // In-process JavaScript engine for agent run_js tool
     implementation("io.github.dokar3:quickjs-kt:1.0.0-alpha13")
+    // OpenCV for image processing in QuickJS (cv.* APIs)
+    implementation("org.opencv:opencv:4.13.0")
 }

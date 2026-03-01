@@ -192,6 +192,13 @@
     },
     {
       "ecosystem": "android-gradle",
+      "name": "org.opencv:opencv",
+      "version": "4.13.0",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
       "name": "org.tensorflow:tensorflow-lite",
       "version": "2.17.0",
       "source_path": "app/android/app/build.gradle.kts",
