@@ -2,9 +2,7 @@
 
 ## API Reference
 
-- **OpenAPI Spec**: `openapi/openapi.yaml` — complete HTTP API reference (OpenAPI 3.1.0).
-  - Paths: `openapi/paths/*.yaml`
-  - Schemas: `openapi/components/schemas.yaml`
+- **API Docs**: `api/*.md` — per-domain HTTP API reference (Markdown).
 - **Agent Tools**: `agent_tools.md` — device_api mapping, agent filesystem helpers, chat UI shortcuts.
 - **Permissions**: `permissions.md` — permission scopes, request flow, USB special cases.
 

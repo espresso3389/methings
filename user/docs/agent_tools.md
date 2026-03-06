@@ -1,7 +1,7 @@
 # Agent Tools Reference
 
 This document covers agent-side tool conventions and runtime helpers
-that are **not** part of the HTTP API (see `openapi/` for the full API spec).
+that are **not** part of the HTTP API (see `api/` for the full API reference).
 
 ## device_api Tool
 
@@ -13,7 +13,7 @@ endpoints (e.g. `camera.capture` → `POST /camera/capture`).
 - `payload`: **all structured parameters** go here as a JSON object (e.g. `{"peer_device_id":"d_xxx","text":"hello"}`)
 - `detail`: optional free-text note for logging — **never put parameters here**
 
-See `openapi/openapi.yaml` for the complete endpoint reference.
+See `api/*.md` for the complete endpoint reference.
 
 ## Identity + Permissions
 
