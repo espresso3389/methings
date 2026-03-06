@@ -1661,7 +1661,7 @@ class AgentRuntime(
         }
         try {
             val sid = meta.optString("session_id", "default").ifEmpty { "default" }
-            storage.addChatMessage(sid, role, text, meta.toString())
+            storage.addChatMessage(sid, role, displayText, meta.toString())
         } catch (_: Exception) {}
 
         // Publish to event bus
