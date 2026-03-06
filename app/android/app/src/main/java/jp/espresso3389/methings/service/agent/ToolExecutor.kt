@@ -604,8 +604,8 @@ class ToolExecutor(
                 val v = obj.opt(k)
                 when {
                     k in setOf("content", "output", "stderr", "stdout") && v is String -> {
-                        out.put(k, clipStr(v, 4096))
-                        if (v.length > 4096) {
+                        out.put(k, clipStr(v, 8192))
+                        if (v.length > 8192) {
                             out.put("truncated_for_model", true)
                             out.put("${k}_len", v.length)
                         }
@@ -619,7 +619,7 @@ class ToolExecutor(
                         val arr = JSONArray()
                         for (i in 0 until v.length().coerceAtMost(maxListItems)) {
                             val item = v.opt(i)
-                            arr.put(if (item is String) clipStr(item, 4096) else item)
+                            arr.put(if (item is String) clipStr(item, 6144) else item)
                         }
                         if (v.length() > maxListItems) {
                             arr.put(JSONObject().put("truncated_for_model", true).put("omitted_items", v.length() - maxListItems))
@@ -627,7 +627,7 @@ class ToolExecutor(
                         out.put(k, arr)
                     }
                     v is JSONObject -> out.put(k, shrinkJson(v, maxChars, maxListItems, depth + 1))
-                    v is String -> out.put(k, clipStr(v, 4096))
+                    v is String -> out.put(k, clipStr(v, 6144))
                     else -> out.put(k, v)
                 }
             }

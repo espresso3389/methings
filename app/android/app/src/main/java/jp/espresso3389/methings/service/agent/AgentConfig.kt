@@ -53,6 +53,11 @@ data class AgentConfig(
         return emptyMap()
     }
 
+    fun boolWithProfile(key: String, default: Boolean): Boolean {
+        val profile = modelProfileOverrides()
+        return (profile[key] as? Boolean) ?: default
+    }
+
     companion object {
         const val DEFAULT_SYSTEM_PROMPT =
             "You are \"methings\" running on an Android device. " +
@@ -123,7 +128,7 @@ data class AgentConfig(
                 "dialogue_raw_fetch_limit" to 600,
                 "max_tool_rounds" to 22,
                 "max_actions" to 14,
-                "max_tool_output_chars" to 18000,
+                "max_tool_output_chars" to 24000,
             ),
             "gpt-5" to mapOf(
                 "dialogue_window_user_assistant" to 64,
@@ -154,13 +159,41 @@ data class AgentConfig(
                 "max_actions" to 10,
                 "max_tool_output_chars" to 14000,
             ),
+            // claude-opus-4-6 must precede claude-opus-4 and claude-opus (substring match)
+            "claude-opus-4-6" to mapOf(
+                "dialogue_window_user_assistant" to 72,
+                "dialogue_raw_fetch_limit" to 600,
+                "max_tool_rounds" to 22,
+                "max_actions" to 14,
+                "max_tool_output_chars" to 24000,
+                "extended_thinking" to true,
+                "thinking_budget_tokens" to 10000,
+            ),
+            "claude-opus-4" to mapOf(
+                "dialogue_window_user_assistant" to 72,
+                "dialogue_raw_fetch_limit" to 600,
+                "max_tool_rounds" to 22,
+                "max_actions" to 14,
+                "max_tool_output_chars" to 24000,
+                "extended_thinking" to true,
+                "thinking_budget_tokens" to 10000,
+            ),
+            "claude-opus" to mapOf(
+                "dialogue_window_user_assistant" to 64,
+                "dialogue_raw_fetch_limit" to 520,
+                "max_tool_rounds" to 20,
+                "max_actions" to 12,
+                "max_tool_output_chars" to 20000,
+                "extended_thinking" to true,
+                "thinking_budget_tokens" to 10000,
+            ),
             // claude-sonnet-4-6 must precede claude-sonnet-4 (substring match)
             "claude-sonnet-4-6" to mapOf(
                 "dialogue_window_user_assistant" to 64,
                 "dialogue_raw_fetch_limit" to 520,
                 "max_tool_rounds" to 20,
                 "max_actions" to 12,
-                "max_tool_output_chars" to 16000,
+                "max_tool_output_chars" to 20000,
             ),
             "claude-sonnet-4" to mapOf(
                 "dialogue_window_user_assistant" to 64,
@@ -168,6 +201,13 @@ data class AgentConfig(
                 "max_tool_rounds" to 20,
                 "max_actions" to 12,
                 "max_tool_output_chars" to 16000,
+            ),
+            "claude-haiku" to mapOf(
+                "dialogue_window_user_assistant" to 28,
+                "dialogue_raw_fetch_limit" to 220,
+                "max_tool_rounds" to 14,
+                "max_actions" to 8,
+                "max_tool_output_chars" to 8000,
             ),
         )
     }

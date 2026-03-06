@@ -33,6 +33,8 @@ class LlmClient {
             ProviderKind.ANTHROPIC -> {
                 headers["x-api-key"] = apiKey
                 headers["anthropic-version"] = "2023-06-01"
+                val beta = cfg["anthropic-beta"]
+                if (!beta.isNullOrEmpty()) headers["anthropic-beta"] = beta
             }
             ProviderKind.OPENAI_RESPONSES, ProviderKind.OPENAI_CHAT -> {
                 headers["Authorization"] = "Bearer $apiKey"
@@ -282,18 +284,25 @@ class LlmClient {
                         val block = event.optJSONObject("content_block")
                         if (block != null) {
                             currentBlockType = block.optString("type", "text")
-                            if (currentBlockType == "tool_use") {
-                                val toolBlock = JSONObject().apply {
-                                    put("type", "tool_use")
-                                    put("id", block.optString("id", ""))
-                                    put("name", block.optString("name", ""))
-                                    put("input", JSONObject())
+                            when (currentBlockType) {
+                                "tool_use" -> {
+                                    val toolBlock = JSONObject().apply {
+                                        put("type", "tool_use")
+                                        put("id", block.optString("id", ""))
+                                        put("name", block.optString("name", ""))
+                                        put("input", JSONObject())
+                                    }
+                                    contentBlocks.add(toolBlock)
+                                    currentBlockText = StringBuilder()
                                 }
-                                contentBlocks.add(toolBlock)
-                                currentBlockText = StringBuilder()
-                            } else {
-                                contentBlocks.add(JSONObject().put("type", "text").put("text", ""))
-                                currentBlockText = StringBuilder()
+                                "thinking" -> {
+                                    contentBlocks.add(JSONObject().put("type", "thinking").put("thinking", ""))
+                                    currentBlockText = StringBuilder()
+                                }
+                                else -> {
+                                    contentBlocks.add(JSONObject().put("type", "text").put("text", ""))
+                                    currentBlockText = StringBuilder()
+                                }
                             }
                         }
                     }
@@ -305,6 +314,12 @@ class LlmClient {
                                     currentBlockText.append(delta.optString("text", ""))
                                     if (contentBlocks.isNotEmpty()) {
                                         contentBlocks.last().put("text", currentBlockText.toString())
+                                    }
+                                }
+                                "thinking_delta" -> {
+                                    currentBlockText.append(delta.optString("thinking", ""))
+                                    if (contentBlocks.isNotEmpty()) {
+                                        contentBlocks.last().put("thinking", currentBlockText.toString())
                                     }
                                 }
                                 "input_json_delta" -> {

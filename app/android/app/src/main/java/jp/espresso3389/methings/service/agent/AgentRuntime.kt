@@ -14,6 +14,13 @@ data class ExtractedMedia(
     val mediaType: String,  // "image" or "audio"
 )
 
+private data class ToolRoundRecord(
+    val name: String,
+    val status: String,
+    val args: JSONObject,
+    val resultSnippet: String,
+)
+
 class AgentRuntime(
     private val userDir: File,
     private val sysDir: File,
@@ -379,7 +386,11 @@ class AgentRuntime(
 
         val providerKind = llmClient.detectProviderKind(providerUrl, vendor)
         Log.i(TAG, "Provider: kind=$providerKind, vendor=$vendor, url=$providerUrl, model=$model")
-        val headers = llmClient.buildHeaders(providerKind, apiKey)
+        val extraCfg = mutableMapOf<String, String>()
+        if (providerKind == ProviderKind.ANTHROPIC && config.boolWithProfile("extended_thinking", false)) {
+            extraCfg["anthropic-beta"] = "interleaved-thinking-2025-05-14"
+        }
+        val headers = llmClient.buildHeaders(providerKind, apiKey, extraCfg)
 
         val dialogueLimit = config.intWithProfile("dialogue_window_user_assistant", 40, 10, 120)
         val dialogueRawLimit = config.intWithProfile("dialogue_raw_fetch_limit", 320, 40, 2000)
@@ -447,6 +458,7 @@ class AgentRuntime(
         var lastToolName = ""
         var lastToolStatus = ""
         var lastToolError = ""
+        val toolHistory = mutableListOf<ToolRoundRecord>()
 
         for (roundIdx in 0 until maxRounds) {
             checkInterrupt()
@@ -554,20 +566,19 @@ class AgentRuntime(
                 // called at all, give the model one more chance.  Many models
                 // respond with text-only ("I'm ready" / "please clarify") instead
                 // of acting.  The nudge asks them to reconsider.
-                if (roundIdx == 0 && forcedRounds == 0 && toolCallsExecuted == 0) {
+                if (roundIdx == 0 && forcedRounds == 0 && toolCallsExecuted == 0 && curText.length > 20) {
                     forcedRounds++
                     pendingInput = appendUserNudge(providerKind, pendingInput,
-                        "You responded with text but did not call any tools. " +
-                        "If the user's request requires any action (creating files, running code, " +
-                        "querying device state, searching the web, etc.), you MUST call the " +
-                        "appropriate tools now — do not just describe or narrate, actually " +
-                        "invoke the tools. Only respond with text alone if the request is " +
-                        "purely conversational (greeting, opinion, clarification).")
+                        "If the request requires action, call the appropriate tools now.")
                     continue
                 }
-                // Final assistant message
-                for (text in messageTexts) {
-                    recordMessage("assistant", text, JSONObject().apply {
+                // Final assistant message — append tool history summary for cross-turn memory
+                val toolSummary = buildToolHistorySummary(toolHistory)
+                for ((idx, text) in messageTexts.withIndex()) {
+                    val recorded = if (idx == messageTexts.lastIndex && toolSummary.isNotEmpty()) {
+                        "$text\n$toolSummary"
+                    } else text
+                    recordMessage("assistant", recorded, JSONObject().apply {
                         put("item_id", item.optString("id"))
                         put("session_id", sessionId)
                     })
@@ -621,22 +632,28 @@ class AgentRuntime(
                 pendingInput.put(assistantMsg)
             }
 
-            // Anthropic: echo back assistant message with tool_use content blocks
+            // Anthropic: echo back the raw content array to preserve thinking blocks
             if (providerKind == ProviderKind.ANTHROPIC) {
-                val contentArr = JSONArray()
-                for (t in messageTexts) {
-                    contentArr.put(JSONObject().put("type", "text").put("text", t))
+                val rawContent = payload.optJSONArray("content")
+                if (rawContent != null) {
+                    pendingInput.put(JSONObject().put("role", "assistant").put("content", rawContent))
+                } else {
+                    // Fallback: reconstruct from parsed data
+                    val contentArr = JSONArray()
+                    for (t in messageTexts) {
+                        contentArr.put(JSONObject().put("type", "text").put("text", t))
+                    }
+                    for (ci in 0 until calls.length()) {
+                        val c = calls.getJSONObject(ci)
+                        contentArr.put(JSONObject().apply {
+                            put("type", "tool_use")
+                            put("id", c.optString("call_id", c.optString("id", "")))
+                            put("name", c.optString("name", ""))
+                            put("input", c.opt("arguments") ?: JSONObject())
+                        })
+                    }
+                    pendingInput.put(JSONObject().put("role", "assistant").put("content", contentArr))
                 }
-                for (ci in 0 until calls.length()) {
-                    val c = calls.getJSONObject(ci)
-                    contentArr.put(JSONObject().apply {
-                        put("type", "tool_use")
-                        put("id", c.optString("call_id", c.optString("id", "")))
-                        put("name", c.optString("name", ""))
-                        put("input", c.opt("arguments") ?: JSONObject())
-                    })
-                }
-                pendingInput.put(JSONObject().put("role", "assistant").put("content", contentArr))
             }
 
             // Gemini: echo back model message with functionCall parts
@@ -690,6 +707,14 @@ class AgentRuntime(
                 val result = toolExecutor.executeFunctionTool(name, args, curText)
                 lastToolStatus = result.optString("status", "").ifBlank { "ok" }
                 lastToolError = result.optString("error", "")
+
+                // Record tool activity for cross-turn summary
+                toolHistory.add(ToolRoundRecord(
+                    name = name,
+                    status = lastToolStatus,
+                    args = args,
+                    resultSnippet = buildToolResultSnippet(name, args, result),
+                ))
 
                 // Check for permission_required
                 val resultStatus = result.optString("status", "")
@@ -777,10 +802,12 @@ class AgentRuntime(
                 break
             }
 
-            // Nudge to stop
-            pendingInput = appendUserNudge(providerKind, pendingInput,
-                "Tool outputs have been provided. If the user's request is fully satisfied, respond with the final answer and STOP. " +
-                "If there are still outstanding actions needed, call additional tools now.")
+            // Nudge to stop — only in the last 3 rounds to avoid wasting context
+            if (roundIdx >= maxRounds - 3) {
+                pendingInput = appendUserNudge(providerKind, pendingInput,
+                    "Tool outputs have been provided. If the user's request is fully satisfied, respond with the final answer and STOP. " +
+                    "If there are still outstanding actions needed, call additional tools now.")
+            }
         }
 
         // Exhausted max rounds — force finalization
@@ -803,8 +830,12 @@ class AgentRuntime(
             }
 
             val finalResult = parseProviderResponse(providerKind, finalPayload)
-            for (text in finalResult.first) {
-                recordMessage("assistant", text, JSONObject().apply {
+            val finalToolSummary = buildToolHistorySummary(toolHistory)
+            for ((idx, text) in finalResult.first.withIndex()) {
+                val recorded = if (idx == finalResult.first.lastIndex && finalToolSummary.isNotEmpty()) {
+                    "$text\n$finalToolSummary"
+                } else text
+                recordMessage("assistant", recorded, JSONObject().apply {
                     put("item_id", item.optString("id"))
                     put("session_id", sessionId)
                 })
@@ -829,6 +860,7 @@ class AgentRuntime(
             val errPart = if (lastToolError.isNotBlank()) " (error=$lastToolError)" else ""
             "$lastToolName -> $lastToolStatus$errPart"
         }
+        val fallbackToolSummary = buildToolHistorySummary(toolHistory)
         recordMessage("assistant",
             (if (stoppedForStall) "Stopped due to repetitive tool-call loop.\n" else "Reached maximum tool rounds ($maxRounds).\n") +
                 "Progress summary:\n" +
@@ -837,7 +869,8 @@ class AgentRuntime(
                 "- Tool calls executed: $toolCallsExecuted\n" +
                 "- Tools used: $toolsUsedSummary\n" +
                 "- Last tool result: $lastToolSummary\n" +
-                "Please continue with the next concrete sub-step.",
+                "Please continue with the next concrete sub-step." +
+                if (fallbackToolSummary.isNotEmpty()) "\n$fallbackToolSummary" else "",
             JSONObject().put("item_id", item.optString("id")).put("session_id", sessionId))
     }
 
@@ -870,12 +903,18 @@ class AgentRuntime(
                 if (requireTool) put("tool_choice", "required")
             }
             ProviderKind.ANTHROPIC -> JSONObject().apply {
+                val cfg = configManager.loadFull()
+                val thinkingEnabled = cfg.boolWithProfile("extended_thinking", false)
+                val thinkingBudget = cfg.intWithProfile("thinking_budget_tokens", 8000, 1000, 32000)
                 put("model", model)
-                put("max_tokens", 8192)
+                put("max_tokens", if (thinkingEnabled) maxOf(16000, thinkingBudget + 4096) else 8192)
                 put("system", systemPrompt)
                 put("tools", tools)
                 put("messages", input)
                 if (requireTool) put("tool_choice", JSONObject().put("type", "any"))
+                if (thinkingEnabled) {
+                    put("thinking", JSONObject().put("type", "enabled").put("budget_tokens", thinkingBudget))
+                }
             }
             ProviderKind.GOOGLE_GEMINI -> JSONObject().apply {
                 put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
@@ -1567,8 +1606,10 @@ class AgentRuntime(
      * and internal thinking blocks that models sometimes leak.
      */
     private fun sanitizeAssistantText(raw: String): String {
+        // Strip tool activity summaries (cross-turn memory, not for UI display)
+        var text = raw.replace(Regex("\n---\n\\[Tool Activity:[\\s\\S]*?---$"), "").trim()
         // Strip <thought>...</thought> blocks (internal reasoning)
-        var text = raw.replace(Regex("<thought>[\\s\\S]*?</thought>"), "").trim()
+        text = text.replace(Regex("<thought>[\\s\\S]*?</thought>"), "").trim()
         // Strip leading lines that are echoed system-prompt instructions.
         // Pattern: lines starting with imperative directives (NEVER, Do NOT, Do not,
         // Always, You MUST, You must, Only, Prefer, Keep responses, Use ...).
@@ -1689,6 +1730,89 @@ class AgentRuntime(
         } catch (e: Exception) {
             Log.w(TAG, "Failed to log Gemini request structure", e)
         }
+    }
+
+    private fun buildToolResultSnippet(name: String, args: JSONObject, result: JSONObject): String {
+        val status = result.optString("status", "")
+        return when (name) {
+            "read_file" -> {
+                val path = args.optString("path", "")
+                val size = result.optInt("size", 0)
+                "$path ($size bytes)"
+            }
+            "write_file" -> {
+                val path = args.optString("path", "")
+                val size = result.optInt("size", 0)
+                "wrote $path ($size bytes)"
+            }
+            "list_dir" -> {
+                val path = args.optString("path", ".")
+                val items = result.optJSONArray("items")
+                val count = items?.length() ?: 0
+                "$path ($count entries)"
+            }
+            "run_js" -> {
+                val res = result.optString("result", "").take(80)
+                "result=$res"
+            }
+            "run_shell", "run_python" -> {
+                val code = result.optInt("exit_code", -1)
+                "exit=$code"
+            }
+            "device_api" -> {
+                val action = args.optString("action", "")
+                val httpStatus = result.optInt("http_status", 0)
+                if (httpStatus > 0) "$action http=$httpStatus" else "$action $status"
+            }
+            "web_search" -> {
+                val query = args.optString("query", "").take(40)
+                "query=\"$query\""
+            }
+            "delete_path" -> {
+                val path = args.optString("path", "")
+                "deleted $path"
+            }
+            "move_path" -> {
+                val src = args.optString("src", "")
+                val dst = args.optString("dst", "")
+                "$src -> $dst"
+            }
+            else -> {
+                val error = result.optString("error", "")
+                if (error.isNotEmpty()) "error=$error" else status
+            }
+        }
+    }
+
+    private fun buildToolHistorySummary(history: List<ToolRoundRecord>): String {
+        if (history.isEmpty()) return ""
+
+        val sb = StringBuilder()
+        sb.append("\n---\n[Tool Activity: ${history.size} call(s)]\n")
+
+        // Tool usage counts
+        val counts = linkedMapOf<String, Int>()
+        for (r in history) counts[r.name] = (counts[r.name] ?: 0) + 1
+        sb.append(counts.entries.joinToString(", ") { "${it.key} x${it.value}" })
+        sb.append("\nOutcomes:\n")
+
+        // Group outcomes by tool name
+        val grouped = linkedMapOf<String, MutableList<ToolRoundRecord>>()
+        for (r in history) grouped.getOrPut(r.name) { mutableListOf() }.add(r)
+
+        for ((toolName, records) in grouped) {
+            val snippets = records.map { it.resultSnippet }.filter { it.isNotBlank() }
+            if (snippets.isNotEmpty()) {
+                sb.append("  $toolName: ${snippets.joinToString("; ").take(200)}\n")
+            } else {
+                sb.append("  $toolName: ${records.first().status}\n")
+            }
+        }
+        sb.append("---")
+
+        // Cap at ~2000 chars
+        val result = sb.toString()
+        return if (result.length > 2000) result.take(1980) + "\n---" else result
     }
 
     companion object {
