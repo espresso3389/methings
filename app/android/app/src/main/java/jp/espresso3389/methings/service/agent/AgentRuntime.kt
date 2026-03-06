@@ -562,15 +562,21 @@ class AgentRuntime(
                         "Then summarize after tool outputs are provided.")
                     continue
                 }
-                // Soft nudge: if this is the first round and no tools have been
-                // called at all, give the model one more chance.  Many models
-                // respond with text-only ("I'm ready" / "please clarify") instead
-                // of acting.  The nudge asks them to reconsider.
-                if (roundIdx == 0 && forcedRounds == 0 && toolCallsExecuted == 0 && curText.length > 20) {
-                    forcedRounds++
-                    pendingInput = appendUserNudge(providerKind, pendingInput,
-                        "If the request requires action, call the appropriate tools now.")
-                    continue
+                // Soft nudge: if the model returned text without tool calls but
+                // the task likely isn't finished, nudge it to keep working.
+                // - Round 0 with no tools yet: model may be narrating instead of acting
+                // - Mid-task (tools already executed): model may be pausing to "report progress"
+                if (forcedRounds < 3) {
+                    val isFirstRoundIdle = roundIdx == 0 && toolCallsExecuted == 0 && curText.length > 20
+                    val isMidTaskPause = toolCallsExecuted > 0 && roundIdx < maxRounds - 2
+                    if (isFirstRoundIdle || isMidTaskPause) {
+                        forcedRounds++
+                        pendingInput = appendUserNudge(providerKind, pendingInput,
+                            "You responded with text only. If the task is not fully complete, " +
+                            "call the appropriate tools NOW to continue working. " +
+                            "Do not narrate what you plan to do — actually do it.")
+                        continue
+                    }
                 }
                 // Final assistant message — append tool history summary for cross-turn memory
                 val toolSummary = buildToolHistorySummary(toolHistory)
