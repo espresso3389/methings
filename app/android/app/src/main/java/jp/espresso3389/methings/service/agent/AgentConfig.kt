@@ -79,7 +79,10 @@ data class AgentConfig(
             "Always respond in the same language the user writes in. " +
             "JOURNAL: Use journal tools for continuity — keep Journal (Current) short, update at milestones. " +
             "Do NOT write MEMORY.md unless the user explicitly asks. " +
-            "Refer to AGENTS.md and TOOLS.md (auto-injected) for detailed rules on filesystem, device_api domains, execution tools, and chat rendering."
+            "DOCS: Your context includes two layers of auto-injected docs. " +
+            "System AGENTS.md/TOOLS.md (read-only, updated with app) provide base rules and tool reference. " +
+            "User AGENTS.md/TOOLS.md (in your home directory) are yours — freely write_file to store learned patterns, custom rules, or session notes. " +
+            "They start empty; anything you write persists across sessions and is auto-injected after the system layer."
 
         val BUILTIN_MODEL_PROFILES: Map<String, Map<String, Any>> = mapOf(
             // gpt-5.2 must precede gpt-5 (substring match: "gpt-5.2-pro" contains "gpt-5")

@@ -125,14 +125,10 @@ class AssetExtractor(private val context: Context) {
             val targetDir = File(context.filesDir, "user")
             targetDir.mkdirs()
 
-            // Only seed defaults if missing, so we never overwrite user edits.
-            val agentFile = File(targetDir, "AGENTS.md")
-            val toolsFile = File(targetDir, "TOOLS.md")
-            if (!agentFile.exists() && assetExists("user_defaults/AGENTS.md")) {
-                copyAssetFile("user_defaults/AGENTS.md", agentFile)
-            }
-            if (!toolsFile.exists() && assetExists("user_defaults/TOOLS.md")) {
-                copyAssetFile("user_defaults/TOOLS.md", toolsFile)
+            // Create empty AGENTS.md/TOOLS.md if missing — content is fully agent-controlled.
+            for (name in listOf("AGENTS.md", "TOOLS.md")) {
+                val f = File(targetDir, name)
+                if (!f.exists()) f.writeText("")
             }
 
             // Create empty agent workspace directory for the agent's own notes.
@@ -252,21 +248,10 @@ class AssetExtractor(private val context: Context) {
                 }
             }
 
-            // v3 migration: AGENTS.md/TOOLS.md are now split into system (read-only) + user
-            // (editable). Reset user copies one final time to deliver the lightweight templates.
-            // After v3, user AGENTS.md/TOOLS.md are never force-overwritten again — system
-            // content lives in $sys/docs/ and is always current via extractSystemAssets().
-            if (existingVersion < "3") {
-                // Back up existing files so user customizations aren't lost.
-                // The agent can detect *.bak.md and offer to merge custom content.
-                for (name in listOf("AGENTS.md", "TOOLS.md")) {
-                    val src = File(userDir, name)
-                    if (src.exists() && src.length() > 0) {
-                        val bak = File(userDir, name.replace(".md", ".bak.md"))
-                        src.copyTo(bak, overwrite = true)
-                    }
-                }
-                resetUserDefaults()
+            // v3+: AGENTS.md/TOOLS.md are fully agent-controlled.
+            // Clean up legacy .bak.md files from previous migration.
+            for (name in listOf("AGENTS.bak.md", "TOOLS.bak.md")) {
+                File(userDir, name).takeIf { it.exists() }?.delete()
             }
 
             markerFile.writeText(currentVersion)
@@ -329,16 +314,9 @@ class AssetExtractor(private val context: Context) {
             val targetDir = File(context.filesDir, "user")
             targetDir.mkdirs()
 
-            // Overwrite agent operational docs (explicit user action).
-            // System reference docs (docs/, examples/, lib/) live in files/system/ and are
-            // always kept current by extractSystemAssets() — no reset needed here.
-            val agentFile = File(targetDir, "AGENTS.md")
-            val toolsFile = File(targetDir, "TOOLS.md")
-            if (assetExists("user_defaults/AGENTS.md")) {
-                copyAssetFile("user_defaults/AGENTS.md", agentFile)
-            }
-            if (assetExists("user_defaults/TOOLS.md")) {
-                copyAssetFile("user_defaults/TOOLS.md", toolsFile)
+            // Reset AGENTS.md/TOOLS.md to empty — content is fully agent-controlled.
+            for (name in listOf("AGENTS.md", "TOOLS.md")) {
+                File(targetDir, name).writeText("")
             }
 
             targetDir

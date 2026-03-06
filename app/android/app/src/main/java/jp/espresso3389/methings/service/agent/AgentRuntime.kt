@@ -1558,7 +1558,7 @@ class AgentRuntime(
     private fun userRootPolicyBlob(): String {
         val parts = mutableListOf<String>()
 
-        // System docs (read-only)
+        // System docs (read-only, always current with app version)
         for (name in listOf("AGENTS.md", "TOOLS.md")) {
             val content = readDocFile(File(sysDir, "docs/$name"))
             if (content.isNotEmpty()) {
@@ -1566,22 +1566,17 @@ class AgentRuntime(
             }
         }
 
-        // User docs (editable)
-        var hasUser = false
+        // User docs (agent-controlled, empty by default)
         for (name in listOf("AGENTS.md", "TOOLS.md")) {
             val content = readDocFile(File(userDir, name))
             if (content.isNotEmpty()) {
-                if (!hasUser) {
-                    parts.add("\nUser-root docs (auto-injected; reloaded if changed on disk).\n")
-                    hasUser = true
-                }
                 val sha = sha256Short(content)
                 parts.add("## User $name (sha256=$sha)\n$content\n")
             }
         }
         val notices = readDocFile(File(userDir, "AGENT_NOTICES.md"))
         if (notices.isNotEmpty()) {
-            parts.add("## User AGENT_NOTICES.md\n$notices\n")
+            parts.add("## AGENT_NOTICES.md\n$notices\n")
         }
 
         return parts.joinToString("\n").trim()
