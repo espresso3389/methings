@@ -133,14 +133,18 @@ Upload a file to MicroPython filesystem over raw REPL.
 
 ### mcu.micropython_soft_reset
 
-Send soft reset (Ctrl-C/Ctrl-D) and capture boot output.
+Send soft reset (Ctrl-C/Ctrl-D) and capture boot output as a `lines` array.
 
 **Params (+ common serial params):**
 - `settle_ms` (integer, optional): Default: 250
-- `read_timeout_ms` (integer, optional): First-byte wait. Default: 1500
 - `capture_timeout_ms` (integer, optional): Total capture budget. Default: 4000
-- `idle_timeout_ms` (integer, optional): Post-first-byte idle cutoff. Default: 300
+- `idle_timeout_ms` (integer, optional): Idle cutoff (ms since last byte). Default: 300
+- `max_lines` (integer, optional): Max lines to capture. Default: 200
 - `drain_before_reset` (boolean, optional): Default: true
-- `max_dump_bytes` (integer, optional): Default: 8192
+- `raw_output` (boolean, optional): Include `output_b64`/`output_ascii` fields. Default: false
 
-**Notes:** Capture flow: wait `read_timeout_ms` for first byte, then read until `idle_timeout_ms` silence, `capture_timeout_ms` total, or `max_dump_bytes`. Reset may temporarily drop the serial link.
+**Returns:**
+- `lines` (array of string): captured output lines (newlines stripped). Check for `Traceback`, `ImportError`, `SyntaxError` etc.
+- `line_count`, `bytes_read`, `elapsed_ms`, `truncated`, `truncation_reason`
+
+**Notes:** Uses line-oriented capture with 100ms polling to avoid USB bulk boundary false-idle. Always check `lines` for errors before reporting success.

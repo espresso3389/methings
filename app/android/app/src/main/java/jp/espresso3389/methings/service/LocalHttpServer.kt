@@ -4792,6 +4792,8 @@ class LocalHttpServer(
             val drainBeforeReset = payload.optBoolean("drain_before_reset", true)
             val maxLines = payload.optInt("max_lines", 200).coerceIn(1, 5000)
 
+            val rawOutput = payload.optBoolean("raw_output", false)
+
             val result = synchronized(lease.serial.lock) {
                 if (drainBeforeReset) {
                     drainSerialInput(lease.serial, perReadTimeoutMs = 40, maxRounds = 12)
@@ -4801,31 +4803,28 @@ class LocalHttpServer(
                 readSerialLines(lease.serial, maxLines, idleTimeoutMs, captureTimeoutMs)
             }
 
-            // build backward-compatible output_b64/output_ascii from lines
-            val outputText = result.lines.joinToString("\r\n")
-            val outputBytes = outputText.toByteArray(Charsets.UTF_8)
             val linesArr = JSONArray()
             result.lines.forEach { linesArr.put(it) }
-            jsonResponse(
-                JSONObject()
-                    .put("status", "ok")
-                    .put("model", lease.model)
-                    .put("serial_handle", lease.serial.id)
-                    .put("handle", lease.handle ?: JSONObject.NULL)
-                    .put("ephemeral_session", lease.ephemeral)
-                    .put("soft_reset_sent", true)
-                    .put("lines", linesArr)
-                    .put("line_count", result.lines.size)
-                    .put("bytes_read", result.bytesRead)
-                    .put("drain_before_reset", drainBeforeReset)
-                    .put("capture_timeout_ms", captureTimeoutMs)
-                    .put("idle_timeout_ms", idleTimeoutMs)
-                    .put("elapsed_ms", result.elapsedMs)
-                    .put("truncated", result.truncated)
-                    .put("truncation_reason", result.truncationReason ?: JSONObject.NULL)
-                    .put("output_b64", Base64.encodeToString(outputBytes, Base64.NO_WRAP))
+            val resp = JSONObject()
+                .put("status", "ok")
+                .put("model", lease.model)
+                .put("serial_handle", lease.serial.id)
+                .put("handle", lease.handle ?: JSONObject.NULL)
+                .put("ephemeral_session", lease.ephemeral)
+                .put("soft_reset_sent", true)
+                .put("lines", linesArr)
+                .put("line_count", result.lines.size)
+                .put("bytes_read", result.bytesRead)
+                .put("elapsed_ms", result.elapsedMs)
+                .put("truncated", result.truncated)
+                .put("truncation_reason", result.truncationReason ?: JSONObject.NULL)
+            if (rawOutput) {
+                val outputText = result.lines.joinToString("\r\n")
+                val outputBytes = outputText.toByteArray(Charsets.UTF_8)
+                resp.put("output_b64", Base64.encodeToString(outputBytes, Base64.NO_WRAP))
                     .put("output_ascii", bytesToAsciiPreview(outputBytes))
-            )
+            }
+            jsonResponse(resp)
         } catch (ex: Exception) {
             jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_soft_reset_failed", JSONObject().put("detail", ex.message ?: ""))
         } finally {
