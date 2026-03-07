@@ -597,14 +597,11 @@ class AgentRuntime(
 
             toolRequiredUnsatisfied = false
 
-            // Record assistant text
-            for (text in messageTexts) {
-                recordMessage("assistant", text, JSONObject().apply {
-                    put("item_id", item.optString("id"))
-                    put("session_id", sessionId)
-                })
-                emitLog("brain_response", JSONObject().put("item_id", item.optString("id")).put("text", text.take(300)))
-            }
+            // Defer recording assistant text until after tool execution.
+            // If tools fail (permission_required, policy error), the premature
+            // text is discarded — the next LLM round will generate a new message
+            // that reflects the actual outcome.
+            val deferredTexts = messageTexts.toList()
 
             // Execute tool calls
             // Chat Completions and Anthropic are stateless — keep accumulating
