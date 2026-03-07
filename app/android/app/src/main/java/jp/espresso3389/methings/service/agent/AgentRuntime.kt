@@ -567,16 +567,17 @@ class AgentRuntime(
                 // the task likely isn't finished, nudge it to keep working.
                 // - Round 0 with no tools yet: model may be narrating instead of acting
                 // - Mid-task (tools already executed): model may be pausing to "report progress"
-                if (forcedRounds < 3) {
+                if (forcedRounds < 4) {
                     val isFirstRoundIdle = roundIdx == 0 && toolCallsExecuted == 0 && curText.length > 20
                     val isMidTaskPause = toolCallsExecuted > 0 && roundIdx < maxRounds - 2
                     if (isFirstRoundIdle || isMidTaskPause) {
                         forcedRounds++
                         pendingInput = appendUserNudge(providerKind, pendingInput,
-                            "You responded with text only. If the task is not fully complete, " +
-                            "call the appropriate tools to continue. " +
-                            "If you cannot proceed (e.g. missing permission, missing info), " +
-                            "explain what is blocking you instead of claiming completion.")
+                            "You responded with text only — this text was NOT shown to the user. " +
+                            "If the task is not fully complete, call tools to continue. " +
+                            "Do NOT stop to ask 'should I continue' or 'please say 続けて'. " +
+                            "If you are blocked (missing permission, error), explain the blocker. " +
+                            "Otherwise, call the next tool NOW.")
                         continue
                     }
                 }
