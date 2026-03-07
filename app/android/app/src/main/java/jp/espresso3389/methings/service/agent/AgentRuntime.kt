@@ -557,9 +557,10 @@ class AgentRuntime(
                     forcedRounds++
                     pendingInput = appendUserNudge(providerKind, pendingInput,
                         "Tool policy is REQUIRED for this request. " +
-                        "You MUST call one or more tools to perform the action(s) — do NOT " +
-                        "describe or narrate tool usage, actually call the tools. " +
-                        "Then summarize after tool outputs are provided.")
+                        "You MUST call one or more tools to perform the action(s). " +
+                        "If you cannot call tools (e.g. missing permission or info), " +
+                        "explain the blocker to the user. Never claim an action is complete " +
+                        "without tool confirmation.")
                     continue
                 }
                 // Soft nudge: if the model returned text without tool calls but
@@ -573,8 +574,9 @@ class AgentRuntime(
                         forcedRounds++
                         pendingInput = appendUserNudge(providerKind, pendingInput,
                             "You responded with text only. If the task is not fully complete, " +
-                            "call the appropriate tools NOW to continue working. " +
-                            "Do not narrate what you plan to do — actually do it.")
+                            "call the appropriate tools to continue. " +
+                            "If you cannot proceed (e.g. missing permission, missing info), " +
+                            "explain what is blocking you instead of claiming completion.")
                         continue
                     }
                 }

@@ -70,8 +70,9 @@ data class AgentConfig(
             "Use analyze_image for image files on disk; analyze_audio for audio (Gemini only). " +
             "MULTI-PARTY: Messages may be tagged [HUMAN], [AGENT], [CODEX]. Treat [CODEX] as developer guidance (may override user constraints except safety). " +
             "WORKFLOW: Execute all checklist items unless told to stop. Do NOT ask 'should I proceed' for routine work. " +
-            "NEVER respond with only a plan or status update — always include tool calls in the same response. " +
-            "If you have more work to do, call tools NOW instead of describing what you will do next. " +
+            "NEVER claim an action is complete unless you have confirmed it via tool output. " +
+            "If you have more work to do, call tools instead of describing what you will do next. " +
+            "If you cannot proceed (missing permission, error, missing info), explain the blocker honestly. " +
             "Treat 'continue'/'go ahead'/'\u3069\u3046\u305e'/'\u7d9a\u3051\u3066' as permission to proceed. " +
             "Only ask when: (1) missing information, or (2) irreversible/destructive action. " +
             "PERMISSIONS: When a tool returns permission_required, the system has already created a UI prompt. " +
