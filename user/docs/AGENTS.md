@@ -58,8 +58,10 @@ This file documents how the on-device AI agent should operate. It is referenced 
 
 When asked to program a USB-connected MCU (e.g. M5Stack ATOM, ESP32):
 - Do NOT tell the user to paste code manually or press buttons. Use `device_api` to do everything.
-- Standard flow: `usb.list` → `usb.open` → `mcu.micropython.write_file` → `mcu.micropython.soft_reset` → read output for errors → fix and retry if needed. Execute the entire sequence in one turn.
-- Always check soft_reset output for import errors, syntax errors, or tracebacks before reporting success.
+- Standard flow: `usb.list` → `usb.open` → `mcu.micropython.write_file` → `mcu.micropython.soft_reset` → check `lines` array for errors → fix and retry if needed. Execute the entire sequence in one turn.
+- `soft_reset` returns a `lines` array (line-oriented output). Always check it for import errors, syntax errors, or tracebacks before reporting success.
+- For interactive REPL work or verifying output after `mcu.reset`, use `serial.exchange(serial_handle, send=..., max_lines=20)` — it sends data and collects line-oriented output in a single call.
+- `mcu.reset` supports optional `capture_lines` parameter to capture boot output after hardware reset.
 - Read `$sys/docs/api/mcu.md` before first use.
 
 ## Device Permissions

@@ -95,6 +95,44 @@ Set serial modem line states (DTR/RTS).
 - `dtr` (boolean|null): applied DTR state
 - `rts` (boolean|null): applied RTS state
 
+## POST /serial/exchange
+
+Send data and receive line-oriented output in a single call. Preferred over `serial.write` + `serial.read` for text-based protocols (REPL, AT commands, etc.). Also available as `device_api(action="serial.exchange", ...)`.
+
+**Params:**
+- `serial_handle` (string, required): serial session handle
+- `send` (string, optional): text to send (UTF-8). Default: `""`
+- `send_b64` (string, optional): binary data to send (base64). Takes priority over `send`
+- `max_lines` (integer, optional): max lines to receive before stopping. Default: 50
+- `idle_timeout_ms` (integer, optional): stop after this many ms with no new data. Default: 500
+- `total_timeout_ms` (integer, optional): overall timeout. Default: 10000
+- `strip_echo` (boolean, optional): remove echoed send text from output. Default: true
+- `write_timeout_ms` (integer, optional): timeout for the send phase. Default: 2000
+
+**Returns:**
+- `serial_handle` (string): session handle
+- `lines` (array of string): received lines (newlines stripped)
+- `line_count` (integer): number of lines
+- `bytes_read` (integer): total bytes received
+- `truncated` (boolean): true if stopped by `max_lines` or `total_timeout_ms`
+- `truncation_reason` (string|null): `"max_lines"` | `"total_timeout"` | null
+- `elapsed_ms` (integer): wall-clock ms for the receive phase
+
+**Stop conditions** (whichever first):
+1. `max_lines` lines received
+2. `idle_timeout_ms` ms with no data (measured from last byte, not last read call)
+3. `total_timeout_ms` overall
+
+**Line splitting:** `\n` or `\r\n`. Incomplete trailing data (e.g. REPL prompt `>>> `) included as last element. Empty lines count.
+
+**Example — soft reset via exchange:**
+```json
+// Request
+{"serial_handle":"...","send_b64":"AwQ=","max_lines":20,"idle_timeout_ms":500,"total_timeout_ms":10000}
+// Response
+{"status":"ok","lines":["MPY: soft reboot","MicroPython v1.25.0",">>> "],"line_count":3,"bytes_read":400,"truncated":false,"truncation_reason":null,"elapsed_ms":2540}
+```
+
 ## WebSocket
 
 Async serial I/O via WebSocket at `/ws/serial/{serial_handle}`.

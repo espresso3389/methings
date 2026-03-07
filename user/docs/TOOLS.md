@@ -74,9 +74,10 @@ Read the relevant `$sys/docs/api/<domain>.md` before using a domain for the firs
 - `uvc.mjpeg.capture` / `uvc.ptz.*`: USB webcam frame capture, PTZ. → `$sys/docs/api/uvc.md`
 - `usb.list` / `usb.open` / `usb.close` / `usb.transfer.*`: USB device enumeration + transfers. → `$sys/docs/api/usb.md`
 - `mcu.*`: MCU probe, flash, reset, serial monitor, MicroPython. → `$sys/docs/api/mcu.md`
-  - **MicroPython workflow**: `usb.list` → `usb.open` → `mcu.micropython.write_file(handle, path="main.py", content=...)` → `mcu.micropython.soft_reset(handle)` (captures boot output including errors) → check output for errors → iterate. Always do write + soft_reset + check output as a single sequence. Do NOT ask the user to paste code manually or press reset.
+  - **MicroPython workflow**: `usb.list` → `usb.open` → `mcu.micropython.write_file(handle, path="main.py", content=...)` → `mcu.micropython.soft_reset(handle)` (captures boot output as `lines` array) → check output for errors → iterate. Always do write + soft_reset + check output as a single sequence. Do NOT ask the user to paste code manually or press reset.
   - `mcu.micropython.exec(handle, code=...)`: execute code in raw REPL without writing a file.
   - For multi-step work, open serial once with `serial.open` and pass `serial_handle` to all subsequent calls.
+  - `serial.exchange(serial_handle, send=..., max_lines=20)`: send text and receive line-oriented output in one call. Preferred for interactive REPL sessions and verifying boot output after `mcu.reset`.
 - `ble.scan.*` / `ble.connect` / `ble.gatt.*`: BLE scanning, GATT read/write. → `$sys/docs/api/ble.md`
 - `sensor.list` / `sensor.stream.*`: sensor enumeration, realtime data. → `$sys/docs/api/sensors.md`
 - `location.get` / `location.status`: GPS fix, provider state. → `$sys/docs/api/location.md`
@@ -98,7 +99,8 @@ Read the relevant `$sys/docs/api/<domain>.md` before using a domain for the firs
 
 **Serial operations are direct HTTP endpoints.** Use `run_js` with `fetch()` or `run_curl`. Do NOT use `device_api(action="serial.open")` — it will fail with `unknown_action`.
 
-Key endpoints: `POST /serial/open`, `/serial/list_ports`, `/serial/read`, `/serial/write`, `/serial/close`, `GET /serial/status`.
+Key endpoints: `POST /serial/open`, `/serial/close`, `/serial/exchange` (line-oriented send+receive), `/serial/read`, `/serial/write`, `/serial/list_ports`, `GET /serial/status`.
+`serial.exchange` is also available as a `device_api` action: `device_api(action="serial.exchange", serial_handle=..., send="print('hi')\\r\\n", max_lines=10)`.
 WebSocket async I/O: `GET /serial/ws/contract`, then connect to `/ws/serial/{serial_handle}`.
 
 USB device must be opened first via `device_api(action="usb.open")`. Full details: `$sys/docs/api/serial.md`.

@@ -2437,6 +2437,15 @@ class LocalHttpServer(
                     jsonError(Response.Status.INTERNAL_ERROR, "serial_lines_handler_failed")
                 }
             }
+            (uri == "/serial/exchange" || uri == "/serial/exchange/") && session.method == Method.POST -> {
+                return try {
+                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                    handleSerialExchange(session, payload)
+                } catch (ex: Exception) {
+                    Log.e(TAG, "Serial exchange handler failed", ex)
+                    jsonError(Response.Status.INTERNAL_ERROR, "serial_exchange_handler_failed")
+                }
+            }
             else -> notFound()
         }
     }
@@ -4476,16 +4485,67 @@ class LocalHttpServer(
                     }
                 }
                 if (sleepAfterMs > 0) Thread.sleep(sleepAfterMs.toLong())
-                jsonResponse(
-                    JSONObject()
-                        .put("status", "ok")
-                        .put("model", model)
-                        .put("handle", handle)
-                        .put("mode", mode)
-                        .put("bridge_hint", bridge ?: JSONObject.NULL)
-                        .put("interface_id", selection.interfaceObj.id)
-                        .put("transport", if (sessionCtx.usesUsbSerial()) "usb-serial-for-android" else "usb-bulk")
-                )
+
+                val captureLines = payload.optInt("capture_lines", 0).coerceIn(0, 5000)
+                val resp = JSONObject()
+                    .put("status", "ok")
+                    .put("model", model)
+                    .put("handle", handle)
+                    .put("mode", mode)
+                    .put("bridge_hint", bridge ?: JSONObject.NULL)
+                    .put("interface_id", selection.interfaceObj.id)
+                    .put("transport", if (sessionCtx.usesUsbSerial()) "usb-serial-for-android" else "usb-bulk")
+
+                if (captureLines > 0) {
+                    // Open a high-level serial session to capture boot output
+                    val captureIdleMs = payload.optInt("idle_timeout_ms", 500).coerceIn(20, 60_000)
+                    val captureTimeoutMs = payload.optInt("capture_timeout_ms", 10000).coerceIn(100, 120_000)
+                    val baudRate = payload.optInt("baud_rate", 115200).coerceIn(300, 3_500_000)
+                    // Must close the low-level EspSerialSession first so we can open a high-level one
+                    sessionCtx.close()
+                    val serialConn = usbManager.openDevice(dev)
+                    if (serialConn != null) {
+                        try {
+                            val driver = UsbSerialProber.getDefaultProber().probeDevice(dev)
+                            if (driver != null) {
+                                val portIndex = payload.optInt("port_index", 0).coerceIn(0, driver.ports.size - 1)
+                                val port = driver.ports[portIndex]
+                                port.open(serialConn)
+                                port.setParameters(baudRate, UsbSerialPort.DATABITS_8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+                                val captureState = SerialSessionState(
+                                    id = UUID.randomUUID().toString(),
+                                    usbHandle = handle,
+                                    deviceName = dev.deviceName,
+                                    portIndex = portIndex,
+                                    baudRate = baudRate,
+                                    dataBits = UsbSerialPort.DATABITS_8,
+                                    stopBits = UsbSerialPort.STOPBITS_1,
+                                    parity = UsbSerialPort.PARITY_NONE,
+                                    connection = serialConn,
+                                    port = port,
+                                    openedAtMs = System.currentTimeMillis(),
+                                )
+                                try {
+                                    val result = synchronized(captureState.lock) {
+                                        readSerialLines(captureState, captureLines, captureIdleMs, captureTimeoutMs)
+                                    }
+                                    val linesArr = JSONArray()
+                                    result.lines.forEach { linesArr.put(it) }
+                                    resp.put("lines", linesArr)
+                                        .put("line_count", result.lines.size)
+                                } finally {
+                                    runCatching { port.close() }
+                                    runCatching { serialConn.close() }
+                                }
+                            }
+                        } catch (capEx: Exception) {
+                            Log.w(TAG, "mcu.reset capture failed", capEx)
+                            runCatching { serialConn.close() }
+                        }
+                    }
+                }
+
+                jsonResponse(resp)
             } finally {
                 sessionCtx.close()
             }
@@ -4727,52 +4787,25 @@ class LocalHttpServer(
         return try {
             val writeTimeoutMs = payload.optInt("write_timeout_ms", 2000).coerceIn(100, 60_000)
             val settleMs = payload.optInt("settle_ms", 250).coerceIn(0, 5000)
-            val firstByteTimeoutMs = payload.optInt("read_timeout_ms", 1500).coerceIn(100, 60_000)
             val captureTimeoutMs = payload.optInt("capture_timeout_ms", 4000).coerceIn(100, 120_000)
             val idleTimeoutMs = payload.optInt("idle_timeout_ms", 300).coerceIn(20, 10_000)
             val drainBeforeReset = payload.optBoolean("drain_before_reset", true)
-            val maxDumpBytes = payload.optInt("max_dump_bytes", 8192).coerceIn(64, 262_144)
-            val buf = ByteArray(maxDumpBytes)
-            val capture = ByteArrayOutputStream()
+            val maxLines = payload.optInt("max_lines", 200).coerceIn(1, 5000)
 
-            synchronized(lease.serial.lock) {
+            val result = synchronized(lease.serial.lock) {
                 if (drainBeforeReset) {
                     drainSerialInput(lease.serial, perReadTimeoutMs = 40, maxRounds = 12)
                 }
                 writeSerialAll(lease.serial, byteArrayOf(0x03, 0x04), writeTimeoutMs)
                 if (settleMs > 0) Thread.sleep(settleMs.toLong())
-                val startedAt = System.currentTimeMillis()
-                val firstDeadline = startedAt + firstByteTimeoutMs.toLong()
-                val overallDeadline = startedAt + captureTimeoutMs.toLong()
-                var sawAny = false
-                while (capture.size() < maxDumpBytes) {
-                    val now = System.currentTimeMillis()
-                    if (now >= overallDeadline) break
-                    val remainOverall = (overallDeadline - now).coerceAtLeast(1L).toInt()
-                    val timeoutForRead = if (!sawAny) {
-                        val remainFirst = (firstDeadline - now).coerceAtLeast(1L).toInt()
-                        minOf(remainOverall, remainFirst)
-                    } else {
-                        minOf(remainOverall, idleTimeoutMs)
-                    }
-                    if (timeoutForRead <= 0) break
-                    val readRemaining = maxDumpBytes - capture.size()
-                    if (readRemaining <= 0) break
-                    val want = minOf(buf.size, readRemaining)
-                    val n = try {
-                        lease.serial.port.read(buf, timeoutForRead)
-                    } catch (_: Exception) {
-                        0
-                    }
-                    if (n <= 0) {
-                        if (!sawAny && System.currentTimeMillis() < firstDeadline) continue
-                        break
-                    }
-                    sawAny = true
-                    capture.write(buf, 0, minOf(n, want))
-                }
+                readSerialLines(lease.serial, maxLines, idleTimeoutMs, captureTimeoutMs)
             }
-            val out = capture.toByteArray()
+
+            // build backward-compatible output_b64/output_ascii from lines
+            val outputText = result.lines.joinToString("\r\n")
+            val outputBytes = outputText.toByteArray(Charsets.UTF_8)
+            val linesArr = JSONArray()
+            result.lines.forEach { linesArr.put(it) }
             jsonResponse(
                 JSONObject()
                     .put("status", "ok")
@@ -4781,13 +4814,17 @@ class LocalHttpServer(
                     .put("handle", lease.handle ?: JSONObject.NULL)
                     .put("ephemeral_session", lease.ephemeral)
                     .put("soft_reset_sent", true)
-                    .put("bytes_read", out.size)
+                    .put("lines", linesArr)
+                    .put("line_count", result.lines.size)
+                    .put("bytes_read", result.bytesRead)
                     .put("drain_before_reset", drainBeforeReset)
-                    .put("first_byte_timeout_ms", firstByteTimeoutMs)
                     .put("capture_timeout_ms", captureTimeoutMs)
                     .put("idle_timeout_ms", idleTimeoutMs)
-                    .put("output_b64", Base64.encodeToString(out, Base64.NO_WRAP))
-                    .put("output_ascii", bytesToAsciiPreview(out))
+                    .put("elapsed_ms", result.elapsedMs)
+                    .put("truncated", result.truncated)
+                    .put("truncation_reason", result.truncationReason ?: JSONObject.NULL)
+                    .put("output_b64", Base64.encodeToString(outputBytes, Base64.NO_WRAP))
+                    .put("output_ascii", bytesToAsciiPreview(outputBytes))
             )
         } catch (ex: Exception) {
             jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_soft_reset_failed", JSONObject().put("detail", ex.message ?: ""))
@@ -5016,6 +5053,96 @@ class LocalHttpServer(
             st.port.write(chunk, timeoutMs)
             offset = data.size
         }
+    }
+
+    private data class ReadSerialLinesResult(
+        val lines: List<String>,
+        val bytesRead: Int,
+        val truncated: Boolean,
+        val truncationReason: String?,   // "max_lines" | "total_timeout" | null
+        val elapsedMs: Long,
+    )
+
+    /**
+     * Line-oriented serial read: collects lines until a stop condition is met.
+     *
+     * Stop conditions (whichever comes first):
+     *   1. [maxLines] lines received
+     *   2. [idleTimeoutMs] ms since last byte received
+     *   3. [totalTimeoutMs] overall timeout
+     *
+     * Uses short per-read timeouts (100 ms) and tracks lastByteAt externally
+     * so USB bulk-transfer boundary gaps don't trigger premature idle-timeout.
+     */
+    private fun readSerialLines(
+        st: SerialSessionState,
+        maxLines: Int,
+        idleTimeoutMs: Int,
+        totalTimeoutMs: Int,
+    ): ReadSerialLinesResult {
+        val lines = mutableListOf<String>()
+        val buf = ByteArray(4096)
+        var textBuf = StringBuilder()
+        var bytesRead = 0
+        val startedAt = System.currentTimeMillis()
+        val deadline = startedAt + totalTimeoutMs.toLong()
+        var lastByteAt = startedAt
+        var truncated = false
+        var truncationReason: String? = null
+        val perReadTimeout = 100 // short poll to avoid USB bulk boundary false-idle
+
+        while (lines.size < maxLines) {
+            val now = System.currentTimeMillis()
+            if (now >= deadline) {
+                truncated = true
+                truncationReason = "total_timeout"
+                break
+            }
+            if (now - lastByteAt >= idleTimeoutMs) break
+            val remainTotal = (deadline - now).coerceAtLeast(1L).toInt()
+            val remainIdle = (idleTimeoutMs - (now - lastByteAt).toInt()).coerceAtLeast(1)
+            val timeout = minOf(perReadTimeout, remainTotal, remainIdle)
+            if (timeout <= 0) break
+
+            val n = try {
+                st.port.read(buf, timeout)
+            } catch (_: Exception) {
+                0
+            }
+
+            if (n > 0) {
+                lastByteAt = System.currentTimeMillis()
+                bytesRead += n
+                textBuf.append(String(buf, 0, n, Charsets.UTF_8))
+                // extract complete lines
+                while (lines.size < maxLines) {
+                    val idx = textBuf.indexOf('\n')
+                    if (idx < 0) break
+                    val line = textBuf.substring(0, idx).trimEnd('\r')
+                    lines.add(line)
+                    textBuf.delete(0, idx + 1)
+                }
+                if (lines.size >= maxLines) {
+                    truncated = true
+                    truncationReason = "max_lines"
+                }
+            }
+            // n <= 0: no data this round; loop will re-check idle/total
+        }
+
+        // include trailing incomplete line (e.g. REPL prompt ">>> ")
+        if (!truncated && textBuf.isNotEmpty() && lines.size < maxLines) {
+            lines.add(textBuf.toString().trimEnd('\r'))
+        }
+
+        val elapsed = System.currentTimeMillis() - startedAt
+        return ReadSerialLinesResult(
+            lines = lines,
+            bytesRead = bytesRead,
+            truncated = truncated,
+            truncationReason = truncationReason,
+            elapsedMs = elapsed,
+        )
     }
 
     private fun indexOfByte(src: ByteArray, target: Int, start: Int): Int {
@@ -5547,6 +5674,90 @@ class LocalHttpServer(
             )
         } catch (ex: Exception) {
             jsonError(Response.Status.INTERNAL_ERROR, "serial_lines_failed", JSONObject().put("detail", ex.message ?: ""))
+        }
+    }
+
+    private fun handleSerialExchange(session: IHTTPSession, payload: JSONObject): Response {
+        val perm = ensureDevicePermission(
+            session,
+            payload,
+            tool = "device.usb",
+            capability = "usb",
+            detail = "Serial exchange (send+receive lines)"
+        )
+        if (!perm.first) return perm.second!!
+
+        val serialHandle = payload.optString("serial_handle", "").trim()
+        if (serialHandle.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "serial_handle_required")
+        val st = serialSessions[serialHandle] ?: return jsonError(Response.Status.NOT_FOUND, "serial_handle_not_found")
+
+        val maxLines = payload.optInt("max_lines", 50).coerceIn(1, 5000)
+        val idleTimeoutMs = payload.optInt("idle_timeout_ms", 500).coerceIn(20, 60_000)
+        val totalTimeoutMs = payload.optInt("total_timeout_ms", 10000).coerceIn(100, 120_000)
+        val stripEcho = payload.optBoolean("strip_echo", true)
+        val writeTimeoutMs = payload.optInt("write_timeout_ms", 2000).coerceIn(100, 60_000)
+
+        // Determine data to send: send_b64 takes priority over send
+        val sendB64 = payload.optString("send_b64", "").trim()
+        val sendText = payload.optString("send", "").let {
+            // optString returns "null" for JSONObject.NULL
+            if (it == "null") "" else it
+        }
+        val sendBytes: ByteArray? = when {
+            sendB64.isNotBlank() -> try {
+                Base64.decode(sendB64, Base64.DEFAULT)
+            } catch (_: Exception) {
+                return jsonError(Response.Status.BAD_REQUEST, "invalid_send_b64")
+            }
+            sendText.isNotEmpty() -> sendText.toByteArray(Charsets.UTF_8)
+            else -> null
+        }
+
+        return try {
+            val result = synchronized(st.lock) {
+                // send data if provided
+                if (sendBytes != null && sendBytes.isNotEmpty()) {
+                    writeSerialAll(st, sendBytes, writeTimeoutMs)
+                }
+                // read lines
+                readSerialLines(st, maxLines, idleTimeoutMs, totalTimeoutMs)
+            }
+
+            var lines = result.lines
+            // strip echo: remove leading lines that match the sent text
+            if (stripEcho && sendBytes != null) {
+                val sentStr = String(sendBytes, Charsets.UTF_8).trimEnd('\r', '\n')
+                if (sentStr.isNotBlank()) {
+                    val sentLines = sentStr.split('\n').map { it.trimEnd('\r') }
+                    var strip = 0
+                    for (i in sentLines.indices) {
+                        if (i < lines.size && lines[i].trimEnd() == sentLines[i].trimEnd()) {
+                            strip++
+                        } else {
+                            break
+                        }
+                    }
+                    if (strip > 0) {
+                        lines = lines.drop(strip)
+                    }
+                }
+            }
+
+            val linesArr = JSONArray()
+            lines.forEach { linesArr.put(it) }
+            jsonResponse(
+                JSONObject()
+                    .put("status", "ok")
+                    .put("serial_handle", serialHandle)
+                    .put("lines", linesArr)
+                    .put("line_count", lines.size)
+                    .put("bytes_read", result.bytesRead)
+                    .put("truncated", result.truncated)
+                    .put("truncation_reason", result.truncationReason ?: JSONObject.NULL)
+                    .put("elapsed_ms", result.elapsedMs)
+            )
+        } catch (ex: Exception) {
+            jsonError(Response.Status.INTERNAL_ERROR, "serial_exchange_failed", JSONObject().put("detail", ex.message ?: ""))
         }
     }
 
