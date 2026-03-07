@@ -74,10 +74,14 @@ Read the relevant `$sys/docs/api/<domain>.md` before using a domain for the firs
 - `uvc.mjpeg.capture` / `uvc.ptz.*`: USB webcam frame capture, PTZ. → `$sys/docs/api/uvc.md`
 - `usb.list` / `usb.open` / `usb.close` / `usb.transfer.*`: USB device enumeration + transfers. → `$sys/docs/api/usb.md`
 - `mcu.*`: MCU probe, flash, reset, serial monitor, MicroPython. → `$sys/docs/api/mcu.md`
-  - **MicroPython workflow**: `usb.list` → `usb.open` → `mcu.micropython.write_file(handle, path="main.py", content=...)` → `mcu.micropython.soft_reset(handle)` (captures boot output as `lines` array) → check output for errors → iterate. Always do write + soft_reset + check output as a single sequence. Do NOT ask the user to paste code manually or press reset.
-  - `mcu.micropython.exec(handle, code=...)`: execute code in raw REPL without writing a file.
-  - For multi-step work, open serial once with `serial.open` and pass `serial_handle` to all subsequent calls.
-  - `serial.exchange(serial_handle, send=..., max_lines=20)`: send text and receive line-oriented output in one call. Preferred for interactive REPL sessions and verifying boot output after `mcu.reset`.
+  - **MicroPython workflow** (complete example):
+    1. `device_api(action="usb.open", payload={"name":"/dev/bus/usb/001/002"})` → get `handle` from response
+    2. `device_api(action="mcu.micropython.write_file", payload={"handle":"<handle>", "path":"main.py", "content":"import machine\n..."})` — `handle` is **required** in payload
+    3. `device_api(action="mcu.micropython.soft_reset", payload={"handle":"<handle>"})` → check `lines` array for `Traceback`/`ImportError`/`SyntaxError`
+    4. If errors found → fix code → repeat from step 2. Always do write + soft_reset + check as a single sequence.
+  - `mcu.micropython.exec(payload={"handle":"<handle>", "code":"..."})`: execute code in raw REPL without writing a file.
+  - For multi-step work, open serial once with `serial.open` and pass `serial_handle` (instead of `handle`) to all subsequent calls.
+  - `serial.exchange`: send text and receive line-oriented output in one call. Preferred for interactive REPL sessions and verifying boot output after `mcu.reset`.
 - `ble.scan.*` / `ble.connect` / `ble.gatt.*`: BLE scanning, GATT read/write. → `$sys/docs/api/ble.md`
 - `sensor.list` / `sensor.stream.*`: sensor enumeration, realtime data. → `$sys/docs/api/sensors.md`
 - `location.get` / `location.status`: GPS fix, provider state. → `$sys/docs/api/location.md`

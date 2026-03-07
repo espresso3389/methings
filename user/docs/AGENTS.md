@@ -58,10 +58,14 @@ This file documents how the on-device AI agent should operate. It is referenced 
 
 When asked to program a USB-connected MCU (e.g. M5Stack ATOM, ESP32):
 - Do NOT tell the user to paste code manually or press buttons. Use `device_api` to do everything.
-- Standard flow: `usb.list` → `usb.open` → `mcu.micropython.write_file` → `mcu.micropython.soft_reset` → check `lines` array for errors → fix and retry if needed. Execute the entire sequence in one turn.
-- `soft_reset` returns a `lines` array (line-oriented output). Always check it for import errors, syntax errors, or tracebacks before reporting success.
-- For interactive REPL work or verifying output after `mcu.reset`, use `serial.exchange(serial_handle, send=..., max_lines=20)` — it sends data and collects line-oriented output in a single call.
-- `mcu.reset` supports optional `capture_lines` parameter to capture boot output after hardware reset.
+- **CRITICAL**: All MicroPython actions (`mcu.micropython.*`) require either `handle` (USB handle from `usb.open`) or `serial_handle` (from `serial.open`) in the payload. Without it, the call fails.
+- Standard flow:
+  1. `device_api(action="usb.open", payload={"name":"..."})` → save returned `handle`
+  2. `device_api(action="mcu.micropython.write_file", payload={"handle":"<handle>", "path":"main.py", "content":"..."})`
+  3. `device_api(action="mcu.micropython.soft_reset", payload={"handle":"<handle>"})` → check `lines` for errors
+  4. If errors → fix → repeat from step 2. Execute the entire sequence in one turn.
+- Always check `soft_reset` `lines` array for `Traceback`, `ImportError`, `SyntaxError` before reporting success.
+- For interactive REPL or verifying output after `mcu.reset`, use `serial.exchange`.
 - Read `$sys/docs/api/mcu.md` before first use.
 
 ## Device Permissions
