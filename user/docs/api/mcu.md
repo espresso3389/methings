@@ -136,15 +136,16 @@ Upload a file to MicroPython filesystem over raw REPL.
 Send soft reset (Ctrl-C/Ctrl-D) and capture boot output as a `lines` array.
 
 **Params (+ common serial params):**
-- `settle_ms` (integer, optional): Default: 250
-- `capture_timeout_ms` (integer, optional): Total capture budget. Default: 4000
-- `idle_timeout_ms` (integer, optional): Idle cutoff (ms since last byte). Default: 300
+- `settle_ms` (integer, optional): Default: 0 (must be 0 to avoid FTDI buffer overflow)
+- `capture_timeout_ms` (integer, optional): Total capture budget. Default: 15000
+- `idle_timeout_ms` (integer, optional): Idle cutoff (ms since last byte). Default: 3000
 - `max_lines` (integer, optional): Max lines to capture. Default: 200
 - `drain_before_reset` (boolean, optional): Default: true
 - `raw_output` (boolean, optional): Include `output_b64`/`output_ascii` fields. Default: false
 
 **Returns:**
 - `lines` (array of string): captured output lines (newlines stripped). Check for `Traceback`, `ImportError`, `SyntaxError` etc.
+- `boot_complete` (boolean): true if REPL prompt `>>> ` appeared after "soft reboot". **If false, boot.py or main.py crashed/hung** — the written code likely has an error even if no Traceback is visible in `lines`.
 - `line_count`, `bytes_read`, `elapsed_ms`, `truncated`, `truncation_reason`
 
-**Notes:** Uses line-oriented capture with 100ms polling to avoid USB bulk boundary false-idle. Always check `lines` for errors before reporting success.
+**Notes:** Uses line-oriented capture with 100ms polling to avoid USB bulk boundary false-idle. Always check both `boot_complete` and `lines` for errors before reporting success. If `boot_complete` is false and no Traceback is visible, the boot process hung (common cause: import of a missing module in main.py).

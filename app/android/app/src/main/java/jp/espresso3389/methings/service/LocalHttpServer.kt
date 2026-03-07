@@ -4786,9 +4786,14 @@ class LocalHttpServer(
 
         return try {
             val writeTimeoutMs = payload.optInt("write_timeout_ms", 2000).coerceIn(100, 60_000)
-            val settleMs = payload.optInt("settle_ms", 250).coerceIn(0, 5000)
-            val captureTimeoutMs = payload.optInt("capture_timeout_ms", 4000).coerceIn(100, 120_000)
-            val idleTimeoutMs = payload.optInt("idle_timeout_ms", 300).coerceIn(20, 10_000)
+            // settle_ms default 0: reading must start immediately after Ctrl-C/D
+            // to avoid FTDI RX buffer overflow (256 bytes) which silently drops data.
+            val settleMs = payload.optInt("settle_ms", 0).coerceIn(0, 5000)
+            // UIFlow2 boot sequence: Ctrl-C/D → immediate echo → 3-4s boot.py silence → banner+main.py+>>>
+            // capture_timeout must be long enough for the entire boot (15s budget).
+            // idle_timeout is the actual termination trigger once output finishes (3s of silence).
+            val captureTimeoutMs = payload.optInt("capture_timeout_ms", 15000).coerceIn(100, 120_000)
+            val idleTimeoutMs = payload.optInt("idle_timeout_ms", 3000).coerceIn(20, 120_000)
             val drainBeforeReset = payload.optBoolean("drain_before_reset", true)
             val maxLines = payload.optInt("max_lines", 200).coerceIn(1, 5000)
 
@@ -4802,9 +4807,21 @@ class LocalHttpServer(
                 if (settleMs > 0) Thread.sleep(settleMs.toLong())
                 readSerialLines(lease.serial, maxLines, idleTimeoutMs, captureTimeoutMs)
             }
+            Log.i("MCU", "soft_reset: ${result.lines.size} lines, ${result.bytesRead}B, ${result.elapsedMs}ms, truncated=${result.truncated}/${result.truncationReason}, idleTimeout=${idleTimeoutMs}ms, captureTimeout=${captureTimeoutMs}ms")
+            for ((i, line) in result.lines.withIndex()) {
+                Log.i("MCU", "  line[$i]: $line")
+            }
 
             val linesArr = JSONArray()
             result.lines.forEach { linesArr.put(it) }
+            // Detect boot completion: REPL prompt ">>> " at the END of output
+            // means MicroPython booted successfully and is ready.
+            // Missing prompt after soft_reset means boot.py or main.py crashed/hung.
+            val hasPromptAfterReboot = run {
+                val rebootIdx = result.lines.indexOfLast { it.contains("soft reboot") }
+                if (rebootIdx < 0) false
+                else result.lines.drop(rebootIdx + 1).any { it.trimEnd().endsWith(">>>") }
+            }
             val resp = JSONObject()
                 .put("status", "ok")
                 .put("model", lease.model)
@@ -4812,6 +4829,7 @@ class LocalHttpServer(
                 .put("handle", lease.handle ?: JSONObject.NULL)
                 .put("ephemeral_session", lease.ephemeral)
                 .put("soft_reset_sent", true)
+                .put("boot_complete", hasPromptAfterReboot)
                 .put("lines", linesArr)
                 .put("line_count", result.lines.size)
                 .put("bytes_read", result.bytesRead)

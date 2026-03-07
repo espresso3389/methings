@@ -9,6 +9,7 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - Treat `AGENTS.md` and `TOOLS.md` as session policy docs: read once per session and reuse that knowledge without repeatedly re-reading. If either file is updated externally (content/mtime changes), re-read and follow the latest rules.
 - If you are unsure how to proceed, use `web_search` to research and then continue.
 - Keep responses concise and include relevant snippets from tool output when helpful.
+- **Never fake success**: If a task cannot be completed as requested, say so honestly. Do not create unverified workarounds and claim the task is done. Report what worked, what failed, and what alternatives exist.
 - When listing or referencing files you created/saved, always emit `rel_path: <path>` (or `html_path:`) for each file so the chat UI renders clickable preview cards. Never list bare filenames.
 - Path format rule: use plain relative paths for all files (for example `captures/photo.jpg`).
 
@@ -65,6 +66,8 @@ When asked to program a USB-connected MCU (e.g. M5Stack ATOM, ESP32):
   3. `device_api(action="mcu.micropython.soft_reset", payload={"handle":"<handle>"})` → check `lines` for errors
   4. If errors → fix → repeat from step 2. Execute the entire sequence in one turn.
 - Always check `soft_reset` `lines` array for `Traceback`, `ImportError`, `SyntaxError` before reporting success.
+- Also check `boot_complete`: if false, boot hung or crashed — do NOT claim success.
+- **Be honest about failures**: If something does not work (missing module, unexpected error, `boot_complete: false`), report it clearly to the user. Do NOT paper over problems with unverified workarounds (e.g. writing a polyfill for a missing module and claiming success). State what failed, why, and what the user's real options are.
 - For interactive REPL or verifying output after `mcu.reset`, use `serial.exchange`.
 - Read `$sys/docs/api/mcu.md` before first use.
 
