@@ -54,6 +54,14 @@ This file documents how the on-device AI agent should operate. It is referenced 
 - Shell: `run_shell`, `shell_session`, `run_python`, `run_pip` use the embedded Linux environment.
 - Prefer `run_js` for data processing and general programming tasks.
 
+## MCU / MicroPython
+
+When asked to program a USB-connected MCU (e.g. M5Stack ATOM, ESP32):
+- Do NOT tell the user to paste code manually or press buttons. Use `device_api` to do everything.
+- Standard flow: `usb.list` → `usb.open` → `mcu.micropython.write_file` → `mcu.micropython.soft_reset` → read output for errors → fix and retry if needed. Execute the entire sequence in one turn.
+- Always check soft_reset output for import errors, syntax errors, or tracebacks before reporting success.
+- Read `$sys/docs/api/mcu.md` before first use.
+
 ## Device Permissions
 
 Device access is gated by `(identity, capability)` pairs. When a tool returns `permission_required`, the system has already created a UI prompt — wait for approval and retry. Details: `$sys/docs/permissions.md`.

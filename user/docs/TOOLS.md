@@ -74,6 +74,9 @@ Read the relevant `$sys/docs/api/<domain>.md` before using a domain for the firs
 - `uvc.mjpeg.capture` / `uvc.ptz.*`: USB webcam frame capture, PTZ. → `$sys/docs/api/uvc.md`
 - `usb.list` / `usb.open` / `usb.close` / `usb.transfer.*`: USB device enumeration + transfers. → `$sys/docs/api/usb.md`
 - `mcu.*`: MCU probe, flash, reset, serial monitor, MicroPython. → `$sys/docs/api/mcu.md`
+  - **MicroPython workflow**: `usb.list` → `usb.open` → `mcu.micropython.write_file(handle, path="main.py", content=...)` → `mcu.micropython.soft_reset(handle)` (captures boot output including errors) → check output for errors → iterate. Always do write + soft_reset + check output as a single sequence. Do NOT ask the user to paste code manually or press reset.
+  - `mcu.micropython.exec(handle, code=...)`: execute code in raw REPL without writing a file.
+  - For multi-step work, open serial once with `serial.open` and pass `serial_handle` to all subsequent calls.
 - `ble.scan.*` / `ble.connect` / `ble.gatt.*`: BLE scanning, GATT read/write. → `$sys/docs/api/ble.md`
 - `sensor.list` / `sensor.stream.*`: sensor enumeration, realtime data. → `$sys/docs/api/sensors.md`
 - `location.get` / `location.status`: GPS fix, provider state. → `$sys/docs/api/location.md`

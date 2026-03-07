@@ -3669,6 +3669,7 @@
                     if (fmt === "markdown") {
                       body.className = "license-doc license-doc-md";
                       body.innerHTML = renderMarkdown(txt);
+                      deferHighlight(body);
                     } else {
                       body.className = "license-doc license-doc-text";
                       body.textContent = txt;
@@ -3742,17 +3743,22 @@
       function renderMarkdown(text) {
         if (typeof marked !== "undefined" && marked.parse) {
           try {
-            const html = marked.parse(text, { gfm: true, breaks: true });
-            // Apply hljs to code blocks in a temporary container
-            const tmp = document.createElement("div");
-            tmp.innerHTML = html;
-            tmp.querySelectorAll("pre code[class*='language-']").forEach(function(el) {
-              try { hljs.highlightElement(el); } catch (_) {}
-            });
-            return tmp.innerHTML;
+            return marked.parse(text, { gfm: true, breaks: true });
           } catch (_) {}
         }
         return renderMarkdownFallback(text);
+      }
+
+      // Deferred syntax highlighting: schedules hljs on a DOM element's code blocks
+      // so renderMarkdown() stays fast (no synchronous regex work).
+      function deferHighlight(el) {
+        if (typeof hljs === "undefined" || !hljs.highlightElement) return;
+        requestAnimationFrame(function() {
+          var blocks = el.querySelectorAll("pre code[class*='language-']");
+          for (var i = 0; i < blocks.length; i++) {
+            try { hljs.highlightElement(blocks[i]); } catch (_) {}
+          }
+        });
       }
 
       function sanitizeAssistantText(text) {
@@ -3828,6 +3834,7 @@
             const sec = document.createElement("section");
             sec.className = "attach-md";
             sec.innerHTML = renderMarkdown(trimmed);
+            deferHighlight(sec);
             fb.appendChild(sec);
           });
           slideWrap.appendChild(fb);
@@ -3951,6 +3958,7 @@
         const thumb = document.createElement("div");
         thumb.className = "marp-fallback-thumb attach-md";
         thumb.innerHTML = renderMarkdown(slideText.trim());
+        deferHighlight(thumb);
         container.appendChild(thumb);
       }
 
@@ -4660,6 +4668,7 @@
                     const mdDiv = document.createElement("div");
                     mdDiv.className = "attach-md";
                     mdDiv.innerHTML = renderMarkdown(content);
+                    deferHighlight(mdDiv);
                     body.appendChild(mdDiv);
                     const srcPre = document.createElement("pre");
                     srcPre.style.display = "none";
@@ -5053,6 +5062,7 @@
           const mdDiv = document.createElement("div");
           mdDiv.className = "attach-md";
           mdDiv.innerHTML = renderMarkdown(content);
+          deferHighlight(mdDiv);
           viewerText.appendChild(mdDiv);
           const srcPre = document.createElement("pre");
           const srcCode = document.createElement("code");
@@ -5646,6 +5656,7 @@
                     if (_thinking.el === existing) _thinking.el = null;
                     // Always reflect the latest assistant text for the same item_id.
                     existing.innerHTML = renderMarkdown(visibleText);
+                    deferHighlight(existing);
                     try { existing.__msgText = String(visibleText || ""); } catch (_) {}
                     if (streaming && !activeAgentItemId && String(meta.error || "") === "brain_item_failed") {
                       streaming = false;
@@ -5759,6 +5770,16 @@
               if (id && _sseWaiters.has(id)) resolveSseWaiter(id, "Interrupted.");
               if (streaming) return;
               dismissThinkingNow();
+            } catch (_) {}
+          });
+          es.addEventListener("brain_response", function(e) {
+            try {
+              const data = JSON.parse((e && e.data) || "{}");
+              if (!eventMatchesActiveSession(data, null)) return;
+              if (String(data.text || "").indexOf("permission") >= 0) {
+                // Permission-related event: trigger immediate permission card poll.
+                schedulePermPoll(100);
+              }
             } catch (_) {}
           });
           es.addEventListener("brain_status", function(e) {
@@ -6029,6 +6050,7 @@
         try { div.__msgText = String(safeContent || ""); } catch (_) {}
         if (role === "assistant" || role === "user") {
           div.innerHTML = renderMarkdown(safeContent);
+          deferHighlight(div);
           // Attachments should render for both user and assistant messages.
           try { renderInlineAttachments(div, safeContent); } catch (_) {}
           try { renderInlineUrlCards(div, safeContent); } catch (_) {}
@@ -6276,6 +6298,7 @@
                     if (_thinking.el === existing) _thinking.el = null;
                     // Always keep the newest assistant content for the same item_id.
                     existing.innerHTML = renderMarkdown(visibleText);
+                    deferHighlight(existing);
                     try { existing.__msgText = String(visibleText || ""); } catch (_) {}
                     // Clean up recovered-streaming state if applicable.
                     if (streaming && !activeAgentItemId) {
@@ -7347,7 +7370,20 @@
         });
       }
 
-      setInterval(pollPendingPermissions, 1200);
+      // Permission polling: prefer event-driven (triggered by SSE brain_message
+      // that mentions permission). Fall back to a slow interval as a safety net.
+      var _permPollTimer = null;
+      function schedulePermPoll(delayMs) {
+        if (_permPollTimer) clearTimeout(_permPollTimer);
+        _permPollTimer = setTimeout(function() {
+          _permPollTimer = null;
+          pollPendingPermissions().finally(function() {
+            // Keep a slow background interval as safety net.
+            if (!_permPollTimer) schedulePermPoll(5000);
+          });
+        }, Math.max(200, delayMs || 5000));
+      }
+      schedulePermPoll(1200);
 
       // Session menu handlers.
       try { sessionChip.addEventListener("click", openSessionModal); } catch (_) {}
@@ -7550,6 +7586,7 @@
           if (cleaned) {
             if (_thinking.el === aDiv) _thinking.el = null;
             aDiv.innerHTML = renderMarkdown(cleaned);
+            deferHighlight(aDiv);
             try { aDiv.__msgText = String(cleaned || ""); } catch (_) {}
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
@@ -7630,6 +7667,7 @@
           if (cleaned) {
             if (_thinking.el === aDiv) _thinking.el = null;
             aDiv.innerHTML = renderMarkdown(cleaned);
+            deferHighlight(aDiv);
             try { aDiv.__msgText = String(cleaned || ""); } catch (_) {}
             try { renderInlineAttachments(aDiv, cleaned); } catch (_) {}
             setMsgWorking(aDiv, false);
@@ -7778,6 +7816,7 @@
         // Update local echo bubble with final message so inline media renders.
         try {
           uDiv.innerHTML = renderMarkdown(finalText);
+          deferHighlight(uDiv);
           try { uDiv.__msgText = String(finalText || ""); } catch (_) {}
           try { renderInlineAttachments(uDiv, finalText); } catch (_) {}
         } catch (_) {}
