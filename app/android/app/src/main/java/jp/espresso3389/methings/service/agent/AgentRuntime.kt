@@ -564,25 +564,41 @@ class AgentRuntime(
                     continue
                 }
                 // Soft nudge: if the model returned text without tool calls but
-                // the task likely isn't finished, nudge it to keep working.
-                // - Round 0 with no tools yet: model may be narrating instead of acting
-                // - Mid-task (tools already executed): model may be pausing to "report progress"
-                if (forcedRounds < 4) {
-                    val isFirstRoundIdle = roundIdx == 0 && toolCallsExecuted == 0 && curText.length > 20
-                    val isMidTaskPause = toolCallsExecuted > 0 && roundIdx < maxRounds - 2
-                    if (isFirstRoundIdle || isMidTaskPause) {
+                // Nudge when the model pauses instead of continuing tool use.
+                // Two cases:
+                // (a) No tools called yet and user message is non-trivial: model is narrating
+                //     → force tool_choice to make it act
+                // (b) Tools were called but model asks user to "continue" instead of proceeding
+                //     → nudge with text only (don't force tool_choice — it causes repeat-call loops)
+                if (forcedRounds < 3) {
+                    val isIdleNoTools = toolCallsExecuted == 0 && curText.length > 20
+                    val asksUserToAct = messageTexts.any { t ->
+                        t.contains("続け") || t.contains("どうぞ") || t.contains("お試し") ||
+                        t.contains("proceed") || t.contains("continue") || t.contains("should I") ||
+                        t.contains("shall I") || t.contains("try again")
+                    }
+                    val isMidTaskPause = toolCallsExecuted > 0 && roundIdx < maxRounds - 2 && asksUserToAct
+                    if (isIdleNoTools || isMidTaskPause) {
                         forcedRounds++
+                        if (isIdleNoTools) {
+                            toolRequiredUnsatisfied = true  // Force tool_choice only for idle-no-tools
+                        }
+                        Log.i(TAG, "Text-only nudge on round $roundIdx (toolsExec=$toolCallsExecuted, idle=$isIdleNoTools, pause=$isMidTaskPause)")
                         pendingInput = appendUserNudge(providerKind, pendingInput,
-                            "You responded with text only — this text was NOT shown to the user. " +
-                            "If the task is not fully complete, call tools to continue. " +
-                            "Do NOT stop to ask 'should I continue' or 'please say 続けて'. " +
-                            "If you are blocked (missing permission, error), explain the blocker. " +
-                            "Otherwise, call the next tool NOW.")
+                            if (isIdleNoTools)
+                                "You responded with text only — this text was NOT shown to the user. " +
+                                "You MUST call tools to perform the action. " +
+                                "If you are blocked, explain the blocker."
+                            else
+                                "Do NOT ask the user to 'continue' or '続けて'. " +
+                                "If there is more work to do, call the next tool NOW. " +
+                                "If you are blocked (missing permission, error), explain the blocker honestly.")
                         continue
                     }
                 }
                 // Final assistant message — append tool history summary for cross-turn memory
                 val toolSummary = buildToolHistorySummary(toolHistory)
+                Log.i(TAG, "Final text (round=$roundIdx, toolsExec=$toolCallsExecuted, forcedRounds=$forcedRounds): ${messageTexts.joinToString(" | ").take(300)}")
                 for ((idx, text) in messageTexts.withIndex()) {
                     val recorded = if (idx == messageTexts.lastIndex && toolSummary.isNotEmpty()) {
                         "$text\n$toolSummary"
@@ -713,6 +729,10 @@ class AgentRuntime(
                 val result = toolExecutor.executeFunctionTool(name, args, curText)
                 lastToolStatus = result.optString("status", "").ifBlank { "ok" }
                 lastToolError = result.optString("error", "")
+                Log.i(TAG, "Tool[$roundIdx/$i] $name → status=$lastToolStatus" +
+                    if (lastToolError.isNotBlank()) " error=$lastToolError" else "" +
+                    " args=${args.toString().take(200)}" +
+                    " result=${result.toString().take(300)}")
 
                 // Record tool activity for cross-turn summary
                 toolHistory.add(ToolRoundRecord(
@@ -778,14 +798,32 @@ class AgentRuntime(
                 appendToolResult(providerKind, pendingInput, callId, textResult, name, mediaData)
             }
 
-            // Detect repetitive rounds (same tool/status/error pattern) and stop early to avoid
+            // Detect repetitive rounds (same tool/action/status pattern) and stop early to avoid
             // exhausting max rounds with little progress.
+            // For device_api calls, include the action parameter to distinguish different operations.
             val roundCallsFingerprint = buildString {
                 val limit = calls.length().coerceAtMost(maxActions)
                 for (i in 0 until limit) {
                     val c = calls.optJSONObject(i) ?: continue
                     val n = c.optString("name", "")
                     append(n)
+                    // Include device_api action + payload hash in fingerprint to avoid false stalls.
+                    // Different actions (usb.open vs write_file) and different payloads for
+                    // the same action (exec with different code) must produce different fingerprints.
+                    if (n == "device_api") {
+                        val rawArgs = c.opt("arguments") ?: c.opt("input")
+                        val argsObj = try {
+                            when (rawArgs) {
+                                is String -> JSONObject(rawArgs)
+                                is JSONObject -> rawArgs
+                                else -> null
+                            }
+                        } catch (_: Exception) { null }
+                        val action = argsObj?.optString("action", "") ?: ""
+                        if (action.isNotEmpty()) append("/$action")
+                        val payload = argsObj?.optJSONObject("payload")
+                        if (payload != null) append("#${payload.toString().hashCode()}")
+                    }
                     append(';')
                 }
                 append("last=")
@@ -816,9 +854,16 @@ class AgentRuntime(
             }
         }
 
-        // Exhausted max rounds — force finalization
+        // Exhausted max rounds or stall — force finalization
         try {
-            val finalPrompt = (systemPrompt + "\n\nFINALIZATION:\n- Do NOT call any tools.\n- Produce the best possible final answer now.").trim()
+            val stallInfo = if (stoppedForStall) {
+                val toolNames = toolHistory.map { it.name }.distinct().joinToString(", ")
+                val lastStatus = toolHistory.lastOrNull()?.status ?: "unknown"
+                "\n- STALL DETECTED: You called the same tool(s) repeatedly ($toolNames) with status=$lastStatus." +
+                "\n- Report honestly what was accomplished and what was NOT completed." +
+                "\n- Do NOT claim actions were completed unless tool output confirms it."
+            } else ""
+            val finalPrompt = (systemPrompt + "\n\nFINALIZATION:\n- Do NOT call any tools.\n- Produce the best possible final answer now.$stallInfo").trim()
             val finalBody = buildRequestBody(providerKind, model, JSONArray(), pendingInput, finalPrompt, false)
             if (providerKind == ProviderKind.OPENAI_RESPONSES && lastResponsesResponseId.isNotBlank()) {
                 finalBody.put("previous_response_id", lastResponsesResponseId)
