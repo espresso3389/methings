@@ -6,6 +6,7 @@ import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.ArrayDeque
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
 data class ExtractedMedia(
@@ -565,13 +566,21 @@ class AgentRuntime(
                 }
                 // Soft nudge: if the model returned text without tool calls but
                 // Nudge when the model pauses instead of continuing tool use.
-                // Two cases:
+                // Three cases:
                 // (a) No tools called yet and user message is non-trivial: model is narrating
                 //     → force tool_choice to make it act
                 // (b) Tools were called but model asks user to "continue" instead of proceeding
                 //     → nudge with text only (don't force tool_choice — it causes repeat-call loops)
+                // (c) User message is a continuation keyword ("続けて", "continue", etc.)
+                //     → force tool_choice even if message is short, to break the "say 続けて" loop
                 if (forcedRounds < 3) {
-                    val isIdleNoTools = toolCallsExecuted == 0 && curText.length > 20
+                    // Detect short continuation messages that should still force tool use
+                    val isContinuationMsg = curText.length <= 20 && curText.lowercase(Locale.US).let { t ->
+                        t.contains("続け") || t.contains("どうぞ") || t.contains("go ahead") ||
+                        t.contains("continue") || t.contains("proceed") || t.contains("やって") ||
+                        t.contains("お願い")
+                    }
+                    val isIdleNoTools = toolCallsExecuted == 0 && (curText.length > 20 || isContinuationMsg)
                     val asksUserToAct = messageTexts.any { t ->
                         t.contains("続け") || t.contains("どうぞ") || t.contains("お試し") ||
                         t.contains("proceed") || t.contains("continue") || t.contains("should I") ||
@@ -585,7 +594,11 @@ class AgentRuntime(
                         }
                         Log.i(TAG, "Text-only nudge on round $roundIdx (toolsExec=$toolCallsExecuted, idle=$isIdleNoTools, pause=$isMidTaskPause)")
                         pendingInput = appendUserNudge(providerKind, pendingInput,
-                            if (isIdleNoTools)
+                            if (isIdleNoTools && isContinuationMsg)
+                                "The user is asking you to continue the previous task. " +
+                                "Your text response was NOT shown — you MUST call tools to resume work. " +
+                                "You have full tool access in this turn. Call the next tool NOW."
+                            else if (isIdleNoTools)
                                 "You responded with text only — this text was NOT shown to the user. " +
                                 "You MUST call tools to perform the action. " +
                                 "If you are blocked, explain the blocker."
@@ -863,7 +876,10 @@ class AgentRuntime(
                 "\n- Report honestly what was accomplished and what was NOT completed." +
                 "\n- Do NOT claim actions were completed unless tool output confirms it."
             } else ""
-            val finalPrompt = (systemPrompt + "\n\nFINALIZATION:\n- Do NOT call any tools.\n- Produce the best possible final answer now.$stallInfo").trim()
+            val finalPrompt = (systemPrompt + "\n\nFINALIZATION:\n- Do NOT call any tools.\n- Produce the best possible final answer now." +
+                "\n- Summarize what was accomplished and what remains." +
+                "\n- Do NOT ask the user to say '続けて' or 'continue'. If the task is incomplete, just say what was done and what is left." +
+                stallInfo).trim()
             val finalBody = buildRequestBody(providerKind, model, JSONArray(), pendingInput, finalPrompt, false)
             if (providerKind == ProviderKind.OPENAI_RESPONSES && lastResponsesResponseId.isNotBlank()) {
                 finalBody.put("previous_response_id", lastResponsesResponseId)
@@ -919,8 +935,7 @@ class AgentRuntime(
                 "- Tool calls requested by model: $toolCallsRequested\n" +
                 "- Tool calls executed: $toolCallsExecuted\n" +
                 "- Tools used: $toolsUsedSummary\n" +
-                "- Last tool result: $lastToolSummary\n" +
-                "Please continue with the next concrete sub-step." +
+                "- Last tool result: $lastToolSummary" +
                 if (fallbackToolSummary.isNotEmpty()) "\n$fallbackToolSummary" else "",
             JSONObject().put("item_id", item.optString("id")).put("session_id", sessionId))
     }

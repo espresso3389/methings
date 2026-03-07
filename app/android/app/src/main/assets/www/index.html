@@ -6372,21 +6372,22 @@
                   addThinkingIndicator();
                 }
               }
+              // Ensure stop button exists on any visible thinking/working indicator.
+              const curItemId = String(st.current_item_id || "").trim();
+              if (curItemId) setInterruptUi(true, curItemId);
             } else {
               // Agent is idle — clean up any lingering indicators.
-              // But if sendAgentChat owns the lifecycle (streaming), don't touch it.
-              if (streaming && !activeAgentItemId) {
+              // Force-reset streaming if it's still set (e.g. SSE missed brain_item_done).
+              if (streaming) {
                 streaming = false;
                 chatSend.disabled = false;
                 setInterruptUi(false, "");
               }
-              if (!streaming) {
-                // Remove leftover thinking bubble if present.
-                if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
-                _thinking.el = null;
-                // Remove lingering mini-dots.
-                chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
-              }
+              // Remove leftover thinking bubble if present.
+              if (_thinking.el && _thinking.el.isConnected) _thinking.el.remove();
+              _thinking.el = null;
+              // Remove lingering mini-dots.
+              chatMessages.querySelectorAll(".msg-working").forEach(el => el.remove());
             }
           }
         } catch (_) {}
@@ -6952,7 +6953,8 @@
           streaming = true;
           chatSend.disabled = true;
           addThinkingIndicator();
-          setInterruptUi(true, "");
+          const curItemId = String(st.current_item_id || "").trim();
+          setInterruptUi(true, curItemId);
         } catch (_) {}
       }
 
