@@ -173,7 +173,7 @@ internal class EspSerialSession(
 
     fun enterBootloaderIfSupported(bridgeHint: String?, interfaceId: Int) {
         when (bridgeHint) {
-            "cp210x" -> {
+            "cp210x", "ch34x" -> {
                 // Matches esptool ClassicReset semantics for DTR/RTS.
                 applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)
                 Thread.sleep(100)
@@ -196,7 +196,7 @@ internal class EspSerialSession(
 
     fun enterBootloaderInvertedIfSupported(bridgeHint: String?, interfaceId: Int) {
         when (bridgeHint) {
-            "cp210x", "ftdi" -> {
+            "cp210x", "ch34x", "ftdi" -> {
                 // Some boards wire EN/IO0 opposite to common DTR/RTS mapping.
                 applyModemLines(dtr = true, rts = false, interfaceId = interfaceId)
                 Thread.sleep(100)
@@ -210,7 +210,7 @@ internal class EspSerialSession(
 
     private fun enterBootloaderPulseEnIfSupported(bridgeHint: String?, interfaceId: Int) {
         when (bridgeHint) {
-            "cp210x", "ftdi" -> {
+            "cp210x", "ch34x", "ftdi" -> {
                 // Keep IO0 asserted during EN pulse; then release to run ROM loader.
                 applyModemLines(dtr = true, rts = true, interfaceId = interfaceId)
                 Thread.sleep(90)
@@ -224,7 +224,7 @@ internal class EspSerialSession(
 
     fun rebootToRunIfSupported(bridgeHint: String?, interfaceId: Int) {
         when (bridgeHint) {
-            "cp210x", "ftdi" -> {
+            "cp210x", "ch34x", "ftdi" -> {
                 // Pulse EN low with IO0 released, then return to run mode.
                 applyModemLines(dtr = false, rts = true, interfaceId = interfaceId)
                 Thread.sleep(90)

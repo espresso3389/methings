@@ -10,6 +10,8 @@ Tool signature: `run_js(code, timeout_ms?)`. Default timeout: 30 s (max 120 s). 
 |--------|------|-------------|
 | `console.log/warn/error/info` | sync | Captured in `console_output` |
 | `device_api(action, payload)` | sync | Call device API actions |
+| `btoa(binaryString)` | sync | Binary string → Base64 string |
+| `atob(base64)` | sync | Base64 string → binary string |
 | `await fetch(url, options?)` | async | HTTP request → `{status, ok, headers, body}` |
 | `await connectWs(url)` | async | WebSocket → handle with `receive()`, `send()`, `close()`, `isOpen` |
 | `await connectTcp(host, port, options?)` | async | TCP client → handle with `read()`, `readText()`, `write()`, `close()`, `isOpen` |
@@ -190,11 +192,136 @@ await f.truncate(200);  // set file size to 200 bytes
 await f.close();
 ```
 
+## Base64 Encoding (btoa / atob)
+
+Standard `btoa`/`atob` for converting between binary strings and Base64. Essential for serial/USB binary I/O where APIs use `data_b64` fields.
+
+```javascript
+// Encode binary bytes to base64
+const bytes = new Uint8Array([0xC0, 0x00, 0x08, 0x24]);
+const b64 = btoa(String.fromCharCode.apply(null, bytes));  // "wAAIJA=="
+
+// Decode base64 to binary bytes
+const raw = atob(b64);
+const decoded = new Uint8Array(raw.length);
+for (let i = 0; i < raw.length; i++) decoded[i] = raw.charCodeAt(i);
+```
+
+Helper pattern for serial APIs:
+```javascript
+function toB64(bytes) {
+    return btoa(String.fromCharCode.apply(null, bytes));
+}
+function fromB64(b64) {
+    const s = atob(b64);
+    const a = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+    return a;
+}
+```
+
 ## device_api (sync)
 
 Same as the `device_api` tool — call device API actions synchronously from JS:
 ```javascript
 const sensors = device_api("sensor.list", {});
+```
+
+## MCU Serial Scripting
+
+`run_js` can implement custom MCU serial protocols entirely in JavaScript, combining `device_api` (for MCU control actions), `fetch` (for serial HTTP endpoints), `delay` (for timing), and `btoa`/`atob` (for binary data). This allows the agent to support new driver ICs or protocols without app updates.
+
+### Available primitives
+
+| Primitive | API | Description |
+|---|---|---|
+| USB open/close | `device_api("usb.open", ...)` | Open USB device, get `handle` |
+| Serial open/close | `fetch("/serial/open", ...)` | Open serial session, get `serial_handle` |
+| Serial write | `fetch("/serial/write", ...)` | Send raw bytes via `data_b64` |
+| Serial read | `fetch("/serial/read", ...)` | Read raw bytes, returns `data_b64` |
+| Serial exchange | `device_api("serial.exchange", ...)` | Send + line-oriented receive in one call |
+| DTR/RTS control | `fetch("/serial/lines", ...)` | Set modem line states |
+| Timing | `await delay(ms)` | Async sleep |
+| Binary encoding | `btoa()` / `atob()` | Base64 ↔ binary string |
+| Binary construction | `new Uint8Array(...)` | Native byte arrays |
+
+### Example: custom bootloader entry
+
+```javascript
+const PORT = 33389;
+const BASE = `http://127.0.0.1:${PORT}`;
+
+// Open USB device
+const usb = device_api("usb.open", {name: "/dev/bus/usb/001/002"});
+const handle = usb.handle;
+
+// Open serial port
+const serRes = await fetch(`${BASE}/serial/open`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({handle, baud_rate: 115200})
+});
+const sh = JSON.parse(serRes.body).session.serial_handle;
+
+// DTR/RTS bootloader entry sequence (ClassicReset)
+async function setLines(dtr, rts) {
+    await fetch(`${BASE}/serial/lines`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({serial_handle: sh, dtr, rts})
+    });
+}
+await setLines(false, true);   // EN low, IO0 high
+await delay(100);
+await setLines(true, false);   // EN high, IO0 low (boot mode)
+await delay(50);
+await setLines(true, true);    // release both
+
+// Send ESP32 SYNC command (SLIP-framed)
+function toB64(bytes) {
+    return btoa(String.fromCharCode.apply(null, bytes));
+}
+const SYNC = new Uint8Array([
+    0xC0,                                   // SLIP start
+    0x00, 0x08, 0x24, 0x00,                 // command: SYNC, size: 36
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // value + dummy
+    0x07, 0x07, 0x12, 0x20,                 // sync pattern
+    ...new Array(32).fill(0x55),            // 32x 0x55
+    0xC0                                    // SLIP end
+]);
+await fetch(`${BASE}/serial/write`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({serial_handle: sh, data_b64: toB64(SYNC)})
+});
+
+// Read response
+await delay(50);
+const readRes = await fetch(`${BASE}/serial/read`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({serial_handle: sh, max_bytes: 256, timeout_ms: 1000})
+});
+const resp = JSON.parse(readRes.body);
+console.log("Response bytes:", resp.bytes_read);
+JSON.stringify({sync_sent: true, response_bytes: resp.bytes_read});
+```
+
+### Example: MicroPython REPL interaction via serial.exchange
+
+```javascript
+// Send Ctrl-C + Ctrl-D (soft reset) and capture boot output
+const result = device_api("serial.exchange", {
+    serial_handle: sh,
+    send_b64: btoa("\x03\x04"),  // Ctrl-C, Ctrl-D
+    max_lines: 30,
+    idle_timeout_ms: 500,
+    total_timeout_ms: 10000
+});
+console.log("Boot output:", JSON.stringify(result.lines));
+const hasError = result.lines.some(l =>
+    l.includes("Traceback") || l.includes("ImportError") || l.includes("SyntaxError"));
+JSON.stringify({boot_ok: !hasError, lines: result.lines});
 ```
 
 ## When to use run_js vs. run_curl

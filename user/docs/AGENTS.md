@@ -69,6 +69,7 @@ When asked to program a USB-connected MCU (e.g. M5Stack ATOM, ESP32):
 - Also check `boot_complete`: if false, boot hung or crashed — do NOT claim success.
 - **Be honest about failures**: If something does not work (missing module, unexpected error, `boot_complete: false`), report it clearly to the user. Do NOT paper over problems with unverified workarounds (e.g. writing a polyfill for a missing module and claiming success). State what failed, why, and what the user's real options are.
 - For interactive REPL or verifying output after `mcu.reset`, use `serial.exchange`.
+- **Custom serial protocols**: For unsupported driver ICs or custom boot sequences, use `run_js` to implement protocols directly in JavaScript. Combines `device_api` (MCU actions), `fetch` (serial HTTP endpoints), `await delay(ms)` (timing), and `btoa`/`atob` (binary encoding). See `$sys/docs/run_js.md` "MCU Serial Scripting" section.
 - Read `$sys/docs/api/mcu.md` before first use.
 
 ## Device Permissions

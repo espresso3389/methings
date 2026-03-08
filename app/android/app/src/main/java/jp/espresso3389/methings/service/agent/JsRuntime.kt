@@ -673,6 +673,24 @@ class JsRuntime(
             }
         }
 
+        // --- __encoding: btoa / atob ---
+        js.define("__encoding") {
+            function("btoa") { args ->
+                val str = args.getOrNull(0)?.toString() ?: ""
+                android.util.Base64.encodeToString(
+                    str.toByteArray(Charsets.ISO_8859_1),
+                    android.util.Base64.NO_WRAP,
+                )
+            }
+            function("atob") { args ->
+                val b64 = args.getOrNull(0)?.toString() ?: ""
+                String(
+                    android.util.Base64.decode(b64, android.util.Base64.DEFAULT),
+                    Charsets.ISO_8859_1,
+                )
+            }
+        }
+
         // --- __cv: OpenCV image processing ---
         cvBridge.registerBindings(js)
 
@@ -800,6 +818,10 @@ class JsRuntime(
             globalThis.clearInterval = function(id) {
                 delete _timers[id];
             };
+
+            // --- Base64 encoding ---
+            globalThis.btoa = function(s) { return __encoding.btoa(s); };
+            globalThis.atob = function(s) { return __encoding.atob(s); };
 
             // --- File operations ---
             globalThis.readFile = function(path) {
