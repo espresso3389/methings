@@ -13,7 +13,7 @@ Android App
   ├─ AgentRuntime                          [started on demand]
   │   ├─ LlmClient (SSE streaming to OpenAI / Anthropic APIs)
   │   ├─ ToolExecutor (filesystem, device API, journal, memory, JS engine, native HTTP)
-  │   ├─ JsEngine (QuickJS — run_js, always available)
+  │   ├─ JsRuntime (QuickJS — run_js, always available)
   │   └─ DeviceToolBridge (calls device handlers via loopback)
   ├─ UI assets served from files/www
   ├─ Storage + permissions (Room + Keystore AES-GCM)
@@ -34,7 +34,7 @@ Android App
 - **AgentRuntime**: Queue-based loop with interrupt support, processes chat messages and events.
 - **LlmClient**: SSE streaming for both OpenAI Responses API and Anthropic Messages API.
 - **ToolExecutor**: Dispatches tool calls (filesystem, device API, journal, memory, JS engine, native HTTP, shell, web search, cloud requests).
-- **JsEngine**: Built-in QuickJS JavaScript engine for `run_js` tool. Always available.
+- **JsRuntime**: Built-in QuickJS JavaScript engine for `run_js` tool. Async/await, fetch, WebSocket, TCP, file I/O, timers, btoa/atob, device_api bridge, OpenCV bindings.
 - **DeviceToolBridge**: Executes device API actions via HTTP loopback to LocalHttpServer handlers.
 - **AgentStorage**: Chat message persistence in `agent/agent.db` (SQLite). Migrates old messages from legacy `protected/app.db` on first run.
 - **JournalStore**: JSONL file-based session journal.

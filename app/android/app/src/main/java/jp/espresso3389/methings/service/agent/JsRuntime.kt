@@ -26,6 +26,20 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
+data class JsResult(
+    val status: String,
+    val result: String,
+    val consoleOutput: String,
+    val error: String = "",
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("status", status)
+        put("result", result)
+        put("console_output", consoleOutput)
+        if (error.isNotEmpty()) put("error", error)
+    }
+}
+
 /**
  * Persistent async JavaScript runtime built on quickjs-kt.
  *
