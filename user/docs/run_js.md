@@ -237,12 +237,9 @@ const r = device_api("serial.read", {serial_handle: sh, max_bytes: 256, timeout_
 const bytes = r.data;         // Uint8Array — native binary
 console.log(bytes.length);    // number of bytes read
 console.log(bytes[0]);        // first byte value (0-255)
-
-// data_b64 is also available for backward compatibility
-const b64 = r.data_b64;      // base64 string (same content)
 ```
 
-Actions returning `data` as `Uint8Array`: `serial.read`, `usb.control_transfer`, `usb.bulk_transfer`, `usb.iso_transfer`, `usb.raw_descriptors`.
+Actions returning `data` as `Uint8Array`: `serial.read`, `usb.control_transfer`, `usb.bulk_transfer`, `usb.iso_transfer`. `usb.raw_descriptors` returns `descriptors` as `Uint8Array`.
 
 **Writing binary data:** Input fields (`data_b64`, `send_b64`) still require base64 strings — use `btoa()`:
 ```javascript
@@ -250,7 +247,7 @@ const bytes = new Uint8Array([0xC0, 0x00, 0x08]);
 device_api("serial.write", {serial_handle: sh, data_b64: toB64(bytes)});
 ```
 
-> **Note:** This native binary support only applies to `device_api()` calls from `run_js`. HTTP endpoints (via `fetch()`) always use base64 strings in `data_b64` fields.
+> **Note:** Via `device_api()`, binary fields are native `Uint8Array`. Via HTTP (`fetch()`), the same fields are auto-renamed with a `_b64` suffix and base64-encoded (e.g. `data` → `data_b64`).
 
 ## MCU Serial Scripting
 

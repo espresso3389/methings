@@ -7,23 +7,22 @@ import org.json.JSONObject
 /**
  * Conversion utilities between [Map] (Core API surface) and [JSONObject] (HTTP layer).
  *
- * Key rule: [UByteArray] / [ByteArray] values in a Map are encoded to base64 strings
- * when converting to JSONObject (for HTTP responses), whereas QuickJS-kt converts them
- * to Uint8Array natively.
+ * Key rule: [UByteArray] / [ByteArray] values in a Map are **auto-renamed** with a `_b64`
+ * suffix and base64-encoded when converting to JSONObject (for HTTP responses).
+ * QuickJS-kt converts them to `Uint8Array` natively under the original key name.
+ *
+ * Example: `"data" to bytes.asUByteArray()` →
+ *   - QuickJS: `data` = `Uint8Array`
+ *   - HTTP JSON: `"data_b64"` = base64 string
  */
 object CoreApiUtils {
 
     // ---- Map → JSONObject (for HTTP responses) --------------------------------
 
     /** Convert a Core API result [Map] to a [JSONObject] suitable for HTTP responses.
-     *  [ByteArray] and [UByteArray] values are base64-encoded with a `_b64` suffix. */
+     *  [ByteArray] and [UByteArray] values are base64-encoded and their keys get a `_b64` suffix. */
     fun toJsonResponse(map: Map<String, Any?>): JSONObject {
-        val obj = JSONObject()
-        for ((key, value) in map) {
-            if (key.startsWith("_")) continue // strip internal keys like _http_status
-            obj.put(key, convertToJson(value))
-        }
-        return obj
+        return convertMapToJson(map)
     }
 
     // ---- JSONObject → Map (for incoming HTTP payloads) -------------------------
@@ -104,18 +103,28 @@ object CoreApiUtils {
 
     // ---- Internal helpers -------------------------------------------------------
 
+    /**
+     * Convert a [Map] to [JSONObject], renaming binary-valued keys with `_b64` suffix.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun convertMapToJson(map: Map<*, *>): JSONObject {
+        val obj = JSONObject()
+        for ((k, v) in map) {
+            val key = k?.toString() ?: continue
+            if (key.startsWith("_")) continue
+            when (v) {
+                is ByteArray -> obj.put("${key}_b64", Base64.encodeToString(v, Base64.NO_WRAP))
+                is UByteArray -> obj.put("${key}_b64", Base64.encodeToString(v.toByteArray(), Base64.NO_WRAP))
+                else -> obj.put(key, convertToJson(v))
+            }
+        }
+        return obj
+    }
+
     private fun convertToJson(value: Any?): Any? {
         return when (value) {
             null -> JSONObject.NULL
-            is Map<*, *> -> {
-                val obj = JSONObject()
-                @Suppress("UNCHECKED_CAST")
-                for ((k, v) in value as Map<String, Any?>) {
-                    if (k.startsWith("_")) continue
-                    obj.put(k, convertToJson(v))
-                }
-                obj
-            }
+            is Map<*, *> -> convertMapToJson(value)
             is List<*> -> {
                 val arr = JSONArray()
                 for (item in value) arr.put(convertToJson(item))

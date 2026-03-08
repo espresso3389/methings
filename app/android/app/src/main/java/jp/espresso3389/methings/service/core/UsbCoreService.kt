@@ -169,10 +169,6 @@ class UsbCoreService(
         val result = mutableMapOf<String, Any?>("status" to "ok", "transferred" to transferred)
         if (directionIn && buf != null) {
             result["data"] = buf.copyOfRange(0, transferred.coerceIn(0, buf.size)).asUByteArray()
-            // Also include base64 for backward compatibility at HTTP level
-            result["data_b64"] = Base64.encodeToString(
-                buf.copyOfRange(0, transferred.coerceIn(0, buf.size)), Base64.NO_WRAP,
-            )
         }
         return result
     }
@@ -183,8 +179,7 @@ class UsbCoreService(
         val conn = usbConnections[handle] ?: return CoreApiUtils.error("handle_not_found", 404)
         val raw = conn.rawDescriptors ?: return CoreApiUtils.error("raw_descriptors_unavailable", 500)
         return CoreApiUtils.ok(
-            "data" to raw.asUByteArray(),
-            "data_b64" to Base64.encodeToString(raw, Base64.NO_WRAP),
+            "descriptors" to raw.asUByteArray(),
             "length" to raw.size,
         )
     }
@@ -238,7 +233,6 @@ class UsbCoreService(
             return CoreApiUtils.ok(
                 "transferred" to n,
                 "data" to slice.asUByteArray(),
-                "data_b64" to Base64.encodeToString(slice, Base64.NO_WRAP),
             )
         } else {
             val b64 = params.optString("data_b64")
@@ -335,7 +329,6 @@ class UsbCoreService(
             "payload_length" to payloadLen,
             "packets" to packets,
             "data" to payloadBytes.asUByteArray(),
-            "data_b64" to Base64.encodeToString(payloadBytes, Base64.NO_WRAP),
         )
     }
 

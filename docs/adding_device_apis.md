@@ -39,8 +39,10 @@ For USB, serial, or MCU actions, implement the handler in the appropriate core s
 Then add the action routing in `CoreApiDispatcher.kt`.
 
 Core API methods accept `Map<String, Any?>` params, return `Map<String, Any?>`.
-For binary data, use `UByteArray` values — QuickJS-kt auto-converts to `Uint8Array`,
-the HTTP adapter base64-encodes them.
+For binary data, use `UByteArray` values — QuickJS-kt auto-converts to `Uint8Array`.
+The HTTP adapter (`CoreApiUtils.toJsonResponse`) auto-renames binary keys with a
+`_b64` suffix and base64-encodes them (e.g. `"data" to bytes.asUByteArray()` →
+HTTP: `"data_b64": "<base64>"`, QuickJS: `data` = `Uint8Array`).
 
 ## 4. `LocalHttpServer.kt` — route handler
 

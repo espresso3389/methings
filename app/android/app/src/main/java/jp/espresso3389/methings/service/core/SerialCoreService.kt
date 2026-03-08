@@ -217,7 +217,6 @@ class SerialCoreService(
                 "serial_handle" to serialHandle,
                 "bytes_read" to out.size,
                 "data" to out.asUByteArray(),
-                "data_b64" to Base64.encodeToString(out, Base64.NO_WRAP),
             )
         } catch (ex: Exception) {
             CoreApiUtils.error("serial_read_failed", 500, mapOf("detail" to (ex.message ?: "")))

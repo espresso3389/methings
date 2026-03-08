@@ -2,7 +2,7 @@
 
 USB serial session management. Serial operations are available both as `device_api()` actions (preferred from `run_js`) and as HTTP endpoints (via `fetch()` or `run_curl`).
 
-When called via `device_api()` from `run_js`, read operations return binary data as native `Uint8Array` in the `data` field (alongside `data_b64` for backward compatibility). Write operations still accept `data_b64` (base64 string) for input.
+When called via `device_api()` from `run_js`, read operations return binary data as native `Uint8Array` (e.g. `data`). HTTP responses auto-rename binary fields with a `_b64` suffix (e.g. `data` → `data_b64`). Write operations accept `data_b64` (base64 string) for input.
 
 Permission: `device.usb`
 
@@ -68,8 +68,7 @@ Read bytes from a USB serial session (polling).
 **Returns:**
 - `serial_handle` (string): session handle
 - `bytes_read` (integer): number of bytes read
-- `data` (Uint8Array): raw bytes (native binary — `run_js` `device_api()` only)
-- `data_b64` (string): base64-encoded data (always present)
+- `data` (Uint8Array / `data_b64` string via HTTP): raw bytes read
 
 ## POST /serial/write
 

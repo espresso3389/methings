@@ -421,10 +421,10 @@ class McuCoreService(
                     "model" to model, "handle" to handle,
                     "bridge_hint" to bridge,
                     "interface_id" to selection.interfaceObj.id,
-                    "baseline_b64" to Base64.encodeToString(baseline, Base64.NO_WRAP),
+                    "baseline" to baseline.asUByteArray(),
                     "baseline_ascii" to bytesToAsciiPreview(baseline),
                     "baseline_length" to baseline.size,
-                    "reply_b64" to Base64.encodeToString(reply, Base64.NO_WRAP),
+                    "reply" to reply.asUByteArray(),
                     "reply_ascii" to bytesToAsciiPreview(reply),
                     "reply_length" to reply.size,
                     "slip_frames_found" to frames.length(),
@@ -646,7 +646,6 @@ class McuCoreService(
                 CoreApiUtils.ok(
                     "handle" to handle, "bridge_hint" to bridge,
                     "data" to data.asUByteArray(),
-                    "data_b64" to Base64.encodeToString(data, Base64.NO_WRAP),
                     "data_ascii" to bytesToAsciiPreview(data),
                     "length" to data.size,
                 )
@@ -676,7 +675,7 @@ class McuCoreService(
                 "stdout" to String(result.stdout, Charsets.UTF_8),
                 "stderr" to String(result.stderr, Charsets.UTF_8),
                 *if (includeRaw) arrayOf(
-                    "raw_b64" to Base64.encodeToString(result.raw, Base64.NO_WRAP),
+                    "raw" to result.raw.asUByteArray(),
                     "raw_ascii" to bytesToAsciiPreview(result.raw),
                 ) else emptyArray(),
             )
