@@ -28,13 +28,28 @@ entry appear as `"none"` (no permission needed).
 If the prefix already exists (e.g. adding `ble.gatt.subscribe` when `ble` is
 already mapped), no change is needed.
 
-## 3. `LocalHttpServer.kt` — route handler
+## 3. Core API service (if applicable)
+
+For USB, serial, or MCU actions, implement the handler in the appropriate core service:
+
+- `app/android/app/src/main/java/jp/espresso3389/methings/service/core/UsbCoreService.kt`
+- `app/android/app/src/main/java/jp/espresso3389/methings/service/core/SerialCoreService.kt`
+- `app/android/app/src/main/java/jp/espresso3389/methings/service/core/McuCoreService.kt`
+
+Then add the action routing in `CoreApiDispatcher.kt`.
+
+Core API methods accept `Map<String, Any?>` params, return `Map<String, Any?>`.
+For binary data, use `UByteArray` values — QuickJS-kt auto-converts to `Uint8Array`,
+the HTTP adapter base64-encodes them.
+
+## 4. `LocalHttpServer.kt` — route handler
 
 File: `app/android/app/src/main/java/jp/espresso3389/methings/service/LocalHttpServer.kt`
 
-Add the HTTP route handler that implements the action.
+For core API actions: add a thin wrapper using `coreApiResponse(action, session, postBody)`.
+For other actions: add the HTTP route handler directly.
 
-## 4. OpenAPI spec (if agent-facing)
+## 5. OpenAPI spec (if agent-facing)
 
 Directory: `user/docs/openapi/`
 

@@ -59,7 +59,7 @@ class JsRuntime(
     private val userDir: File,
     private val sysDir: File,
     private val port: Int = 33389,
-    private val deviceApiCallback: ((String, String) -> String)? = null,
+    private val deviceApiCallback: ((String, Map<String, Any?>) -> Map<String, Any?>)? = null,
 ) {
     private val jsDispatcher = Executors.newSingleThreadExecutor { r ->
         Thread(r, "JsRuntime").apply { isDaemon = true }
@@ -166,21 +166,26 @@ class JsRuntime(
             }
         }
 
-        // --- device_api bridge ---
+        // --- device_api bridge (Map-based: QuickJS auto-converts Map↔JS object, UByteArray↔Uint8Array) ---
         if (deviceApiCallback != null) {
             js.define("__bridge") {
+                @Suppress("UNCHECKED_CAST")
                 function("deviceApi") { args ->
                     val action = args.getOrNull(0)?.toString() ?: ""
-                    val payloadJson = args.getOrNull(1)?.toString() ?: "{}"
-                    deviceApiCallback.invoke(action, payloadJson)
+                    val payload: Map<String, Any?> = when (val v = args.getOrNull(1)) {
+                        is Map<*, *> -> v as Map<String, Any?>
+                        is String -> try {
+                            jp.espresso3389.methings.service.core.CoreApiUtils.fromJsonPayload(JSONObject(v))
+                        } catch (_: Exception) { emptyMap() }
+                        null -> emptyMap()
+                        else -> emptyMap()
+                    }
+                    deviceApiCallback.invoke(action, payload)
                 }
             }
             js.evaluate<Any?>("""
                 globalThis.device_api = function(action, payload) {
-                    var json = (typeof payload === 'object' && payload !== null)
-                        ? JSON.stringify(payload) : (payload || '{}');
-                    var raw = __bridge.deviceApi(action, json);
-                    try { return JSON.parse(raw); } catch(e) { return raw; }
+                    return __bridge.deviceApi(action, payload || {});
                 };
             """.trimIndent())
         }

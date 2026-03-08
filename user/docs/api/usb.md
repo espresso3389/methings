@@ -4,6 +4,8 @@ Low-level USB device access: enumeration, handles, transfers, and streaming.
 
 All actions require `Permission: device.usb`.
 
+When called via `device_api()` from `run_js`, transfer operations return binary data as native `Uint8Array` in the `data` field (alongside `data_b64` for backward compatibility). HTTP responses always use `data_b64` (base64 string).
+
 ## usb.list
 
 List connected USB devices.
@@ -81,6 +83,7 @@ Perform a USB control transfer.
 
 **Returns:**
 - `transferred` (integer): Number of bytes transferred
+- `data` (Uint8Array): Raw response bytes (`run_js` `device_api()` only)
 - `data_b64` (string): Base64-encoded response data (IN transfers)
 
 ## usb.bulk_transfer
@@ -96,6 +99,7 @@ Perform a USB bulk transfer.
 
 **Returns:**
 - `transferred` (integer): Number of bytes transferred
+- `data` (Uint8Array): Raw response bytes (`run_js` `device_api()` only)
 - `data_b64` (string): Base64-encoded response data
 
 ## usb.iso_transfer
@@ -110,6 +114,7 @@ Perform a USB isochronous transfer (low-level, native usbfs workaround).
 - `timeout_ms` (integer, optional): Default: 5000
 
 **Returns:**
+- `data` (Uint8Array): Raw KISO blob (`run_js` `device_api()` only)
 - `data_b64` (string): Base64-encoded KISO blob
 
 ## usb.stream_start

@@ -2,6 +2,9 @@ package jp.espresso3389.methings.service.agent
 
 import android.util.Base64
 import android.util.Log
+import jp.espresso3389.methings.service.core.ApiContext
+import jp.espresso3389.methings.service.core.CoreApiDispatcher
+import jp.espresso3389.methings.service.core.CoreApiUtils
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -16,6 +19,8 @@ class ToolExecutor(
     private val sessionIdProvider: () -> String,
     private val jsRuntime: JsRuntime,
     private val shellExecutor: ShellExecutor,
+    private val coreApi: CoreApiDispatcher? = null,
+    private val apiContextProvider: (() -> ApiContext)? = null,
 ) {
     /** Media types the current provider supports natively (e.g. "image", "audio").
      *  Set by AgentRuntime before the tool execution loop each turn. */
@@ -208,6 +213,15 @@ class ToolExecutor(
         return JSONObject().put("status", "ok").put("path", path).put("deleted", deleted)
     }
 
+    private fun dispatchAction(action: String, payload: JSONObject, detail: String): JSONObject {
+        if (coreApi != null && apiContextProvider != null) {
+            val params = CoreApiUtils.fromJsonPayload(payload)
+            val result = coreApi.dispatch(action, params, apiContextProvider.invoke())
+            return CoreApiUtils.toJsonResponse(result)
+        }
+        return deviceBridge.execute(action, payload, detail)
+    }
+
     private fun executeDeviceApi(args: JSONObject, userText: String): JSONObject {
         val actionName = args.optString("action", "")
         if (actionName.isEmpty()) return JSONObject().put("status", "error").put("error", "missing_action")
@@ -222,11 +236,11 @@ class ToolExecutor(
 
         val payload = args.optJSONObject("payload") ?: JSONObject()
         val detail = args.optString("detail", "")
-        return deviceBridge.execute(actionName, payload, detail)
+        return dispatchAction(actionName, payload, detail)
     }
 
     private fun executeMemoryGet(): JSONObject {
-        return deviceBridge.execute("brain.memory.get", JSONObject(), "Read persistent memory")
+        return dispatchAction("brain.memory.get", JSONObject(), "Read persistent memory")
     }
 
     private fun executeMemorySet(args: JSONObject, userText: String): JSONObject {
@@ -237,7 +251,7 @@ class ToolExecutor(
                 .put("detail", "Persistent memory writes require an explicit user request to save/persist.")
         }
         val payload = JSONObject().put("content", args.optString("content", ""))
-        return deviceBridge.execute("brain.memory.set", payload, "Write persistent memory")
+        return dispatchAction("brain.memory.set", payload, "Write persistent memory")
     }
 
     private fun executeJournalGetCurrent(args: JSONObject): JSONObject {

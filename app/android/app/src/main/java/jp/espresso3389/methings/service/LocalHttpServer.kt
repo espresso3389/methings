@@ -92,6 +92,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import jp.espresso3389.methings.device.AndroidPermissionWaiter
 import jp.espresso3389.methings.device.UsbPermissionWaiter
 import jp.espresso3389.methings.service.agent.*
+import jp.espresso3389.methings.service.core.*
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -122,15 +123,64 @@ class LocalHttpServer(
     private val sshKeyPolicy = jp.espresso3389.methings.perm.SshKeyPolicy(context)
     private val agentTasks = java.util.concurrent.ConcurrentHashMap<String, AgentTask>()
     private val lastPermissionPromptAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
-    private val usbConnections = ConcurrentHashMap<String, UsbDeviceConnection>()
-    private val usbDevicesByHandle = ConcurrentHashMap<String, UsbDevice>()
+
+    // ---- Core API layer (Phase 1: USB/Serial/MCU extracted) ----
+    val coreApi: CoreApiDispatcher by lazy {
+        val permSvc = PermissionCoreService(
+            permissionStore, permissionPrefs, installIdentity,
+            onPrompt = { id, tool, detail -> sendPermissionPrompt(id, tool, detail, false) },
+            onAutoApproved = { req ->
+                maybeGrantDeviceCapability(req)
+                sendPermissionResolved(req.id, req.status)
+                notifyBrainPermissionAutoApproved(req)
+                Thread { notifyBrainPermissionResolved(req) }.apply { isDaemon = true }.start()
+            },
+        )
+        val usbSvc = UsbCoreService(context, permSvc)
+        val serialSvc = SerialCoreService(usbSvc, permSvc).also { svc ->
+            svc.onSessionClosed = { handle ->
+                val ws = serialWsByHandle.remove(handle)
+                ws?.let { runCatching { it.close(NanoWSD.WebSocketFrame.CloseCode.NormalClosure, "serial_closed", false) } }
+            }
+            svc.isWsConnected = { handle -> serialWsByHandle.containsKey(handle) }
+        }
+        val mcuSvc = McuCoreService(context, usbSvc, serialSvc, permSvc, object : McuFileResolver {
+            override fun readPathBytes(path: String): Pair<ByteArray, String> {
+                val ref = parseFsPathRef(path) ?: throw IllegalArgumentException("invalid_path")
+                return readFsPathBytes(ref)
+            }
+            override fun resolveParentDir(path: String): File? {
+                val ref = parseFsPathRef(path) ?: return null
+                return ref.userFile?.parentFile
+            }
+            override fun userRoot(): File = File(context.filesDir, "user")
+        })
+        // Fallback: HTTP loopback for actions not yet extracted
+        val fallbackBridge = DeviceToolBridge(identity = { installIdentity.get() })
+        CoreApiDispatcher(
+            usb = usbSvc, serial = serialSvc, mcu = mcuSvc, permission = permSvc,
+            fallback = { action, params, ctx ->
+                val spec = ToolDefinitions.ACTIONS[action]
+                val isVirtualUvc = action.startsWith("uvc.ptz.")
+                if (spec != null || isVirtualUvc) {
+                    val payload = CoreApiUtils.toJsonResponse(params)
+                    payload.put("identity", ctx.identity)
+                    CoreApiUtils.fromJsonPayload(fallbackBridge.execute(action, payload, ctx.source))
+                } else {
+                    CoreApiUtils.error("unknown_action", 400, mapOf("action" to action))
+                }
+            },
+        )
+    }
+
+    // State owned by core services; accessor aliases for backward compatibility
+    private val usbConnections get() = coreApi.usb.usbConnections
+    private val usbDevicesByHandle get() = coreApi.usb.usbDevicesByHandle
     private val usbStreams = ConcurrentHashMap<String, UsbStreamState>()
-    private val serialSessions = ConcurrentHashMap<String, SerialSessionState>()
+    private val serialSessions get() = coreApi.serial.serialSessions
     private val serialWsByHandle = ConcurrentHashMap<String, NanoWSD.WebSocket>()
 
-    private val usbManager: UsbManager by lazy {
-        context.getSystemService(Context.USB_SERVICE) as UsbManager
-    }
+    private val usbManager: UsbManager get() = coreApi.usb.usbManager
 
     private val powerManager: PowerManager by lazy {
         context.getSystemService(PowerManager::class.java)
@@ -162,26 +212,23 @@ class LocalHttpServer(
             userDir = File(context.filesDir, "user"),
             sysDir = File(context.filesDir, "system"),
             port = PORT,
-            deviceApiCallback = { action, payloadJson ->
-                val payload = try { JSONObject(payloadJson) } catch (_: Exception) { JSONObject() }
-                agentDeviceBridge.execute(action, payload, "js_runtime").toString()
+            deviceApiCallback = { action, params ->
+                val ctx = ApiContext(identity = installIdentity.get(), source = "js_runtime")
+                coreApi.dispatch(action, params, ctx)
             },
         )
     }
 
     // --- Scheduler ---
     private val schedulerStore by lazy { SchedulerStore(context) }
-    private val schedulerDeviceBridge by lazy {
-        DeviceToolBridge(identity = { "scheduler" })
-    }
     private val schedulerJsRuntime by lazy {
         JsRuntime(
             userDir = File(context.filesDir, "user"),
             sysDir = File(context.filesDir, "system"),
             port = PORT,
-            deviceApiCallback = { action, payloadJson ->
-                val payload = try { JSONObject(payloadJson) } catch (_: Exception) { JSONObject() }
-                schedulerDeviceBridge.execute(action, payload, "scheduler").toString()
+            deviceApiCallback = { action, params ->
+                val ctx = ApiContext(identity = "scheduler", source = "scheduler")
+                coreApi.dispatch(action, params, ctx)
             },
         )
     }
@@ -216,6 +263,8 @@ class LocalHttpServer(
             sessionIdProvider = { "default" },
             jsRuntime = agentJsRuntime,
             shellExecutor = shellExecutor,
+            coreApi = coreApi,
+            apiContextProvider = { ApiContext(identity = installIdentity.get(), source = "agent") },
         ).also { executor ->
             // Apply File Transfer image settings
             val ftPrefs = fileTransferPrefs
@@ -2173,84 +2222,28 @@ class LocalHttpServer(
 
     private fun routeUsb(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
-            (uri == "/usb/list" || uri == "/usb/list/") && session.method == Method.GET -> {
-                return handleUsbList(session)
-            }
-            (uri == "/usb/status" || uri == "/usb/status/") && session.method == Method.GET -> {
-                return handleUsbStatus(session)
-            }
-            (uri == "/usb/open" || uri == "/usb/open/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbOpen(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "USB open handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "usb_open_handler_failed")
-                }
-            }
-            (uri == "/usb/close" || uri == "/usb/close/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbClose(payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "USB close handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "usb_close_handler_failed")
-                }
-            }
-            (uri == "/usb/control_transfer" || uri == "/usb/control_transfer/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbControlTransfer(payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "USB control_transfer handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "usb_control_transfer_handler_failed")
-                }
-            }
-            (uri == "/usb/raw_descriptors" || uri == "/usb/raw_descriptors/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbRawDescriptors(payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "USB raw_descriptors handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "usb_raw_descriptors_handler_failed")
-                }
-            }
-            (uri == "/usb/claim_interface" || uri == "/usb/claim_interface/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbClaimInterface(payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "USB claim_interface handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "usb_claim_interface_handler_failed")
-                }
-            }
-            (uri == "/usb/release_interface" || uri == "/usb/release_interface/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbReleaseInterface(payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "USB release_interface handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "usb_release_interface_handler_failed")
-                }
-            }
-            (uri == "/usb/bulk_transfer" || uri == "/usb/bulk_transfer/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbBulkTransfer(payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "USB bulk_transfer handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "usb_bulk_transfer_handler_failed")
-                }
-            }
-            (uri == "/usb/iso_transfer" || uri == "/usb/iso_transfer/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleUsbIsoTransfer(payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "USB iso_transfer handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "usb_iso_transfer_handler_failed")
-                }
-            }
+            // ---- Core API dispatched routes ----
+            (uri == "/usb/list" || uri == "/usb/list/") && session.method == Method.GET ->
+                coreApiResponse("usb.list", session, postBody)
+            (uri == "/usb/status" || uri == "/usb/status/") && session.method == Method.GET ->
+                coreApiResponse("usb.status", session, postBody)
+            (uri == "/usb/open" || uri == "/usb/open/") && session.method == Method.POST ->
+                coreApiResponse("usb.open", session, postBody)
+            (uri == "/usb/close" || uri == "/usb/close/") && session.method == Method.POST ->
+                coreApiResponse("usb.close", session, postBody)
+            (uri == "/usb/control_transfer" || uri == "/usb/control_transfer/") && session.method == Method.POST ->
+                coreApiResponse("usb.control_transfer", session, postBody)
+            (uri == "/usb/raw_descriptors" || uri == "/usb/raw_descriptors/") && session.method == Method.POST ->
+                coreApiResponse("usb.raw_descriptors", session, postBody)
+            (uri == "/usb/claim_interface" || uri == "/usb/claim_interface/") && session.method == Method.POST ->
+                coreApiResponse("usb.claim_interface", session, postBody)
+            (uri == "/usb/release_interface" || uri == "/usb/release_interface/") && session.method == Method.POST ->
+                coreApiResponse("usb.release_interface", session, postBody)
+            (uri == "/usb/bulk_transfer" || uri == "/usb/bulk_transfer/") && session.method == Method.POST ->
+                coreApiResponse("usb.bulk_transfer", session, postBody)
+            (uri == "/usb/iso_transfer" || uri == "/usb/iso_transfer/") && session.method == Method.POST ->
+                coreApiResponse("usb.iso_transfer", session, postBody)
+            // ---- USB streaming (stays in LocalHttpServer — NanoWSD dependency) ----
             (uri == "/usb/stream/start" || uri == "/usb/stream/start/") && session.method == Method.POST -> {
                 return try {
                     val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
@@ -2278,174 +2271,52 @@ class LocalHttpServer(
 
     private fun routeMcu(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
-            (uri == "/mcu/models" || uri == "/mcu/models/") && session.method == Method.GET -> {
-                return handleMcuModels()
-            }
-            (uri == "/mcu/probe" || uri == "/mcu/probe/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuProbe(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU probe handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_probe_handler_failed")
-                }
-            }
-            (uri == "/mcu/flash" || uri == "/mcu/flash/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuFlash(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU flash handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_flash_handler_failed")
-                }
-            }
-            (uri == "/mcu/flash/plan" || uri == "/mcu/flash/plan/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuFlashPlan(payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU flash plan handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_flash_plan_handler_failed")
-                }
-            }
-            (uri == "/mcu/diag/serial" || uri == "/mcu/diag/serial/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuDiagSerial(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU diag serial handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_diag_serial_handler_failed")
-                }
-            }
-            (uri == "/mcu/serial_lines" || uri == "/mcu/serial_lines/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuSerialLines(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU serial lines handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_serial_lines_handler_failed")
-                }
-            }
-            (uri == "/mcu/reset" || uri == "/mcu/reset/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuReset(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU reset handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_reset_handler_failed")
-                }
-            }
-            (uri == "/mcu/serial_monitor" || uri == "/mcu/serial_monitor/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuSerialMonitor(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU serial monitor handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_serial_monitor_handler_failed")
-                }
-            }
-            (uri == "/mcu/micropython/exec" || uri == "/mcu/micropython/exec/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuMicroPythonExec(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU MicroPython exec handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_exec_handler_failed")
-                }
-            }
-            (uri == "/mcu/micropython/write_file" || uri == "/mcu/micropython/write_file/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuMicroPythonWriteFile(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU MicroPython write_file handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_write_file_handler_failed")
-                }
-            }
-            (uri == "/mcu/micropython/soft_reset" || uri == "/mcu/micropython/soft_reset/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleMcuMicroPythonSoftReset(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "MCU MicroPython soft_reset handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "mcu_micropython_soft_reset_handler_failed")
-                }
-            }
+            (uri == "/mcu/models" || uri == "/mcu/models/") && session.method == Method.GET ->
+                coreApiResponse("mcu.models", session, postBody)
+            (uri == "/mcu/probe" || uri == "/mcu/probe/") && session.method == Method.POST ->
+                coreApiResponse("mcu.probe", session, postBody)
+            (uri == "/mcu/flash" || uri == "/mcu/flash/") && session.method == Method.POST ->
+                coreApiResponse("mcu.flash", session, postBody)
+            (uri == "/mcu/flash/plan" || uri == "/mcu/flash/plan/") && session.method == Method.POST ->
+                coreApiResponse("mcu.flash.plan", session, postBody)
+            (uri == "/mcu/diag/serial" || uri == "/mcu/diag/serial/") && session.method == Method.POST ->
+                coreApiResponse("mcu.diag.serial", session, postBody)
+            (uri == "/mcu/serial_lines" || uri == "/mcu/serial_lines/") && session.method == Method.POST ->
+                coreApiResponse("mcu.serial_lines", session, postBody)
+            (uri == "/mcu/reset" || uri == "/mcu/reset/") && session.method == Method.POST ->
+                coreApiResponse("mcu.reset", session, postBody)
+            (uri == "/mcu/serial_monitor" || uri == "/mcu/serial_monitor/") && session.method == Method.POST ->
+                coreApiResponse("mcu.serial_monitor", session, postBody)
+            (uri == "/mcu/micropython/exec" || uri == "/mcu/micropython/exec/") && session.method == Method.POST ->
+                coreApiResponse("mcu.micropython.exec", session, postBody)
+            (uri == "/mcu/micropython/write_file" || uri == "/mcu/micropython/write_file/") && session.method == Method.POST ->
+                coreApiResponse("mcu.micropython.write_file", session, postBody)
+            (uri == "/mcu/micropython/soft_reset" || uri == "/mcu/micropython/soft_reset/") && session.method == Method.POST ->
+                coreApiResponse("mcu.micropython.soft_reset", session, postBody)
             else -> notFound()
         }
     }
 
     private fun routeSerial(session: IHTTPSession, uri: String, postBody: String?): Response {
         return when {
-            (uri == "/serial/ws/contract" || uri == "/serial/ws/contract/") && session.method == Method.GET -> {
-                return handleSerialWsContract()
-            }
-            (uri == "/serial/status" || uri == "/serial/status/") && session.method == Method.GET -> {
-                return handleSerialStatus(session)
-            }
-            (uri == "/serial/open" || uri == "/serial/open/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialOpen(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "Serial open handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "serial_open_handler_failed")
-                }
-            }
-            (uri == "/serial/list_ports" || uri == "/serial/list_ports/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialListPorts(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "Serial list_ports handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "serial_list_ports_handler_failed")
-                }
-            }
-            (uri == "/serial/close" || uri == "/serial/close/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialClose(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "Serial close handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "serial_close_handler_failed")
-                }
-            }
-            (uri == "/serial/read" || uri == "/serial/read/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialRead(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "Serial read handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "serial_read_handler_failed")
-                }
-            }
-            (uri == "/serial/write" || uri == "/serial/write/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialWrite(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "Serial write handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "serial_write_handler_failed")
-                }
-            }
-            (uri == "/serial/lines" || uri == "/serial/lines/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialLines(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "Serial lines handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "serial_lines_handler_failed")
-                }
-            }
-            (uri == "/serial/exchange" || uri == "/serial/exchange/") && session.method == Method.POST -> {
-                return try {
-                    val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
-                    handleSerialExchange(session, payload)
-                } catch (ex: Exception) {
-                    Log.e(TAG, "Serial exchange handler failed", ex)
-                    jsonError(Response.Status.INTERNAL_ERROR, "serial_exchange_handler_failed")
-                }
-            }
+            (uri == "/serial/ws/contract" || uri == "/serial/ws/contract/") && session.method == Method.GET ->
+                coreApiResponse("serial.ws.contract", session, postBody)
+            (uri == "/serial/status" || uri == "/serial/status/") && session.method == Method.GET ->
+                coreApiResponse("serial.status", session, postBody)
+            (uri == "/serial/open" || uri == "/serial/open/") && session.method == Method.POST ->
+                coreApiResponse("serial.open", session, postBody)
+            (uri == "/serial/list_ports" || uri == "/serial/list_ports/") && session.method == Method.POST ->
+                coreApiResponse("serial.list_ports", session, postBody)
+            (uri == "/serial/close" || uri == "/serial/close/") && session.method == Method.POST ->
+                coreApiResponse("serial.close", session, postBody)
+            (uri == "/serial/read" || uri == "/serial/read/") && session.method == Method.POST ->
+                coreApiResponse("serial.read", session, postBody)
+            (uri == "/serial/write" || uri == "/serial/write/") && session.method == Method.POST ->
+                coreApiResponse("serial.write", session, postBody)
+            (uri == "/serial/lines" || uri == "/serial/lines/") && session.method == Method.POST ->
+                coreApiResponse("serial.lines", session, postBody)
+            (uri == "/serial/exchange" || uri == "/serial/exchange/") && session.method == Method.POST ->
+                coreApiResponse("serial.exchange", session, postBody)
             else -> notFound()
         }
     }
@@ -6090,20 +5961,7 @@ class LocalHttpServer(
         val out: java.io.BufferedOutputStream,
     )
 
-    private data class SerialSessionState(
-        val id: String,
-        val usbHandle: String,
-        val deviceName: String,
-        val portIndex: Int,
-        val baudRate: Int,
-        val dataBits: Int,
-        val stopBits: Int,
-        val parity: Int,
-        val connection: UsbDeviceConnection,
-        val port: UsbSerialPort,
-        val openedAtMs: Long,
-        val lock: Any = Any(),
-    )
+    // SerialSessionState is now defined in core/SerialCoreService.kt
 
     private data class UsbStreamState(
         val id: String,
@@ -7932,6 +7790,43 @@ class LocalHttpServer(
         response.addHeader("Cache-Control", "no-cache, no-store, must-revalidate")
         response.addHeader("Pragma", "no-cache")
         response.addHeader("Expires", "0")
+        return response
+    }
+
+    // ---- Core API HTTP helpers ----
+
+    private fun apiContextFromHttp(session: IHTTPSession): ApiContext {
+        val identity = ((session.headers["x-methings-identity"] ?: "") as String).trim()
+        return ApiContext(identity = identity.ifBlank { installIdentity.get() }, source = "http")
+    }
+
+    private fun coreApiResponse(action: String, session: IHTTPSession, postBody: String?): Response {
+        return try {
+            val ctx = apiContextFromHttp(session)
+            val params = if (!postBody.isNullOrBlank()) {
+                try { CoreApiUtils.fromJsonPayload(JSONObject(postBody)) } catch (_: Exception) { emptyMap() }
+            } else emptyMap()
+            val result = coreApi.dispatch(action, params, ctx)
+            mapToResponse(result)
+        } catch (ex: Exception) {
+            Log.e(TAG, "coreApiResponse($action) failed", ex)
+            jsonError(Response.Status.INTERNAL_ERROR, "${action.replace('.', '_')}_handler_failed")
+        }
+    }
+
+    private fun mapToResponse(result: Map<String, Any?>): Response {
+        val httpStatus = CoreApiUtils.httpStatusOf(result)
+        val json = CoreApiUtils.toJsonResponse(result)
+        val status = when (httpStatus) {
+            200 -> Response.Status.OK
+            400 -> Response.Status.BAD_REQUEST
+            403 -> Response.Status.FORBIDDEN
+            404 -> Response.Status.NOT_FOUND
+            503 -> Response.Status.SERVICE_UNAVAILABLE
+            else -> if (httpStatus >= 400) Response.Status.INTERNAL_ERROR else Response.Status.OK
+        }
+        val response = newFixedLengthResponse(status, "application/json", json.toString())
+        response.addHeader("Cache-Control", "no-cache")
         return response
     }
 

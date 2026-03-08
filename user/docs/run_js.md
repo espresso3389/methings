@@ -194,7 +194,7 @@ await f.close();
 
 ## Base64 Encoding (btoa / atob)
 
-Standard `btoa`/`atob` for converting between binary strings and Base64. Essential for serial/USB binary I/O where APIs use `data_b64` fields.
+Standard `btoa`/`atob` for converting between binary strings and Base64. Needed for **writing** binary data via `device_api()` (input fields like `data_b64`), and for **reading** binary data via `fetch()` HTTP endpoints. When **reading** via `device_api()`, prefer the native `data` field (`Uint8Array`) instead — see "Native binary data" above.
 
 ```javascript
 // Encode binary bytes to base64
@@ -227,60 +227,77 @@ Same as the `device_api` tool — call device API actions synchronously from JS:
 const sensors = device_api("sensor.list", {});
 ```
 
+### Native binary data (Uint8Array)
+
+When called from `run_js`, `device_api()` returns binary fields as native `Uint8Array` — **no base64 decode needed**. USB/Serial read operations return a `data` field containing raw bytes:
+
+```javascript
+// Direct Uint8Array — no btoa/atob conversion needed
+const r = device_api("serial.read", {serial_handle: sh, max_bytes: 256, timeout_ms: 1000});
+const bytes = r.data;         // Uint8Array — native binary
+console.log(bytes.length);    // number of bytes read
+console.log(bytes[0]);        // first byte value (0-255)
+
+// data_b64 is also available for backward compatibility
+const b64 = r.data_b64;      // base64 string (same content)
+```
+
+Actions returning `data` as `Uint8Array`: `serial.read`, `usb.control_transfer`, `usb.bulk_transfer`, `usb.iso_transfer`, `usb.raw_descriptors`.
+
+**Writing binary data:** Input fields (`data_b64`, `send_b64`) still require base64 strings — use `btoa()`:
+```javascript
+const bytes = new Uint8Array([0xC0, 0x00, 0x08]);
+device_api("serial.write", {serial_handle: sh, data_b64: toB64(bytes)});
+```
+
+> **Note:** This native binary support only applies to `device_api()` calls from `run_js`. HTTP endpoints (via `fetch()`) always use base64 strings in `data_b64` fields.
+
 ## MCU Serial Scripting
 
-`run_js` can implement custom MCU serial protocols entirely in JavaScript, combining `device_api` (for MCU control actions), `fetch` (for serial HTTP endpoints), `delay` (for timing), and `btoa`/`atob` (for binary data). This allows the agent to support new driver ICs or protocols without app updates.
+`run_js` can implement custom MCU serial protocols entirely in JavaScript, combining `device_api` (for MCU control actions and serial I/O), `fetch` (for serial HTTP endpoints), `delay` (for timing), and native `Uint8Array` for binary data. This allows the agent to support new driver ICs or protocols without app updates.
 
 ### Available primitives
 
 | Primitive | API | Description |
 |---|---|---|
 | USB open/close | `device_api("usb.open", ...)` | Open USB device, get `handle` |
-| Serial open/close | `fetch("/serial/open", ...)` | Open serial session, get `serial_handle` |
-| Serial write | `fetch("/serial/write", ...)` | Send raw bytes via `data_b64` |
-| Serial read | `fetch("/serial/read", ...)` | Read raw bytes, returns `data_b64` |
+| Serial open/close | `device_api("serial.open", ...)` | Open serial session, get `serial_handle` |
+| Serial write | `device_api("serial.write", ...)` | Send raw bytes via `data_b64` |
+| Serial read | `device_api("serial.read", ...)` | Read raw bytes, returns `data` (`Uint8Array`) + `data_b64` |
 | Serial exchange | `device_api("serial.exchange", ...)` | Send + line-oriented receive in one call |
-| DTR/RTS control | `fetch("/serial/lines", ...)` | Set modem line states |
+| DTR/RTS control | `device_api("serial.lines", ...)` | Set modem line states |
 | Timing | `await delay(ms)` | Async sleep |
-| Binary encoding | `btoa()` / `atob()` | Base64 ↔ binary string |
+| Binary encoding | `btoa()` / `atob()` | Base64 ↔ binary string (for write inputs) |
 | Binary construction | `new Uint8Array(...)` | Native byte arrays |
+
+> **Prefer `device_api()` over `fetch()`** for serial operations — `device_api()` calls the Core API directly (no HTTP roundtrip) and returns binary data as native `Uint8Array`.
 
 ### Example: custom bootloader entry
 
 ```javascript
-const PORT = 33389;
-const BASE = `http://127.0.0.1:${PORT}`;
+function toB64(bytes) {
+    return btoa(String.fromCharCode.apply(null, bytes));
+}
 
 // Open USB device
 const usb = device_api("usb.open", {name: "/dev/bus/usb/001/002"});
 const handle = usb.handle;
 
-// Open serial port
-const serRes = await fetch(`${BASE}/serial/open`, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({handle, baud_rate: 115200})
-});
-const sh = JSON.parse(serRes.body).session.serial_handle;
+// Open serial port (device_api — direct Core API call, no HTTP)
+const serRes = device_api("serial.open", {handle, baud_rate: 115200});
+const sh = serRes.session.serial_handle;
 
 // DTR/RTS bootloader entry sequence (ClassicReset)
-async function setLines(dtr, rts) {
-    await fetch(`${BASE}/serial/lines`, {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({serial_handle: sh, dtr, rts})
-    });
+function setLines(dtr, rts) {
+    device_api("serial.lines", {serial_handle: sh, dtr, rts});
 }
-await setLines(false, true);   // EN low, IO0 high
+setLines(false, true);   // EN low, IO0 high
 await delay(100);
-await setLines(true, false);   // EN high, IO0 low (boot mode)
+setLines(true, false);   // EN high, IO0 low (boot mode)
 await delay(50);
-await setLines(true, true);    // release both
+setLines(true, true);    // release both
 
 // Send ESP32 SYNC command (SLIP-framed)
-function toB64(bytes) {
-    return btoa(String.fromCharCode.apply(null, bytes));
-}
 const SYNC = new Uint8Array([
     0xC0,                                   // SLIP start
     0x00, 0x08, 0x24, 0x00,                 // command: SYNC, size: 36
@@ -289,22 +306,14 @@ const SYNC = new Uint8Array([
     ...new Array(32).fill(0x55),            // 32x 0x55
     0xC0                                    // SLIP end
 ]);
-await fetch(`${BASE}/serial/write`, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({serial_handle: sh, data_b64: toB64(SYNC)})
-});
+device_api("serial.write", {serial_handle: sh, data_b64: toB64(SYNC)});
 
-// Read response
+// Read response — data is native Uint8Array (no base64 decode needed)
 await delay(50);
-const readRes = await fetch(`${BASE}/serial/read`, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({serial_handle: sh, max_bytes: 256, timeout_ms: 1000})
-});
-const resp = JSON.parse(readRes.body);
-console.log("Response bytes:", resp.bytes_read);
-JSON.stringify({sync_sent: true, response_bytes: resp.bytes_read});
+const resp = device_api("serial.read", {serial_handle: sh, max_bytes: 256, timeout_ms: 1000});
+const data = resp.data;         // Uint8Array — raw response bytes
+console.log("Response bytes:", data.length);
+JSON.stringify({sync_sent: true, response_bytes: data.length, first_byte: data[0]});
 ```
 
 ### Example: MicroPython REPL interaction via serial.exchange
