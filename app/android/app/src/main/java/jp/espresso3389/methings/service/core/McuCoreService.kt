@@ -54,6 +54,8 @@ private data class MicroPythonRawExecResult(
     val raw: ByteArray,
 )
 
+private class MicroPythonRawPromptException(message: String) : IllegalStateException(message)
+
 /**
  * File-system access callbacks — provided by LocalHttpServer.
  * Keeps MCU service decoupled from the path resolution scheme.
@@ -663,11 +665,12 @@ class McuCoreService(
         val perm = permission.ensurePermission(ctx, params, "device.usb", "usb", "MicroPython exec")
         if (perm is PermissionResult.Pending) return perm.response
 
-        val lease = acquireMicroPythonSession(params) ?: return CoreApiUtils.error("micropython_session_failed")
+        val lease = acquireMicroPythonSession(params)
+            ?: return CoreApiUtils.error("micropython_session_failed", 500, micropythonFailureExtras(params))
         return try {
             val code = extractMicroPythonCode(params)
                 ?: return CoreApiUtils.error("code_required")
-            val result = runMicroPythonRawExec(lease.serial, code)
+            val result = runMicroPythonRawExecWithRecovery(lease, params, code)
             val includeRaw = params.optBoolean("include_raw", false)
             CoreApiUtils.ok(
                 "model" to lease.model,
@@ -676,11 +679,15 @@ class McuCoreService(
                 "stderr" to String(result.stderr, Charsets.UTF_8),
                 *if (includeRaw) arrayOf(
                     "raw" to result.raw.asUByteArray(),
-                    "raw_ascii" to bytesToAsciiPreview(result.raw),
+                "raw_ascii" to bytesToAsciiPreview(result.raw),
                 ) else emptyArray(),
             )
         } catch (ex: Exception) {
-            CoreApiUtils.error("micropython_exec_failed", 500, mapOf("detail" to (ex.message ?: "")))
+            CoreApiUtils.error(
+                "micropython_exec_failed",
+                500,
+                mapOf("detail" to (ex.message ?: "")) + micropythonFailureExtras(params, lease),
+            )
         } finally {
             releaseMicroPythonSession(lease)
         }
@@ -690,7 +697,8 @@ class McuCoreService(
         val perm = permission.ensurePermission(ctx, params, "device.usb", "usb", "MicroPython write_file")
         if (perm is PermissionResult.Pending) return perm.response
 
-        val lease = acquireMicroPythonSession(params) ?: return CoreApiUtils.error("micropython_session_failed")
+        val lease = acquireMicroPythonSession(params)
+            ?: return CoreApiUtils.error("micropython_session_failed", 500, micropythonFailureExtras(params))
         return try {
             val remotePath = params.optString("remote_path").trim()
             if (remotePath.isBlank()) return CoreApiUtils.error("remote_path_required")
@@ -701,7 +709,7 @@ class McuCoreService(
                 val dir = remotePath.substringBeforeLast('/', "")
                 if (dir.isNotBlank()) {
                     val mkdirCode = "import os\ntry:\n os.makedirs('$dir')\nexcept:\n pass\n"
-                    try { runMicroPythonRawExec(lease.serial, mkdirCode) } catch (_: Exception) {}
+                    try { runMicroPythonRawExecWithRecovery(lease, params, mkdirCode) } catch (_: Exception) {}
                 }
             }
 
@@ -711,7 +719,7 @@ class McuCoreService(
                 val b64 = Base64.encodeToString(chunk, Base64.NO_WRAP)
                 val mode = if (i == 0) "wb" else "ab"
                 val pyCode = "import ubinascii\nf=open(${pythonSingleQuoted(remotePath)},'$mode')\nf.write(ubinascii.a2b_base64('$b64'))\nf.close()\nprint('ok')\n"
-                runMicroPythonRawExec(lease.serial, pyCode)
+                runMicroPythonRawExecWithRecovery(lease, params, pyCode)
             }
             CoreApiUtils.ok(
                 "model" to lease.model,
@@ -721,7 +729,11 @@ class McuCoreService(
                 "chunks" to chunks.size,
             )
         } catch (ex: Exception) {
-            CoreApiUtils.error("micropython_write_file_failed", 500, mapOf("detail" to (ex.message ?: "")))
+            CoreApiUtils.error(
+                "micropython_write_file_failed",
+                500,
+                mapOf("detail" to (ex.message ?: "")) + micropythonFailureExtras(params, lease),
+            )
         } finally {
             releaseMicroPythonSession(lease)
         }
@@ -731,7 +743,8 @@ class McuCoreService(
         val perm = permission.ensurePermission(ctx, params, "device.usb", "usb", "MicroPython soft_reset")
         if (perm is PermissionResult.Pending) return perm.response
 
-        val lease = acquireMicroPythonSession(params) ?: return CoreApiUtils.error("micropython_session_failed")
+        val lease = acquireMicroPythonSession(params)
+            ?: return CoreApiUtils.error("micropython_session_failed", 500, micropythonFailureExtras(params))
         return try {
             val drain = params.optBoolean("drain", true)
             val captureMaxLines = params.optInt("capture_max_lines", 100).coerceIn(1, 1000)
@@ -763,7 +776,11 @@ class McuCoreService(
                 "boot_complete" to bootComplete,
             )
         } catch (ex: Exception) {
-            CoreApiUtils.error("micropython_soft_reset_failed", 500, mapOf("detail" to (ex.message ?: "")))
+            CoreApiUtils.error(
+                "micropython_soft_reset_failed",
+                500,
+                mapOf("detail" to (ex.message ?: "")) + micropythonFailureExtras(params, lease),
+            )
         } finally {
             releaseMicroPythonSession(lease)
         }
@@ -908,6 +925,54 @@ class McuCoreService(
         }
     }
 
+    private fun micropythonFailureExtras(
+        params: Map<String, Any?>,
+        lease: MicroPythonSessionLease? = null,
+    ): Map<String, Any?> {
+        val dev = microPythonUsbDevice(params, lease) ?: return emptyMap()
+        val device = mutableMapOf<String, Any?>(
+            "device_name" to dev.deviceName,
+            "vendor_id" to dev.vendorId,
+            "product_id" to dev.productId,
+        )
+        if (!dev.manufacturerName.isNullOrBlank()) device["manufacturer_name"] = dev.manufacturerName
+        if (!dev.productName.isNullOrBlank()) device["product_name"] = dev.productName
+        val hint = micropythonFirmwareHint(dev) ?: return mapOf("device" to device)
+        return mapOf(
+            "device" to device,
+            "hint_code" to hint.first,
+            "hint" to hint.second,
+        )
+    }
+
+    private fun microPythonUsbDevice(
+        params: Map<String, Any?>,
+        lease: MicroPythonSessionLease? = null,
+    ): UsbDevice? {
+        val handle = lease?.handle ?: params.optString("handle").trim()
+        if (handle.isNotBlank()) return usb.usbDevicesByHandle[handle]
+        val serialHandle = lease?.serial?.id ?: params.optString("serial_handle").trim()
+        if (serialHandle.isBlank()) return null
+        val st = serial.serialSessions[serialHandle] ?: return null
+        val usbHandle = st.usbHandle
+        return usb.usbDevicesByHandle[usbHandle]
+    }
+
+    private fun micropythonFirmwareHint(dev: UsbDevice): Pair<String, String>? {
+        if (!isEspUsbJtagSerialDebugUnit(dev)) return null
+        return "micropython_runtime_missing" to (
+            "This device appears as 'Espressif / USB JTAG/serial debug unit'. " +
+                "On M5Stack boards this usually means UIFlow2 or MicroPython is not installed. " +
+                "Flash UIFlow2 with M5Burner, reconnect the device, then retry."
+            )
+    }
+
+    private fun isEspUsbJtagSerialDebugUnit(dev: UsbDevice): Boolean {
+        val product = dev.productName?.trim()?.lowercase(Locale.US).orEmpty()
+        val manufacturer = dev.manufacturerName?.trim()?.lowercase(Locale.US).orEmpty()
+        return manufacturer.contains("espressif") && product.contains("usb jtag/serial debug unit")
+    }
+
     private fun releaseMicroPythonSession(lease: MicroPythonSessionLease) {
         if (lease.ephemeral) {
             serial.serialSessions.remove(lease.serial.id)
@@ -937,14 +1002,37 @@ class McuCoreService(
         return null
     }
 
-    private fun runMicroPythonRawExec(st: SerialSessionState, code: String): MicroPythonRawExecResult {
+    private fun runMicroPythonRawExecWithRecovery(
+        lease: MicroPythonSessionLease,
+        params: Map<String, Any?>,
+        code: String,
+    ): MicroPythonRawExecResult {
+        return try {
+            runMicroPythonRawExec(lease.serial, code)
+        } catch (ex: MicroPythonRawPromptException) {
+            if (!shouldRetryMicroPythonRawExec(lease)) throw ex
+            rebootMicroPythonTargetToRun(lease)
+            waitForMicroPythonPrompt(lease.serial, timeoutMs = 4_000)
+            runMicroPythonRawExec(lease.serial, code, rawPromptTimeoutMs = 4_000, settleMs = 250)
+        }
+    }
+
+    private fun runMicroPythonRawExec(
+        st: SerialSessionState,
+        code: String,
+        rawPromptTimeoutMs: Int = 1_500,
+        settleMs: Int = 100,
+    ): MicroPythonRawExecResult {
         if (code.length > 1_000_000) throw IllegalArgumentException("code_too_large")
         synchronized(st.lock) {
             serial.drainSerialInput(st, 50, 5)
             // Ctrl-C Ctrl-C SOH (enter raw REPL)
             serial.writeSerialAll(st, byteArrayOf(0x03, 0x03, 0x01), 2000)
-            Thread.sleep(100)
-            serial.drainSerialInput(st, 50, 5)
+            Thread.sleep(settleMs.toLong().coerceAtLeast(0L))
+            val rawPrompt = readSerialBytesUntilIdle(st, totalTimeoutMs = rawPromptTimeoutMs, idleTimeoutMs = 250)
+            if (!looksLikeMicroPythonRawPrompt(rawPrompt)) {
+                throw MicroPythonRawPromptException("micropython_raw_prompt_not_found")
+            }
             // Write code + EOT
             serial.writeSerialAll(st, code.toByteArray(Charsets.UTF_8), 2000)
             serial.writeSerialAll(st, byteArrayOf(0x04), 2000)
@@ -961,6 +1049,89 @@ class McuCoreService(
             serial.writeSerialAll(st, byteArrayOf(0x02), 2000)
             return parseMicroPythonRawExec(accum.toByteArray())
         }
+    }
+
+    private fun shouldRetryMicroPythonRawExec(lease: MicroPythonSessionLease): Boolean {
+        val handle = lease.handle ?: lease.serial.usbHandle
+        val dev = usb.usbDevicesByHandle[handle] ?: return false
+        return usb.guessUsbSerialBridge(dev) == "ch34x"
+    }
+
+    private fun rebootMicroPythonTargetToRun(lease: MicroPythonSessionLease) {
+        val handle = lease.handle ?: lease.serial.usbHandle
+        val conn = usb.usbConnections[handle] ?: return
+        val dev = usb.usbDevicesByHandle[handle] ?: return
+        val payload = JSONObject()
+        val selection = pickEspSerialSelection(dev, payload) ?: return
+        val bridge = usb.guessUsbSerialBridge(dev)
+        val session = EspSerialSession(
+            usbManager = usb.usbManager,
+            dev = dev,
+            conn = conn,
+            inEp = selection.inEndpoint,
+            outEp = selection.outEndpoint,
+            timeoutMs = 2_000,
+            bridgeHint = bridge,
+            interfaceId = selection.interfaceObj.id,
+        )
+        try {
+            if (!session.usesUsbSerial()) {
+                conn.claimInterface(selection.interfaceObj, true)
+                runCatching { conn.setInterface(selection.interfaceObj) }
+            }
+            session.configureSerial()
+            session.rebootToRunIfSupported(bridge, selection.interfaceObj.id)
+        } finally {
+            session.close()
+        }
+    }
+
+    private fun waitForMicroPythonPrompt(st: SerialSessionState, timeoutMs: Int): ByteArray {
+        synchronized(st.lock) {
+            val bytes = readSerialBytesUntilIdle(st, totalTimeoutMs = timeoutMs, idleTimeoutMs = 500)
+            if (looksLikeMicroPythonNormalPrompt(bytes)) return bytes
+            return bytes
+        }
+    }
+
+    private fun looksLikeMicroPythonRawPrompt(data: ByteArray): Boolean {
+        if (data.isEmpty()) return false
+        val ascii = bytesToAsciiPreview(data).lowercase(Locale.US)
+        if (ascii.contains("raw repl")) return true
+        return ascii.trimEnd().endsWith(">")
+    }
+
+    private fun looksLikeMicroPythonNormalPrompt(data: ByteArray): Boolean {
+        if (data.isEmpty()) return false
+        val ascii = bytesToAsciiPreview(data)
+        return ascii.contains(">>>") || ascii.contains("Type \"help()\" for more information.")
+    }
+
+    private fun readSerialBytesUntilIdle(
+        st: SerialSessionState,
+        totalTimeoutMs: Int,
+        idleTimeoutMs: Int,
+        perReadTimeoutMs: Int = 200,
+    ): ByteArray {
+        val buf = ByteArray(4096)
+        val out = java.io.ByteArrayOutputStream()
+        val startedAt = System.currentTimeMillis()
+        var lastByteAt = startedAt
+        while (true) {
+            val now = System.currentTimeMillis()
+            if (now - startedAt >= totalTimeoutMs) break
+            if (out.size() > 0 && now - lastByteAt >= idleTimeoutMs) break
+            val timeout = minOf(
+                perReadTimeoutMs,
+                (totalTimeoutMs - (now - startedAt)).coerceAtLeast(1L).toInt(),
+            )
+            val n = try { st.port.read(buf, timeout) } catch (_: Exception) { 0 }
+            if (n > 0) {
+                out.write(buf, 0, n)
+                lastByteAt = System.currentTimeMillis()
+            }
+        }
+        return out.toByteArray()
     }
 
     private fun hasMicroPythonRawDelimiters(data: ByteArray): Boolean {

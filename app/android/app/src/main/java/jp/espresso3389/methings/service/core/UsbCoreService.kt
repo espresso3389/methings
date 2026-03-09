@@ -336,9 +336,51 @@ class UsbCoreService(
 
     fun findUsbDevice(name: String, vendorId: Int, productId: Int): UsbDevice? {
         val list = usbManager.deviceList.values
-        if (name.isNotBlank()) return list.firstOrNull { it.deviceName == name }
+        if (name.isNotBlank()) {
+            findUsbDeviceByName(list, name)?.let { return it }
+        }
         if (vendorId >= 0 && productId >= 0) return list.firstOrNull { it.vendorId == vendorId && it.productId == productId }
+        if (vendorId >= 0) return list.firstOrNull { it.vendorId == vendorId }
+        if (productId >= 0) return list.firstOrNull { it.productId == productId }
         return null
+    }
+
+    private fun findUsbDeviceByName(devices: Collection<UsbDevice>, rawName: String): UsbDevice? {
+        val exact = rawName.trim()
+        if (exact.isBlank()) return null
+        devices.firstOrNull { it.deviceName == exact }?.let { return it }
+
+        val normalized = normalizeUsbLookup(exact)
+        val byMetadata = devices.firstOrNull { dev ->
+            sequenceOf(dev.productName, dev.manufacturerName, usbDisplayName(dev))
+                .filterNotNull()
+                .map(::normalizeUsbLookup)
+                .any { it == normalized }
+        }
+        if (byMetadata != null) return byMetadata
+
+        return devices.firstOrNull { dev ->
+            sequenceOf(dev.productName, dev.manufacturerName, usbDisplayName(dev))
+                .filterNotNull()
+                .map(::normalizeUsbLookup)
+                .any { candidate ->
+                    candidate.contains(normalized) || normalized.contains(candidate)
+                }
+        }
+    }
+
+    private fun usbDisplayName(dev: UsbDevice): String {
+        val manufacturer = dev.manufacturerName?.trim().orEmpty()
+        val product = dev.productName?.trim().orEmpty()
+        return listOf(manufacturer, product).filter { it.isNotBlank() }.joinToString(" ").trim()
+    }
+
+    private fun normalizeUsbLookup(value: String): String {
+        return value
+            .trim()
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
     }
 
     fun ensureUsbPermission(device: UsbDevice, timeoutMs: Long): Boolean {
