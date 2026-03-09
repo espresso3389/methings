@@ -1,6 +1,6 @@
 # MCU API
 
-MCU programming and serial communication for ESP32 targets over USB.
+MCU programming and serial communication over USB.
 
 All actions except `mcu.models` and `mcu.flash_plan` require `Permission: device.usb`.
 
@@ -109,7 +109,7 @@ The following actions share common serial params:
 - `baud_rate` (integer, optional): Default: 115200
 - `timeout_ms`, `write_timeout_ms` (integer, optional)
 
-**Notes:** Avoid mixing `handle` and `serial_handle` for the same session. For multi-step workflows, open serial once and reuse `serial_handle`.
+**Notes:** Avoid mixing `handle` and `serial_handle` for the same session. For multi-step workflows, open serial once and reuse `serial_handle`. Determine whether MicroPython is present from serial or REPL responses, not from board family alone. The `model` field mainly selects transport helpers and reset behavior; it does not decide whether a board can run MicroPython.
 
 ### mcu.micropython_exec
 
@@ -149,3 +149,10 @@ Send soft reset (Ctrl-C/Ctrl-D) and capture boot output as a `lines` array.
 - `line_count`, `bytes_read`, `elapsed_ms`, `truncated`, `truncation_reason`
 
 **Notes:** Uses line-oriented capture with 100ms polling to avoid USB bulk boundary false-idle. Always check both `boot_complete` and `lines` for errors before reporting success. If `boot_complete` is false and no Traceback is visible, the boot process hung (common cause: import of a missing module in main.py).
+
+## MicroPython troubleshooting
+
+- Start from evidence: can USB open, can serial open, and does the device produce a REPL prompt or MicroPython banner.
+- A board with an unknown or generic USB bridge name can still be a valid MicroPython target if serial and REPL work.
+- `Espressif / USB JTAG/serial debug unit` is a device-specific hint. On some M5Stack boards it often means UIFlow2 / MicroPython is not installed yet, so ask the user to flash UIFlow2 or another MicroPython image with M5Burner before retrying.
+- CH340, CP210x, FTDI, and other USB-UART bridges can front working MicroPython boards even when the board identity is not directly discoverable.
