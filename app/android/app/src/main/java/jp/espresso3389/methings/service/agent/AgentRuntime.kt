@@ -693,7 +693,9 @@ class AgentRuntime(
                         val isIdleNoTools = toolCallsExecuted == 0 && (curText.length > 20 || isContinuationMsg)
                         val asksUserToAct = messageTexts.any { t ->
                             t.contains("続け") || t.contains("どうぞ") || t.contains("お試し") ||
-                            t.contains("proceed") || t.contains("continue") || t.contains("should I") ||
+                            t.contains("次のターン") || t.contains("次のメッセージ") ||
+                            t.contains("proceed") || t.contains("continue") || t.contains("next turn") ||
+                            t.contains("next message") || t.contains("should I") ||
                             t.contains("shall I") || t.contains("try again")
                         }
                         val isMidTaskPause = toolCallsExecuted > 0 && roundIdx < maxRounds - 2 && asksUserToAct
@@ -714,6 +716,7 @@ class AgentRuntime(
                                     "If you are blocked, explain the blocker."
                                 else
                                     "Do NOT ask the user to 'continue' or '続けて'. " +
+                                    "Do NOT ask for 'the next turn' or another message when no new information is needed. " +
                                     "If there is more work to do, call the next tool NOW. " +
                                     "If you are blocked (missing permission, error), explain the blocker honestly.")
                             continue
