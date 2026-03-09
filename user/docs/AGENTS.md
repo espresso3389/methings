@@ -57,17 +57,20 @@ This file documents how the on-device AI agent should operate. It is referenced 
 
 ## MCU / MicroPython
 
-When asked to program a USB-connected MCU (e.g. M5Stack ATOM, ESP32):
+When asked to program a USB-connected MCU or MicroPython board:
 - Do NOT tell the user to paste code manually or press buttons. Use `device_api` to do everything.
 - **CRITICAL**: All MicroPython actions (`mcu.micropython.*`) require either `handle` (USB handle from `usb.open`) or `serial_handle` (from `serial.open`) in the payload. Without it, the call fails.
+- Judge whether MicroPython is available from USB serial and REPL behavior, not from the board family alone. A board can run MicroPython even if the exact model is unknown.
 - Standard flow:
   1. `device_api(action="usb.open", payload={"name":"..."})` → save returned `handle`
   2. `device_api(action="mcu.micropython.write_file", payload={"handle":"<handle>", "path":"main.py", "content":"..."})`
   3. `device_api(action="mcu.micropython.soft_reset", payload={"handle":"<handle>"})` → check `lines` for errors
   4. If errors → fix → repeat from step 2. Execute the entire sequence in one turn.
+- If MicroPython execution fails, verify the runtime with serial evidence (`serial.open`, `serial.exchange`, `mcu.serial_monitor`, `mcu.micropython.*` responses) before concluding that the board is unsupported.
 - Always check `soft_reset` `lines` array for `Traceback`, `ImportError`, `SyntaxError` before reporting success.
 - Also check `boot_complete`: if false, boot hung or crashed — do NOT claim success.
 - **Be honest about failures**: If something does not work (missing module, unexpected error, `boot_complete: false`), report it clearly to the user. Do NOT paper over problems with unverified workarounds (e.g. writing a polyfill for a missing module and claiming success). State what failed, why, and what the user's real options are.
+- A specific USB identity can still be a useful heuristic. Example: `Espressif / USB JTAG/serial debug unit` on M5Stack hardware often means UIFlow2 / MicroPython is not installed yet. Treat that as a device-specific hint, not a generic ESP32 rule.
 - For interactive REPL or verifying output after `mcu.reset`, use `serial.exchange`.
 - **Custom serial protocols**: For unsupported driver ICs or custom boot sequences, use `run_js` to implement protocols directly in JavaScript. Combines `device_api` (MCU actions), `fetch` (serial HTTP endpoints), `await delay(ms)` (timing), and `btoa`/`atob` (binary encoding). See `$sys/docs/run_js.md` "MCU Serial Scripting" section.
 - Read `$sys/docs/api/mcu.md` before first use.
