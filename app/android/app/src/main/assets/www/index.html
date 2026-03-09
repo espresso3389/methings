@@ -5664,8 +5664,9 @@
                       setInterruptUi(false, "");
                     }
                   }
-                  try { renderInlineAttachments(existing, visibleText); } catch (_) {}
+                  scheduleRichRender(existing, visibleText);
                   upsertConversationEntry(role, itemId, visibleText, meta, ts);
+                  scheduleConversationSave(120);
                   if (role === "assistant") clearWorkingByItemId(itemId);
                   return;
                 }
@@ -5674,7 +5675,7 @@
               conversation.push({ role: role, content: visibleText, meta: meta, ts: ts || Date.now() });
               if (role === "assistant" && itemId) clearWorkingByItemId(itemId);
               conversation = conversation.slice(-220);
-              saveConversation();
+              scheduleConversationSave(120);
             } catch (_) {}
           });
           // Debounce timer for thinking indicator — suppresses flash from
@@ -5911,6 +5912,15 @@
         return CHAT_STORAGE_PREFIX + chatSessionId;
       }
 
+      let _saveConversationTimer = null;
+      function scheduleConversationSave(delay) {
+        if (_saveConversationTimer) clearTimeout(_saveConversationTimer);
+        _saveConversationTimer = setTimeout(() => {
+          _saveConversationTimer = null;
+          saveConversation();
+        }, Math.max(0, Number(delay || 0)));
+      }
+
       function saveConversation() {
         try {
           localStorage.setItem(convoStorageKey(), JSON.stringify(conversation));
@@ -5936,6 +5946,33 @@
             addMsg(msg.role, msg.content, Object.assign({}, msg.meta || {}, { _ts: msg.ts || 0 }));
           }
         } catch (_) {}
+      }
+
+      const renderedItemMap = new Map();
+      function renderedItemKey(role, itemId) {
+        return String(role || "") + ":" + String(itemId || "");
+      }
+
+      function rememberRenderedItem(role, itemId, el) {
+        if (!itemId || !el) return;
+        renderedItemMap.set(renderedItemKey(role, itemId), el);
+      }
+
+      function clearRenderedItemCache() {
+        renderedItemMap.clear();
+      }
+
+      function scheduleRichRender(msgDiv, rawText) {
+        if (!msgDiv) return;
+        try {
+          if (msgDiv.__richRenderTimer) clearTimeout(msgDiv.__richRenderTimer);
+        } catch (_) {}
+        msgDiv.__richRenderTimer = setTimeout(() => {
+          try { renderInlineAttachments(msgDiv, rawText); } catch (_) {}
+          try { renderInlineUrlCards(msgDiv, rawText); } catch (_) {}
+          try { renderInlineMentions(msgDiv); } catch (_) {}
+          try { msgDiv.__richRenderTimer = null; } catch (_) {}
+        }, 16);
       }
 
       window.uiClearChatCache = async function(opts) {
@@ -6045,16 +6082,14 @@
         if (meta && meta._ts) div.dataset.ts = String(meta._ts);
         const safeContent = (role === "assistant") ? sanitizeAssistantText(content) : String(content || "");
         if (role === "assistant" && !safeContent) return null;
+        if (m.item_id) rememberRenderedItem(role, m.item_id, div);
         // Keep canonical plain text on each bubble so long-tap actions always
         // resolve against the correct balloon, independent of conversation[] index drift.
         try { div.__msgText = String(safeContent || ""); } catch (_) {}
         if (role === "assistant" || role === "user") {
           div.innerHTML = renderMarkdown(safeContent);
           deferHighlight(div);
-          // Attachments should render for both user and assistant messages.
-          try { renderInlineAttachments(div, safeContent); } catch (_) {}
-          try { renderInlineUrlCards(div, safeContent); } catch (_) {}
-          try { renderInlineMentions(div); } catch (_) {}
+          scheduleRichRender(div, safeContent);
           // Retry affordance for agent failures.
           try {
             const err = m && m.error ? String(m.error) : "";
@@ -6222,6 +6257,7 @@
           lastServerTs = Math.max(lastServerTs, maxTs);
           conversation = rebuilt.slice(-200).map(m => ({ role: m.role, content: m.content, meta: m.meta || {}, ts: m.ts || 0 }));
           chatMessages.textContent = "";
+          clearRenderedItemCache();
           // Reset perm-card and thinking state so they re-create after rebuild.
           _permState.cardEl = null; _permState.items = {}; _permState.knownIds.clear();
           _thinking.el = null;
@@ -6231,7 +6267,7 @@
             const aTs = Number(lastAssistantTsByItem.get(itemId) || 0);
             if (tTs > aTs) markWorkingByItemId(itemId);
           }
-          saveConversation();
+          scheduleConversationSave(120);
           // Immediately re-render any pending permission cards.
           pollPendingPermissions();
         } catch (_) {}
@@ -6240,11 +6276,15 @@
       function findRenderedByItem(role, itemId) {
         if (!itemId) return null;
         try {
+          const cached = renderedItemMap.get(renderedItemKey(role, itemId));
+          if (cached && cached.isConnected) return cached;
           const esc = (typeof CSS !== "undefined" && CSS.escape) ? CSS.escape : (s) => String(s).replace(/"/g, '\\"');
           // There can be multiple bubbles with the same item_id (e.g., permission required + approved).
           // Always target the most recent one so "working" dots attach to the right bubble.
           const nodes = chatMessages.querySelectorAll('.msg.' + role + '[data-item-id="' + esc(String(itemId)) + '"]');
-          return (nodes && nodes.length) ? nodes[nodes.length - 1] : null;
+          const found = (nodes && nodes.length) ? nodes[nodes.length - 1] : null;
+          if (found) rememberRenderedItem(role, itemId, found);
+          return found;
         } catch (_) {
           return null;
         }
@@ -6331,7 +6371,7 @@
           if (maxTs > lastServerTs) {
             lastServerTs = maxTs;
             conversation = conversation.slice(-220);
-            saveConversation();
+          scheduleConversationSave(120);
           }
         } catch (_) {}
         // Check brain busy status to show/hide working indicator.

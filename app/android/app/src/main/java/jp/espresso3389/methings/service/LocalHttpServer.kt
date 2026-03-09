@@ -308,15 +308,25 @@ class LocalHttpServer(
         return shellExecutor.exec(command, cwd, 300_000)
     }
     // SSE event broadcasting for brain events
-    private val brainSseClients = CopyOnWriteArrayList<java.io.PipedOutputStream>()
+    private data class BrainSseClient(
+        val output: java.io.PipedOutputStream,
+        val sessionId: String,
+    )
+    private val brainSseClients = CopyOnWriteArrayList<BrainSseClient>()
     private fun broadcastBrainEvent(name: String, payload: JSONObject) {
+        val eventSessionId = payload.optString("session_id", "").ifBlank {
+            payload.optJSONObject("meta")?.optString("session_id", "") ?: ""
+        }
         val data = payload.toString()
         val sseMsg = "event: $name\ndata: $data\n\n"
         val bytes = sseMsg.toByteArray(Charsets.UTF_8)
         for (client in brainSseClients) {
+            if (client.sessionId.isNotEmpty() && eventSessionId.isNotEmpty() && client.sessionId != eventSessionId) {
+                continue
+            }
             try {
-                client.write(bytes)
-                client.flush()
+                client.output.write(bytes)
+                client.output.flush()
             } catch (_: Exception) {
                 brainSseClients.remove(client)
             }
@@ -1655,7 +1665,9 @@ class LocalHttpServer(
         return when {
             // --- SSE event stream (native) ---
             uri == "/brain/events" && session.method == Method.GET -> {
-                serveBrainSse()
+                val params = session.parms ?: emptyMap()
+                val sessionId = (params["session_id"] ?: "").trim()
+                serveBrainSse(sessionId)
             }
             // --- GET endpoints (native) ---
             uri == "/brain/status" && session.method == Method.GET -> {
@@ -1806,10 +1818,10 @@ class LocalHttpServer(
         }
     }
 
-    private fun serveBrainSse(): Response {
+    private fun serveBrainSse(sessionId: String = ""): Response {
         val pipedOut = java.io.PipedOutputStream()
         val pipedIn = java.io.PipedInputStream(pipedOut, 8192)
-        brainSseClients.add(pipedOut)
+        brainSseClients.add(BrainSseClient(pipedOut, sessionId))
         // Send initial status event
         try {
             val runtime = agentRuntime
