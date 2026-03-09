@@ -22,6 +22,109 @@ private data class ToolRoundRecord(
     val resultSnippet: String,
 )
 
+private data class TurnResumeState(
+    val roundIndex: Int,
+    val nextCallIndex: Int,
+    val pendingInput: JSONArray,
+    val pendingCalls: JSONArray,
+    val forcedRounds: Int,
+    val roundsUsed: Int,
+    val toolCallsRequested: Int,
+    val toolCallsExecuted: Int,
+    val toolUsageCounts: LinkedHashMap<String, Int>,
+    val lastRoundFingerprint: String,
+    val consecutiveStallRounds: Int,
+    val stoppedForStall: Boolean,
+    val lastToolName: String,
+    val lastToolStatus: String,
+    val lastToolError: String,
+    val toolHistory: MutableList<ToolRoundRecord>,
+    val toolRequiredUnsatisfied: Boolean,
+    val lastResponsesOutputItems: JSONArray,
+    val lastResponsesResponseId: String,
+) {
+    fun toJson(): JSONObject {
+        val usage = JSONObject()
+        for ((name, count) in toolUsageCounts) usage.put(name, count)
+        val history = JSONArray()
+        for (record in toolHistory) {
+            history.put(JSONObject().apply {
+                put("name", record.name)
+                put("status", record.status)
+                put("args", record.args)
+                put("result_snippet", record.resultSnippet)
+            })
+        }
+        return JSONObject().apply {
+            put("round_index", roundIndex)
+            put("next_call_index", nextCallIndex)
+            put("pending_input", pendingInput)
+            put("pending_calls", pendingCalls)
+            put("forced_rounds", forcedRounds)
+            put("rounds_used", roundsUsed)
+            put("tool_calls_requested", toolCallsRequested)
+            put("tool_calls_executed", toolCallsExecuted)
+            put("tool_usage_counts", usage)
+            put("last_round_fingerprint", lastRoundFingerprint)
+            put("consecutive_stall_rounds", consecutiveStallRounds)
+            put("stopped_for_stall", stoppedForStall)
+            put("last_tool_name", lastToolName)
+            put("last_tool_status", lastToolStatus)
+            put("last_tool_error", lastToolError)
+            put("tool_history", history)
+            put("tool_required_unsatisfied", toolRequiredUnsatisfied)
+            put("last_responses_output_items", lastResponsesOutputItems)
+            put("last_responses_response_id", lastResponsesResponseId)
+        }
+    }
+
+    companion object {
+        fun fromJson(json: JSONObject): TurnResumeState {
+            val usageJson = json.optJSONObject("tool_usage_counts") ?: JSONObject()
+            val usage = linkedMapOf<String, Int>()
+            val usageKeys = usageJson.keys()
+            while (usageKeys.hasNext()) {
+                val key = usageKeys.next()
+                usage[key] = usageJson.optInt(key, 0)
+            }
+
+            val historyJson = json.optJSONArray("tool_history") ?: JSONArray()
+            val history = mutableListOf<ToolRoundRecord>()
+            for (i in 0 until historyJson.length()) {
+                val record = historyJson.optJSONObject(i) ?: continue
+                history.add(ToolRoundRecord(
+                    name = record.optString("name", ""),
+                    status = record.optString("status", ""),
+                    args = record.optJSONObject("args") ?: JSONObject(),
+                    resultSnippet = record.optString("result_snippet", ""),
+                ))
+            }
+
+            return TurnResumeState(
+                roundIndex = json.optInt("round_index", 0),
+                nextCallIndex = json.optInt("next_call_index", 0),
+                pendingInput = JSONArray(json.optJSONArray("pending_input")?.toString() ?: "[]"),
+                pendingCalls = JSONArray(json.optJSONArray("pending_calls")?.toString() ?: "[]"),
+                forcedRounds = json.optInt("forced_rounds", 0),
+                roundsUsed = json.optInt("rounds_used", 0),
+                toolCallsRequested = json.optInt("tool_calls_requested", 0),
+                toolCallsExecuted = json.optInt("tool_calls_executed", 0),
+                toolUsageCounts = LinkedHashMap(usage),
+                lastRoundFingerprint = json.optString("last_round_fingerprint", ""),
+                consecutiveStallRounds = json.optInt("consecutive_stall_rounds", 0),
+                stoppedForStall = json.optBoolean("stopped_for_stall", false),
+                lastToolName = json.optString("last_tool_name", ""),
+                lastToolStatus = json.optString("last_tool_status", ""),
+                lastToolError = json.optString("last_tool_error", ""),
+                toolHistory = history,
+                toolRequiredUnsatisfied = json.optBoolean("tool_required_unsatisfied", false),
+                lastResponsesOutputItems = JSONArray(json.optJSONArray("last_responses_output_items")?.toString() ?: "[]"),
+                lastResponsesResponseId = json.optString("last_responses_response_id", ""),
+            )
+        }
+    }
+}
+
 class AgentRuntime(
     private val userDir: File,
     private val sysDir: File,
@@ -302,7 +405,12 @@ class AgentRuntime(
                 if (paused != null && permStatus == "approved") {
                     val originalItem = paused.optJSONObject("item")
                     if (originalItem != null) {
-                        processWithResponsesTools(originalItem)
+                        val resumedItem = JSONObject(originalItem.toString())
+                        val turnState = paused.optJSONObject("turn_state")
+                        if (turnState != null) {
+                            resumedItem.put("resume_state", JSONObject(turnState.toString()))
+                        }
+                        processWithResponsesTools(resumedItem)
                     }
                 } else if (paused != null && permStatus == "denied") {
                     val sid = paused.optString("session_id", "default")
@@ -355,12 +463,14 @@ class AgentRuntime(
         val sessionId = sessionIdForItem(item)
 
         // Record user message (use display_text for chat UI if available, full text goes to the LLM)
-        val visibleText = item.optString("display_text", "").ifBlank { text }
-        recordMessage("user", visibleText, JSONObject().apply {
-            put("item_id", item.optString("id"))
-            put("session_id", sessionId)
-            put("actor", item.optJSONObject("meta")?.optString("actor", "human") ?: "human")
-        })
+        if (!item.optBoolean("suppress_user_record", false)) {
+            val visibleText = item.optString("display_text", "").ifBlank { text }
+            recordMessage("user", visibleText, JSONObject().apply {
+                put("item_id", item.optString("id"))
+                put("session_id", sessionId)
+                put("actor", item.optJSONObject("meta")?.optString("actor", "human") ?: "human")
+            })
+        }
 
         processWithResponsesTools(item)
     }
@@ -445,23 +555,32 @@ class AgentRuntime(
         val journalBlob = buildJournalBlob(journalCurrent, sessionId, persistentMemory)
 
         var pendingInput = buildInitialInput(providerKind, filteredDialogue, journalBlob, curText, item, supportedMediaTypes)
+        val resumeStateJson = item.optJSONObject("resume_state")
+        val resumeState = if (resumeStateJson != null) TurnResumeState.fromJson(resumeStateJson) else null
+        if (resumeState != null) {
+            pendingInput = resumeState.pendingInput
+        }
         // Reset Responses API per-turn state.
-        lastResponsesOutputItems = JSONArray()
-        lastResponsesResponseId = ""
-        var forcedRounds = 0
-        var roundsUsed = 0
-        var toolCallsRequested = 0
-        var toolCallsExecuted = 0
-        val toolUsageCounts = linkedMapOf<String, Int>()
-        var lastRoundFingerprint = ""
-        var consecutiveStallRounds = 0
-        var stoppedForStall = false
-        var lastToolName = ""
-        var lastToolStatus = ""
-        var lastToolError = ""
-        val toolHistory = mutableListOf<ToolRoundRecord>()
+        lastResponsesOutputItems = resumeState?.lastResponsesOutputItems ?: JSONArray()
+        lastResponsesResponseId = resumeState?.lastResponsesResponseId ?: ""
+        var forcedRounds = resumeState?.forcedRounds ?: 0
+        var roundsUsed = resumeState?.roundsUsed ?: 0
+        var toolCallsRequested = resumeState?.toolCallsRequested ?: 0
+        var toolCallsExecuted = resumeState?.toolCallsExecuted ?: 0
+        val toolUsageCounts = resumeState?.toolUsageCounts ?: linkedMapOf<String, Int>()
+        var lastRoundFingerprint = resumeState?.lastRoundFingerprint ?: ""
+        var consecutiveStallRounds = resumeState?.consecutiveStallRounds ?: 0
+        var stoppedForStall = resumeState?.stoppedForStall ?: false
+        var lastToolName = resumeState?.lastToolName ?: ""
+        var lastToolStatus = resumeState?.lastToolStatus ?: ""
+        var lastToolError = resumeState?.lastToolError ?: ""
+        val toolHistory = resumeState?.toolHistory ?: mutableListOf()
+        toolRequiredUnsatisfied = resumeState?.toolRequiredUnsatisfied ?: toolRequiredUnsatisfied
+        val startRoundIdx = resumeState?.roundIndex ?: 0
+        var resumedCalls: JSONArray? = resumeState?.pendingCalls
+        var resumedCallIndex = resumeState?.nextCallIndex ?: 0
 
-        for (roundIdx in 0 until maxRounds) {
+        for (roundIdx in startRoundIdx until maxRounds) {
             checkInterrupt()
             roundsUsed = roundIdx + 1
             emitLog("brain_status", JSONObject().apply {
@@ -471,248 +590,224 @@ class AgentRuntime(
                 put("label", "Thinking\u2026")
             })
 
-            val body = buildRequestBody(providerKind, model, tools, pendingInput, systemPrompt, toolRequiredUnsatisfied)
-            if (providerKind == ProviderKind.OPENAI_RESPONSES && roundIdx > 0 && lastResponsesResponseId.isNotBlank()) {
-                body.put("previous_response_id", lastResponsesResponseId)
-            }
-
-            // Debug: log input structure for troubleshooting
-            try {
-                val inputArr = pendingInput as? JSONArray
-                if (inputArr != null) {
-                    val summary = (0 until inputArr.length()).joinToString(", ") { i ->
-                        val o = inputArr.optJSONObject(i)
-                        val role = o?.optString("role", "?") ?: "?"
-                        val text = o?.optString("text", "") ?: ""
-                        val content = o?.opt("content")
-                        val textLen = when {
-                            text.isNotEmpty() -> text.length
-                            content is String -> content.length
-                            content is JSONArray -> {
-                                (0 until content.length()).sumOf { j ->
-                                    content.optJSONObject(j)?.optString("text", "")?.length ?: 0
-                                }
-                            }
-                            else -> 0
-                        }
-                        "$role($textLen)"
-                    }
-                    Log.i(TAG, "Round $roundIdx input: [$summary] system=${systemPrompt.length}chars tools=${tools.length()}")
+            val usingResumedCalls = resumedCalls != null
+            val calls: JSONArray
+            if (usingResumedCalls) {
+                calls = resumedCalls ?: JSONArray()
+            } else {
+                val body = buildRequestBody(providerKind, model, tools, pendingInput, systemPrompt, toolRequiredUnsatisfied)
+                if (providerKind == ProviderKind.OPENAI_RESPONSES && roundIdx > 0 && lastResponsesResponseId.isNotBlank()) {
+                    body.put("previous_response_id", lastResponsesResponseId)
                 }
-            } catch (_: Exception) {}
-            if (providerKind == ProviderKind.GOOGLE_GEMINI) {
-                logGeminiRequestStructure(body)
-            }
 
-            // Make API call with retries
-            var payload: JSONObject? = null
-            var lastEx: Exception? = null
-            for (attempt in 0..maxRetries) {
                 try {
-                    payload = llmClient.streamingPost(
-                        effectiveProviderUrl, headers, body, providerKind,
-                        connectTimeoutMs, readTimeoutMs,
-                        interruptCheck = { interruptFlag }
-                    )
-                    lastEx = null
-                    break
-                } catch (ex: InterruptedException) {
-                    throw ex
-                } catch (ex: Exception) {
-                    lastEx = ex
-                    // Retry without tool_choice if that was set
-                    if (body.has("tool_choice")) {
-                        try {
-                            val body2 = JSONObject(body.toString())
-                            body2.remove("tool_choice")
-                            payload = llmClient.streamingPost(
-                                effectiveProviderUrl, headers, body2, providerKind,
-                                connectTimeoutMs, readTimeoutMs,
-                                interruptCheck = { interruptFlag }
-                            )
-                            lastEx = null
-                            break
-                        } catch (_: Exception) {}
-                    }
-                    val isTransient = ex is java.net.SocketTimeoutException || ex is java.net.ConnectException
-                    if (!isTransient || attempt >= maxRetries) throw ex
-                    Thread.sleep((300L * (attempt + 1)).coerceAtMost(1500))
-                }
-            }
-            if (lastEx != null) throw lastEx
-            if (payload == null) throw RuntimeException("No response from provider")
-
-            // Parse response based on provider kind
-            val parseResult = parseProviderResponse(providerKind, payload)
-            val messageTexts = parseResult.first
-            val calls = parseResult.second
-            toolCallsRequested += calls.length()
-
-            if (calls.length() == 0) {
-                if (messageTexts.isEmpty()) {
-                    pendingInput = appendUserNudge(providerKind, pendingInput,
-                        "You returned an empty response (no text, no tool calls). You MUST either respond with text or call tools.")
-                    continue
-                }
-                if (toolRequiredUnsatisfied && forcedRounds < 2) {
-                    forcedRounds++
-                    pendingInput = appendUserNudge(providerKind, pendingInput,
-                        "Tool policy is REQUIRED for this request. " +
-                        "You MUST call one or more tools to perform the action(s). " +
-                        "If you cannot call tools (e.g. missing permission or info), " +
-                        "explain the blocker to the user. Never claim an action is complete " +
-                        "without tool confirmation.")
-                    continue
-                }
-                // Soft nudge: if the model returned text without tool calls but
-                // Nudge when the model pauses instead of continuing tool use.
-                // Three cases:
-                // (a) No tools called yet and user message is non-trivial: model is narrating
-                //     → force tool_choice to make it act
-                // (b) Tools were called but model asks user to "continue" instead of proceeding
-                //     → nudge with text only (don't force tool_choice — it causes repeat-call loops)
-                // (c) User message is a continuation keyword ("続けて", "continue", etc.)
-                //     → force tool_choice even if message is short, to break the "say 続けて" loop
-                if (forcedRounds < 3) {
-                    // Detect short continuation messages that should still force tool use
-                    val isContinuationMsg = curText.length <= 20 && curText.lowercase(Locale.US).let { t ->
-                        t.contains("続け") || t.contains("どうぞ") || t.contains("go ahead") ||
-                        t.contains("continue") || t.contains("proceed") || t.contains("やって") ||
-                        t.contains("お願い")
-                    }
-                    val isIdleNoTools = toolCallsExecuted == 0 && (curText.length > 20 || isContinuationMsg)
-                    val asksUserToAct = messageTexts.any { t ->
-                        t.contains("続け") || t.contains("どうぞ") || t.contains("お試し") ||
-                        t.contains("proceed") || t.contains("continue") || t.contains("should I") ||
-                        t.contains("shall I") || t.contains("try again")
-                    }
-                    val isMidTaskPause = toolCallsExecuted > 0 && roundIdx < maxRounds - 2 && asksUserToAct
-                    if (isIdleNoTools || isMidTaskPause) {
-                        forcedRounds++
-                        if (isIdleNoTools) {
-                            toolRequiredUnsatisfied = true  // Force tool_choice only for idle-no-tools
+                    val inputArr = pendingInput as? JSONArray
+                    if (inputArr != null) {
+                        val summary = (0 until inputArr.length()).joinToString(", ") { i ->
+                            val o = inputArr.optJSONObject(i)
+                            val role = o?.optString("role", "?") ?: "?"
+                            val text = o?.optString("text", "") ?: ""
+                            val content = o?.opt("content")
+                            val textLen = when {
+                                text.isNotEmpty() -> text.length
+                                content is String -> content.length
+                                content is JSONArray -> {
+                                    (0 until content.length()).sumOf { j ->
+                                        content.optJSONObject(j)?.optString("text", "")?.length ?: 0
+                                    }
+                                }
+                                else -> 0
+                            }
+                            "$role($textLen)"
                         }
-                        Log.i(TAG, "Text-only nudge on round $roundIdx (toolsExec=$toolCallsExecuted, idle=$isIdleNoTools, pause=$isMidTaskPause)")
+                        Log.i(TAG, "Round $roundIdx input: [$summary] system=${systemPrompt.length}chars tools=${tools.length()}")
+                    }
+                } catch (_: Exception) {}
+                if (providerKind == ProviderKind.GOOGLE_GEMINI) {
+                    logGeminiRequestStructure(body)
+                }
+
+                var payload: JSONObject? = null
+                var lastEx: Exception? = null
+                for (attempt in 0..maxRetries) {
+                    try {
+                        payload = llmClient.streamingPost(
+                            effectiveProviderUrl, headers, body, providerKind,
+                            connectTimeoutMs, readTimeoutMs,
+                            interruptCheck = { interruptFlag }
+                        )
+                        lastEx = null
+                        break
+                    } catch (ex: InterruptedException) {
+                        throw ex
+                    } catch (ex: Exception) {
+                        lastEx = ex
+                        if (body.has("tool_choice")) {
+                            try {
+                                val body2 = JSONObject(body.toString())
+                                body2.remove("tool_choice")
+                                payload = llmClient.streamingPost(
+                                    effectiveProviderUrl, headers, body2, providerKind,
+                                    connectTimeoutMs, readTimeoutMs,
+                                    interruptCheck = { interruptFlag }
+                                )
+                                lastEx = null
+                                break
+                            } catch (_: Exception) {}
+                        }
+                        val isTransient = ex is java.net.SocketTimeoutException || ex is java.net.ConnectException
+                        if (!isTransient || attempt >= maxRetries) throw ex
+                        Thread.sleep((300L * (attempt + 1)).coerceAtMost(1500))
+                    }
+                }
+                if (lastEx != null) throw lastEx
+                if (payload == null) throw RuntimeException("No response from provider")
+
+                val parseResult = parseProviderResponse(providerKind, payload)
+                val messageTexts = parseResult.first
+                calls = parseResult.second
+                toolCallsRequested += calls.length()
+
+                if (calls.length() == 0) {
+                    if (messageTexts.isEmpty()) {
                         pendingInput = appendUserNudge(providerKind, pendingInput,
-                            if (isIdleNoTools && isContinuationMsg)
-                                "The user is asking you to continue the previous task. " +
-                                "Your text response was NOT shown — you MUST call tools to resume work. " +
-                                "You have full tool access in this turn. Call the next tool NOW."
-                            else if (isIdleNoTools)
-                                "You responded with text only — this text was NOT shown to the user. " +
-                                "You MUST call tools to perform the action. " +
-                                "If you are blocked, explain the blocker."
-                            else
-                                "Do NOT ask the user to 'continue' or '続けて'. " +
-                                "If there is more work to do, call the next tool NOW. " +
-                                "If you are blocked (missing permission, error), explain the blocker honestly.")
+                            "You returned an empty response (no text, no tool calls). You MUST either respond with text or call tools.")
                         continue
                     }
+                    if (toolRequiredUnsatisfied && forcedRounds < 2) {
+                        forcedRounds++
+                        pendingInput = appendUserNudge(providerKind, pendingInput,
+                            "Tool policy is REQUIRED for this request. " +
+                            "You MUST call one or more tools to perform the action(s). " +
+                            "If you cannot call tools (e.g. missing permission or info), " +
+                            "explain the blocker to the user. Never claim an action is complete " +
+                            "without tool confirmation.")
+                        continue
+                    }
+                    if (forcedRounds < 3) {
+                        val isContinuationMsg = curText.length <= 20 && curText.lowercase(Locale.US).let { t ->
+                            t.contains("続け") || t.contains("どうぞ") || t.contains("go ahead") ||
+                            t.contains("continue") || t.contains("proceed") || t.contains("やって") ||
+                            t.contains("お願い")
+                        }
+                        val isIdleNoTools = toolCallsExecuted == 0 && (curText.length > 20 || isContinuationMsg)
+                        val asksUserToAct = messageTexts.any { t ->
+                            t.contains("続け") || t.contains("どうぞ") || t.contains("お試し") ||
+                            t.contains("proceed") || t.contains("continue") || t.contains("should I") ||
+                            t.contains("shall I") || t.contains("try again")
+                        }
+                        val isMidTaskPause = toolCallsExecuted > 0 && roundIdx < maxRounds - 2 && asksUserToAct
+                        if (isIdleNoTools || isMidTaskPause) {
+                            forcedRounds++
+                            if (isIdleNoTools) {
+                                toolRequiredUnsatisfied = true
+                            }
+                            Log.i(TAG, "Text-only nudge on round $roundIdx (toolsExec=$toolCallsExecuted, idle=$isIdleNoTools, pause=$isMidTaskPause)")
+                            pendingInput = appendUserNudge(providerKind, pendingInput,
+                                if (isIdleNoTools && isContinuationMsg)
+                                    "The user is asking you to continue the previous task. " +
+                                    "Your text response was NOT shown — you MUST call tools to resume work. " +
+                                    "You have full tool access in this turn. Call the next tool NOW."
+                                else if (isIdleNoTools)
+                                    "You responded with text only — this text was NOT shown to the user. " +
+                                    "You MUST call tools to perform the action. " +
+                                    "If you are blocked, explain the blocker."
+                                else
+                                    "Do NOT ask the user to 'continue' or '続けて'. " +
+                                    "If there is more work to do, call the next tool NOW. " +
+                                    "If you are blocked (missing permission, error), explain the blocker honestly.")
+                            continue
+                        }
+                    }
+                    val toolSummary = buildToolHistorySummary(toolHistory)
+                    Log.i(TAG, "Final text (round=$roundIdx, toolsExec=$toolCallsExecuted, forcedRounds=$forcedRounds): ${messageTexts.joinToString(" | ").take(300)}")
+                    for ((idx, text) in messageTexts.withIndex()) {
+                        val recorded = if (idx == messageTexts.lastIndex && toolSummary.isNotEmpty()) {
+                            "$text\n$toolSummary"
+                        } else text
+                        recordMessage("assistant", recorded, JSONObject().apply {
+                            put("item_id", item.optString("id"))
+                            put("session_id", sessionId)
+                        })
+                        emitLog("brain_response", JSONObject().put("item_id", item.optString("id")).put("text", text.take(300)))
+                    }
+                    return
                 }
-                // Final assistant message — append tool history summary for cross-turn memory
-                val toolSummary = buildToolHistorySummary(toolHistory)
-                Log.i(TAG, "Final text (round=$roundIdx, toolsExec=$toolCallsExecuted, forcedRounds=$forcedRounds): ${messageTexts.joinToString(" | ").take(300)}")
-                for ((idx, text) in messageTexts.withIndex()) {
-                    val recorded = if (idx == messageTexts.lastIndex && toolSummary.isNotEmpty()) {
-                        "$text\n$toolSummary"
-                    } else text
-                    recordMessage("assistant", recorded, JSONObject().apply {
-                        put("item_id", item.optString("id"))
-                        put("session_id", sessionId)
-                    })
-                    emitLog("brain_response", JSONObject().put("item_id", item.optString("id")).put("text", text.take(300)))
-                }
-                return
-            }
 
-            toolRequiredUnsatisfied = false
+                toolRequiredUnsatisfied = false
 
-            // Defer recording assistant text until after tool execution.
-            // If tools fail (permission_required, policy error), the premature
-            // text is discarded — the next LLM round will generate a new message
-            // that reflects the actual outcome.
-            val deferredTexts = messageTexts.toList()
-
-            // Execute tool calls
-            // Chat Completions and Anthropic are stateless — keep accumulating
-            // the full conversation history so multi-round tool loops retain context.
-            if (providerKind == ProviderKind.OPENAI_RESPONSES) {
-                pendingInput = JSONArray()
-                // When previous_response_id is used, do not re-send prior output items.
-                // Re-sending + previous_response_id triggers duplicate-item errors.
-                if (lastResponsesResponseId.isBlank()) {
-                    for (ci in 0 until lastResponsesOutputItems.length()) {
-                        pendingInput.put(lastResponsesOutputItems.get(ci))
+                if (providerKind == ProviderKind.OPENAI_RESPONSES) {
+                    pendingInput = JSONArray()
+                    if (lastResponsesResponseId.isBlank()) {
+                        for (ci in 0 until lastResponsesOutputItems.length()) {
+                            pendingInput.put(lastResponsesOutputItems.get(ci))
+                        }
                     }
                 }
-            }
 
-            // Chat Completions: include the assistant message (with tool_calls) before tool results
-            if (providerKind == ProviderKind.OPENAI_CHAT) {
-                val assistantMsg = JSONObject().put("role", "assistant")
-                if (messageTexts.isNotEmpty()) assistantMsg.put("content", messageTexts.joinToString("\n"))
-                val tcArr = JSONArray()
-                for (ci in 0 until calls.length()) {
-                    val c = calls.getJSONObject(ci)
-                    tcArr.put(JSONObject().apply {
-                        put("id", c.optString("call_id", c.optString("id", "")))
-                        put("type", "function")
-                        put("function", JSONObject().apply {
-                            put("name", c.optString("name", ""))
-                            put("arguments", (c.opt("arguments") as? JSONObject)?.toString() ?: "{}")
+                if (providerKind == ProviderKind.OPENAI_CHAT) {
+                    val assistantMsg = JSONObject().put("role", "assistant")
+                    if (messageTexts.isNotEmpty()) assistantMsg.put("content", messageTexts.joinToString("\n"))
+                    val tcArr = JSONArray()
+                    for (ci in 0 until calls.length()) {
+                        val c = calls.getJSONObject(ci)
+                        tcArr.put(JSONObject().apply {
+                            put("id", c.optString("call_id", c.optString("id", "")))
+                            put("type", "function")
+                            put("function", JSONObject().apply {
+                                put("name", c.optString("name", ""))
+                                put("arguments", (c.opt("arguments") as? JSONObject)?.toString() ?: "{}")
+                            })
                         })
-                    })
+                    }
+                    assistantMsg.put("tool_calls", tcArr)
+                    pendingInput.put(assistantMsg)
                 }
-                assistantMsg.put("tool_calls", tcArr)
-                pendingInput.put(assistantMsg)
-            }
 
-            // Anthropic: echo back the raw content array to preserve thinking blocks
-            if (providerKind == ProviderKind.ANTHROPIC) {
-                val rawContent = payload.optJSONArray("content")
-                if (rawContent != null) {
-                    pendingInput.put(JSONObject().put("role", "assistant").put("content", rawContent))
-                } else {
-                    // Fallback: reconstruct from parsed data
-                    val contentArr = JSONArray()
+                if (providerKind == ProviderKind.ANTHROPIC) {
+                    val rawContent = payload.optJSONArray("content")
+                    if (rawContent != null) {
+                        pendingInput.put(JSONObject().put("role", "assistant").put("content", rawContent))
+                    } else {
+                        val contentArr = JSONArray()
+                        for (t in messageTexts) {
+                            contentArr.put(JSONObject().put("type", "text").put("text", t))
+                        }
+                        for (ci in 0 until calls.length()) {
+                            val c = calls.getJSONObject(ci)
+                            contentArr.put(JSONObject().apply {
+                                put("type", "tool_use")
+                                put("id", c.optString("call_id", c.optString("id", "")))
+                                put("name", c.optString("name", ""))
+                                put("input", c.opt("arguments") ?: JSONObject())
+                            })
+                        }
+                        pendingInput.put(JSONObject().put("role", "assistant").put("content", contentArr))
+                    }
+                }
+
+                if (providerKind == ProviderKind.GOOGLE_GEMINI) {
+                    val parts = JSONArray()
                     for (t in messageTexts) {
-                        contentArr.put(JSONObject().put("type", "text").put("text", t))
+                        parts.put(JSONObject().put("text", t))
                     }
                     for (ci in 0 until calls.length()) {
                         val c = calls.getJSONObject(ci)
-                        contentArr.put(JSONObject().apply {
-                            put("type", "tool_use")
-                            put("id", c.optString("call_id", c.optString("id", "")))
-                            put("name", c.optString("name", ""))
-                            put("input", c.opt("arguments") ?: JSONObject())
+                        parts.put(JSONObject().apply {
+                            put("functionCall", JSONObject().apply {
+                                put("name", c.optString("name", ""))
+                                put("args", c.opt("arguments") ?: JSONObject())
+                            })
+                            val sig = c.optString("thoughtSignature", "")
+                            if (sig.isNotEmpty()) put("thoughtSignature", sig)
                         })
                     }
-                    pendingInput.put(JSONObject().put("role", "assistant").put("content", contentArr))
+                    pendingInput.put(JSONObject().put("role", "model").put("parts", parts))
                 }
             }
 
-            // Gemini: echo back model message with functionCall parts
-            if (providerKind == ProviderKind.GOOGLE_GEMINI) {
-                val parts = JSONArray()
-                for (t in messageTexts) {
-                    parts.put(JSONObject().put("text", t))
-                }
-                for (ci in 0 until calls.length()) {
-                    val c = calls.getJSONObject(ci)
-                    parts.put(JSONObject().apply {
-                        put("functionCall", JSONObject().apply {
-                            put("name", c.optString("name", ""))
-                            put("args", c.opt("arguments") ?: JSONObject())
-                        })
-                        // Gemini 3.x: echo back thoughtSignature at the part level
-                        val sig = c.optString("thoughtSignature", "")
-                        if (sig.isNotEmpty()) put("thoughtSignature", sig)
-                    })
-                }
-                pendingInput.put(JSONObject().put("role", "model").put("parts", parts))
-            }
-
-            for (i in 0 until calls.length().coerceAtMost(maxActions)) {
+            val callStartIndex = if (usingResumedCalls) resumedCallIndex else 0
+            for (i in callStartIndex until calls.length().coerceAtMost(maxActions)) {
                 checkInterrupt()
                 val call = calls.getJSONObject(i)
                 val name = call.optString("name", "")
@@ -747,7 +842,6 @@ class AgentRuntime(
                     " args=${args.toString().take(200)}" +
                     " result=${result.toString().take(300)}")
 
-                // Record tool activity for cross-turn summary
                 toolHistory.add(ToolRoundRecord(
                     name = name,
                     status = lastToolStatus,
@@ -755,18 +849,46 @@ class AgentRuntime(
                     resultSnippet = buildToolResultSnippet(name, args, result),
                 ))
 
-                // Check for permission_required
                 val resultStatus = result.optString("status", "")
                 if (resultStatus in setOf("permission_required", "permission_expired")) {
                     val req = result.optJSONObject("request") ?: JSONObject()
                     val pid = req.optString("id", "").trim()
                     if (pid.isNotEmpty()) {
+                        val turnState = TurnResumeState(
+                            roundIndex = roundIdx,
+                            nextCallIndex = i,
+                            pendingInput = JSONArray(pendingInput.toString()),
+                            pendingCalls = JSONArray(calls.toString()),
+                            forcedRounds = forcedRounds,
+                            roundsUsed = roundsUsed,
+                            toolCallsRequested = toolCallsRequested,
+                            toolCallsExecuted = toolCallsExecuted - 1,
+                            toolUsageCounts = LinkedHashMap(toolUsageCounts).apply {
+                                if (name.isNotBlank()) {
+                                    val updated = (this[name] ?: 1) - 1
+                                    if (updated <= 0) remove(name) else put(name, updated)
+                                }
+                            },
+                            lastRoundFingerprint = lastRoundFingerprint,
+                            consecutiveStallRounds = consecutiveStallRounds,
+                            stoppedForStall = stoppedForStall,
+                            lastToolName = if (lastToolName == name) "" else lastToolName,
+                            lastToolStatus = "",
+                            lastToolError = "",
+                            toolHistory = toolHistory.dropLast(1).mapTo(mutableListOf()) {
+                                ToolRoundRecord(it.name, it.status, JSONObject(it.args.toString()), it.resultSnippet)
+                            },
+                            toolRequiredUnsatisfied = toolRequiredUnsatisfied,
+                            lastResponsesOutputItems = JSONArray(lastResponsesOutputItems.toString()),
+                            lastResponsesResponseId = lastResponsesResponseId,
+                        )
                         awaitingPermissions[pid] = JSONObject().apply {
                             put("permission_id", pid)
                             put("status", "pending")
                             put("tool", name)
                             put("session_id", sessionId)
                             put("item", item)
+                            put("turn_state", turnState.toJson())
                             put("created_at", System.currentTimeMillis())
                         }
                     }
@@ -774,7 +896,6 @@ class AgentRuntime(
                     return
                 }
 
-                // Check for policy errors
                 if (resultStatus == "error") {
                     val err = result.optString("error", "")
                     if (err in setOf("command_not_allowed", "path_not_allowed", "invalid_path")) {
@@ -785,7 +906,6 @@ class AgentRuntime(
                     }
                 }
 
-                // Extract media from tool result BEFORE truncation (only if provider supports the media type)
                 val mediaData = extractMediaFromToolResult(result, supportedMediaTypes)
                 if (mediaData != null) {
                     Log.i(TAG, "Tool '$name' produced ${mediaData.mediaType}: ${mediaData.mimeType}, ${mediaData.base64.length} chars b64, sending as multimodal")
@@ -797,10 +917,8 @@ class AgentRuntime(
                     config.intWithProfile("max_tool_output_chars", 12000, 2000, 100000),
                     config.intWithProfile("max_tool_output_list_items", 80, 10, 500))
 
-                // Strip redundant base64 data from text when media is sent separately
                 val textResult = if (mediaData != null) {
                     val stripped = ToolExecutor.stripMediaData(truncated)
-                    // Inject a hint so the agent knows the media is visible right now
                     stripped.put("_media_hint",
                         "A ${mediaData.mediaType} is attached to this tool result. " +
                         "You can see/hear it directly — describe or analyze it now. " +
@@ -811,18 +929,15 @@ class AgentRuntime(
                 appendToolResult(providerKind, pendingInput, callId, textResult, name, mediaData)
             }
 
-            // Detect repetitive rounds (same tool/action/status pattern) and stop early to avoid
-            // exhausting max rounds with little progress.
-            // For device_api calls, include the action parameter to distinguish different operations.
+            resumedCalls = null
+            resumedCallIndex = 0
+
             val roundCallsFingerprint = buildString {
                 val limit = calls.length().coerceAtMost(maxActions)
                 for (i in 0 until limit) {
                     val c = calls.optJSONObject(i) ?: continue
                     val n = c.optString("name", "")
                     append(n)
-                    // Include device_api action + payload hash in fingerprint to avoid false stalls.
-                    // Different actions (usb.open vs write_file) and different payloads for
-                    // the same action (exec with different code) must produce different fingerprints.
                     if (n == "device_api") {
                         val rawArgs = c.opt("arguments") ?: c.opt("input")
                         val argsObj = try {
@@ -859,7 +974,6 @@ class AgentRuntime(
                 break
             }
 
-            // Nudge to stop — only in the last 3 rounds to avoid wasting context
             if (roundIdx >= maxRounds - 3) {
                 pendingInput = appendUserNudge(providerKind, pendingInput,
                     "Tool outputs have been provided. If the user's request is fully satisfied, respond with the final answer and STOP. " +
@@ -1681,7 +1795,7 @@ class AgentRuntime(
                 "|(?:You (?:MUST|must|ARE|are|MAY|should))\\b" +
                 "|(?:Only |Prefer |Keep responses|Use the available|Use device_api)" +
                 "|(?:If (?:a |the )?(?:tool|capability|request|user))" +
-                "|(?:Permission|Tool policy)" +
+                "|(?:Permission policy|Tool policy)" +
                 ").*",
             RegexOption.MULTILINE
         )

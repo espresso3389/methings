@@ -15,18 +15,20 @@ class SchedulerEngine(
     private val executeRunJs: (code: String, timeoutMs: Long) -> JsResult,
     private val executeShellExec: ((cmd: String, args: String, cwd: String) -> JSONObject)?,
 ) {
-    private val ticker: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
-        Thread(r, "scheduler-tick").apply { isDaemon = true }
-    }
-    private val executionPool = Executors.newFixedThreadPool(2) { r ->
-        Thread(r, "scheduler-exec").apply { isDaemon = true }
-    }
+    private var ticker: ScheduledExecutorService = newTicker()
+    private var executionPool = newExecutionPool()
     private val runningSchedules = ConcurrentHashMap<String, Future<*>>()
 
     @Volatile private var started = false
 
     fun start() {
         if (started) return
+        if (ticker.isShutdown || ticker.isTerminated) {
+            ticker = newTicker()
+        }
+        if (executionPool.isShutdown || executionPool.isTerminated) {
+            executionPool = newExecutionPool()
+        }
         started = true
         Log.i(TAG, "SchedulerEngine starting")
         try {
@@ -239,5 +241,15 @@ class SchedulerEngine(
     companion object {
         private const val TAG = "SchedulerEngine"
         private const val TICK_INTERVAL_S = 60L
+
+        private fun newTicker(): ScheduledExecutorService =
+            Executors.newSingleThreadScheduledExecutor { r ->
+                Thread(r, "scheduler-tick").apply { isDaemon = true }
+            }
+
+        private fun newExecutionPool() =
+            Executors.newFixedThreadPool(2) { r ->
+                Thread(r, "scheduler-exec").apply { isDaemon = true }
+            }
     }
 }

@@ -184,9 +184,10 @@ class ShellExecutor(private val context: Context) {
         stdoutThread.join(2000)
         stderrThread.join(2000)
 
+        val exitCode = process.exitValue()
         return JSONObject()
-            .put("status", "ok")
-            .put("exit_code", process.exitValue())
+            .put("status", if (exitCode == 0) "ok" else "error")
+            .put("exit_code", exitCode)
             .put("stdout", stdoutBuilder.toString())
             .put("stderr", stderrBuilder.toString())
     }

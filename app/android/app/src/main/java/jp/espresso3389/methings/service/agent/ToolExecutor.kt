@@ -8,6 +8,7 @@ import jp.espresso3389.methings.service.core.CoreApiUtils
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -126,9 +127,13 @@ class ToolExecutor(
         if (!target.exists()) return JSONObject().put("status", "error").put("error", "not_found")
         if (!target.isFile) return JSONObject().put("status", "error").put("error", "not_a_file")
 
-        val bytes = target.readBytes()
-        val content = if (bytes.size > maxBytes) {
-            String(bytes, 0, maxBytes, Charsets.UTF_8) + "\n...[truncated at $maxBytes bytes, total ${bytes.size}]..."
+        val totalSize = target.length()
+        val bytes = RandomAccessFile(target, "r").use { raf ->
+            val toRead = minOf(totalSize, maxBytes.toLong()).toInt()
+            ByteArray(toRead).also { raf.readFully(it) }
+        }
+        val content = if (totalSize > maxBytes.toLong()) {
+            String(bytes, Charsets.UTF_8) + "\n...[truncated at $maxBytes bytes, total $totalSize]..."
         } else {
             String(bytes, Charsets.UTF_8)
         }
@@ -136,8 +141,8 @@ class ToolExecutor(
             .put("status", "ok")
             .put("path", path)
             .put("content", content)
-            .put("size", bytes.size)
-            .put("truncated", bytes.size > maxBytes)
+            .put("size", totalSize)
+            .put("truncated", totalSize > maxBytes.toLong())
     }
 
     private fun executeReadBinaryFile(args: JSONObject): JSONObject {
@@ -151,9 +156,16 @@ class ToolExecutor(
         val offsetBytes = args.optInt("offset_bytes", 0).coerceAtLeast(0)
         val sizeBytes = args.optInt("size_bytes", 262144).coerceIn(1, 1_048_576)
 
-        val bytes = target.readBytes()
-        val end = (offsetBytes + sizeBytes).coerceAtMost(bytes.size)
-        val slice = if (offsetBytes < bytes.size) bytes.copyOfRange(offsetBytes, end) else ByteArray(0)
+        val totalSize = target.length()
+        val slice = RandomAccessFile(target, "r").use { raf ->
+            if (offsetBytes.toLong() >= totalSize) {
+                ByteArray(0)
+            } else {
+                raf.seek(offsetBytes.toLong())
+                val toRead = minOf(sizeBytes.toLong(), totalSize - offsetBytes.toLong()).toInt()
+                ByteArray(toRead).also { raf.readFully(it) }
+            }
+        }
         val b64 = Base64.encodeToString(slice, Base64.NO_WRAP)
 
         return JSONObject()
@@ -162,7 +174,7 @@ class ToolExecutor(
             .put("data_b64", b64)
             .put("offset_bytes", offsetBytes)
             .put("size_bytes", slice.size)
-            .put("total_size", bytes.size)
+            .put("total_size", totalSize)
     }
 
     private fun executeWriteFile(args: JSONObject): JSONObject {
@@ -533,8 +545,15 @@ class ToolExecutor(
     }
 
     private fun resolveSecure(baseDir: File, relativePath: String): File? {
-        val resolved = File(baseDir, relativePath).canonicalFile
-        return if (resolved.absolutePath.startsWith(baseDir.canonicalPath)) resolved else null
+        val canonicalBase = baseDir.canonicalFile
+        val resolved = File(canonicalBase, relativePath).canonicalFile
+        val basePath = canonicalBase.path
+        val resolvedPath = resolved.path
+        return if (resolvedPath == basePath || resolvedPath.startsWith("$basePath${File.separator}")) {
+            resolved
+        } else {
+            null
+        }
     }
 
     private fun pathError(error: String): JSONObject {

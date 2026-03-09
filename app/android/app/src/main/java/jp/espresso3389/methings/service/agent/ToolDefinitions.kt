@@ -147,14 +147,14 @@ object ToolDefinitions {
             put("data_b64", prop("string"))
             put("mime_type", prop("string"))
             put("prompt", prop("string"))
-        }.withRequired("path"))
+        }.withRequired())
 
         tools.put(functionTool("analyze_audio", "Analyze an audio file using built-in multimodal audio understanding. The audio is sent directly to the LLM. Use this to transcribe speech, identify sounds, or answer questions about audio. Only supported by Gemini; returns an error with other providers. Check the system prompt for current provider capabilities.") {
             put("path", prop("string"))
             put("data_b64", prop("string"))
             put("mime_type", prop("string"))
             put("prompt", prop("string"))
-        }.withRequired("path"))
+        }.withRequired())
 
         return tools
     }

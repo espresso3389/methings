@@ -36,6 +36,10 @@ val appGitSha = (System.getenv("METHINGS_GIT_SHA") ?: "").trim().ifBlank {
 }
 val appRepoUrl = "https://github.com/espresso3389/methings"
 
+configurations.configureEach {
+    resolutionStrategy.force("org.bouncycastle:bcprov-jdk18on:1.77")
+}
+
 android {
     namespace = "jp.espresso3389.methings"
     compileSdk = 34
@@ -113,6 +117,10 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+    }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -426,4 +434,9 @@ dependencies {
     implementation("io.github.dokar3:quickjs-kt:1.0.0-alpha13")
     // OpenCV for image processing in QuickJS (cv.* APIs)
     implementation("org.opencv:opencv:4.13.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.mockito:mockito-inline:5.2.0")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
 }
