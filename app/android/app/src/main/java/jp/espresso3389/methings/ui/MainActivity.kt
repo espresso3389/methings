@@ -116,6 +116,31 @@ class MainActivity : AppCompatActivity() {
             val cb = pendingWebViewPermAction.getAndSet(null)
             cb?.invoke(ok)
         }
+    private val pendingChatCameraPermAction = AtomicReference<((Boolean) -> Unit)?>(null)
+    private val chatCameraPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            val cb = pendingChatCameraPermAction.getAndSet(null)
+            cb?.invoke(granted)
+        }
+    private val chatCameraLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val data = result.data
+            val relPath = data?.getStringExtra(CameraCaptureActivity.EXTRA_REL_PATH)?.trim().orEmpty()
+            val error = data?.getStringExtra(CameraCaptureActivity.EXTRA_ERROR)?.trim().orEmpty()
+            when {
+                result.resultCode == RESULT_OK && relPath.isNotBlank() -> {
+                    val escaped = jsString(relPath)
+                    evalJs("window.onNativeChatCameraResult && window.onNativeChatCameraResult({ok:true,rel_path:'$escaped'})")
+                }
+                error.isNotBlank() -> {
+                    val escaped = jsString(error)
+                    evalJs("window.onNativeChatCameraResult && window.onNativeChatCameraResult({ok:false,error:'$escaped'})")
+                }
+                else -> {
+                    evalJs("window.onNativeChatCameraResult && window.onNativeChatCameraResult({ok:false,cancelled:true})")
+                }
+            }
+        }
 
     private val pendingBrowserPermAction = AtomicReference<((Boolean) -> Unit)?>(null)
     private val browserPermLauncher =
@@ -1103,6 +1128,33 @@ pre code.hljs{padding:12px;font-size:12px;line-height:1.5;background:#0e0e10}
         opts.setBarcodeImageEnabled(false)
         opts.setCameraId(0)
         meSyncQrScanLauncher.launch(opts)
+    }
+
+    fun openNativeChatCamera(initialLens: String) {
+        val lens = if (initialLens.trim().equals("front", ignoreCase = true)) "front" else "back"
+        val launch = {
+            chatCameraLauncher.launch(
+                Intent(this, CameraCaptureActivity::class.java).apply {
+                    putExtra(CameraCaptureActivity.EXTRA_LENS, lens)
+                }
+            )
+        }
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launch()
+            return
+        }
+        if (pendingChatCameraPermAction.get() != null) {
+            evalJs("window.onNativeChatCameraResult && window.onNativeChatCameraResult({ok:false,error:'camera_permission_busy'})")
+            return
+        }
+        pendingChatCameraPermAction.set { ok ->
+            if (ok) {
+                launch()
+            } else {
+                evalJs("window.onNativeChatCameraResult && window.onNativeChatCameraResult({ok:false,error:'camera_permission_denied'})")
+            }
+        }
+        chatCameraPermLauncher.launch(Manifest.permission.CAMERA)
     }
 
     private fun maybeHandlePermissionIntent(intent: Intent?) {

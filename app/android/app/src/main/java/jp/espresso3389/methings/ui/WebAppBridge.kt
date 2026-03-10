@@ -324,6 +324,13 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun openChatCamera(lens: String) {
+        handler.post {
+            activity.openNativeChatCamera(lens)
+        }
+    }
+
+    @JavascriptInterface
     fun getTaskCompleteNotifyAndroid(): Boolean {
         return notifPrefs.getBoolean("notify_android", true)
     }

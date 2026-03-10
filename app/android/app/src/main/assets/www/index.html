@@ -797,9 +797,63 @@
         order: -1;
       }
       .chat-input-area.expanded .chat-input-row #chatUploadBtn { order: 0; }
-      .chat-input-area.expanded .chat-input-row #chatRecordBtn { display: grid; order: 1; }
-      .chat-input-area.expanded .chat-input-row .mention-trigger { display: flex; order: 2; }
-      .chat-input-area.expanded .chat-input-row .send-btn { order: 3; margin-left: auto; }
+      .chat-input-area.expanded .chat-input-row #chatCameraBtn { order: 1; }
+      .chat-input-area.expanded .chat-input-row #chatRecordBtn { display: grid; order: 2; }
+      .chat-input-area.expanded .chat-input-row .mention-trigger { display: flex; order: 3; }
+      .chat-input-area.expanded .chat-input-row .send-btn { order: 4; margin-left: auto; }
+      .camera-capture-modal {
+        text-align: left;
+        max-width: min(92vw, 560px);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .camera-preview-shell {
+        position: relative;
+        margin-top: 10px;
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at top, rgba(59,130,246,0.18), transparent 45%),
+          linear-gradient(180deg, rgba(17,24,39,0.92), rgba(3,7,18,0.98));
+      }
+      .camera-preview-shell.ready .camera-preview-empty { display: none; }
+      .camera-preview-shell.ready #chatCameraPreview { display: block; }
+      #chatCameraPreview {
+        display: none;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .camera-preview-empty {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: 20px;
+        color: var(--ink-muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .camera-capture-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 14px;
+        flex-wrap: wrap;
+      }
+      .camera-capture-controls .btn {
+        flex: 1;
+        min-width: 0;
+      }
+      .camera-capture-controls .btn.primary {
+        flex: 1.25;
+      }
 
       .mention-trigger {
         width: 36px;
@@ -2107,6 +2161,7 @@
         <div class="chat-send-hint" id="chatSendHint"><kbd>Ctrl</kbd><span class="hint-text">+</span><kbd>Enter</kbd> <span class="hint-text">to send</span></div>
         <div class="chat-input-row">
           <button class="icon-btn" id="chatUploadBtn" title="Attach file(s)" aria-label="Attach file(s)"></button>
+          <button class="icon-btn" id="chatCameraBtn" title="Take photo" aria-label="Take photo"></button>
           <textarea id="chatInput" placeholder="Message..." rows="1"></textarea>
           <div class="mention-mirror" id="mentionMirror"></div>
           <button class="send-btn" id="chatSend" title="Send" aria-label="Send" disabled></button>
@@ -2546,6 +2601,25 @@
         <div class="request-list" id="providerRequestsList"></div>
         <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
           <button class="btn" id="providerRequestsRefresh">Refresh</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="chatCameraModal" role="dialog" aria-modal="true" aria-labelledby="chatCameraTitle">
+      <div class="modal-card settings-detail camera-capture-modal">
+        <div class="card-header">
+          <div class="card-icon blue">&#128247;</div>
+          <div class="card-title" id="chatCameraTitle" style="margin-bottom:0;">Camera</div>
+          <button class="icon-btn secondary" id="chatCameraClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
+        </div>
+        <div class="muted" id="chatCameraStatus" style="margin-top:6px;">Starting preview...</div>
+        <div class="camera-preview-shell" id="chatCameraPreviewShell">
+          <img id="chatCameraPreview" alt="Camera preview" />
+          <div class="camera-preview-empty" id="chatCameraPreviewEmpty">Preview will appear here.</div>
+        </div>
+        <div class="camera-capture-controls">
+          <button class="btn" id="chatCameraLensBtn">Use front camera</button>
+          <button class="btn primary" id="chatCameraCaptureBtn">Capture</button>
         </div>
       </div>
     </div>
@@ -3009,6 +3083,7 @@
       const ICON = {
         settings: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.05-1.59a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.42.98a7.23 7.23 0 0 0-1.63-.94l-.37-2.6A.5.5 0 0 0 13.8 2h-3.6a.5.5 0 0 0-.49.42l-.37 2.6c-.58.23-1.12.54-1.63.94l-2.42-.98a.5.5 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.05 1.59c-.04.31-.06.63-.06.94s.02.63.06.94l-2.05 1.59a.5.5 0 0 0-.12.64l2 3.46a.5.5 0 0 0 .6.22l2.42-.98c.5.39 1.05.7 1.63.94l.37 2.6a.5.5 0 0 0 .49.42h3.6a.5.5 0 0 0 .49-.42l.37-2.6c.58-.23 1.12-.54 1.63-.94l2.42.98a.5.5 0 0 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.05-1.59ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"/></svg>',
         attach: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.44 11.05 12.25 20.24a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.82-2.83l8.49-8.48"/></svg>',
+        camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.5 4H9.5l-1.2 2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.3z"/><circle cx="12" cy="13" r="3.5"/></svg>',
         mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v4"/><path d="M8 23h8"/></svg>',
         stop: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>',
         send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
@@ -3032,6 +3107,7 @@
       try { $("chatSearchBtn").innerHTML = ICON.search; } catch (_) {}
       try { $("openSettingsBtn").innerHTML = ICON.settings; } catch (_) {}
       try { $("chatUploadBtn").innerHTML = ICON.attach; } catch (_) {}
+      try { $("chatCameraBtn").innerHTML = ICON.camera; } catch (_) {}
       try { $("chatSend").innerHTML = ICON.send; } catch (_) {}
       try { $("backToChatBtn").innerHTML = ICON.back; } catch (_) {}
       try { $("backToSettingsFromLicenses").innerHTML = ICON.back; } catch (_) {}
@@ -3042,6 +3118,7 @@
       try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
       try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
+      try { $("chatCameraClose").innerHTML = ICON.close; } catch (_) {}
       try { $("providerRequestsClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meSyncModalClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meSyncImportModalClose").innerHTML = ICON.close; } catch (_) {}
@@ -7869,11 +7946,25 @@
       // Pending attachments (Slack-like)
       // ==============================
       const composerAttachments = $("composerAttachments");
+      const chatCameraModal = $("chatCameraModal");
+      const chatCameraClose = $("chatCameraClose");
+      const chatCameraStatus = $("chatCameraStatus");
+      const chatCameraPreviewShell = $("chatCameraPreviewShell");
+      const chatCameraPreview = $("chatCameraPreview");
+      const chatCameraPreviewEmpty = $("chatCameraPreviewEmpty");
+      const chatCameraLensBtn = $("chatCameraLensBtn");
+      const chatCameraCaptureBtn = $("chatCameraCaptureBtn");
       let pendingAttachments = [];
       let uploadBusy = false;
       let recordingBusy = false;
       let sendInFlight = false;
       let lastSendAtMs = 0;
+      let chatCameraLens = "back";
+      let chatCameraPreviewSocket = null;
+      let chatCameraPreviewUrl = "";
+      let chatCameraPreviewGeneration = 0;
+      let chatCameraPreviewRunning = false;
+      let chatCameraCaptureBusy = false;
 
       function fmtBytes(n) {
         const v = Number(n || 0);
@@ -7942,6 +8033,162 @@
         renderComposerAttachments();
       }
 
+      function addPendingCapturedPath(relPath, name) {
+        const p = String(relPath || "").trim();
+        if (!p) return;
+        pendingAttachments.push({
+          kind: "captured",
+          name: String(name || p.split("/").pop() || "capture.jpg"),
+          size: 0,
+          relPath: p,
+        });
+        renderComposerAttachments();
+      }
+
+      window.onNativeChatCameraResult = function(payload) {
+        const data = payload && typeof payload === "object" ? payload : {};
+        const rel = String((data && data.rel_path) || "").trim();
+        if (data && data.ok && rel) {
+          addPendingCapturedPath(rel);
+          showToast("Photo added", 1100);
+          return;
+        }
+        if (data && data.cancelled) return;
+        const msg = String((data && (data.error || data.detail || data.message)) || "Camera capture failed");
+        showToast(msg, 1800);
+      };
+
+      function setChatCameraStatus(msg) {
+        if (chatCameraStatus) chatCameraStatus.textContent = String(msg || "");
+      }
+
+      function resetChatCameraPreviewFrame(message) {
+        if (chatCameraPreviewShell) chatCameraPreviewShell.classList.remove("ready");
+        if (chatCameraPreview) {
+          try { chatCameraPreview.removeAttribute("src"); } catch (_) {}
+        }
+        if (chatCameraPreviewUrl) {
+          try { URL.revokeObjectURL(chatCameraPreviewUrl); } catch (_) {}
+          chatCameraPreviewUrl = "";
+        }
+        if (chatCameraPreviewEmpty) {
+          chatCameraPreviewEmpty.textContent = String(message || "Preview will appear here.");
+        }
+      }
+
+      function setChatCameraFrame(blob, generation) {
+        if (!blob || generation !== chatCameraPreviewGeneration || !chatCameraPreview) return;
+        const nextUrl = URL.createObjectURL(blob);
+        const prevUrl = chatCameraPreviewUrl;
+        chatCameraPreviewUrl = nextUrl;
+        chatCameraPreview.onload = () => {
+          if (prevUrl) {
+            try { URL.revokeObjectURL(prevUrl); } catch (_) {}
+          }
+        };
+        chatCameraPreview.src = nextUrl;
+        if (chatCameraPreviewShell) chatCameraPreviewShell.classList.add("ready");
+      }
+
+      function updateChatCameraLensUi() {
+        if (!chatCameraLensBtn) return;
+        chatCameraLensBtn.textContent = chatCameraLens === "front" ? "Use back camera" : "Use front camera";
+      }
+
+      async function stopChatCameraPreview(opts) {
+        const silent = !!(opts && opts.silent);
+        chatCameraPreviewGeneration += 1;
+        chatCameraPreviewRunning = false;
+        const socket = chatCameraPreviewSocket;
+        chatCameraPreviewSocket = null;
+        if (socket) {
+          try { socket.onopen = null; } catch (_) {}
+          try { socket.onmessage = null; } catch (_) {}
+          try { socket.onerror = null; } catch (_) {}
+          try { socket.onclose = null; } catch (_) {}
+          try { socket.close(); } catch (_) {}
+        }
+        resetChatCameraPreviewFrame("Preview stopped.");
+        try {
+          await fetch(API + "/camera/preview/stop", { method: "POST" });
+        } catch (_) {}
+        if (!silent) setChatCameraStatus("Preview stopped.");
+      }
+
+      async function startChatCameraPreview() {
+        const generation = chatCameraPreviewGeneration + 1;
+        await stopChatCameraPreview({ silent: true });
+        chatCameraPreviewGeneration = generation;
+        chatCameraPreviewRunning = true;
+        resetChatCameraPreviewFrame("Starting preview...");
+        setChatCameraStatus("Starting " + (chatCameraLens === "front" ? "front" : "back") + " camera...");
+        const startRes = await fetch(API + "/camera/preview/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({
+            lens: chatCameraLens,
+            width: 960,
+            height: 720,
+            fps: 8,
+            jpeg_quality: 72,
+          }),
+        });
+        const startData = await startRes.json().catch(() => ({}));
+        if (!startRes.ok) {
+          const msg = String((startData && (startData.error || startData.detail || startData.message)) || ("Camera preview failed (" + startRes.status + ")"));
+          throw new Error(msg);
+        }
+        if (generation !== chatCameraPreviewGeneration || !chatCameraModal || !chatCameraModal.classList.contains("show")) {
+          try { await fetch(API + "/camera/preview/stop", { method: "POST" }); } catch (_) {}
+          return;
+        }
+        const socket = new WebSocket(WS_BASE + "/ws/camera/preview");
+        chatCameraPreviewSocket = socket;
+        socket.binaryType = "blob";
+        socket.onopen = () => {
+          if (generation !== chatCameraPreviewGeneration) return;
+          setChatCameraStatus("Live preview");
+        };
+        socket.onmessage = (event) => {
+          if (generation !== chatCameraPreviewGeneration) return;
+          const blob = event && event.data ? event.data : null;
+          if (!blob) return;
+          setChatCameraFrame(blob, generation);
+        };
+        socket.onerror = () => {
+          if (generation !== chatCameraPreviewGeneration) return;
+          setChatCameraStatus("Preview stream error");
+          if (chatCameraPreviewEmpty) {
+            chatCameraPreviewEmpty.textContent = "Preview stream failed. Try reopening the camera.";
+          }
+        };
+        socket.onclose = () => {
+          if (generation !== chatCameraPreviewGeneration || !chatCameraPreviewRunning) return;
+          setChatCameraStatus("Preview disconnected");
+          if (chatCameraPreviewEmpty) {
+            chatCameraPreviewEmpty.textContent = "Preview disconnected. Try reopening the camera.";
+          }
+        };
+      }
+
+      async function openChatCameraModal() {
+        if (!chatCameraModal || sendInFlight || uploadBusy || recordingBusy) return;
+        updateChatCameraLensUi();
+        openSimpleModal(chatCameraModal);
+        try {
+          await startChatCameraPreview();
+        } catch (e) {
+          await closeChatCameraModal({ silent: true });
+          showToast(String((e && e.message) || e || "Camera preview failed"), 1800);
+        }
+      }
+
+      async function closeChatCameraModal(opts) {
+        const silent = !!(opts && opts.silent);
+        await stopChatCameraPreview({ silent });
+        closeSimpleModal(chatCameraModal);
+      }
+
       async function finalizeAndUploadAttachments(comment, uDiv) {
         const text = String(comment || "").trim();
         if (!pendingAttachments.length) return text || "(no text)";
@@ -7957,6 +8204,10 @@
         const rels = [];
         for (const a of items) {
           try {
+            if (a.kind === "captured" && a.relPath) {
+              rels.push(String(a.relPath));
+              continue;
+            }
             const fd = new FormData();
             if (a.kind === "file") {
               fd.append("file", a.file, a.name);
@@ -8003,6 +8254,7 @@
       // Chat-left media buttons (attach + record)
       (function initChatAttachAndRecord() {
         const uploadBtn = $("chatUploadBtn");
+        const cameraBtn = $("chatCameraBtn");
         const uploadInput = $("chatUploadInput");
         const recBtn = $("chatRecordBtn");
         const recStatus = $("recordingStatus");
@@ -8020,6 +8272,82 @@
             const list = uploadInput.files ? Array.from(uploadInput.files) : [];
             list.forEach(addPendingFile);
             uploadInput.value = "";
+          });
+        }
+        if (cameraBtn) {
+          cameraBtn.addEventListener("click", () => {
+            if (cameraBtn.disabled) return;
+            if (isEmbeddedClientWebView() && typeof AndroidBridge !== "undefined" && AndroidBridge.openChatCamera) {
+              try {
+                AndroidBridge.openChatCamera(chatCameraLens === "front" ? "front" : "back");
+                return;
+              } catch (_) {}
+            }
+            openChatCameraModal();
+          });
+        }
+        if (chatCameraClose) {
+          chatCameraClose.addEventListener("click", () => {
+            if (chatCameraCaptureBusy) return;
+            closeChatCameraModal();
+          });
+        }
+        if (chatCameraModal) {
+          chatCameraModal.addEventListener("click", (e) => {
+            if (e && e.target === chatCameraModal && !chatCameraCaptureBusy) closeChatCameraModal();
+          });
+        }
+        if (chatCameraLensBtn) {
+          chatCameraLensBtn.addEventListener("click", async () => {
+            if (chatCameraCaptureBusy) return;
+            chatCameraLens = chatCameraLens === "front" ? "back" : "front";
+            updateChatCameraLensUi();
+            try {
+              await startChatCameraPreview();
+            } catch (e) {
+              setChatCameraStatus("Preview unavailable");
+              resetChatCameraPreviewFrame("Could not start preview for the selected camera.");
+              showToast(String((e && e.message) || e || "Camera preview failed"), 1800);
+            }
+          });
+        }
+        if (chatCameraCaptureBtn) {
+          chatCameraCaptureBtn.addEventListener("click", async () => {
+            if (chatCameraCaptureBusy) return;
+            chatCameraCaptureBusy = true;
+            if (chatCameraCaptureBtn) chatCameraCaptureBtn.disabled = true;
+            if (chatCameraLensBtn) chatCameraLensBtn.disabled = true;
+            if (chatCameraClose) chatCameraClose.disabled = true;
+            setChatCameraStatus("Capturing...");
+            try {
+              const res = await fetch(API + "/camera/capture", {
+                method: "POST",
+                headers: { "Content-Type": "application/json; charset=utf-8" },
+                body: JSON.stringify({ lens: chatCameraLens }),
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok) {
+                const msg = String((data && (data.error || data.detail || data.message)) || ("Camera capture failed (" + res.status + ")"));
+                throw new Error(msg);
+              }
+              const rel = String((data && data.rel_path) || "").trim();
+              if (!rel) throw new Error("Camera capture returned no file");
+              addPendingCapturedPath(rel);
+              await closeChatCameraModal({ silent: true });
+              showToast("Photo added", 1100);
+            } catch (e) {
+              setChatCameraStatus("Capture failed");
+              showToast(String((e && e.message) || e || "Camera capture failed"), 1800);
+            } finally {
+              chatCameraCaptureBusy = false;
+              if (chatCameraCaptureBtn) chatCameraCaptureBtn.disabled = false;
+              if (chatCameraLensBtn) chatCameraLensBtn.disabled = false;
+              if (chatCameraClose) chatCameraClose.disabled = false;
+              if (chatCameraModal && !chatCameraModal.classList.contains("show")) {
+                resetChatCameraPreviewFrame("Preview will appear here.");
+                setChatCameraStatus("Starting preview...");
+              }
+            }
           });
         }
 
