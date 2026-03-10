@@ -310,6 +310,10 @@ class AgentRuntime(
         return storage.listChatSessions(limit)
     }
 
+    fun listProviderRequestsForSession(sessionId: String, limit: Int = 100): List<Map<String, Any?>> {
+        return storage.listLlmRequests(sessionId, limit)
+    }
+
     // --- Main Processing Loop ---
 
     private fun runLoop() {
@@ -631,6 +635,15 @@ class AgentRuntime(
                 var lastEx: Exception? = null
                 for (attempt in 0..maxRetries) {
                     try {
+                        recordProviderRequest(
+                            sessionId = sessionId,
+                            itemId = item.optString("id"),
+                            providerKind = providerKind,
+                            providerUrl = effectiveProviderUrl,
+                            model = model,
+                            phase = "round_${roundIdx}_attempt_${attempt}",
+                            body = body,
+                        )
                         payload = llmClient.streamingPost(
                             effectiveProviderUrl, headers, body, providerKind,
                             connectTimeoutMs, readTimeoutMs,
@@ -646,6 +659,15 @@ class AgentRuntime(
                             try {
                                 val body2 = JSONObject(body.toString())
                                 body2.remove("tool_choice")
+                                recordProviderRequest(
+                                    sessionId = sessionId,
+                                    itemId = item.optString("id"),
+                                    providerKind = providerKind,
+                                    providerUrl = effectiveProviderUrl,
+                                    model = model,
+                                    phase = "round_${roundIdx}_attempt_${attempt}_fallback_no_tool_choice",
+                                    body = body2,
+                                )
                                 payload = llmClient.streamingPost(
                                     effectiveProviderUrl, headers, body2, providerKind,
                                     connectTimeoutMs, readTimeoutMs,
@@ -1004,11 +1026,29 @@ class AgentRuntime(
             finalBody.put("tool_choice", "none")
 
             val finalPayload = try {
+                recordProviderRequest(
+                    sessionId = sessionId,
+                    itemId = item.optString("id"),
+                    providerKind = providerKind,
+                    providerUrl = effectiveProviderUrl,
+                    model = model,
+                    phase = "finalization",
+                    body = finalBody,
+                )
                 llmClient.streamingPost(effectiveProviderUrl, headers, finalBody, providerKind, connectTimeoutMs, readTimeoutMs,
                     interruptCheck = { interruptFlag })
             } catch (_: Exception) {
                 val body2 = JSONObject(finalBody.toString())
                 body2.remove("tool_choice")
+                recordProviderRequest(
+                    sessionId = sessionId,
+                    itemId = item.optString("id"),
+                    providerKind = providerKind,
+                    providerUrl = effectiveProviderUrl,
+                    model = model,
+                    phase = "finalization_fallback_no_tool_choice",
+                    body = body2,
+                )
                 llmClient.streamingPost(effectiveProviderUrl, headers, body2, providerKind, connectTimeoutMs, readTimeoutMs,
                     interruptCheck = { interruptFlag })
             }
@@ -1878,6 +1918,30 @@ class AgentRuntime(
     }
 
     /** Log Gemini request structure for debugging (without dumping full base64 data). */
+    private fun recordProviderRequest(
+        sessionId: String,
+        itemId: String,
+        providerKind: ProviderKind,
+        providerUrl: String,
+        model: String,
+        phase: String,
+        body: JSONObject,
+    ) {
+        try {
+            storage.addLlmRequest(
+                sessionId = sessionId,
+                itemId = itemId,
+                providerKind = providerKind.name,
+                providerUrl = providerUrl,
+                model = model,
+                phase = phase,
+                requestBody = body.toString(2),
+            )
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to record provider request", ex)
+        }
+    }
+
     private fun logGeminiRequestStructure(body: JSONObject) {
         try {
             val contents = body.optJSONArray("contents") ?: return

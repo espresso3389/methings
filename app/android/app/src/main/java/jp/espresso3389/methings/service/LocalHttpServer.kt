@@ -1694,6 +1694,24 @@ class LocalHttpServer(
                 }
                 jsonResponse(JSONObject().put("messages", arr))
             }
+            uri == "/brain/provider_requests" && session.method == Method.GET -> {
+                val params = session.parms ?: emptyMap()
+                val sessionId = (params["session_id"] ?: "default").trim()
+                val limit = (params["limit"] ?: "100").toIntOrNull() ?: 100
+                val rows = runtime.listProviderRequestsForSession(sessionId, limit)
+                val arr = JSONArray()
+                for (row in rows) {
+                    val obj = JSONObject()
+                    for ((key, value) in row) {
+                        obj.put(key, value)
+                    }
+                    if (obj.has("created_at") && !obj.has("ts")) {
+                        obj.put("ts", obj.optLong("created_at", 0))
+                    }
+                    arr.put(obj)
+                }
+                jsonResponse(JSONObject().put("requests", arr))
+            }
             uri == "/brain/sessions" && session.method == Method.GET -> {
                 val params = session.parms ?: emptyMap()
                 val limit = (params["limit"] ?: "50").toIntOrNull() ?: 50

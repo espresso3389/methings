@@ -15,6 +15,27 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
 ) {
     private val filesDir = context.filesDir
 
+    private fun createLlmRequestsTable(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS llm_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                item_id TEXT,
+                provider_kind TEXT NOT NULL,
+                provider_url TEXT,
+                model TEXT,
+                phase TEXT,
+                request_body TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_llm_requests_session ON llm_requests(session_id, id)"
+        )
+    }
+
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             """
@@ -50,10 +71,13 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
             )
             """.trimIndent()
         )
+        createLlmRequestsTable(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Future migrations go here
+        if (oldVersion < 2) {
+            createLlmRequestsTable(db)
+        }
     }
 
     fun addChatMessage(sessionId: String, role: String, text: String, metaJson: String) {
@@ -144,6 +168,89 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
         return rows
     }
 
+    fun addLlmRequest(
+        sessionId: String,
+        itemId: String,
+        providerKind: String,
+        providerUrl: String,
+        model: String,
+        phase: String,
+        requestBody: String,
+    ) {
+        val sid = sessionId.trim().ifEmpty { "default" }
+        val iid = itemId.trim()
+        val now = System.currentTimeMillis()
+        val db = writableDatabase
+        db.execSQL(
+            """
+            INSERT INTO llm_requests
+                (session_id, item_id, provider_kind, provider_url, model, phase, request_body, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """.trimIndent(),
+            arrayOf(
+                sid,
+                if (iid.isEmpty()) null else iid,
+                providerKind,
+                providerUrl,
+                model,
+                phase,
+                requestBody,
+                now,
+            )
+        )
+        db.execSQL(
+            """
+            DELETE FROM llm_requests
+            WHERE session_id = ? AND id NOT IN (
+                SELECT id FROM llm_requests WHERE session_id = ? ORDER BY id DESC LIMIT ?
+            )
+            """.trimIndent(),
+            arrayOf(sid, sid, MAX_LLM_REQUESTS_PER_SESSION)
+        )
+        db.execSQL(
+            """
+            DELETE FROM llm_requests
+            WHERE id NOT IN (
+                SELECT id FROM llm_requests ORDER BY id DESC LIMIT ?
+            )
+            """.trimIndent(),
+            arrayOf(MAX_LLM_REQUESTS_GLOBAL)
+        )
+    }
+
+    fun listLlmRequests(sessionId: String, limit: Int = 100): List<Map<String, Any?>> {
+        val sid = sessionId.trim().ifEmpty { "default" }
+        val lim = limit.coerceIn(1, 500)
+        val db = readableDatabase
+        val cursor = db.rawQuery(
+            """
+            SELECT item_id, provider_kind, provider_url, model, phase, request_body, created_at
+            FROM llm_requests
+            WHERE session_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(sid, lim.toString())
+        )
+        val rows = mutableListOf<Map<String, Any?>>()
+        cursor.use {
+            while (it.moveToNext()) {
+                rows.add(
+                    mapOf(
+                        "item_id" to it.getString(0),
+                        "provider_kind" to it.getString(1),
+                        "provider_url" to it.getString(2),
+                        "model" to it.getString(3),
+                        "phase" to it.getString(4),
+                        "request_body" to it.getString(5),
+                        "created_at" to it.getLong(6),
+                    )
+                )
+            }
+        }
+        return rows.reversed()
+    }
+
     fun renameChatSession(oldId: String, newId: String): Int {
         val old = oldId.trim()
         val new_ = newId.trim()
@@ -151,6 +258,10 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
         val db = writableDatabase
         db.execSQL(
             "UPDATE chat_messages SET session_id = ? WHERE session_id = ?",
+            arrayOf(new_, old)
+        )
+        db.execSQL(
+            "UPDATE llm_requests SET session_id = ? WHERE session_id = ?",
             arrayOf(new_, old)
         )
         return db.compileStatement("SELECT changes()").simpleQueryForLong().toInt()
@@ -161,6 +272,7 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
         if (sid.isEmpty()) return 0
         val db = writableDatabase
         db.execSQL("DELETE FROM chat_messages WHERE session_id = ?", arrayOf(sid))
+        db.execSQL("DELETE FROM llm_requests WHERE session_id = ?", arrayOf(sid))
         return db.compileStatement("SELECT changes()").simpleQueryForLong().toInt()
     }
 
@@ -255,8 +367,10 @@ class AgentStorage(context: Context) : SQLiteOpenHelper(
 
     companion object {
         private const val TAG = "AgentStorage"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
         private const val MAX_PER_SESSION = 400
         private const val MAX_GLOBAL = 4000
+        private const val MAX_LLM_REQUESTS_PER_SESSION = 120
+        private const val MAX_LLM_REQUESTS_GLOBAL = 2000
     }
 }

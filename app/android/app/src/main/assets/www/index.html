@@ -1826,6 +1826,51 @@
       .session-item .session-edit svg { width: 14px; height: 14px; display: block; }
       .session-item .session-edit:hover { background: var(--accent-soft); color: var(--accent); border-color: rgba(99,102,241,0.25); }
       .session-item .session-edit:active { transform: scale(0.9); }
+      .request-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        overflow: auto;
+        min-height: 160px;
+      }
+      .request-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        padding: 12px;
+        box-shadow: var(--shadow);
+      }
+      .request-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+      .request-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--ink);
+      }
+      .request-meta {
+        font-size: 11px;
+        color: var(--ink-muted);
+      }
+      .request-body {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--ink);
+        background: rgba(0,0,0,0.22);
+        border: 1px solid rgba(255,255,255,0.05);
+        border-radius: var(--radius-sm);
+        padding: 10px;
+        max-height: 42vh;
+        overflow: auto;
+      }
 
       /* Permission card (inline in chat) */
       .perm-card {
@@ -2485,6 +2530,22 @@
         <div style="display:flex; align-items:center; gap:6px; margin-top:10px;">
           <button class="icon-btn" id="sessionNew" style="width:30px; height:30px;" title="New session" aria-label="New session"></button>
           <button class="icon-btn" id="sessionRefresh" style="width:30px; height:30px;" title="Refresh" aria-label="Refresh"></button>
+          <button class="btn" id="sessionPayloadsBtn" style="margin-left:auto;">Provider Payloads</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal" id="providerRequestsModal" role="dialog" aria-modal="true" aria-labelledby="providerRequestsTitle">
+      <div class="modal-card settings-detail" style="text-align:left; max-width:720px; max-height:calc(100vh - 40px); display:flex; flex-direction:column; overflow:hidden;">
+        <div class="card-header">
+          <div class="card-icon amber">&#123;&#125;</div>
+          <div class="card-title" id="providerRequestsTitle" style="margin-bottom:0;">Provider Payloads</div>
+          <button class="icon-btn secondary" id="providerRequestsClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
+        </div>
+        <div class="muted" id="providerRequestsSummary" style="margin-bottom:10px;">Current session</div>
+        <div class="request-list" id="providerRequestsList"></div>
+        <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
+          <button class="btn" id="providerRequestsRefresh">Refresh</button>
         </div>
       </div>
     </div>
@@ -2981,6 +3042,7 @@
       try { $("sessionNew").innerHTML = ICON.plus; } catch (_) {}
       try { $("sessionRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
+      try { $("providerRequestsClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meSyncModalClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meSyncImportModalClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meMeSettingsModalClose").innerHTML = ICON.close; } catch (_) {}
@@ -3099,6 +3161,9 @@
       const sessionChip = $("sessionChip");
       const sessionModal = $("sessionModal");
       const sessionList = $("sessionList");
+      const providerRequestsModal = $("providerRequestsModal");
+      const providerRequestsList = $("providerRequestsList");
+      const providerRequestsSummary = $("providerRequestsSummary");
 
       function setSessionChipText() {
         try { sessionChip.textContent = String(chatSessionId || "default"); } catch (_) {}
@@ -3111,6 +3176,64 @@
 
       function closeSessionModal() {
         try { sessionModal.classList.remove("show"); } catch (_) {}
+      }
+
+      function closeProviderRequestsModal() {
+        try { providerRequestsModal.classList.remove("show"); } catch (_) {}
+      }
+
+      async function openProviderRequestsModal() {
+        try { providerRequestsModal.classList.add("show"); } catch (_) {}
+        await refreshProviderRequests();
+      }
+
+      function formatProviderRequestTs(ts) {
+        try {
+          const n = Number(ts || 0);
+          if (!n) return "";
+          return new Date(n).toLocaleString();
+        } catch (_) {
+          return "";
+        }
+      }
+
+      async function refreshProviderRequests() {
+        if (!providerRequestsList) return;
+        const sid = String(chatSessionId || "default").trim() || "default";
+        try {
+          providerRequestsSummary.textContent = "Session: " + sid;
+          providerRequestsList.innerHTML = "<div class='muted'>Loading…</div>";
+          const res = await fetch(API + "/brain/provider_requests?limit=120&session_id=" + encodeURIComponent(sid), { cache: "no-store" });
+          const data = res.ok ? await res.json().catch(() => ({})) : {};
+          const items = Array.isArray(data.requests) ? data.requests : [];
+          if (!items.length) {
+            providerRequestsList.innerHTML = "<div class='muted'>No provider payloads recorded for this session yet.</div>";
+            return;
+          }
+          providerRequestsList.innerHTML = items.slice().reverse().map((req) => {
+            const provider = escapeHtml(String(req.provider_kind || ""));
+            const model = escapeHtml(String(req.model || ""));
+            const phase = escapeHtml(String(req.phase || ""));
+            const itemId = escapeHtml(String(req.item_id || ""));
+            const url = escapeHtml(String(req.provider_url || ""));
+            const ts = escapeHtml(formatProviderRequestTs(req.created_at || req.ts || 0));
+            const body = escapeHtml(String(req.request_body || ""));
+            const meta = [phase, model, ts].filter(Boolean).join(" · ");
+            const sub = [itemId ? ("item " + itemId) : "", url].filter(Boolean).join(" · ");
+            return (
+              "<div class='request-card'>" +
+                "<div class='request-head'>" +
+                  "<div class='request-title'>" + (provider || "Provider") + "</div>" +
+                  (meta ? "<div class='request-meta'>" + meta + "</div>" : "") +
+                "</div>" +
+                (sub ? "<div class='request-meta' style='margin-bottom:8px;'>" + sub + "</div>" : "") +
+                "<pre class='request-body'>" + body + "</pre>" +
+              "</div>"
+            );
+          }).join("");
+        } catch (e) {
+          providerRequestsList.innerHTML = "<div class='muted'>Failed to load provider payloads.</div>";
+        }
       }
 
       async function refreshSessionMenu() {
@@ -7436,6 +7559,14 @@
         });
       } catch (_) {}
       try { $("sessionRefresh").addEventListener("click", refreshSessionMenu); } catch (_) {}
+      try { $("sessionPayloadsBtn").addEventListener("click", openProviderRequestsModal); } catch (_) {}
+      try { $("providerRequestsClose").addEventListener("click", closeProviderRequestsModal); } catch (_) {}
+      try { $("providerRequestsRefresh").addEventListener("click", refreshProviderRequests); } catch (_) {}
+      try {
+        providerRequestsModal.addEventListener("click", (e) => {
+          if (e && e.target === providerRequestsModal) closeProviderRequestsModal();
+        });
+      } catch (_) {}
       try {
         $("sessionNew").addEventListener("click", async () => {
           let prev = "";
