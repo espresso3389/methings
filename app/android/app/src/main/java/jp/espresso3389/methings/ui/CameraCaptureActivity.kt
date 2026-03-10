@@ -60,11 +60,12 @@ class CameraCaptureActivity : AppCompatActivity() {
 
     private lateinit var root: FrameLayout
     private lateinit var previewView: PreviewView
-    private lateinit var statusView: TextView
     private lateinit var captureButton: View
     private lateinit var switchButton: ImageButton
     private lateinit var closeButton: ImageButton
     private lateinit var zoomLabel: TextView
+    private lateinit var zoomBar: LinearLayout
+    private val zoomLevelButtons = mutableListOf<TextView>()
 
     // Review layer
     private lateinit var reviewLayer: FrameLayout
@@ -76,6 +77,11 @@ class CameraCaptureActivity : AppCompatActivity() {
     private var imageCapture: ImageCapture? = null
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
     private var captureInFlight = false
+    private var deviceRotation: Int = Surface.ROTATION_0
+    private var orientationListener: android.view.OrientationEventListener? = null
+
+    // Zoom levels (rebuilt when camera binds)
+    private var zoomLevels = listOf<Float>()
 
     // Pending result for review
     private var pendingFile: File? = null
@@ -112,10 +118,27 @@ class CameraCaptureActivity : AppCompatActivity() {
             finishWithError("camera_permission_missing")
             return
         }
+
+        // Track device orientation for correct EXIF rotation in captured photos
+        orientationListener = object : android.view.OrientationEventListener(this) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                deviceRotation = when {
+                    orientation in 315..360 || orientation in 0..44 -> Surface.ROTATION_0
+                    orientation in 45..134 -> Surface.ROTATION_270  // device tilted right → 270
+                    orientation in 135..224 -> Surface.ROTATION_180
+                    orientation in 225..314 -> Surface.ROTATION_90  // device tilted left → 90
+                    else -> Surface.ROTATION_0
+                }
+            }
+        }.also { it.enable() }
+
         startCamera()
     }
 
     override fun onDestroy() {
+        orientationListener?.disable()
+        orientationListener = null
         runCatching { cameraProvider?.unbindAll() }
         runCatching { reviewBitmap?.recycle() }
         reviewBitmap = null
@@ -125,7 +148,6 @@ class CameraCaptureActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
-        // Re-fit review image after rotation
         val bmp = reviewBitmap ?: return
         if (reviewLayer.visibility != View.VISIBLE) return
         reviewImage.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
@@ -196,6 +218,7 @@ class CameraCaptureActivity : AppCompatActivity() {
                     .coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
                 cam.cameraControl.setZoomRatio(newRatio)
                 showZoomIndicator(newRatio)
+                updateZoomBarSelection(newRatio)
                 return true
             }
         })
@@ -224,28 +247,6 @@ class CameraCaptureActivity : AppCompatActivity() {
             )
         )
 
-        // Status pill
-        statusView = TextView(this).apply {
-            setTextColor(0xFFF3F4F6.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-            text = "Preparing camera…"
-            setPadding((14 * dp).toInt(), (6 * dp).toInt(), (14 * dp).toInt(), (6 * dp).toInt())
-            background = GradientDrawable().apply {
-                setColor(0x66000000)
-                cornerRadius = 20f * dp
-            }
-        }
-        root.addView(
-            statusView,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP or Gravity.CENTER_HORIZONTAL,
-            ).apply {
-                topMargin = (48 * dp).toInt()
-            }
-        )
-
         // Close button (top-left)
         closeButton = ImageButton(this).apply {
             contentDescription = "Close"
@@ -268,7 +269,7 @@ class CameraCaptureActivity : AppCompatActivity() {
             }
         )
 
-        // Zoom indicator (center, initially hidden)
+        // Zoom indicator (center, initially hidden — shown on pinch)
         zoomLabel = TextView(this).apply {
             setTextColor(0xFFF3F4F6.toInt())
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -287,7 +288,7 @@ class CameraCaptureActivity : AppCompatActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.CENTER_HORIZONTAL or Gravity.TOP,
             ).apply {
-                topMargin = (80 * dp).toInt()
+                topMargin = (48 * dp).toInt()
             }
         )
 
@@ -302,9 +303,30 @@ class CameraCaptureActivity : AppCompatActivity() {
             controls,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                (200 * dp).toInt(),
+                (220 * dp).toInt(),
                 Gravity.BOTTOM,
             )
+        )
+
+        // ── Zoom level bar (built dynamically when camera binds) ──
+        zoomBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                setColor(0x55000000)
+                cornerRadius = 20f * dp
+            }
+            setPadding((4 * dp).toInt(), (2 * dp).toInt(), (4 * dp).toInt(), (2 * dp).toInt())
+        }
+        controls.addView(
+            zoomBar,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            ).apply {
+                bottomMargin = (124 * dp).toInt()
+            }
         )
 
         // Shutter button (center, circular ring)
@@ -499,6 +521,68 @@ class CameraCaptureActivity : AppCompatActivity() {
         }
     }
 
+    // ── Zoom level control ──
+
+    private fun rebuildZoomBar(minRatio: Float, maxRatio: Float) {
+        val dp = resources.displayMetrics.density
+        zoomBar.removeAllViews()
+        zoomLevelButtons.clear()
+
+        // Pick levels that are within the camera's supported range
+        val candidates = listOf(0.5f, 1f, 2f, 4f, 8f)
+        zoomLevels = candidates.filter { it in minRatio..maxRatio }
+        // Always include at least the min ratio as "1x equivalent"
+        if (zoomLevels.isEmpty()) zoomLevels = listOf(minRatio)
+
+        for (ratio in zoomLevels) {
+            val label = if (ratio < 1f) ".${(ratio * 10).toInt()}" else ratio.toInt().toString()
+            val btn = TextView(this).apply {
+                text = "${label}×"
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                gravity = Gravity.CENTER
+                val btnSize = (36 * dp).toInt()
+                layoutParams = LinearLayout.LayoutParams(btnSize, btnSize).apply {
+                    marginStart = (2 * dp).toInt()
+                    marginEnd = (2 * dp).toInt()
+                }
+                background = GradientDrawable().apply {
+                    cornerRadius = btnSize / 2f
+                    setColor(Color.TRANSPARENT)
+                }
+                isClickable = true
+                isFocusable = true
+                setOnClickListener { setZoomLevel(ratio) }
+            }
+            zoomLevelButtons.add(btn)
+            zoomBar.addView(btn)
+        }
+        zoomBar.visibility = if (zoomLevels.size > 1) View.VISIBLE else View.GONE
+    }
+
+    private fun setZoomLevel(ratio: Float) {
+        val cam = camera ?: return
+        val zoomState = cam.cameraInfo.zoomState.value ?: return
+        val clamped = ratio.coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
+        cam.cameraControl.setZoomRatio(clamped)
+        showZoomIndicator(clamped)
+        updateZoomBarSelection(clamped)
+    }
+
+    private fun updateZoomBarSelection(currentRatio: Float) {
+        val closest = zoomLevels.minByOrNull { kotlin.math.abs(it - currentRatio) } ?: return
+        for ((i, btn) in zoomLevelButtons.withIndex()) {
+            val isSelected = zoomLevels[i] == closest && kotlin.math.abs(currentRatio - closest) < 0.15f
+            if (isSelected) {
+                btn.setTextColor(0xFF6366F1.toInt())
+                (btn.background as? GradientDrawable)?.setColor(0x33FFFFFF)
+            } else {
+                btn.setTextColor(0xCCF3F4F6.toInt())
+                (btn.background as? GradientDrawable)?.setColor(Color.TRANSPARENT)
+            }
+        }
+    }
+
     // ── Tap to focus ──
 
     private fun handleTapToFocus(x: Float, y: Float) {
@@ -523,7 +607,6 @@ class CameraCaptureActivity : AppCompatActivity() {
                 topMargin = (y - size / 2f).toInt()
             }
         )
-        // Appear: scale up + fade in, then shrink + fade out
         ring.scaleX = 1.4f
         ring.scaleY = 1.4f
         ring.alpha = 0f
@@ -573,14 +656,14 @@ class CameraCaptureActivity : AppCompatActivity() {
             MotionEvent.ACTION_DOWN -> {
                 reviewSavedMatrix.set(reviewMatrix)
                 reviewTouchStart.set(event.x, event.y)
-                reviewMode = 1 // drag
+                reviewMode = 1
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
                 reviewOldDist = spacing(event)
                 if (reviewOldDist > 10f) {
                     reviewSavedMatrix.set(reviewMatrix)
                     midPoint(reviewMidPoint, event)
-                    reviewMode = 2 // zoom
+                    reviewMode = 2
                 }
             }
             MotionEvent.ACTION_MOVE -> {
@@ -634,7 +717,6 @@ class CameraCaptureActivity : AppCompatActivity() {
             reviewMatrix.getValues(values)
         }
 
-        // Clamp translation so image doesn't drift off screen
         val bmp = reviewBitmap ?: return
         val imgW = bmp.width * values[Matrix.MSCALE_X]
         val imgH = bmp.height * values[Matrix.MSCALE_Y]
@@ -688,7 +770,6 @@ class CameraCaptureActivity : AppCompatActivity() {
         reviewLayer.alpha = 0f
         reviewLayer.animate().alpha(1f).setDuration(250).setInterpolator(DecelerateInterpolator()).start()
 
-        // Fit image centered — wait for layout so width/height are valid
         reviewImage.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
             override fun onGlobalLayout() {
                 reviewImage.viewTreeObserver.removeOnGlobalLayoutListener(this)
@@ -721,12 +802,10 @@ class CameraCaptureActivity : AppCompatActivity() {
             reviewLayer.visibility = View.GONE
         }.start()
 
-        // Re-enable capture controls
         captureInFlight = false
         captureButton.isEnabled = true
         switchButton.isEnabled = true
         closeButton.isEnabled = true
-        setStatus(if (lensFacing == CameraSelector.LENS_FACING_FRONT) "Front camera" else "Back camera")
     }
 
     private fun acceptReview() {
@@ -738,12 +817,7 @@ class CameraCaptureActivity : AppCompatActivity() {
 
     // ── Camera lifecycle ──
 
-    private fun setStatus(text: String) {
-        if (::statusView.isInitialized) statusView.text = text
-    }
-
     private fun startCamera() {
-        setStatus("Preparing camera…")
         val providerFuture = ProcessCameraProvider.getInstance(this)
         providerFuture.addListener({
             val provider = providerFuture.get()
@@ -779,8 +853,12 @@ class CameraCaptureActivity : AppCompatActivity() {
             provider.unbindAll()
             val cam = provider.bindToLifecycle(this, selector, preview, imageCapture)
             camera = cam
-        }.onSuccess {
-            setStatus(if (lensFacing == CameraSelector.LENS_FACING_FRONT) "Front camera" else "Back camera")
+            // Rebuild zoom bar based on this camera's actual zoom range
+            val zs = cam.cameraInfo.zoomState.value
+            if (zs != null) {
+                rebuildZoomBar(zs.minZoomRatio, zs.maxZoomRatio)
+                updateZoomBarSelection(zs.zoomRatio)
+            }
         }.onFailure {
             finishWithError("camera_bind_failed")
         }
@@ -803,12 +881,11 @@ class CameraCaptureActivity : AppCompatActivity() {
         if (captureInFlight) return
         val capture = imageCapture ?: return
         val (file, relPath) = createOutputFile()
-        capture.targetRotation = previewView.display?.rotation ?: Surface.ROTATION_0
+        capture.targetRotation = deviceRotation
         captureInFlight = true
         captureButton.isEnabled = false
         switchButton.isEnabled = false
         closeButton.isEnabled = false
-        setStatus("Capturing…")
 
         // Shutter press animation
         captureButton.animate()
@@ -851,7 +928,6 @@ class CameraCaptureActivity : AppCompatActivity() {
                     captureButton.isEnabled = true
                     switchButton.isEnabled = true
                     closeButton.isEnabled = true
-                    setStatus("Capture failed")
                     Toast.makeText(
                         this@CameraCaptureActivity,
                         exception.message ?: "Capture failed",
@@ -888,15 +964,12 @@ class CameraCaptureActivity : AppCompatActivity() {
             style = Paint.Style.STROKE
             strokeWidth = 1.5f * dp
         }
-        private val cornerLen = 8f * dp
 
         override fun onDraw(canvas: Canvas) {
             val cx = width / 2f
             val cy = height / 2f
             val r = minOf(cx, cy) - paint.strokeWidth
-            // Draw rounded-corner brackets instead of full circle
             val rect = android.graphics.RectF(cx - r, cy - r, cx + r, cy + r)
-            // Four corner arcs
             canvas.drawArc(rect, -45f - 20f, 40f, false, paint)
             canvas.drawArc(rect, 45f - 20f, 40f, false, paint)
             canvas.drawArc(rect, 135f - 20f, 40f, false, paint)

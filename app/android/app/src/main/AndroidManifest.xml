@@ -98,8 +98,7 @@
             android:name=".ui.CameraCaptureActivity"
             android:exported="false"
             android:excludeFromRecents="true"
-            android:screenOrientation="fullSensor"
-            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.Methings" />
         <receiver
             android:name=".device.UsbPermissionResultReceiver"
