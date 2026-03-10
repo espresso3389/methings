@@ -873,24 +873,6 @@
       .mention-trigger:hover { color: var(--accent-hover); background: var(--accent-soft); }
       .mention-trigger:active { transform: scale(0.9); }
 
-      .composer-resize-handle {
-        display: flex;
-        justify-content: center;
-        padding: 2px 0 0;
-        cursor: ns-resize;
-        touch-action: none;
-      }
-      .composer-resize-line {
-        width: 36px;
-        height: 4px;
-        border-radius: 2px;
-        background: var(--ink-muted);
-        opacity: 0.35;
-        transition: opacity var(--transition);
-      }
-      .composer-resize-handle:hover .composer-resize-line,
-      .composer-resize-handle:active .composer-resize-line { opacity: 0.7; }
-
       .chat-input-area textarea {
         flex: 1;
         border: 1px solid var(--border);
@@ -2222,7 +2204,6 @@
       </div>
       <div class="chat-input-area" id="chatInputArea" style="position: relative;">
         <div class="mention-dropdown" id="mentionDropdown"></div>
-        <div class="composer-resize-handle" id="composerResizeHandle"><div class="composer-resize-line"></div></div>
         <div class="composer-attachments" id="composerAttachments"></div>
         <div class="muted" id="recordingStatus" style="display:none;margin-top:-6px;margin-bottom:2px;">
           Recording...
@@ -6702,7 +6683,6 @@
         } catch (_) {}
       }
 
-      var userResizeH = 0; // set by drag handle; 0 = natural sizing
       var _sendHint = document.getElementById("chatSendHint");
       function positionSendHint() {
         if (!_sendHint) return;
@@ -6723,8 +6703,7 @@
       }
       function autoResize() {
         chatInput.style.height = "auto";
-        var h = Math.max(chatInput.scrollHeight, userResizeH);
-        chatInput.style.height = h + "px";
+        chatInput.style.height = chatInput.scrollHeight + "px";
         positionSendHint();
       }
       function updateSendBtn() {
@@ -6984,43 +6963,6 @@
         document.addEventListener("touchstart", function(e) {
           if (!inputArea.contains(e.target)) collapseToolbar();
         }, { passive: true });
-      })();
-
-      // Resize handle — drag to adjust textarea height
-      (function initResizeHandle() {
-        const handle = document.getElementById("composerResizeHandle");
-        let dragging = false;
-        let startY = 0;
-        let startH = 0;
-        function onStart(e) {
-          dragging = true;
-          startY = e.touches ? e.touches[0].clientY : e.clientY;
-          startH = chatInput.offsetHeight;
-          e.preventDefault();
-          e.stopPropagation();
-          document.addEventListener("mousemove", onMove);
-          document.addEventListener("mouseup", onEnd);
-          document.addEventListener("touchmove", onMove, { passive: false });
-          document.addEventListener("touchend", onEnd);
-        }
-        function onMove(e) {
-          if (!dragging) return;
-          e.preventDefault();
-          const y = e.touches ? e.touches[0].clientY : e.clientY;
-          const delta = startY - y;
-          userResizeH = Math.max(36, Math.min(startH + delta, Math.round(window.innerHeight * 0.5)));
-          chatInput.style.maxHeight = userResizeH + "px";
-          autoResize();
-        }
-        function onEnd() {
-          dragging = false;
-          document.removeEventListener("mousemove", onMove);
-          document.removeEventListener("mouseup", onEnd);
-          document.removeEventListener("touchmove", onMove);
-          document.removeEventListener("touchend", onEnd);
-        }
-        handle.addEventListener("mousedown", onStart);
-        handle.addEventListener("touchstart", onStart, { passive: false });
       })();
 
       // Mention trigger button — inserts @ and opens the dropdown
