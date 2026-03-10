@@ -99,6 +99,7 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:screenOrientation="fullSensor"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize"
             android:theme="@style/Theme.Methings" />
         <receiver
             android:name=".device.UsbPermissionResultReceiver"

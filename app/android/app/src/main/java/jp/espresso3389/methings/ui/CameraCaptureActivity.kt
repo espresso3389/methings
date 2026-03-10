@@ -123,6 +123,19 @@ class CameraCaptureActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Re-fit review image after rotation
+        val bmp = reviewBitmap ?: return
+        if (reviewLayer.visibility != View.VISIBLE) return
+        reviewImage.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                reviewImage.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                fitReviewImage(bmp)
+            }
+        })
+    }
+
     override fun onBackPressed() {
         if (reviewLayer.visibility == View.VISIBLE) {
             dismissReview()
@@ -653,22 +666,29 @@ class CameraCaptureActivity : AppCompatActivity() {
         reviewBitmap = bmp
         reviewImage.setImageBitmap(bmp)
 
-        // Fit image centered
-        reviewImage.post {
-            val vw = reviewImage.width.toFloat()
-            val vh = reviewImage.height.toFloat()
-            if (vw <= 0 || vh <= 0) return@post
-            val scale = minOf(vw / bmp.width, vh / bmp.height)
-            reviewBaseScale = scale
-            reviewMatrix.reset()
-            reviewMatrix.postScale(scale, scale)
-            reviewMatrix.postTranslate((vw - bmp.width * scale) / 2f, (vh - bmp.height * scale) / 2f)
-            reviewImage.imageMatrix = reviewMatrix
-        }
-
         reviewLayer.visibility = View.VISIBLE
         reviewLayer.alpha = 0f
         reviewLayer.animate().alpha(1f).setDuration(250).setInterpolator(DecelerateInterpolator()).start()
+
+        // Fit image centered — wait for layout so width/height are valid
+        reviewImage.viewTreeObserver.addOnGlobalLayoutListener(object : android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                reviewImage.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                fitReviewImage(bmp)
+            }
+        })
+    }
+
+    private fun fitReviewImage(bmp: Bitmap) {
+        val vw = reviewImage.width.toFloat()
+        val vh = reviewImage.height.toFloat()
+        if (vw <= 0 || vh <= 0) return
+        val scale = minOf(vw / bmp.width, vh / bmp.height)
+        reviewBaseScale = scale
+        reviewMatrix.reset()
+        reviewMatrix.postScale(scale, scale)
+        reviewMatrix.postTranslate((vw - bmp.width * scale) / 2f, (vh - bmp.height * scale) / 2f)
+        reviewImage.imageMatrix = reviewMatrix
     }
 
     private fun dismissReview() {
