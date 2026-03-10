@@ -408,6 +408,7 @@ dependencies {
     implementation("androidx.camera:camera-core:1.3.2")
     implementation("androidx.camera:camera-view:1.3.2")
     implementation("androidx.camera:camera-video:1.3.2")
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("org.nanohttpd:nanohttpd:2.3.1")
     implementation("org.nanohttpd:nanohttpd-websocket:2.3.1")
     implementation("com.github.mik3y:usb-serial-for-android:3.9.0")

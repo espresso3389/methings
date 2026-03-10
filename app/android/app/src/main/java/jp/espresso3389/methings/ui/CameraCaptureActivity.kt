@@ -660,8 +660,26 @@ class CameraCaptureActivity : AppCompatActivity() {
 
     // ── Review show/dismiss ──
 
+    private fun decodeWithExifRotation(file: File): Bitmap? {
+        val raw = BitmapFactory.decodeFile(file.absolutePath) ?: return null
+        val rotation = try {
+            val exif = androidx.exifinterface.media.ExifInterface(file.absolutePath)
+            when (exif.getAttributeInt(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION, androidx.exifinterface.media.ExifInterface.ORIENTATION_NORMAL)) {
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                androidx.exifinterface.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+        } catch (_: Exception) { 0f }
+        if (rotation == 0f) return raw
+        val matrix = Matrix().apply { postRotate(rotation) }
+        val rotated = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, matrix, true)
+        if (rotated !== raw) raw.recycle()
+        return rotated
+    }
+
     private fun showReview(file: File) {
-        val bmp = BitmapFactory.decodeFile(file.absolutePath) ?: return
+        val bmp = decodeWithExifRotation(file) ?: return
         runCatching { reviewBitmap?.recycle() }
         reviewBitmap = bmp
         reviewImage.setImageBitmap(bmp)
