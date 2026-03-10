@@ -1578,24 +1578,24 @@ class AgentRuntime(
                 }
             }
             ProviderKind.OPENAI_CHAT -> {
+                input.put(JSONObject().apply {
+                    put("role", "tool")
+                    put("tool_call_id", callId)
+                    put("content", result.toString())
+                })
                 if (mediaData != null && mediaData.mediaType == "image") {
-                    // Multimodal tool result: content is an array of text + image_url (audio not supported)
-                    val contentArr = JSONArray()
-                    contentArr.put(JSONObject().put("type", "text").put("text", result.toString()))
-                    contentArr.put(JSONObject().apply {
-                        put("type", "image_url")
-                        put("image_url", JSONObject().put("url", "data:${mediaData.mimeType};base64,${mediaData.base64}"))
-                    })
+                    // OpenAI-compatible chat providers commonly accept images on user messages,
+                    // but not on tool-role messages. Forward the image as a follow-up user turn.
                     input.put(JSONObject().apply {
-                        put("role", "tool")
-                        put("tool_call_id", callId)
-                        put("content", contentArr)
-                    })
-                } else {
-                    input.put(JSONObject().apply {
-                        put("role", "tool")
-                        put("tool_call_id", callId)
-                        put("content", result.toString())
+                        put("role", "user")
+                        put("content", JSONArray().apply {
+                            put(JSONObject().put("type", "text").put("text",
+                                "The previous tool result includes an attached image. Analyze it directly."))
+                            put(JSONObject().apply {
+                                put("type", "image_url")
+                                put("image_url", JSONObject().put("url", "data:${mediaData.mimeType};base64,${mediaData.base64}"))
+                            })
+                        })
                     })
                 }
             }

@@ -155,6 +155,43 @@ class AgentRuntimePermissionResumeTest {
         verify(harness.llmClient, times(2)).streamingPost(any(), any(), any(), any(), any(), any(), any())
     }
 
+    @Test
+    fun openAiChatToolResultWithImageAddsFollowUpUserMessage() {
+        val harness = createHarness(
+            llmPayloads = listOf(finalTextPayload("done")),
+        ) { _, _ ->
+            JSONObject().put("status", "ok")
+        }
+        val input = org.json.JSONArray()
+
+        invokePrivateAppendToolResult(
+            runtime = harness.runtime,
+            kind = ProviderKind.OPENAI_CHAT,
+            input = input,
+            callId = "call_img",
+            result = JSONObject().put("status", "ok").put("_media_hint", "image attached"),
+            toolName = "analyze_image",
+            mediaData = ExtractedMedia("QUJD", "image/png", "image"),
+        )
+
+        assertEquals(2, input.length())
+
+        val toolMessage = input.getJSONObject(0)
+        assertEquals("tool", toolMessage.getString("role"))
+        assertEquals("call_img", toolMessage.getString("tool_call_id"))
+        assertTrue(toolMessage.getString("content").contains("_media_hint"))
+
+        val userMessage = input.getJSONObject(1)
+        assertEquals("user", userMessage.getString("role"))
+        val content = userMessage.getJSONArray("content")
+        assertEquals("text", content.getJSONObject(0).getString("type"))
+        assertEquals("image_url", content.getJSONObject(1).getString("type"))
+        assertEquals(
+            "data:image/png;base64,QUJD",
+            content.getJSONObject(1).getJSONObject("image_url").getString("url"),
+        )
+    }
+
     private fun initialToolCallPayload(): JSONObject = JSONObject(
         """
         {
@@ -209,6 +246,28 @@ class AgentRuntimePermissionResumeTest {
         val method: Method = target.javaClass.getDeclaredMethod(name, JSONObject::class.java)
         method.isAccessible = true
         method.invoke(target, arg)
+    }
+
+    private fun invokePrivateAppendToolResult(
+        runtime: AgentRuntime,
+        kind: ProviderKind,
+        input: org.json.JSONArray,
+        callId: String,
+        result: JSONObject,
+        toolName: String,
+        mediaData: ExtractedMedia?,
+    ) {
+        val method = runtime.javaClass.getDeclaredMethod(
+            "appendToolResult",
+            ProviderKind::class.java,
+            org.json.JSONArray::class.java,
+            String::class.java,
+            JSONObject::class.java,
+            String::class.java,
+            ExtractedMedia::class.java,
+        )
+        method.isAccessible = true
+        method.invoke(runtime, kind, input, callId, result, toolName, mediaData)
     }
 
     private fun createHarness(
