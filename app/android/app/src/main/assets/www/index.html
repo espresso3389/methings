@@ -2016,53 +2016,43 @@
         max-height: 42vh;
         overflow: auto;
       }
-      .provider-payload-layout {
-        display: grid;
-        grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
-        gap: 12px;
-        min-height: 0;
-        flex: 1 1 auto;
-        overflow: hidden;
-      }
       .provider-payload-list {
-        min-height: 220px;
+        min-height: 120px;
+        flex: 1 1 auto;
+        overflow: auto;
       }
       .provider-payload-detail {
         min-width: 0;
         min-height: 0;
         display: flex;
         flex-direction: column;
-        gap: 10px;
-        border: 1px solid var(--border);
-        border-radius: var(--radius-md);
-        background: rgba(255,255,255,0.02);
-        padding: 12px;
-        overflow: hidden;
+        gap: 8px;
+        overflow: auto;
+        flex: 1 1 auto;
       }
       .provider-payload-meta {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-        gap: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 12px;
+        font-size: 11px;
+        line-height: 1.5;
+        color: var(--ink-muted);
       }
       .provider-payload-field {
         min-width: 0;
-        padding: 8px 10px;
-        border-radius: var(--radius-sm);
-        border: 1px solid rgba(255,255,255,0.06);
-        background: rgba(0,0,0,0.14);
+        white-space: nowrap;
       }
       .provider-payload-field-label {
-        font-size: 10px;
         font-weight: 700;
         text-transform: uppercase;
-        letter-spacing: 0.45px;
+        letter-spacing: 0.3px;
+        font-size: 10px;
         color: var(--ink-muted);
+        margin-right: 4px;
       }
       .provider-payload-field-value {
-        margin-top: 4px;
-        font-size: 12px;
+        font-size: 11px;
         color: var(--ink);
-        line-height: 1.45;
         word-break: break-word;
       }
       .provider-payload-actions {
@@ -2073,13 +2063,59 @@
       .provider-payload-actions .btn {
         min-height: 34px;
       }
+      .provider-payload-content-wrap {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .provider-payload-msg {
+        border-radius: var(--radius-sm);
+        border: 1px solid rgba(255,255,255,0.06);
+        background: rgba(0,0,0,0.18);
+        padding: 8px 10px;
+      }
+      .provider-payload-msg-role {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.45px;
+        color: var(--accent);
+        margin-bottom: 4px;
+      }
+      .provider-payload-msg-role.system { color: #f59e0b; }
+      .provider-payload-msg-role.assistant { color: #22d3ee; }
+      .provider-payload-msg-role.tool { color: #a78bfa; }
+      .provider-payload-msg-text {
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--ink);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .provider-payload-msg-text img {
+        max-width: 120px;
+        max-height: 80px;
+        border-radius: 4px;
+        vertical-align: middle;
+        margin: 2px 4px 2px 0;
+      }
+      .provider-payload-raw-toggle {
+        font-size: 11px;
+        color: var(--ink-muted);
+        cursor: pointer;
+        user-select: none;
+        padding: 4px 0;
+      }
+      .provider-payload-raw-toggle:hover { color: var(--ink); }
       .provider-payload-code-wrap {
         min-height: 0;
-        flex: 1 1 auto;
+        flex: 0 0 auto;
         border-radius: var(--radius-md);
         border: 1px solid rgba(255,255,255,0.06);
         background: rgba(0,0,0,0.28);
         overflow: auto;
+        max-height: 260px;
       }
       .provider-payload-code {
         margin: 0;
@@ -2093,15 +2129,6 @@
         font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
         font-size: 12px;
         line-height: 1.58;
-      }
-      @media (max-width: 760px) {
-        .provider-payload-layout {
-          grid-template-columns: 1fr;
-        }
-        .provider-payload-list {
-          min-height: 160px;
-          max-height: 220px;
-        }
       }
 
       /* Permission card (inline in chat) */
@@ -2762,36 +2789,47 @@
         <div style="display:flex; align-items:center; gap:6px; margin-top:10px;">
           <button class="icon-btn" id="sessionNew" style="width:30px; height:30px;" title="New session" aria-label="New session"></button>
           <button class="icon-btn" id="sessionRefresh" style="width:30px; height:30px;" title="Refresh" aria-label="Refresh"></button>
-          <button class="btn" id="sessionPayloadsBtn" style="margin-left:auto;">Current Payloads</button>
         </div>
       </div>
     </div>
 
+    <!-- Payload list modal -->
     <div class="modal" id="providerRequestsModal" role="dialog" aria-modal="true" aria-labelledby="providerRequestsTitle">
-      <div class="modal-card settings-detail" style="text-align:left; max-width:1040px; width:min(1040px, calc(100vw - 24px)); max-height:calc(100vh - 28px); display:flex; flex-direction:column; overflow:hidden;">
+      <div class="modal-card settings-detail" style="text-align:left; max-width:480px; width:min(480px, calc(100vw - 24px)); max-height:calc(100vh - 28px); display:flex; flex-direction:column; overflow:hidden;">
         <div class="card-header">
           <div class="card-icon amber">&#123;&#125;</div>
           <div class="card-title" id="providerRequestsTitle" style="margin-bottom:0;">Provider Payloads</div>
           <button class="icon-btn secondary" id="providerRequestsClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
         </div>
         <div class="muted" id="providerRequestsSummary" style="margin-bottom:10px;">Current session</div>
-        <div class="provider-payload-layout">
-          <div class="request-list provider-payload-list" id="providerRequestsList"></div>
-          <div class="provider-payload-detail">
-            <div class="provider-payload-meta" id="providerPayloadMeta"></div>
-            <div class="provider-payload-actions">
-              <button class="btn" id="providerRequestCopyBtn">Copy JSON</button>
-              <button class="btn" id="providerRequestOpenBtn">Open in Viewer</button>
-              <button class="btn" id="providerRequestExternalBtn">Open External</button>
-              <button class="btn" id="providerRequestShareBtn">Share</button>
-            </div>
-            <div class="provider-payload-code-wrap">
-              <pre class="provider-payload-code"><code id="providerPayloadCode" class="language-json">Select a payload.</code></pre>
-            </div>
-          </div>
-        </div>
+        <div class="request-list provider-payload-list" id="providerRequestsList"></div>
         <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
           <button class="btn" id="providerRequestsRefresh">Refresh</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Payload detail modal -->
+    <div class="modal" id="providerDetailModal" role="dialog" aria-modal="true" aria-labelledby="providerDetailTitle">
+      <div class="modal-card settings-detail" style="text-align:left; max-width:640px; width:min(640px, calc(100vw - 24px)); max-height:calc(100vh - 28px); display:flex; flex-direction:column; overflow:hidden; padding-top:8px;">
+        <!-- Top: close + meta (pinned) -->
+        <div style="flex-shrink:0;">
+          <button class="icon-btn secondary" id="providerDetailBack" style="float:right; width:32px; height:32px;" title="Close" aria-label="Close"></button>
+          <div class="provider-payload-meta" id="providerPayloadMeta"></div>
+        </div>
+        <!-- Middle: scrollable content -->
+        <div class="provider-payload-detail">
+          <div class="provider-payload-content-wrap" id="providerPayloadContent"></div>
+          <div class="provider-payload-raw-toggle" id="providerPayloadRawToggle">Show raw JSON &#9660;</div>
+          <div class="provider-payload-code-wrap" id="providerPayloadCodeWrap" style="display:none;">
+            <pre class="provider-payload-code"><code id="providerPayloadCode" class="language-json"></code></pre>
+          </div>
+        </div>
+        <!-- Bottom: action buttons (pinned) -->
+        <div class="provider-payload-actions" style="flex-shrink:0; margin-top:8px; justify-content:flex-end;">
+          <button class="icon-btn secondary" id="providerRequestCopyBtn" style="width:36px; height:36px;" title="Copy JSON" aria-label="Copy JSON"></button>
+          <button class="icon-btn secondary" id="providerRequestOpenBtn" style="width:36px; height:36px;" title="View" aria-label="View"></button>
+          <button class="icon-btn secondary" id="providerRequestShareBtn" style="width:36px; height:36px;" title="Share" aria-label="Share"></button>
         </div>
       </div>
     </div>
@@ -3292,6 +3330,7 @@
         slideScroll: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="1" width="18" height="9" rx="1.5"/><line x1="7" y1="4" x2="15" y2="4"/><line x1="7" y1="7" x2="12" y2="7"/><rect x="3" y="14" width="18" height="9" rx="1.5"/><line x1="7" y1="17" x2="15" y2="17"/><line x1="7" y1="20" x2="12" y2="20"/></svg>',
         search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
         edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
+        copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
       };
 
       // Set static button icons (record button is handled by setRecordUi()).
@@ -3311,6 +3350,10 @@
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
       try { $("chatCameraClose").innerHTML = ICON.close; } catch (_) {}
       try { $("providerRequestsClose").innerHTML = ICON.close; } catch (_) {}
+      try { $("providerDetailBack").innerHTML = ICON.close; } catch (_) {}
+      try { $("providerRequestCopyBtn").innerHTML = ICON.copy; } catch (_) {}
+      try { $("providerRequestOpenBtn").innerHTML = ICON.externalLink; } catch (_) {}
+      try { $("providerRequestShareBtn").innerHTML = ICON.share; } catch (_) {}
       try { $("meSyncModalClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meSyncImportModalClose").innerHTML = ICON.close; } catch (_) {}
       try { $("meMeSettingsModalClose").innerHTML = ICON.close; } catch (_) {}
@@ -3432,11 +3475,14 @@
       const providerRequestsModal = $("providerRequestsModal");
       const providerRequestsList = $("providerRequestsList");
       const providerRequestsSummary = $("providerRequestsSummary");
+      const providerDetailModal = $("providerDetailModal");
       const providerPayloadMeta = $("providerPayloadMeta");
+      const providerPayloadContent = $("providerPayloadContent");
       const providerPayloadCode = $("providerPayloadCode");
+      const providerPayloadCodeWrap = $("providerPayloadCodeWrap");
+      const providerPayloadRawToggle = $("providerPayloadRawToggle");
       const providerRequestCopyBtn = $("providerRequestCopyBtn");
       const providerRequestOpenBtn = $("providerRequestOpenBtn");
-      const providerRequestExternalBtn = $("providerRequestExternalBtn");
       const providerRequestShareBtn = $("providerRequestShareBtn");
       let providerRequestsSessionId = "default";
       let providerRequestsItems = [];
@@ -3460,6 +3506,16 @@
         try { providerRequestsModal.classList.remove("show"); } catch (_) {}
       }
 
+      function openProviderDetailModal(index) {
+        providerRequestsSelectedIndex = index;
+        renderProviderRequestDetail();
+        try { providerDetailModal.classList.add("show"); } catch (_) {}
+      }
+
+      function closeProviderDetailModal() {
+        try { providerDetailModal.classList.remove("show"); } catch (_) {}
+      }
+
       async function openProviderRequestsModal(sessionId) {
         providerRequestsSessionId = String(sessionId || chatSessionId || "default").trim() || "default";
         try { providerRequestsModal.classList.add("show"); } catch (_) {}
@@ -3476,8 +3532,83 @@
         }
       }
 
+      function formatPayloadSize(bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+        return (bytes / 1048576).toFixed(1) + " MB";
+      }
+
       function providerRequestBodyRaw(req) {
         return String((req && req.request_body) || "");
+      }
+
+      function extractPayloadContentBlocks(bodyStr) {
+        try {
+          const obj = JSON.parse(bodyStr);
+          if (!obj || typeof obj !== "object") return null;
+          const msgs = [];
+          // system prompt (Anthropic string or OpenAI instructions)
+          if (typeof obj.system === "string" && obj.system.trim()) {
+            msgs.push({ role: "system", text: obj.system.trim() });
+          } else if (Array.isArray(obj.system)) {
+            const sysText = obj.system.map(b => typeof b === "string" ? b : (b && b.text) || "").filter(Boolean).join("\n");
+            if (sysText) msgs.push({ role: "system", text: sysText });
+          }
+          if (typeof obj.instructions === "string" && obj.instructions.trim()) {
+            msgs.push({ role: "system", text: obj.instructions.trim() });
+          }
+          // messages (OpenAI Chat / Anthropic Messages)
+          const msgArr = Array.isArray(obj.messages) ? obj.messages : Array.isArray(obj.input) ? obj.input : null;
+          if (msgArr) {
+            for (const m of msgArr) {
+              if (!m || typeof m !== "object") continue;
+              const role = String(m.role || m.type || "unknown");
+              let text = "";
+              if (typeof m.content === "string") {
+                text = m.content;
+              } else if (Array.isArray(m.content)) {
+                const parts = [];
+                for (const b of m.content) {
+                  if (!b) continue;
+                  if (typeof b === "string") { parts.push(b); continue; }
+                  if (b.type === "text" && b.text) parts.push(b.text);
+                  else if (b.type === "tool_use") parts.push("[tool_use: " + (b.name || b.id || "") + "]\n" + (typeof b.input === "string" ? b.input : JSON.stringify(b.input, null, 2)));
+                  else if (b.type === "tool_result") parts.push("[tool_result" + (b.tool_use_id ? " " + b.tool_use_id : "") + "]\n" + (typeof b.content === "string" ? b.content : JSON.stringify(b.content, null, 2)));
+                  else if (b.type === "image_url" || b.type === "image") parts.push("[image]");
+                  else parts.push(JSON.stringify(b, null, 2));
+                }
+                text = parts.join("\n");
+              } else if (m.content != null) {
+                text = JSON.stringify(m.content, null, 2);
+              }
+              // OpenAI Responses API: item with type
+              if (!text && m.type) {
+                text = JSON.stringify(m, null, 2);
+              }
+              msgs.push({ role: role, text: text || "(empty)" });
+            }
+          }
+          // tools/tool definitions - summarize count
+          const tools = obj.tools;
+          if (Array.isArray(tools) && tools.length) {
+            const names = tools.map(t => (t && (t.name || (t.function && t.function.name))) || "?").slice(0, 20);
+            msgs.push({ role: "tools", text: tools.length + " tool(s): " + names.join(", ") + (tools.length > 20 ? " ..." : "") });
+          }
+          return msgs.length ? msgs : null;
+        } catch (_) {
+          return null;
+        }
+      }
+
+      function renderPayloadContentMessages(blocks) {
+        if (!blocks || !blocks.length) return "<div class='muted'>Could not extract content from payload.</div>";
+        return blocks.map(b => {
+          const roleClass = (b.role === "system" ? " system" : b.role === "assistant" ? " assistant" : b.role === "tool" || b.role === "tool_result" || b.role === "tools" ? " tool" : "");
+          return "<div class='provider-payload-msg'>" +
+            "<div class='provider-payload-msg-role" + roleClass + "'>" + escapeHtml(b.role) + "</div>" +
+            "<div class='provider-payload-msg-text'>" + escapeHtml(b.text) + "</div>" +
+          "</div>";
+        }).join("");
       }
 
       function providerRequestBodyPretty(req) {
@@ -3516,7 +3647,7 @@
       }
 
       function setProviderRequestActionState(enabled) {
-        [providerRequestCopyBtn, providerRequestOpenBtn, providerRequestExternalBtn, providerRequestShareBtn].forEach((btn) => {
+        [providerRequestCopyBtn, providerRequestOpenBtn, providerRequestShareBtn].forEach((btn) => {
           if (!btn) return;
           btn.disabled = !enabled;
         });
@@ -3526,8 +3657,17 @@
         if (providerPayloadMeta) {
           providerPayloadMeta.innerHTML = "<div class='muted'>" + escapeHtml(message || "Select a payload.") + "</div>";
         }
+        if (providerPayloadContent) {
+          providerPayloadContent.innerHTML = "";
+        }
         if (providerPayloadCode) {
-          providerPayloadCode.textContent = message || "Select a payload.";
+          providerPayloadCode.textContent = "";
+        }
+        if (providerPayloadCodeWrap) {
+          providerPayloadCodeWrap.style.display = "none";
+        }
+        if (providerPayloadRawToggle) {
+          providerPayloadRawToggle.style.display = "none";
         }
         setProviderRequestActionState(false);
       }
@@ -3535,7 +3675,7 @@
       function renderProviderRequestDetail() {
         const req = selectedProviderRequest();
         if (!req) {
-          clearProviderRequestDetail(providerRequestsItems.length ? "Select a payload." : "No payload selected.");
+          clearProviderRequestDetail("No payload selected.");
           return;
         }
         const metaFields = [
@@ -3543,17 +3683,31 @@
           { label: "Model", value: String(req.model || "").trim() || "Unknown" },
           { label: "Phase", value: String(req.phase || "").trim() || "Unknown" },
           { label: "Created", value: formatProviderRequestTs(req.created_at || req.ts || 0) || "Unknown" },
+          { label: "Size", value: formatPayloadSize(providerRequestBodyRaw(req).length) },
           { label: "Item", value: String(req.item_id || "").trim() || "n/a" },
           { label: "URL", value: String(req.provider_url || "").trim() || "n/a" },
         ];
         providerPayloadMeta.innerHTML = metaFields.map((field) => (
-          "<div class='provider-payload-field'>" +
-            "<div class='provider-payload-field-label'>" + escapeHtml(field.label) + "</div>" +
-            "<div class='provider-payload-field-value'>" + escapeHtml(field.value) + "</div>" +
-          "</div>"
+          "<span class='provider-payload-field'>" +
+            "<span class='provider-payload-field-label'>" + escapeHtml(field.label) + "</span>" +
+            "<span class='provider-payload-field-value'>" + escapeHtml(field.value) + "</span>" +
+          "</span>"
         )).join("");
+        // Content messages
+        const blocks = extractPayloadContentBlocks(providerRequestBodyRaw(req));
+        if (providerPayloadContent) {
+          providerPayloadContent.innerHTML = blocks
+            ? renderPayloadContentMessages(blocks)
+            : "<div class='muted'>Could not extract structured content.</div>";
+        }
+        // Raw JSON (collapsed by default)
         providerPayloadCode.textContent = providerRequestBodyPretty(req) || "{}";
         try { hljs.highlightElement(providerPayloadCode); } catch (_) {}
+        if (providerPayloadCodeWrap) providerPayloadCodeWrap.style.display = "none";
+        if (providerPayloadRawToggle) {
+          providerPayloadRawToggle.style.display = "";
+          providerPayloadRawToggle.innerHTML = "Show raw JSON &#9660;";
+        }
         setProviderRequestActionState(true);
       }
 
@@ -3561,7 +3715,6 @@
         if (!providerRequestsList) return;
         if (!providerRequestsItems.length) {
           providerRequestsList.innerHTML = "<div class='muted'>No provider payloads recorded for this session yet.</div>";
-          clearProviderRequestDetail("No payloads for this session yet.");
           return;
         }
         providerRequestsList.innerHTML = providerRequestsItems.map((req, index) => {
@@ -3569,30 +3722,24 @@
           const model = escapeHtml(String(req.model || "").trim() || "Unknown model");
           const phase = escapeHtml(String(req.phase || "").trim() || "phase");
           const ts = escapeHtml(formatProviderRequestTs(req.created_at || req.ts || 0));
-          const itemId = escapeHtml(String(req.item_id || "").trim());
-          const preview = escapeHtml(providerRequestBodyPreview(req));
-          const meta = [phase, model, ts].filter(Boolean).join(" · ");
-          const sub = itemId ? "item " + itemId : "";
+          const size = formatPayloadSize(providerRequestBodyRaw(req).length);
+          const meta = [phase, model, size, ts].filter(Boolean).join(" · ");
           return (
-            "<div class='request-card selectable" + (index === providerRequestsSelectedIndex ? " active" : "") + "' data-provider-request-index='" + index + "'>" +
+            "<div class='request-card selectable' data-provider-request-index='" + index + "'>" +
               "<div class='request-head'>" +
                 "<div class='request-title'>" + provider + "</div>" +
                 (ts ? "<div class='request-meta'>" + ts + "</div>" : "") +
               "</div>" +
-              (meta ? "<div class='request-meta' style='margin-bottom:8px;'>" + meta + "</div>" : "") +
-              (sub ? "<div class='request-meta' style='margin-bottom:8px;'>" + sub + "</div>" : "") +
-              "<div class='request-meta' style='line-height:1.5; word-break:break-word;'>" + (preview || "&nbsp;") + "</div>" +
+              (meta ? "<div class='request-meta'>" + meta + "</div>" : "") +
             "</div>"
           );
         }).join("");
         for (const el of providerRequestsList.querySelectorAll("[data-provider-request-index]")) {
           el.addEventListener("click", () => {
-            providerRequestsSelectedIndex = Number(el.getAttribute("data-provider-request-index") || "0");
-            renderProviderRequestsList();
-            renderProviderRequestDetail();
+            const idx = Number(el.getAttribute("data-provider-request-index") || "0");
+            openProviderDetailModal(idx);
           });
         }
-        renderProviderRequestDetail();
       }
 
       async function exportSelectedProviderRequest() {
@@ -3673,12 +3820,12 @@
                 "<div class='session-item-top'>" +
                   "<div class='session-item-main'>" +
                     "<div class='sid'>" + hSid + "</div>" +
-                    (meta.length ? "<div class='meta'>" + meta.join(" &middot; ") + "</div>" : "") +
+                    "<div class='meta'>" + (meta.length ? meta.join(" &middot; ") : "") + "<span class='session-payload-size' data-size-sid='" + eSid + "'></span></div>" +
                   "</div>" +
                   (isCur ? "<div class='session-active-badge'>active</div>" : "") +
                 "</div>" +
                 "<div class='session-actions'>" +
-                  "<button class='btn session-payload' data-payload='" + eSid + "' title='View latest provider payloads'>Latest Payload</button>" +
+                  "<button class='icon-btn secondary session-payload' data-payload='" + eSid + "' title='View payloads' aria-label='View payloads' style='width:30px; height:30px;'>" + ICON.doc + "</button>" +
                   "<button class='session-edit' data-edit='" + eSid + "' title='Rename session'>" + ICON.edit + "</button>" +
                   "<button class='session-del' data-del='" + eSid + "' title='Delete session'>" + ICON.close + "</button>" +
                 "</div>" +
@@ -3767,6 +3914,22 @@
               await refreshSessionMenu();
               showToast("Session renamed", 900);
             });
+          }
+          // Fetch latest payload size per session (non-blocking)
+          for (const sid of uniq.filter(Boolean)) {
+            const eSid = sid.replace(/'/g, "&#39;");
+            fetch(API + "/brain/provider_requests?limit=1&session_id=" + encodeURIComponent(sid), { cache: "no-store" })
+              .then(r => r.ok ? r.json() : {})
+              .then(d => {
+                const reqs = Array.isArray(d.requests) ? d.requests : [];
+                const el = sessionList.querySelector("[data-size-sid='" + eSid + "']");
+                if (!el) return;
+                if (reqs.length) {
+                  const size = String((reqs[0] && reqs[0].request_body) || "").length;
+                  el.textContent = " \u00b7 " + formatPayloadSize(size);
+                }
+              })
+              .catch(() => {});
           }
         } catch (_) {
           sessionList.innerHTML = "<div class='muted'>(sessions unavailable)</div>";
@@ -5847,6 +6010,34 @@
           // Binary / unknown — attempt to show in iframe
           openHtmlViewer(path);
         }
+      };
+
+      window.uiViewerOpenText = function(title, content, ext) {
+        if (viewer.classList.contains("show")) {
+          _viewerClosingFromPopstate = true;
+          closeViewer();
+          _viewerClosingFromPopstate = false;
+        }
+        ext = ext || "json";
+        viewerSourceToggle.style.display = "none";
+        viewerSourceToggle.onclick = null;
+        viewerCurrentRel = null;
+        viewerMode = "text";
+        viewerTitle.textContent = title || "Viewer";
+        resetViewerPanels();
+        viewerText.style.display = "block";
+        viewerText.innerHTML = "";
+        if (_viewerMdToggle) { try { _viewerMdToggle.remove(); } catch (_) {} _viewerMdToggle = null; }
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        const langMap = { py:"python", js:"javascript", ts:"typescript", kt:"kotlin", sh:"bash", yml:"yaml", rs:"rust", rb:"ruby", json:"json" };
+        code.className = "language-" + (langMap[ext] || ext);
+        code.textContent = content;
+        pre.appendChild(code);
+        viewerText.appendChild(wrapWithLineNumbers(pre, content));
+        try { hljs.highlightElement(code); } catch (_) {}
+        viewer.classList.add("show");
+        history.pushState({ viewer: true }, "");
       };
 
       window.uiViewerClose = function() {
@@ -7934,9 +8125,27 @@
         });
       } catch (_) {}
       try { $("sessionRefresh").addEventListener("click", refreshSessionMenu); } catch (_) {}
-      try { $("sessionPayloadsBtn").addEventListener("click", () => openProviderRequestsModal(chatSessionId)); } catch (_) {}
+
       try { $("providerRequestsClose").addEventListener("click", closeProviderRequestsModal); } catch (_) {}
       try { $("providerRequestsRefresh").addEventListener("click", refreshProviderRequests); } catch (_) {}
+      try {
+        providerRequestsModal.addEventListener("click", (e) => {
+          if (e && e.target === providerRequestsModal) closeProviderRequestsModal();
+        });
+      } catch (_) {}
+      try { $("providerDetailBack").addEventListener("click", closeProviderDetailModal); } catch (_) {}
+      try {
+        providerDetailModal.addEventListener("click", (e) => {
+          if (e && e.target === providerDetailModal) closeProviderDetailModal();
+        });
+      } catch (_) {}
+      try {
+        providerPayloadRawToggle.addEventListener("click", () => {
+          const showing = providerPayloadCodeWrap.style.display !== "none";
+          providerPayloadCodeWrap.style.display = showing ? "none" : "";
+          providerPayloadRawToggle.innerHTML = showing ? "Show raw JSON &#9660;" : "Hide raw JSON &#9650;";
+        });
+      } catch (_) {}
       try {
         providerRequestCopyBtn.addEventListener("click", async () => {
           const req = selectedProviderRequest();
@@ -7950,52 +8159,43 @@
         });
       } catch (_) {}
       try {
-        providerRequestOpenBtn.addEventListener("click", async () => {
-          try {
-            const rel = await exportSelectedProviderRequest();
-            if (!rel) return;
-            if (typeof window.uiViewerOpen === "function") {
-              await window.uiViewerOpen(rel);
-            }
-          } catch (_) {
-            showToast("Open failed", 1600);
-          }
-        });
-      } catch (_) {}
-      try {
-        providerRequestExternalBtn.addEventListener("click", async () => {
-          try {
-            const rel = await exportSelectedProviderRequest();
-            if (!rel) return;
-            const url = fileUrl(rel);
-            if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInBrowser) {
-              AndroidBridge.openInBrowser(url);
-            } else {
-              openPreviewInNewTab(url);
-            }
-          } catch (_) {
-            showToast("External open failed", 1600);
-          }
+        providerRequestOpenBtn.addEventListener("click", () => {
+          const req = selectedProviderRequest();
+          if (!req) return;
+          const json = providerRequestBodyPretty(req) || "{}";
+          const phase = String(req.phase || "").trim();
+          const model = String(req.model || "").trim();
+          const title = [phase, model].filter(Boolean).join(" · ") || "Payload";
+          closeProviderDetailModal();
+          closeProviderRequestsModal();
+          window.uiViewerOpenText(title, json, "json");
         });
       } catch (_) {}
       try {
         providerRequestShareBtn.addEventListener("click", async () => {
+          const req = selectedProviderRequest();
+          if (!req) return;
           try {
-            const rel = await exportSelectedProviderRequest();
-            if (!rel) return;
-            if (typeof AndroidBridge !== "undefined" && AndroidBridge.shareUserFile) {
-              AndroidBridge.shareUserFile(rel, "application/json");
+            const json = providerRequestBodyPretty(req) || "{}";
+            if (navigator.share) {
+              // Try file share first, fall back to text share
+              const file = new File([json], "payload.json", { type: "application/json" });
+              const fileData = { files: [file] };
+              if (navigator.canShare && navigator.canShare(fileData)) {
+                await navigator.share(fileData);
+              } else {
+                await navigator.share({ title: "Payload", text: json });
+              }
+            } else if (typeof AndroidBridge !== "undefined" && AndroidBridge.shareText) {
+              AndroidBridge.shareText("Payload", json);
             } else {
-              showToast("Share not available", 1500);
+              await navigator.clipboard.writeText(json);
+              showToast("Copied to clipboard", 1200);
             }
-          } catch (_) {
-            showToast("Share failed", 1600);
+          } catch (e) {
+            if (e.name === "AbortError") return;
+            showToast("Share failed: " + (e.message || e), 2000);
           }
-        });
-      } catch (_) {}
-      try {
-        providerRequestsModal.addEventListener("click", (e) => {
-          if (e && e.target === providerRequestsModal) closeProviderRequestsModal();
         });
       } catch (_) {}
       try {
