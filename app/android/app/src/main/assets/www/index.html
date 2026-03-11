@@ -2086,6 +2086,31 @@
       .provider-payload-msg-role.system { color: #f59e0b; }
       .provider-payload-msg-role.assistant { color: #22d3ee; }
       .provider-payload-msg-role.tool { color: #a78bfa; }
+      .provider-payload-sep {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 6px 0 2px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--accent);
+      }
+      .provider-payload-sep::before,
+      .provider-payload-sep::after {
+        content: "";
+        flex: 1;
+        height: 1px;
+        background: var(--accent);
+        opacity: 0.3;
+      }
+      .provider-payload-sep .sep-detail {
+        font-weight: 400;
+        text-transform: none;
+        letter-spacing: 0;
+        color: var(--ink-muted);
+      }
       .provider-payload-msg-text {
         font-size: 12px;
         line-height: 1.55;
@@ -2793,44 +2818,18 @@
       </div>
     </div>
 
-    <!-- Payload list modal -->
-    <div class="modal" id="providerRequestsModal" role="dialog" aria-modal="true" aria-labelledby="providerRequestsTitle">
-      <div class="modal-card settings-detail" style="text-align:left; max-width:480px; width:min(480px, calc(100vw - 24px)); max-height:calc(100vh - 28px); display:flex; flex-direction:column; overflow:hidden;">
-        <div class="card-header">
-          <div class="card-icon amber">&#123;&#125;</div>
-          <div class="card-title" id="providerRequestsTitle" style="margin-bottom:0;">Provider Payloads</div>
-          <button class="icon-btn secondary" id="providerRequestsClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
-        </div>
-        <div class="muted" id="providerRequestsSummary" style="margin-bottom:10px;">Current session</div>
-        <div class="request-list provider-payload-list" id="providerRequestsList"></div>
-        <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
-          <button class="btn" id="providerRequestsRefresh">Refresh</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Payload detail modal -->
-    <div class="modal" id="providerDetailModal" role="dialog" aria-modal="true" aria-labelledby="providerDetailTitle">
+    <!-- Payload timeline modal -->
+    <div class="modal" id="providerRequestsModal" role="dialog" aria-modal="true">
       <div class="modal-card settings-detail" style="text-align:left; max-width:640px; width:min(640px, calc(100vw - 24px)); max-height:calc(100vh - 28px); display:flex; flex-direction:column; overflow:hidden; padding-top:8px;">
-        <!-- Top: close + meta (pinned) -->
-        <div style="flex-shrink:0;">
-          <button class="icon-btn secondary" id="providerDetailBack" style="float:right; width:32px; height:32px;" title="Close" aria-label="Close"></button>
-          <div class="provider-payload-meta" id="providerPayloadMeta"></div>
+        <div style="display:flex; align-items:center; gap:8px; flex-shrink:0; margin-bottom:8px;">
+          <div class="muted" id="providerRequestsSummary" style="flex:1; min-width:0;">Loading…</div>
+          <button class="icon-btn secondary" id="providerRequestsRefresh" style="width:32px; height:32px;" title="Refresh" aria-label="Refresh"></button>
+          <button class="icon-btn secondary" id="providerRequestCopyBtn" style="width:32px; height:32px;" title="Copy latest JSON" aria-label="Copy latest JSON"></button>
+          <button class="icon-btn secondary" id="providerRequestOpenBtn" style="width:32px; height:32px;" title="View latest JSON" aria-label="View latest JSON"></button>
+          <button class="icon-btn secondary" id="providerRequestShareBtn" style="width:32px; height:32px;" title="Share latest JSON" aria-label="Share latest JSON"></button>
+          <button class="icon-btn secondary" id="providerRequestsClose" style="width:32px; height:32px;" title="Close" aria-label="Close"></button>
         </div>
-        <!-- Middle: scrollable content -->
-        <div class="provider-payload-detail">
-          <div class="provider-payload-content-wrap" id="providerPayloadContent"></div>
-          <div class="provider-payload-raw-toggle" id="providerPayloadRawToggle">Show raw JSON &#9660;</div>
-          <div class="provider-payload-code-wrap" id="providerPayloadCodeWrap" style="display:none;">
-            <pre class="provider-payload-code"><code id="providerPayloadCode" class="language-json"></code></pre>
-          </div>
-        </div>
-        <!-- Bottom: action buttons (pinned) -->
-        <div class="provider-payload-actions" style="flex-shrink:0; margin-top:8px; justify-content:flex-end;">
-          <button class="icon-btn secondary" id="providerRequestCopyBtn" style="width:36px; height:36px;" title="Copy JSON" aria-label="Copy JSON"></button>
-          <button class="icon-btn secondary" id="providerRequestOpenBtn" style="width:36px; height:36px;" title="View" aria-label="View"></button>
-          <button class="icon-btn secondary" id="providerRequestShareBtn" style="width:36px; height:36px;" title="Share" aria-label="Share"></button>
-        </div>
+        <div class="provider-payload-detail" id="providerPayloadContent"></div>
       </div>
     </div>
 
@@ -3350,7 +3349,7 @@
       try { $("sessionClose").innerHTML = ICON.close; } catch (_) {}
       try { $("chatCameraClose").innerHTML = ICON.close; } catch (_) {}
       try { $("providerRequestsClose").innerHTML = ICON.close; } catch (_) {}
-      try { $("providerDetailBack").innerHTML = ICON.close; } catch (_) {}
+      try { $("providerRequestsRefresh").innerHTML = ICON.refresh; } catch (_) {}
       try { $("providerRequestCopyBtn").innerHTML = ICON.copy; } catch (_) {}
       try { $("providerRequestOpenBtn").innerHTML = ICON.externalLink; } catch (_) {}
       try { $("providerRequestShareBtn").innerHTML = ICON.share; } catch (_) {}
@@ -3473,21 +3472,14 @@
       const sessionModal = $("sessionModal");
       const sessionList = $("sessionList");
       const providerRequestsModal = $("providerRequestsModal");
-      const providerRequestsList = $("providerRequestsList");
       const providerRequestsSummary = $("providerRequestsSummary");
-      const providerDetailModal = $("providerDetailModal");
-      const providerPayloadMeta = $("providerPayloadMeta");
       const providerPayloadContent = $("providerPayloadContent");
-      const providerPayloadCode = $("providerPayloadCode");
-      const providerPayloadCodeWrap = $("providerPayloadCodeWrap");
-      const providerPayloadRawToggle = $("providerPayloadRawToggle");
       const providerRequestCopyBtn = $("providerRequestCopyBtn");
       const providerRequestOpenBtn = $("providerRequestOpenBtn");
       const providerRequestShareBtn = $("providerRequestShareBtn");
       let providerRequestsSessionId = "default";
       let providerRequestsItems = [];
       let providerRequestsSelectedIndex = -1;
-      setProviderRequestActionState(false);
 
       function setSessionChipText() {
         try { sessionChip.textContent = String(chatSessionId || "default"); } catch (_) {}
@@ -3504,16 +3496,6 @@
 
       function closeProviderRequestsModal() {
         try { providerRequestsModal.classList.remove("show"); } catch (_) {}
-      }
-
-      function openProviderDetailModal(index) {
-        providerRequestsSelectedIndex = index;
-        renderProviderRequestDetail();
-        try { providerDetailModal.classList.add("show"); } catch (_) {}
-      }
-
-      function closeProviderDetailModal() {
-        try { providerDetailModal.classList.remove("show"); } catch (_) {}
       }
 
       async function openProviderRequestsModal(sessionId) {
@@ -3641,145 +3623,89 @@
         return API + "/user/write/" + encoded;
       }
 
-      function selectedProviderRequest() {
-        if (providerRequestsSelectedIndex < 0 || providerRequestsSelectedIndex >= providerRequestsItems.length) return null;
-        return providerRequestsItems[providerRequestsSelectedIndex] || null;
+      function latestProviderRequest() {
+        return providerRequestsItems.length ? providerRequestsItems[0] : null;
       }
 
-      function setProviderRequestActionState(enabled) {
-        [providerRequestCopyBtn, providerRequestOpenBtn, providerRequestShareBtn].forEach((btn) => {
-          if (!btn) return;
-          btn.disabled = !enabled;
-        });
+      function buildPayloadTimeline() {
+        if (!providerRequestsItems.length) return [];
+        var chrono = providerRequestsItems.slice().reverse();
+        var timeline = [];
+        var prevBlocks = null;
+        for (var pi = 0; pi < chrono.length; pi++) {
+          var req = chrono[pi];
+          var blocks = extractPayloadContentBlocks(providerRequestBodyRaw(req)) || [];
+          var diffStart = blocks.length;
+          if (prevBlocks) {
+            for (var bi = 0; bi < blocks.length; bi++) {
+              var prev = prevBlocks[bi];
+              if (!prev || prev.role !== blocks[bi].role || prev.text !== blocks[bi].text) {
+                diffStart = bi;
+                break;
+              }
+            }
+          } else {
+            diffStart = 0;
+          }
+          if (diffStart < blocks.length) {
+            timeline.push({ req: req, blocks: blocks.slice(diffStart) });
+          }
+          prevBlocks = blocks;
+        }
+        return timeline;
       }
 
-      function clearProviderRequestDetail(message) {
-        if (providerPayloadMeta) {
-          providerPayloadMeta.innerHTML = "<div class='muted'>" + escapeHtml(message || "Select a payload.") + "</div>";
-        }
-        if (providerPayloadContent) {
-          providerPayloadContent.innerHTML = "";
-        }
-        if (providerPayloadCode) {
-          providerPayloadCode.textContent = "";
-        }
-        if (providerPayloadCodeWrap) {
-          providerPayloadCodeWrap.style.display = "none";
-        }
-        if (providerPayloadRawToggle) {
-          providerPayloadRawToggle.style.display = "none";
-        }
-        setProviderRequestActionState(false);
-      }
-
-      function renderProviderRequestDetail() {
-        const req = selectedProviderRequest();
-        if (!req) {
-          clearProviderRequestDetail("No payload selected.");
-          return;
-        }
-        const metaFields = [
-          { label: "Provider", value: String(req.provider_kind || "").trim() || "Provider" },
-          { label: "Model", value: String(req.model || "").trim() || "Unknown" },
-          { label: "Phase", value: String(req.phase || "").trim() || "Unknown" },
-          { label: "Created", value: formatProviderRequestTs(req.created_at || req.ts || 0) || "Unknown" },
-          { label: "Size", value: formatPayloadSize(providerRequestBodyRaw(req).length) },
-          { label: "Item", value: String(req.item_id || "").trim() || "n/a" },
-          { label: "URL", value: String(req.provider_url || "").trim() || "n/a" },
-        ];
-        providerPayloadMeta.innerHTML = metaFields.map((field) => (
-          "<span class='provider-payload-field'>" +
-            "<span class='provider-payload-field-label'>" + escapeHtml(field.label) + "</span>" +
-            "<span class='provider-payload-field-value'>" + escapeHtml(field.value) + "</span>" +
-          "</span>"
-        )).join("");
-        // Content messages
-        const blocks = extractPayloadContentBlocks(providerRequestBodyRaw(req));
-        if (providerPayloadContent) {
-          providerPayloadContent.innerHTML = blocks
-            ? renderPayloadContentMessages(blocks)
-            : "<div class='muted'>Could not extract structured content.</div>";
-        }
-        // Raw JSON (collapsed by default)
-        providerPayloadCode.textContent = providerRequestBodyPretty(req) || "{}";
-        try { hljs.highlightElement(providerPayloadCode); } catch (_) {}
-        if (providerPayloadCodeWrap) providerPayloadCodeWrap.style.display = "none";
-        if (providerPayloadRawToggle) {
-          providerPayloadRawToggle.style.display = "";
-          providerPayloadRawToggle.innerHTML = "Show raw JSON &#9660;";
-        }
-        setProviderRequestActionState(true);
-      }
-
-      function renderProviderRequestsList() {
-        if (!providerRequestsList) return;
+      function renderPayloadTimeline() {
+        if (!providerPayloadContent) return;
         if (!providerRequestsItems.length) {
-          providerRequestsList.innerHTML = "<div class='muted'>No provider payloads recorded for this session yet.</div>";
+          providerPayloadContent.innerHTML = "<div class='muted'>No payloads for this session.</div>";
           return;
         }
-        providerRequestsList.innerHTML = providerRequestsItems.map((req, index) => {
-          const provider = escapeHtml(String(req.provider_kind || "").trim() || "Provider");
-          const model = escapeHtml(String(req.model || "").trim() || "Unknown model");
-          const phase = escapeHtml(String(req.phase || "").trim() || "phase");
-          const ts = escapeHtml(formatProviderRequestTs(req.created_at || req.ts || 0));
-          const size = formatPayloadSize(providerRequestBodyRaw(req).length);
-          const meta = [phase, model, size, ts].filter(Boolean).join(" · ");
-          return (
-            "<div class='request-card selectable' data-provider-request-index='" + index + "'>" +
-              "<div class='request-head'>" +
-                "<div class='request-title'>" + provider + "</div>" +
-                (ts ? "<div class='request-meta'>" + ts + "</div>" : "") +
-              "</div>" +
-              (meta ? "<div class='request-meta'>" + meta + "</div>" : "") +
-            "</div>"
-          );
-        }).join("");
-        for (const el of providerRequestsList.querySelectorAll("[data-provider-request-index]")) {
-          el.addEventListener("click", () => {
-            const idx = Number(el.getAttribute("data-provider-request-index") || "0");
-            openProviderDetailModal(idx);
-          });
+        var timeline = buildPayloadTimeline();
+        if (!timeline.length) {
+          providerPayloadContent.innerHTML = "<div class='muted'>No content could be extracted.</div>";
+          return;
         }
-      }
-
-      async function exportSelectedProviderRequest() {
-        const req = selectedProviderRequest();
-        if (!req) return null;
-        const ts = Number(req.created_at || req.ts || Date.now());
-        const stamp = new Date(ts).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-        const relPath =
-          "exports/provider_payloads/" +
-          providerRequestSafeName(providerRequestsSessionId, "session") + "_" +
-          providerRequestSafeName(req.phase || "payload", "payload") + "_" +
-          stamp + ".json";
-        const res = await fetch(providerRequestWriteUrl(relPath), {
-          method: "POST",
-          headers: { "Content-Type": "application/json; charset=utf-8" },
-          body: JSON.stringify({ data: providerRequestBodyPretty(req) || "{}" }),
-        });
-        if (!res.ok) throw new Error("write_failed");
-        return relPath;
+        var html = "";
+        for (var ti = 0; ti < timeline.length; ti++) {
+          var entry = timeline[ti];
+          var req = entry.req;
+          var ts = formatProviderRequestTs(req.created_at || req.ts || 0);
+          var phase = String(req.phase || "").trim();
+          var model = String(req.model || "").trim();
+          var size = formatPayloadSize(providerRequestBodyRaw(req).length);
+          var details = [model, size].filter(Boolean).join(" \u00b7 ");
+          html += "<div class='provider-payload-sep'>" +
+            escapeHtml(ts || "Initial") +
+            (phase ? " \u00b7 " + escapeHtml(phase) : "") +
+            (details ? " <span class='sep-detail'>" + escapeHtml(details) + "</span>" : "") +
+          "</div>";
+          html += renderPayloadContentMessages(entry.blocks, null);
+        }
+        providerPayloadContent.innerHTML = html;
       }
 
       async function refreshProviderRequests() {
-        if (!providerRequestsList) return;
-        const sid = String(providerRequestsSessionId || chatSessionId || "default").trim() || "default";
+        if (!providerPayloadContent) return;
+        var sid = String(providerRequestsSessionId || chatSessionId || "default").trim() || "default";
         try {
-          providerRequestsSummary.textContent = "Session: " + sid + " · loading latest payloads first";
-          providerRequestsList.innerHTML = "<div class='muted'>Loading…</div>";
-          clearProviderRequestDetail("Loading payload...");
-          const res = await fetch(API + "/brain/provider_requests?limit=120&session_id=" + encodeURIComponent(sid), { cache: "no-store" });
-          const data = res.ok ? await res.json().catch(() => ({})) : {};
+          providerRequestsSummary.textContent = sid + " \u00b7 loading\u2026";
+          providerPayloadContent.innerHTML = "<div class='muted'>Loading\u2026</div>";
+          var res = await fetch(API + "/brain/provider_requests?limit=120&session_id=" + encodeURIComponent(sid), { cache: "no-store" });
+          var data = res.ok ? await res.json().catch(function() { return {}; }) : {};
           providerRequestsItems = Array.isArray(data.requests) ? data.requests.slice().reverse() : [];
           providerRequestsSelectedIndex = providerRequestsItems.length ? 0 : -1;
-          providerRequestsSummary.textContent =
-            "Session: " + sid + " · " + providerRequestsItems.length + " payload" + (providerRequestsItems.length === 1 ? "" : "s");
-          renderProviderRequestsList();
+          var latest = latestProviderRequest();
+          providerRequestsSummary.textContent = sid + " \u00b7 " +
+            providerRequestsItems.length + " payload" + (providerRequestsItems.length === 1 ? "" : "s") +
+            (latest ? " \u00b7 latest " + formatPayloadSize(providerRequestBodyRaw(latest).length) : "");
+          [providerRequestCopyBtn, providerRequestOpenBtn, providerRequestShareBtn].forEach(function(b) { if (b) b.disabled = !latest; });
+          renderPayloadTimeline();
         } catch (e) {
           providerRequestsItems = [];
           providerRequestsSelectedIndex = -1;
-          providerRequestsList.innerHTML = "<div class='muted'>Failed to load provider payloads.</div>";
-          clearProviderRequestDetail("Failed to load payload.");
+          providerPayloadContent.innerHTML = "<div class='muted'>Failed to load payloads.</div>";
+          [providerRequestCopyBtn, providerRequestOpenBtn, providerRequestShareBtn].forEach(function(b) { if (b) b.disabled = true; });
         }
       }
 
@@ -8129,26 +8055,13 @@
       try { $("providerRequestsClose").addEventListener("click", closeProviderRequestsModal); } catch (_) {}
       try { $("providerRequestsRefresh").addEventListener("click", refreshProviderRequests); } catch (_) {}
       try {
-        providerRequestsModal.addEventListener("click", (e) => {
+        providerRequestsModal.addEventListener("click", function(e) {
           if (e && e.target === providerRequestsModal) closeProviderRequestsModal();
         });
       } catch (_) {}
-      try { $("providerDetailBack").addEventListener("click", closeProviderDetailModal); } catch (_) {}
       try {
-        providerDetailModal.addEventListener("click", (e) => {
-          if (e && e.target === providerDetailModal) closeProviderDetailModal();
-        });
-      } catch (_) {}
-      try {
-        providerPayloadRawToggle.addEventListener("click", () => {
-          const showing = providerPayloadCodeWrap.style.display !== "none";
-          providerPayloadCodeWrap.style.display = showing ? "none" : "";
-          providerPayloadRawToggle.innerHTML = showing ? "Show raw JSON &#9660;" : "Hide raw JSON &#9650;";
-        });
-      } catch (_) {}
-      try {
-        providerRequestCopyBtn.addEventListener("click", async () => {
-          const req = selectedProviderRequest();
+        providerRequestCopyBtn.addEventListener("click", async function() {
+          var req = latestProviderRequest();
           if (!req) return;
           try {
             await navigator.clipboard.writeText(providerRequestBodyPretty(req) || "{}");
@@ -8159,28 +8072,26 @@
         });
       } catch (_) {}
       try {
-        providerRequestOpenBtn.addEventListener("click", () => {
-          const req = selectedProviderRequest();
+        providerRequestOpenBtn.addEventListener("click", function() {
+          var req = latestProviderRequest();
           if (!req) return;
-          const json = providerRequestBodyPretty(req) || "{}";
-          const phase = String(req.phase || "").trim();
-          const model = String(req.model || "").trim();
-          const title = [phase, model].filter(Boolean).join(" · ") || "Payload";
-          closeProviderDetailModal();
+          var json = providerRequestBodyPretty(req) || "{}";
+          var phase = String(req.phase || "").trim();
+          var model = String(req.model || "").trim();
+          var title = [phase, model].filter(Boolean).join(" \u00b7 ") || "Payload";
           closeProviderRequestsModal();
           window.uiViewerOpenText(title, json, "json");
         });
       } catch (_) {}
       try {
-        providerRequestShareBtn.addEventListener("click", async () => {
-          const req = selectedProviderRequest();
+        providerRequestShareBtn.addEventListener("click", async function() {
+          var req = latestProviderRequest();
           if (!req) return;
           try {
-            const json = providerRequestBodyPretty(req) || "{}";
+            var json = providerRequestBodyPretty(req) || "{}";
             if (navigator.share) {
-              // Try file share first, fall back to text share
-              const file = new File([json], "payload.json", { type: "application/json" });
-              const fileData = { files: [file] };
+              var file = new File([json], "payload.json", { type: "application/json" });
+              var fileData = { files: [file] };
               if (navigator.canShare && navigator.canShare(fileData)) {
                 await navigator.share(fileData);
               } else {
