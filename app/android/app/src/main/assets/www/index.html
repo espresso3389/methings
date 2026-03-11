@@ -1865,7 +1865,7 @@
       .session-list {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 10px;
         margin-top: 14px;
         max-height: min(420px, 60vh);
         overflow: auto;
@@ -1873,51 +1873,75 @@
       }
       .session-item {
         display: flex;
-        gap: 10px;
-        align-items: center;
-        justify-content: space-between;
-        padding: 10px 12px;
-        border-radius: var(--radius-md);
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+        padding: 14px;
+        border-radius: calc(var(--radius-md) + 2px);
         border: 1px solid var(--border);
         background: var(--surface);
         cursor: pointer;
         user-select: none;
-        transition: background var(--transition), border-color var(--transition);
+        transition: background var(--transition), border-color var(--transition), transform var(--transition);
       }
-      .session-item:hover { background: var(--bg-overlay); border-color: var(--ink-muted); }
+      .session-item:hover { background: var(--bg-overlay); border-color: var(--ink-muted); transform: translateY(-1px); }
       .session-item.active {
         border-color: var(--border-focus);
         background: var(--accent-soft);
       }
+      .session-item-top {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        justify-content: space-between;
+      }
+      .session-item-main {
+        min-width: 0;
+        flex: 1;
+      }
       .session-item .sid {
         font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-        font-size: 12px;
+        font-size: 13px;
+        font-weight: 600;
         color: var(--ink);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
       .session-item.active .sid { color: var(--accent-hover); }
-      .session-item .meta { font-size: 11px; color: var(--ink-muted); white-space: nowrap; }
-      .session-item .session-del {
-        width: 26px;
-        height: 26px;
-        flex-shrink: 0;
-        border-radius: var(--radius-sm);
-        border: 1px solid transparent;
-        background: transparent;
+      .session-item .meta {
+        margin-top: 6px;
+        font-size: 11px;
         color: var(--ink-muted);
-        cursor: pointer;
-        display: grid;
-        place-items: center;
-        transition: background var(--transition), color var(--transition), border-color var(--transition);
+        white-space: normal;
+        line-height: 1.45;
       }
-      .session-item .session-del svg { width: 14px; height: 14px; display: block; }
-      .session-item .session-del:hover { background: var(--red-soft); color: var(--red); border-color: rgba(239,68,68,0.25); }
-      .session-item .session-del:active { transform: scale(0.9); }
+      .session-active-badge {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+        color: var(--accent);
+        background: var(--accent-soft);
+        border: 1px solid rgba(99,102,241,0.25);
+        border-radius: var(--radius-full);
+        padding: 3px 9px;
+        flex-shrink: 0;
+      }
+      .session-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+      }
+      .session-actions .btn {
+        min-height: 32px;
+      }
+      .session-item .session-del,
       .session-item .session-edit {
-        width: 26px;
-        height: 26px;
+        width: 30px;
+        height: 30px;
         flex-shrink: 0;
         border-radius: var(--radius-sm);
         border: 1px solid transparent;
@@ -1928,9 +1952,12 @@
         place-items: center;
         transition: background var(--transition), color var(--transition), border-color var(--transition);
       }
-      .session-item .session-edit svg { width: 14px; height: 14px; display: block; }
+      .session-item .session-del svg,
+      .session-item .session-edit svg { width: 15px; height: 15px; display: block; }
+      .session-item .session-del:hover { background: var(--red-soft); color: var(--red); border-color: rgba(239,68,68,0.25); }
+      .session-item .session-del:active,
+      .session-item .session-edit:active { transform: scale(0.92); }
       .session-item .session-edit:hover { background: var(--accent-soft); color: var(--accent); border-color: rgba(99,102,241,0.25); }
-      .session-item .session-edit:active { transform: scale(0.9); }
       .request-list {
         display: flex;
         flex-direction: column;
@@ -1944,6 +1971,19 @@
         border-radius: var(--radius-md);
         padding: 12px;
         box-shadow: var(--shadow);
+      }
+      .request-card.selectable {
+        cursor: pointer;
+        transition: background var(--transition), border-color var(--transition), transform var(--transition);
+      }
+      .request-card.selectable:hover {
+        background: var(--bg-overlay);
+        border-color: var(--ink-muted);
+        transform: translateY(-1px);
+      }
+      .request-card.selectable.active {
+        border-color: var(--border-focus);
+        background: var(--accent-soft);
       }
       .request-head {
         display: flex;
@@ -1975,6 +2015,93 @@
         padding: 10px;
         max-height: 42vh;
         overflow: auto;
+      }
+      .provider-payload-layout {
+        display: grid;
+        grid-template-columns: minmax(240px, 300px) minmax(0, 1fr);
+        gap: 12px;
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow: hidden;
+      }
+      .provider-payload-list {
+        min-height: 220px;
+      }
+      .provider-payload-detail {
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius-md);
+        background: rgba(255,255,255,0.02);
+        padding: 12px;
+        overflow: hidden;
+      }
+      .provider-payload-meta {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 8px;
+      }
+      .provider-payload-field {
+        min-width: 0;
+        padding: 8px 10px;
+        border-radius: var(--radius-sm);
+        border: 1px solid rgba(255,255,255,0.06);
+        background: rgba(0,0,0,0.14);
+      }
+      .provider-payload-field-label {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.45px;
+        color: var(--ink-muted);
+      }
+      .provider-payload-field-value {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--ink);
+        line-height: 1.45;
+        word-break: break-word;
+      }
+      .provider-payload-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .provider-payload-actions .btn {
+        min-height: 34px;
+      }
+      .provider-payload-code-wrap {
+        min-height: 0;
+        flex: 1 1 auto;
+        border-radius: var(--radius-md);
+        border: 1px solid rgba(255,255,255,0.06);
+        background: rgba(0,0,0,0.28);
+        overflow: auto;
+      }
+      .provider-payload-code {
+        margin: 0;
+        min-height: 100%;
+        padding: 14px 16px;
+        white-space: pre;
+        overflow: auto;
+      }
+      .provider-payload-code code {
+        display: block;
+        font-family: "JetBrains Mono", "Fira Code", "Menlo", "Consolas", monospace;
+        font-size: 12px;
+        line-height: 1.58;
+      }
+      @media (max-width: 760px) {
+        .provider-payload-layout {
+          grid-template-columns: 1fr;
+        }
+        .provider-payload-list {
+          min-height: 160px;
+          max-height: 220px;
+        }
       }
 
       /* Permission card (inline in chat) */
@@ -2625,7 +2752,7 @@
 
     <!-- Session Modal -->
     <div class="modal" id="sessionModal" role="dialog" aria-modal="true" aria-labelledby="sessionTitle">
-      <div class="modal-card" style="text-align:left; max-width:360px;">
+      <div class="modal-card" style="text-align:left; max-width:520px;">
         <div class="card-header">
           <div class="card-icon purple">&#9654;</div>
           <div class="card-title" id="sessionTitle" style="margin-bottom:0;">Sessions</div>
@@ -2635,20 +2762,34 @@
         <div style="display:flex; align-items:center; gap:6px; margin-top:10px;">
           <button class="icon-btn" id="sessionNew" style="width:30px; height:30px;" title="New session" aria-label="New session"></button>
           <button class="icon-btn" id="sessionRefresh" style="width:30px; height:30px;" title="Refresh" aria-label="Refresh"></button>
-          <button class="btn" id="sessionPayloadsBtn" style="margin-left:auto;">Provider Payloads</button>
+          <button class="btn" id="sessionPayloadsBtn" style="margin-left:auto;">Current Payloads</button>
         </div>
       </div>
     </div>
 
     <div class="modal" id="providerRequestsModal" role="dialog" aria-modal="true" aria-labelledby="providerRequestsTitle">
-      <div class="modal-card settings-detail" style="text-align:left; max-width:720px; max-height:calc(100vh - 40px); display:flex; flex-direction:column; overflow:hidden;">
+      <div class="modal-card settings-detail" style="text-align:left; max-width:1040px; width:min(1040px, calc(100vw - 24px)); max-height:calc(100vh - 28px); display:flex; flex-direction:column; overflow:hidden;">
         <div class="card-header">
           <div class="card-icon amber">&#123;&#125;</div>
           <div class="card-title" id="providerRequestsTitle" style="margin-bottom:0;">Provider Payloads</div>
           <button class="icon-btn secondary" id="providerRequestsClose" style="margin-left:auto; width:32px; height:32px;" title="Close" aria-label="Close"></button>
         </div>
         <div class="muted" id="providerRequestsSummary" style="margin-bottom:10px;">Current session</div>
-        <div class="request-list" id="providerRequestsList"></div>
+        <div class="provider-payload-layout">
+          <div class="request-list provider-payload-list" id="providerRequestsList"></div>
+          <div class="provider-payload-detail">
+            <div class="provider-payload-meta" id="providerPayloadMeta"></div>
+            <div class="provider-payload-actions">
+              <button class="btn" id="providerRequestCopyBtn">Copy JSON</button>
+              <button class="btn" id="providerRequestOpenBtn">Open in Viewer</button>
+              <button class="btn" id="providerRequestExternalBtn">Open External</button>
+              <button class="btn" id="providerRequestShareBtn">Share</button>
+            </div>
+            <div class="provider-payload-code-wrap">
+              <pre class="provider-payload-code"><code id="providerPayloadCode" class="language-json">Select a payload.</code></pre>
+            </div>
+          </div>
+        </div>
         <div style="display:flex; align-items:center; gap:8px; margin-top:12px;">
           <button class="btn" id="providerRequestsRefresh">Refresh</button>
         </div>
@@ -3291,6 +3432,16 @@
       const providerRequestsModal = $("providerRequestsModal");
       const providerRequestsList = $("providerRequestsList");
       const providerRequestsSummary = $("providerRequestsSummary");
+      const providerPayloadMeta = $("providerPayloadMeta");
+      const providerPayloadCode = $("providerPayloadCode");
+      const providerRequestCopyBtn = $("providerRequestCopyBtn");
+      const providerRequestOpenBtn = $("providerRequestOpenBtn");
+      const providerRequestExternalBtn = $("providerRequestExternalBtn");
+      const providerRequestShareBtn = $("providerRequestShareBtn");
+      let providerRequestsSessionId = "default";
+      let providerRequestsItems = [];
+      let providerRequestsSelectedIndex = -1;
+      setProviderRequestActionState(false);
 
       function setSessionChipText() {
         try { sessionChip.textContent = String(chatSessionId || "default"); } catch (_) {}
@@ -3309,7 +3460,8 @@
         try { providerRequestsModal.classList.remove("show"); } catch (_) {}
       }
 
-      async function openProviderRequestsModal() {
+      async function openProviderRequestsModal(sessionId) {
+        providerRequestsSessionId = String(sessionId || chatSessionId || "default").trim() || "default";
         try { providerRequestsModal.classList.add("show"); } catch (_) {}
         await refreshProviderRequests();
       }
@@ -3324,42 +3476,163 @@
         }
       }
 
+      function providerRequestBodyRaw(req) {
+        return String((req && req.request_body) || "");
+      }
+
+      function providerRequestBodyPretty(req) {
+        const raw = providerRequestBodyRaw(req);
+        const trimmed = raw.trim();
+        if (!trimmed) return "";
+        try {
+          return JSON.stringify(JSON.parse(trimmed), null, 2);
+        } catch (_) {
+          return raw;
+        }
+      }
+
+      function providerRequestBodyPreview(req) {
+        const text = providerRequestBodyPretty(req).replace(/\s+/g, " ").trim();
+        return text.length > 180 ? text.slice(0, 177) + "..." : text;
+      }
+
+      function providerRequestSafeName(value, fallback) {
+        const out = String(value || "")
+          .trim()
+          .replace(/[^a-z0-9._-]+/gi, "_")
+          .replace(/^_+|_+$/g, "")
+          .slice(0, 48);
+        return out || fallback || "payload";
+      }
+
+      function providerRequestWriteUrl(relPath) {
+        const encoded = String(relPath || "").split("/").filter(Boolean).map((seg) => encodeURIComponent(seg)).join("/");
+        return API + "/user/write/" + encoded;
+      }
+
+      function selectedProviderRequest() {
+        if (providerRequestsSelectedIndex < 0 || providerRequestsSelectedIndex >= providerRequestsItems.length) return null;
+        return providerRequestsItems[providerRequestsSelectedIndex] || null;
+      }
+
+      function setProviderRequestActionState(enabled) {
+        [providerRequestCopyBtn, providerRequestOpenBtn, providerRequestExternalBtn, providerRequestShareBtn].forEach((btn) => {
+          if (!btn) return;
+          btn.disabled = !enabled;
+        });
+      }
+
+      function clearProviderRequestDetail(message) {
+        if (providerPayloadMeta) {
+          providerPayloadMeta.innerHTML = "<div class='muted'>" + escapeHtml(message || "Select a payload.") + "</div>";
+        }
+        if (providerPayloadCode) {
+          providerPayloadCode.textContent = message || "Select a payload.";
+        }
+        setProviderRequestActionState(false);
+      }
+
+      function renderProviderRequestDetail() {
+        const req = selectedProviderRequest();
+        if (!req) {
+          clearProviderRequestDetail(providerRequestsItems.length ? "Select a payload." : "No payload selected.");
+          return;
+        }
+        const metaFields = [
+          { label: "Provider", value: String(req.provider_kind || "").trim() || "Provider" },
+          { label: "Model", value: String(req.model || "").trim() || "Unknown" },
+          { label: "Phase", value: String(req.phase || "").trim() || "Unknown" },
+          { label: "Created", value: formatProviderRequestTs(req.created_at || req.ts || 0) || "Unknown" },
+          { label: "Item", value: String(req.item_id || "").trim() || "n/a" },
+          { label: "URL", value: String(req.provider_url || "").trim() || "n/a" },
+        ];
+        providerPayloadMeta.innerHTML = metaFields.map((field) => (
+          "<div class='provider-payload-field'>" +
+            "<div class='provider-payload-field-label'>" + escapeHtml(field.label) + "</div>" +
+            "<div class='provider-payload-field-value'>" + escapeHtml(field.value) + "</div>" +
+          "</div>"
+        )).join("");
+        providerPayloadCode.textContent = providerRequestBodyPretty(req) || "{}";
+        try { hljs.highlightElement(providerPayloadCode); } catch (_) {}
+        setProviderRequestActionState(true);
+      }
+
+      function renderProviderRequestsList() {
+        if (!providerRequestsList) return;
+        if (!providerRequestsItems.length) {
+          providerRequestsList.innerHTML = "<div class='muted'>No provider payloads recorded for this session yet.</div>";
+          clearProviderRequestDetail("No payloads for this session yet.");
+          return;
+        }
+        providerRequestsList.innerHTML = providerRequestsItems.map((req, index) => {
+          const provider = escapeHtml(String(req.provider_kind || "").trim() || "Provider");
+          const model = escapeHtml(String(req.model || "").trim() || "Unknown model");
+          const phase = escapeHtml(String(req.phase || "").trim() || "phase");
+          const ts = escapeHtml(formatProviderRequestTs(req.created_at || req.ts || 0));
+          const itemId = escapeHtml(String(req.item_id || "").trim());
+          const preview = escapeHtml(providerRequestBodyPreview(req));
+          const meta = [phase, model, ts].filter(Boolean).join(" · ");
+          const sub = itemId ? "item " + itemId : "";
+          return (
+            "<div class='request-card selectable" + (index === providerRequestsSelectedIndex ? " active" : "") + "' data-provider-request-index='" + index + "'>" +
+              "<div class='request-head'>" +
+                "<div class='request-title'>" + provider + "</div>" +
+                (ts ? "<div class='request-meta'>" + ts + "</div>" : "") +
+              "</div>" +
+              (meta ? "<div class='request-meta' style='margin-bottom:8px;'>" + meta + "</div>" : "") +
+              (sub ? "<div class='request-meta' style='margin-bottom:8px;'>" + sub + "</div>" : "") +
+              "<div class='request-meta' style='line-height:1.5; word-break:break-word;'>" + (preview || "&nbsp;") + "</div>" +
+            "</div>"
+          );
+        }).join("");
+        for (const el of providerRequestsList.querySelectorAll("[data-provider-request-index]")) {
+          el.addEventListener("click", () => {
+            providerRequestsSelectedIndex = Number(el.getAttribute("data-provider-request-index") || "0");
+            renderProviderRequestsList();
+            renderProviderRequestDetail();
+          });
+        }
+        renderProviderRequestDetail();
+      }
+
+      async function exportSelectedProviderRequest() {
+        const req = selectedProviderRequest();
+        if (!req) return null;
+        const ts = Number(req.created_at || req.ts || Date.now());
+        const stamp = new Date(ts).toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+        const relPath =
+          "exports/provider_payloads/" +
+          providerRequestSafeName(providerRequestsSessionId, "session") + "_" +
+          providerRequestSafeName(req.phase || "payload", "payload") + "_" +
+          stamp + ".json";
+        const res = await fetch(providerRequestWriteUrl(relPath), {
+          method: "POST",
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+          body: JSON.stringify({ data: providerRequestBodyPretty(req) || "{}" }),
+        });
+        if (!res.ok) throw new Error("write_failed");
+        return relPath;
+      }
+
       async function refreshProviderRequests() {
         if (!providerRequestsList) return;
-        const sid = String(chatSessionId || "default").trim() || "default";
+        const sid = String(providerRequestsSessionId || chatSessionId || "default").trim() || "default";
         try {
-          providerRequestsSummary.textContent = "Session: " + sid;
+          providerRequestsSummary.textContent = "Session: " + sid + " · loading latest payloads first";
           providerRequestsList.innerHTML = "<div class='muted'>Loading…</div>";
+          clearProviderRequestDetail("Loading payload...");
           const res = await fetch(API + "/brain/provider_requests?limit=120&session_id=" + encodeURIComponent(sid), { cache: "no-store" });
           const data = res.ok ? await res.json().catch(() => ({})) : {};
-          const items = Array.isArray(data.requests) ? data.requests : [];
-          if (!items.length) {
-            providerRequestsList.innerHTML = "<div class='muted'>No provider payloads recorded for this session yet.</div>";
-            return;
-          }
-          providerRequestsList.innerHTML = items.slice().reverse().map((req) => {
-            const provider = escapeHtml(String(req.provider_kind || ""));
-            const model = escapeHtml(String(req.model || ""));
-            const phase = escapeHtml(String(req.phase || ""));
-            const itemId = escapeHtml(String(req.item_id || ""));
-            const url = escapeHtml(String(req.provider_url || ""));
-            const ts = escapeHtml(formatProviderRequestTs(req.created_at || req.ts || 0));
-            const body = escapeHtml(String(req.request_body || ""));
-            const meta = [phase, model, ts].filter(Boolean).join(" · ");
-            const sub = [itemId ? ("item " + itemId) : "", url].filter(Boolean).join(" · ");
-            return (
-              "<div class='request-card'>" +
-                "<div class='request-head'>" +
-                  "<div class='request-title'>" + (provider || "Provider") + "</div>" +
-                  (meta ? "<div class='request-meta'>" + meta + "</div>" : "") +
-                "</div>" +
-                (sub ? "<div class='request-meta' style='margin-bottom:8px;'>" + sub + "</div>" : "") +
-                "<pre class='request-body'>" + body + "</pre>" +
-              "</div>"
-            );
-          }).join("");
+          providerRequestsItems = Array.isArray(data.requests) ? data.requests.slice().reverse() : [];
+          providerRequestsSelectedIndex = providerRequestsItems.length ? 0 : -1;
+          providerRequestsSummary.textContent =
+            "Session: " + sid + " · " + providerRequestsItems.length + " payload" + (providerRequestsItems.length === 1 ? "" : "s");
+          renderProviderRequestsList();
         } catch (e) {
+          providerRequestsItems = [];
+          providerRequestsSelectedIndex = -1;
           providerRequestsList.innerHTML = "<div class='muted'>Failed to load provider payloads.</div>";
+          clearProviderRequestDetail("Failed to load payload.");
         }
       }
 
@@ -3397,24 +3670,38 @@
             const hSid = sid.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
             rows.push(
               "<div class='session-item" + (isCur ? " active" : "") + "' data-sid='" + eSid + "'>" +
-                "<div style='min-width:0; flex:1;'>" +
-                  "<div class='sid'>" + hSid + "</div>" +
-                  (meta.length ? "<div class='meta'>" + meta.join(" &middot; ") + "</div>" : "") +
+                "<div class='session-item-top'>" +
+                  "<div class='session-item-main'>" +
+                    "<div class='sid'>" + hSid + "</div>" +
+                    (meta.length ? "<div class='meta'>" + meta.join(" &middot; ") + "</div>" : "") +
+                  "</div>" +
+                  (isCur ? "<div class='session-active-badge'>active</div>" : "") +
                 "</div>" +
-                (isCur ? "<div style='font-size:10px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; color:var(--accent); background:var(--accent-soft); border:1px solid rgba(99,102,241,0.25); border-radius:var(--radius-full); padding:2px 8px;'>active</div>" : "") +
-                "<button class='session-edit' data-edit='" + eSid + "' title='Rename session'>" + ICON.edit + "</button>" +
-                "<button class='session-del' data-del='" + eSid + "' title='Delete session'>" + ICON.close + "</button>" +
+                "<div class='session-actions'>" +
+                  "<button class='btn session-payload' data-payload='" + eSid + "' title='View latest provider payloads'>Latest Payload</button>" +
+                  "<button class='session-edit' data-edit='" + eSid + "' title='Rename session'>" + ICON.edit + "</button>" +
+                  "<button class='session-del' data-del='" + eSid + "' title='Delete session'>" + ICON.close + "</button>" +
+                "</div>" +
               "</div>"
             );
           }
           sessionList.innerHTML = rows.join("") || "<div class='muted'>(no sessions)</div>";
           for (const el of sessionList.querySelectorAll(".session-item[data-sid]")) {
             el.addEventListener("click", async (e) => {
-              if (e.target.closest(".session-del") || e.target.closest(".session-edit")) return;
+              if (e.target.closest(".session-del") || e.target.closest(".session-edit") || e.target.closest(".session-payload")) return;
               const sid = String(el.getAttribute("data-sid") || "").trim();
               if (!sid) return;
               await switchChatSession(sid);
               closeSessionModal();
+            });
+          }
+          for (const btn of sessionList.querySelectorAll(".session-payload[data-payload]")) {
+            btn.addEventListener("click", async (e) => {
+              e.stopPropagation();
+              const sid = String(btn.getAttribute("data-payload") || "").trim();
+              if (!sid) return;
+              closeSessionModal();
+              await openProviderRequestsModal(sid);
             });
           }
           for (const btn of sessionList.querySelectorAll(".session-del[data-del]")) {
@@ -7647,9 +7934,65 @@
         });
       } catch (_) {}
       try { $("sessionRefresh").addEventListener("click", refreshSessionMenu); } catch (_) {}
-      try { $("sessionPayloadsBtn").addEventListener("click", openProviderRequestsModal); } catch (_) {}
+      try { $("sessionPayloadsBtn").addEventListener("click", () => openProviderRequestsModal(chatSessionId)); } catch (_) {}
       try { $("providerRequestsClose").addEventListener("click", closeProviderRequestsModal); } catch (_) {}
       try { $("providerRequestsRefresh").addEventListener("click", refreshProviderRequests); } catch (_) {}
+      try {
+        providerRequestCopyBtn.addEventListener("click", async () => {
+          const req = selectedProviderRequest();
+          if (!req) return;
+          try {
+            await navigator.clipboard.writeText(providerRequestBodyPretty(req) || "{}");
+            showToast("Payload copied", 1100);
+          } catch (_) {
+            showToast("Copy failed", 1500);
+          }
+        });
+      } catch (_) {}
+      try {
+        providerRequestOpenBtn.addEventListener("click", async () => {
+          try {
+            const rel = await exportSelectedProviderRequest();
+            if (!rel) return;
+            if (typeof window.uiViewerOpen === "function") {
+              await window.uiViewerOpen(rel);
+            }
+          } catch (_) {
+            showToast("Open failed", 1600);
+          }
+        });
+      } catch (_) {}
+      try {
+        providerRequestExternalBtn.addEventListener("click", async () => {
+          try {
+            const rel = await exportSelectedProviderRequest();
+            if (!rel) return;
+            const url = fileUrl(rel);
+            if (typeof AndroidBridge !== "undefined" && AndroidBridge.openInBrowser) {
+              AndroidBridge.openInBrowser(url);
+            } else {
+              openPreviewInNewTab(url);
+            }
+          } catch (_) {
+            showToast("External open failed", 1600);
+          }
+        });
+      } catch (_) {}
+      try {
+        providerRequestShareBtn.addEventListener("click", async () => {
+          try {
+            const rel = await exportSelectedProviderRequest();
+            if (!rel) return;
+            if (typeof AndroidBridge !== "undefined" && AndroidBridge.shareUserFile) {
+              AndroidBridge.shareUserFile(rel, "application/json");
+            } else {
+              showToast("Share not available", 1500);
+            }
+          } catch (_) {
+            showToast("Share failed", 1600);
+          }
+        });
+      } catch (_) {}
       try {
         providerRequestsModal.addEventListener("click", (e) => {
           if (e && e.target === providerRequestsModal) closeProviderRequestsModal();
