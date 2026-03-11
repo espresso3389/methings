@@ -56,6 +56,14 @@ jobs:
         run: |
           ./scripts/build_libusb_android.sh
           ./scripts/build_libuvc_android.sh
+      - name: Run JVM unit tests
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4"
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID }}
+          CI: "true"
+        run: |
+          gradle --project-dir app/android --parallel --build-cache :app:testDebugUnitTest
       - name: Build Debug APK
         env:
           GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.parallel=true -Dorg.gradle.workers.max=4"

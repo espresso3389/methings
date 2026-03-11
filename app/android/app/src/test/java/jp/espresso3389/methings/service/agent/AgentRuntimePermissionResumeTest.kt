@@ -20,6 +20,7 @@ import org.robolectric.annotation.Config
 import java.io.File
 import java.lang.reflect.Method
 import java.nio.file.Files
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 
 @RunWith(RobolectricTestRunner::class)
@@ -192,6 +193,86 @@ class AgentRuntimePermissionResumeTest {
         )
     }
 
+    @Test
+    fun openAiChatBuildInitialInputStripsHistoricalMediaRelPaths() {
+        val harness = createHarness(
+            llmPayloads = listOf(finalTextPayload("done")),
+        ) { _, _ ->
+            JSONObject().put("status", "ok")
+        }
+        val imageDir = File(harness.userDir, "captures/chat").apply { mkdirs() }
+        val imageFile = File(imageDir, "current.png")
+        imageFile.writeBytes(Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7l8AAAAASUVORK5CYII="
+        ))
+
+        val dialogue = listOf(
+            JSONObject().put("role", "user").put("text", "old request\nrel_path: captures/chat/old.png"),
+            JSONObject().put("role", "assistant").put("text", "previous answer"),
+        )
+
+        val input = invokePrivateBuildInitialInput(
+            runtime = harness.runtime,
+            kind = ProviderKind.OPENAI_CHAT,
+            dialogue = dialogue,
+            journalBlob = "",
+            curText = "new request\nrel_path: captures/chat/current.png",
+            item = JSONObject().put("id", "chat_test"),
+            supportedMedia = setOf("image"),
+        )
+
+        assertEquals(3, input.length())
+        assertEquals("old request", input.getJSONObject(0).getString("content"))
+        assertEquals("previous answer", input.getJSONObject(1).getString("content"))
+
+        val current = input.getJSONObject(2)
+        assertEquals("user", current.getString("role"))
+        val content = current.getJSONArray("content")
+        assertEquals("text", content.getJSONObject(0).getString("type"))
+        assertEquals("new request", content.getJSONObject(0).getString("text").trim())
+        assertEquals("image_url", content.getJSONObject(1).getString("type"))
+
+        val serialized = input.toString()
+        assertTrue(!serialized.contains("captures/chat/old.png"))
+        assertTrue(!serialized.contains("captures/chat/current.png"))
+    }
+
+    @Test
+    fun openRouterQwenEmptyMediaFollowUpFallsBackToDirectImageRequest() {
+        val harness = createHarness(
+            llmPayloads = listOf(
+                imageAnalyzeToolCallPayload(),
+                emptyAssistantPayload(),
+                finalTextPayload("画像にはテストパターンがあります。"),
+            ),
+            model = "qwen/qwen3.5-397b-a17b",
+            providerUrl = "https://openrouter.ai/api/v1/chat/completions",
+        ) { _, _ ->
+            JSONObject()
+                .put("status", "ok")
+                .put("prompt", "この画像の内容を詳しく説明してください。")
+                .put("_media", JSONObject()
+                    .put("type", "image")
+                    .put("mime_type", "image/png")
+                    .put("base64", "QUJD"))
+        }
+
+        invokePrivate(harness.runtime, "processChat", JSONObject().apply {
+            put("id", "chat_img")
+            put("kind", "chat")
+            put("text", "rel_path: captures/chat/current.png")
+            put("meta", JSONObject().put("session_id", "s1").put("actor", "human"))
+        })
+
+        verify(harness.llmClient, times(3)).streamingPost(any(), any(), any(), any(), any(), any(), any())
+        verify(harness.storage).addChatMessage(
+            eq("s1"),
+            eq("assistant"),
+            eq("画像にはテストパターンがあります。"),
+            any()
+        )
+    }
+
     private fun initialToolCallPayload(): JSONObject = JSONObject(
         """
         {
@@ -226,6 +307,32 @@ class AgentRuntimePermissionResumeTest {
         """.trimIndent()
     )
 
+    private fun imageAnalyzeToolCallPayload(): JSONObject = JSONObject(
+        """
+        {
+          "choices": [
+            {
+              "message": {
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [
+                  {
+                    "id": "call_img",
+                    "type": "function",
+                    "function": {
+                      "name": "analyze_image",
+                      "arguments": "{\"path\":\"captures/chat/current.png\",\"prompt\":\"この画像の内容を詳しく説明してください。\"}"
+                    }
+                  }
+                ]
+              },
+              "finish_reason": "tool_calls"
+            }
+          ]
+        }
+        """.trimIndent()
+    )
+
     private fun finalTextPayload(text: String): JSONObject = JSONObject(
         """
         {
@@ -234,6 +341,22 @@ class AgentRuntimePermissionResumeTest {
               "message": {
                 "role": "assistant",
                 "content": "$text"
+              },
+              "finish_reason": "stop"
+            }
+          ]
+        }
+        """.trimIndent()
+    )
+
+    private fun emptyAssistantPayload(): JSONObject = JSONObject(
+        """
+        {
+          "choices": [
+            {
+              "message": {
+                "role": "assistant",
+                "content": null
               },
               "finish_reason": "stop"
             }
@@ -270,8 +393,32 @@ class AgentRuntimePermissionResumeTest {
         method.invoke(runtime, kind, input, callId, result, toolName, mediaData)
     }
 
+    private fun invokePrivateBuildInitialInput(
+        runtime: AgentRuntime,
+        kind: ProviderKind,
+        dialogue: List<JSONObject>,
+        journalBlob: String,
+        curText: String,
+        item: JSONObject,
+        supportedMedia: Set<String>,
+    ): org.json.JSONArray {
+        val method = runtime.javaClass.getDeclaredMethod(
+            "buildInitialInput",
+            ProviderKind::class.java,
+            List::class.java,
+            String::class.java,
+            String::class.java,
+            JSONObject::class.java,
+            Set::class.java,
+        )
+        method.isAccessible = true
+        return method.invoke(runtime, kind, dialogue, journalBlob, curText, item, supportedMedia) as org.json.JSONArray
+    }
+
     private fun createHarness(
         llmPayloads: List<JSONObject>,
+        model: String = "gpt-test",
+        providerUrl: String = "https://example.test/v1/chat/completions",
         toolHandler: (String, JSONObject) -> JSONObject,
     ): Harness {
         val root = Files.createTempDirectory("agent-runtime-test").toFile()
@@ -287,6 +434,9 @@ class AgentRuntimePermissionResumeTest {
             .put("text", ""))
 
         val toolExecutor = mock<ToolExecutor>()
+        whenever(toolExecutor.imageResizeEnabled).thenReturn(false)
+        whenever(toolExecutor.imageJpegQuality).thenReturn(90)
+        whenever(toolExecutor.imageMaxDimPx).thenReturn(2048)
         doAnswer { invocation ->
             toolHandler(
                 invocation.getArgument(0),
@@ -306,18 +456,18 @@ class AgentRuntimePermissionResumeTest {
             enabled = true,
             autoStart = true,
             vendor = "openai",
-            providerUrl = "https://example.test/v1/chat/completions",
-            model = "gpt-test",
+            providerUrl = providerUrl,
+            model = model,
             toolPolicy = "auto",
             systemPrompt = "test prompt",
             maxToolRounds = 4,
             maxActions = 4,
         ))
-        whenever(configManager.getModel()).thenReturn("gpt-test")
+        whenever(configManager.getModel()).thenReturn(model)
         whenever(configManager.getVendor()).thenReturn("openai")
-        whenever(configManager.getBaseUrl()).thenReturn("https://example.test/v1")
+        whenever(configManager.getBaseUrl()).thenReturn(providerUrl.substringBefore("/chat/completions"))
         whenever(configManager.getApiKey()).thenReturn("test-key")
-        whenever(configManager.resolveProviderUrl(any(), any())).thenReturn("https://example.test/v1/chat/completions")
+        whenever(configManager.resolveProviderUrl(any(), any())).thenReturn(providerUrl)
 
         val runtime = AgentRuntime(
             userDir = userDir,
@@ -329,7 +479,7 @@ class AgentRuntimePermissionResumeTest {
             configManager = configManager,
             emitLog = { _, _ -> },
         )
-        return Harness(runtime, storage, llmClient)
+        return Harness(runtime, storage, llmClient, userDir)
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -343,5 +493,6 @@ class AgentRuntimePermissionResumeTest {
         val runtime: AgentRuntime,
         val storage: AgentStorage,
         val llmClient: LlmClient,
+        val userDir: File,
     )
 }

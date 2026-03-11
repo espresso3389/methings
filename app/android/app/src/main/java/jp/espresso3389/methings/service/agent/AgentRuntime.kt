@@ -22,6 +22,11 @@ private data class ToolRoundRecord(
     val resultSnippet: String,
 )
 
+private data class MediaFallbackContext(
+    val mediaData: ExtractedMedia,
+    val prompt: String,
+)
+
 private data class TurnResumeState(
     val roundIndex: Int,
     val nextCallIndex: Int,
@@ -557,6 +562,8 @@ class AgentRuntime(
 
         val systemPrompt = buildSystemPrompt(config, supportedMediaTypes)
         val journalBlob = buildJournalBlob(journalCurrent, sessionId, persistentMemory)
+        var mediaFallbackContext: MediaFallbackContext? = null
+        var mediaFallbackAttempted = false
 
         var pendingInput = buildInitialInput(providerKind, filteredDialogue, journalBlob, curText, item, supportedMediaTypes)
         val resumeStateJson = item.optJSONObject("resume_state")
@@ -692,6 +699,35 @@ class AgentRuntime(
 
                 if (calls.length() == 0) {
                     if (messageTexts.isEmpty()) {
+                        if (!mediaFallbackAttempted && mediaFallbackContext != null &&
+                            shouldUseDirectMediaFallback(providerKind, providerUrl, model)
+                        ) {
+                            mediaFallbackAttempted = true
+                            val fallbackText = runDirectMediaFallback(
+                                providerKind = providerKind,
+                                providerUrl = effectiveProviderUrl,
+                                headers = headers,
+                                model = model,
+                                sessionId = sessionId,
+                                itemId = item.optString("id"),
+                                phase = "round_${roundIdx}_direct_media_fallback",
+                                context = mediaFallbackContext,
+                                connectTimeoutMs = connectTimeoutMs,
+                                readTimeoutMs = readTimeoutMs,
+                            )
+                            if (fallbackText != null) {
+                                val toolSummary = buildToolHistorySummary(toolHistory)
+                                val recorded = if (toolSummary.isNotEmpty()) "$fallbackText\n$toolSummary" else fallbackText
+                                recordMessage("assistant", recorded, JSONObject().apply {
+                                    put("item_id", item.optString("id"))
+                                    put("session_id", sessionId)
+                                })
+                                emitLog("brain_response", JSONObject()
+                                    .put("item_id", item.optString("id"))
+                                    .put("text", fallbackText.take(300)))
+                                return
+                            }
+                        }
                         pendingInput = appendUserNudge(providerKind, pendingInput,
                             "You returned an empty response (no text, no tool calls). You MUST either respond with text or call tools.")
                         continue
@@ -952,6 +988,15 @@ class AgentRuntime(
                 } else truncated
 
                 appendToolResult(providerKind, pendingInput, callId, textResult, name, mediaData)
+                if (mediaData != null) {
+                    mediaFallbackContext = MediaFallbackContext(
+                        mediaData = mediaData,
+                        prompt = result.optString("prompt", "").ifBlank {
+                            "Analyze the attached ${mediaData.mediaType} directly and answer the user."
+                        },
+                    )
+                    mediaFallbackAttempted = false
+                }
             }
 
             resumedCalls = null
@@ -1377,6 +1422,9 @@ class AgentRuntime(
         return Pair(cleanedLines.joinToString("\n"), paths)
     }
 
+    /** Strip media rel_path lines from replayed dialogue so old attachments don't pollute later turns. */
+    private fun sanitizeHistoricalDialogueText(text: String): String = extractUserMediaPaths(text).first
+
     /** Build multimodal content array with text + media blocks for the current user message. */
     private fun buildMultimodalUserContent(
         kind: ProviderKind, text: String, mediaParts: List<ExtractedMedia>
@@ -1498,7 +1546,7 @@ class AgentRuntime(
             ProviderKind.OPENAI_RESPONSES -> {
                 for (msg in dialogue) {
                     val role = msg.optString("role")
-                    val text = msg.optString("text", "")
+                    val text = sanitizeHistoricalDialogueText(msg.optString("text", ""))
                     if (role in setOf("user", "assistant") && text.isNotBlank()) {
                         val blockType = if (role == "assistant") "output_text" else "input_text"
                         input.put(JSONObject().put("role", role)
@@ -1515,7 +1563,7 @@ class AgentRuntime(
             ProviderKind.OPENAI_CHAT -> {
                 for (msg in dialogue) {
                     val role = msg.optString("role")
-                    val text = msg.optString("text", "")
+                    val text = sanitizeHistoricalDialogueText(msg.optString("text", ""))
                     if (role in setOf("user", "assistant") && text.isNotBlank()) {
                         input.put(JSONObject().put("role", role).put("content", text))
                     }
@@ -1526,7 +1574,7 @@ class AgentRuntime(
             ProviderKind.ANTHROPIC -> {
                 for (msg in dialogue) {
                     val role = msg.optString("role")
-                    val text = msg.optString("text", "")
+                    val text = sanitizeHistoricalDialogueText(msg.optString("text", ""))
                     if (role in setOf("user", "assistant") && text.isNotBlank()) {
                         input.put(JSONObject().put("role", role).put("content", text))
                     }
@@ -1537,7 +1585,7 @@ class AgentRuntime(
             ProviderKind.GOOGLE_GEMINI -> {
                 for (msg in dialogue) {
                     val role = msg.optString("role")
-                    val text = msg.optString("text", "")
+                    val text = sanitizeHistoricalDialogueText(msg.optString("text", ""))
                     if (role in setOf("user", "assistant") && text.isNotBlank()) {
                         val geminiRole = if (role == "assistant") "model" else "user"
                         input.put(JSONObject().put("role", geminiRole)
@@ -1716,6 +1764,66 @@ class AgentRuntime(
             }
         }
         return input
+    }
+
+    private fun shouldUseDirectMediaFallback(kind: ProviderKind, providerUrl: String, model: String): Boolean {
+        if (kind != ProviderKind.OPENAI_CHAT) return false
+        val url = providerUrl.lowercase(Locale.US)
+        val modelName = model.lowercase(Locale.US)
+        return url.contains("openrouter.ai") && modelName.contains("qwen")
+    }
+
+    private fun runDirectMediaFallback(
+        providerKind: ProviderKind,
+        providerUrl: String,
+        headers: Map<String, String>,
+        model: String,
+        sessionId: String,
+        itemId: String,
+        phase: String,
+        context: MediaFallbackContext,
+        connectTimeoutMs: Int,
+        readTimeoutMs: Int,
+    ): String? {
+        if (providerKind != ProviderKind.OPENAI_CHAT || context.mediaData.mediaType != "image") return null
+
+        val body = JSONObject().apply {
+            put("model", model)
+            put("tool_choice", "none")
+            put("messages", JSONArray().apply {
+                put(JSONObject().put("role", "system").put("content",
+                    "You are a multimodal assistant. Analyze the attached image directly and answer concisely in the user's language. Do not call tools."))
+                put(JSONObject().put("role", "user").put("content", JSONArray().apply {
+                    put(JSONObject().put("type", "text").put("text", context.prompt))
+                    put(JSONObject().apply {
+                        put("type", "image_url")
+                        put("image_url", JSONObject().put("url",
+                            "data:${context.mediaData.mimeType};base64,${context.mediaData.base64}"))
+                    })
+                }))
+            })
+        }
+
+        return try {
+            recordProviderRequest(
+                sessionId = sessionId,
+                itemId = itemId,
+                providerKind = providerKind,
+                providerUrl = providerUrl,
+                model = model,
+                phase = phase,
+                body = body,
+            )
+            val payload = llmClient.streamingPost(
+                providerUrl, headers, body, providerKind,
+                connectTimeoutMs, readTimeoutMs,
+                interruptCheck = { interruptFlag }
+            )
+            parseProviderResponse(providerKind, payload).first.firstOrNull { it.isNotBlank() }?.trim()
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct media fallback failed", e)
+            null
+        }
     }
 
     // --- Context Helpers ---
