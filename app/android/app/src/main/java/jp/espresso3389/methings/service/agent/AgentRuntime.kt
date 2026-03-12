@@ -27,6 +27,35 @@ private data class MediaFallbackContext(
     val prompt: String,
 )
 
+private data class ArtifactRef(
+    val kind: String,
+    val relPath: String,
+    val name: String,
+)
+
+private data class ArtifactGroup(
+    val messageIndex: Int,
+    val createdAt: Long,
+    val artifacts: List<ArtifactRef>,
+)
+
+private data class ReferentPattern(
+    val kind: String,
+    val artifactBias: String,
+    val phrases: Set<String>,
+)
+
+private data class ReferentLocalePack(
+    val locale: String,
+    val generated: Boolean,
+    val expiresAt: Long,
+    val qualityScore: Double,
+    val deicticSingular: Set<String>,
+    val deicticPlural: Set<String>,
+    val artifactTerms: Map<String, Set<String>>,
+    val patterns: List<ReferentPattern>,
+)
+
 private data class TurnResumeState(
     val roundIndex: Int,
     val nextCallIndex: Int,
@@ -1422,6 +1451,242 @@ class AgentRuntime(
         return Pair(cleanedLines.joinToString("\n"), paths)
     }
 
+    private fun inferArtifactKind(path: String): String {
+        return when {
+            MediaEncoder.isImagePath(path) -> "image"
+            MediaEncoder.isAudioPath(path) -> "audio"
+            path.endsWith(".pdf", ignoreCase = true) ||
+                path.endsWith(".doc", ignoreCase = true) ||
+                path.endsWith(".docx", ignoreCase = true) ||
+                path.endsWith(".txt", ignoreCase = true) ||
+                path.endsWith(".md", ignoreCase = true) -> "document"
+            path.endsWith(".zip", ignoreCase = true) ||
+                path.endsWith(".tar", ignoreCase = true) ||
+                path.endsWith(".gz", ignoreCase = true) -> "archive"
+            path.endsWith(".mp4", ignoreCase = true) ||
+                path.endsWith(".mov", ignoreCase = true) ||
+                path.endsWith(".webm", ignoreCase = true) -> "video"
+            path.endsWith(".py", ignoreCase = true) ||
+                path.endsWith(".js", ignoreCase = true) ||
+                path.endsWith(".kt", ignoreCase = true) ||
+                path.endsWith(".java", ignoreCase = true) -> "code"
+            else -> "file"
+        }
+    }
+
+    private fun normalizeReferentText(text: String): String {
+        val lowered = text.lowercase(Locale.ROOT)
+        val out = StringBuilder(lowered.length)
+        for (ch in lowered) {
+            if (ch.isLetterOrDigit() || Character.getType(ch) == Character.OTHER_LETTER.toInt()) out.append(ch)
+            else out.append(' ')
+        }
+        return out.toString().replace(Regex("\\s+"), " ").trim()
+    }
+
+    private fun normalizeTokenSet(values: Collection<String>): Set<String> {
+        return values.map { normalizeReferentText(it) }.filter { it.isNotBlank() }.toSet()
+    }
+
+    private fun detectReferentLocale(text: String): String {
+        for (ch in text) {
+            val block = Character.UnicodeBlock.of(ch)
+            if (block == Character.UnicodeBlock.HIRAGANA ||
+                block == Character.UnicodeBlock.KATAKANA ||
+                block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+            ) return "ja"
+        }
+        return "en"
+    }
+
+    private fun builtInReferentLocalePack(locale: String): ReferentLocalePack {
+        return when (locale.lowercase(Locale.ROOT)) {
+            "ja" -> ReferentLocalePack(
+                locale = "ja",
+                generated = false,
+                expiresAt = 0L,
+                qualityScore = 1.0,
+                deicticSingular = normalizeTokenSet(listOf("これ", "この", "その", "あの", "この写真", "この画像", "このファイル", "それ", "あれ")),
+                deicticPlural = normalizeTokenSet(listOf("これら", "それら", "あれら", "これらのファイル", "そのファイルたち")),
+                artifactTerms = mapOf(
+                    "image" to normalizeTokenSet(listOf("写真", "画像", "スクリーンショット", "キャプチャ")),
+                    "document" to normalizeTokenSet(listOf("ファイル", "文書", "ドキュメント", "pdf")),
+                    "audio" to normalizeTokenSet(listOf("音声", "録音")),
+                    "video" to normalizeTokenSet(listOf("動画", "ビデオ")),
+                    "archive" to normalizeTokenSet(listOf("zip", "アーカイブ")),
+                    "code" to normalizeTokenSet(listOf("コード", "スクリプト")),
+                ),
+                patterns = listOf(
+                    ReferentPattern("singular", "image", normalizeTokenSet(listOf("この写真", "この画像", "その写真", "このスクリーンショット"))),
+                    ReferentPattern("plural", "document", normalizeTokenSet(listOf("これらのファイル", "そのファイルたち"))),
+                ),
+            )
+            else -> ReferentLocalePack(
+                locale = "en",
+                generated = false,
+                expiresAt = 0L,
+                qualityScore = 1.0,
+                deicticSingular = normalizeTokenSet(listOf("this", "that", "it", "this one", "that one")),
+                deicticPlural = normalizeTokenSet(listOf("these", "those", "them")),
+                artifactTerms = mapOf(
+                    "image" to normalizeTokenSet(listOf("image", "photo", "picture", "screenshot")),
+                    "document" to normalizeTokenSet(listOf("document", "file", "pdf")),
+                    "audio" to normalizeTokenSet(listOf("audio", "recording", "voice note")),
+                    "video" to normalizeTokenSet(listOf("video", "clip")),
+                    "archive" to normalizeTokenSet(listOf("zip", "archive")),
+                    "code" to normalizeTokenSet(listOf("code", "script", "source file")),
+                ),
+                patterns = listOf(
+                    ReferentPattern("singular", "image", normalizeTokenSet(listOf("this photo", "this image", "that picture", "this screenshot"))),
+                    ReferentPattern("plural", "document", normalizeTokenSet(listOf("these files", "those documents"))),
+                ),
+            )
+        }
+    }
+
+    private fun parseReferentLocalePack(file: File, locale: String): ReferentLocalePack? {
+        return try {
+            if (!file.exists()) return null
+            val obj = JSONObject(file.readText())
+            if (obj.optInt("schema_version", 0) != 1) return null
+            val resolvedLocale = obj.optString("locale", locale).ifBlank { locale }
+            val generated = obj.optBoolean("generated", false)
+            val expiresAt = obj.optLong("expires_at", 0L)
+            val qualityScore = obj.optDouble("quality_score", if (generated) 0.75 else 1.0)
+            val tokens = obj.optJSONObject("tokens") ?: JSONObject()
+            val singularArr = tokens.optJSONArray("deictic_singular") ?: JSONArray()
+            val pluralArr = tokens.optJSONArray("deictic_plural") ?: JSONArray()
+            val artifactTermsObj = obj.optJSONObject("artifact_terms") ?: JSONObject()
+            val artifactTerms = linkedMapOf<String, Set<String>>()
+            val artifactKeys = artifactTermsObj.keys()
+            while (artifactKeys.hasNext()) {
+                val key = artifactKeys.next()
+                val arr = artifactTermsObj.optJSONArray(key) ?: continue
+                artifactTerms[key] = normalizeTokenSet((0 until arr.length()).mapNotNull { idx -> arr.optString(idx, null) })
+            }
+            val patternsArr = obj.optJSONArray("patterns") ?: JSONArray()
+            val patterns = mutableListOf<ReferentPattern>()
+            for (i in 0 until patternsArr.length()) {
+                val entry = patternsArr.optJSONObject(i) ?: continue
+                val kind = entry.optString("kind", "")
+                if (kind != "singular" && kind != "plural") continue
+                val phrasesArr = entry.optJSONArray("phrases") ?: continue
+                patterns.add(
+                    ReferentPattern(
+                        kind = kind,
+                        artifactBias = entry.optString("artifact_bias", ""),
+                        phrases = normalizeTokenSet((0 until phrasesArr.length()).mapNotNull { idx -> phrasesArr.optString(idx, null) }),
+                    )
+                )
+            }
+            ReferentLocalePack(
+                locale = resolvedLocale,
+                generated = generated,
+                expiresAt = expiresAt,
+                qualityScore = qualityScore,
+                deicticSingular = normalizeTokenSet((0 until singularArr.length()).mapNotNull { idx -> singularArr.optString(idx, null) }),
+                deicticPlural = normalizeTokenSet((0 until pluralArr.length()).mapNotNull { idx -> pluralArr.optString(idx, null) }),
+                artifactTerms = artifactTerms,
+                patterns = patterns,
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "parseReferentLocalePack: failed for ${file.absolutePath}", e)
+            null
+        }
+    }
+
+    private fun loadReferentLocalePack(text: String): ReferentLocalePack {
+        val locale = detectReferentLocale(text)
+        val userPackFile = File(userDir, "lib/referents/locales/$locale.json")
+        val systemPackFile = File(sysDir, "lib/referents/locales/$locale.json")
+        val pack = parseReferentLocalePack(userPackFile, locale)
+            ?: parseReferentLocalePack(systemPackFile, locale)
+            ?: builtInReferentLocalePack(locale)
+        val now = System.currentTimeMillis()
+        if (pack.generated && pack.expiresAt > 0L && pack.expiresAt <= now) {
+            Log.i(TAG, "loadReferentLocalePack: using expired generated pack locale=${pack.locale} expiresAt=${pack.expiresAt}")
+        }
+        return pack
+    }
+
+    private fun extractHistoricalArtifactGroups(dialogue: List<JSONObject>): List<ArtifactGroup> {
+        val out = mutableListOf<ArtifactGroup>()
+        for ((index, msg) in dialogue.withIndex()) {
+            if (msg.optString("role") != "user") continue
+            val (_, paths) = extractUserMediaPaths(msg.optString("text", ""))
+            if (paths.isEmpty()) continue
+            out.add(
+                ArtifactGroup(
+                    messageIndex = index,
+                    createdAt = msg.optLong("created_at", 0L),
+                    artifacts = paths.map { path ->
+                        ArtifactRef(
+                            kind = inferArtifactKind(path),
+                            relPath = path,
+                            name = File(path).name,
+                        )
+                    }
+                )
+            )
+        }
+        return out.takeLast(12)
+    }
+
+    private fun resolveHistoricalArtifactReferences(currentText: String, dialogue: List<JSONObject>): List<ArtifactRef> {
+        val normalized = normalizeReferentText(currentText)
+        if (normalized.isBlank()) return emptyList()
+        val pack = loadReferentLocalePack(currentText)
+        if (pack.qualityScore < REFERENT_PACK_QUALITY_THRESHOLD) return emptyList()
+        val groups = extractHistoricalArtifactGroups(dialogue)
+        if (groups.isEmpty()) return emptyList()
+
+        var artifactBias = ""
+        for ((kind, terms) in pack.artifactTerms) {
+            if (terms.any { token -> normalized.contains(token) }) {
+                artifactBias = kind
+                break
+            }
+        }
+        var wantsSingular = pack.deicticSingular.any { token -> normalized == token || normalized.contains(token) }
+        var wantsPlural = pack.deicticPlural.any { token -> normalized == token || normalized.contains(token) }
+        for (pattern in pack.patterns) {
+            if (pattern.phrases.any { phrase -> normalized.contains(phrase) }) {
+                if (pattern.kind == "plural") wantsPlural = true else wantsSingular = true
+                if (artifactBias.isBlank() && pattern.artifactBias.isNotBlank()) artifactBias = pattern.artifactBias
+            }
+        }
+        if (!wantsSingular && !wantsPlural && artifactBias.isBlank()) return emptyList()
+
+        data class Candidate(val group: ArtifactGroup, val score: Int)
+        val candidates = groups.mapIndexedNotNull { idx, group ->
+            var score = 0
+            if (artifactBias.isNotBlank()) {
+                if (group.artifacts.any { it.kind == artifactBias }) score += 30 else score -= 20
+            }
+            if (wantsPlural) score += if (group.artifacts.size > 1) 20 else -10
+            if (wantsSingular) score += if (group.artifacts.size == 1) 20 else 5
+            if (group.artifacts.any { artifact -> normalized.contains(normalizeReferentText(artifact.name)) }) score += 50
+            score += (idx + 1).coerceAtMost(5)
+            if (score <= 0) null else Candidate(group, score)
+        }.sortedByDescending { it.score }
+
+        if (candidates.isEmpty()) return emptyList()
+        val best = candidates[0]
+        val second = candidates.getOrNull(1)
+        val confidence = (best.score / 100.0).coerceIn(0.0, 1.0)
+        if (confidence < REFERENT_RESOLUTION_CONFIDENCE_THRESHOLD) return emptyList()
+        if (second != null && (best.score - second.score) < REFERENT_AMBIGUITY_GAP_THRESHOLD) return emptyList()
+
+        val resolved = if (artifactBias.isBlank()) {
+            best.group.artifacts
+        } else {
+            best.group.artifacts.filter { it.kind == artifactBias }
+        }
+        if (resolved.isEmpty()) return emptyList()
+        Log.i(TAG, "resolveHistoricalArtifactReferences: locale=${pack.locale} resolved=${resolved.map { it.relPath }} confidence=$confidence")
+        return resolved
+    }
+
     /** Strip media rel_path lines from replayed dialogue so old attachments don't pollute later turns. */
     private fun sanitizeHistoricalDialogueText(text: String): String = extractUserMediaPaths(text).first
 
@@ -1514,7 +1779,19 @@ class AgentRuntime(
         val input = JSONArray()
 
         // Extract media from current user message (only if provider supports it)
-        val (cleanedText, mediaPaths) = extractUserMediaPaths(curText)
+        val (cleanedText, currentTurnMediaPaths) = extractUserMediaPaths(curText)
+        val resolvedHistoricalArtifacts = if (currentTurnMediaPaths.isNotEmpty()) {
+            emptyList()
+        } else {
+            resolveHistoricalArtifactReferences(cleanedText, dialogue)
+        }
+        val mediaPaths = if (currentTurnMediaPaths.isNotEmpty()) {
+            currentTurnMediaPaths
+        } else {
+            resolvedHistoricalArtifacts
+                .map { it.relPath }
+                .filter { path -> MediaEncoder.isImagePath(path) || MediaEncoder.isAudioPath(path) }
+        }
         val userMedia = mutableListOf<ExtractedMedia>()
         if (supportedMedia.isNotEmpty() && mediaPaths.isNotEmpty()) {
             Log.i(TAG, "buildInitialInput: found ${mediaPaths.size} user media path(s): $mediaPaths")
@@ -1540,7 +1817,21 @@ class AgentRuntime(
                 }
             }
         }
-        val finalUserText = "$journalBlob\n\n$cleanedText"
+        val historicalReferenceLines = if (currentTurnMediaPaths.isEmpty()) {
+            resolvedHistoricalArtifacts
+                .map { "rel_path: ${it.relPath}" }
+                .distinct()
+        } else {
+            emptyList()
+        }
+        val finalCleanedText = buildString {
+            append(cleanedText)
+            if (historicalReferenceLines.isNotEmpty()) {
+                if (isNotBlank()) append("\n")
+                append(historicalReferenceLines.joinToString("\n"))
+            }
+        }.trim()
+        val finalUserText = "$journalBlob\n\n$finalCleanedText"
 
         when (kind) {
             ProviderKind.OPENAI_RESPONSES -> {
@@ -1557,7 +1848,7 @@ class AgentRuntime(
                 input.put(JSONObject().put("role", "user")
                     .put("content", JSONArray().put(JSONObject().put("type", "input_text").put("text", journalBlob))))
                 // Current user message (with media if present)
-                val content = buildMultimodalUserContent(kind, cleanedText, userMedia)
+                val content = buildMultimodalUserContent(kind, finalCleanedText, userMedia)
                 input.put(JSONObject().put("role", "user").put("content", content))
             }
             ProviderKind.OPENAI_CHAT -> {
@@ -2167,5 +2458,8 @@ class AgentRuntime(
 
     companion object {
         private const val TAG = "AgentRuntime"
+        private const val REFERENT_PACK_QUALITY_THRESHOLD = 0.55
+        private const val REFERENT_RESOLUTION_CONFIDENCE_THRESHOLD = 0.35
+        private const val REFERENT_AMBIGUITY_GAP_THRESHOLD = 8
     }
 }

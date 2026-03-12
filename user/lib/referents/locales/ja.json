@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "locale": "ja",
+  "display_name": "Japanese",
+  "generated": false,
+  "expires_at": 0,
+  "quality_score": 1.0,
+  "tokens": {
+    "deictic_singular": [
+      "これ",
+      "この",
+      "その",
+      "あの",
+      "この写真",
+      "この画像",
+      "このファイル",
+      "それ",
+      "あれ"
+    ],
+    "deictic_plural": [
+      "これら",
+      "それら",
+      "あれら",
+      "これらのファイル",
+      "そのファイルたち"
+    ]
+  },
+  "artifact_terms": {
+    "image": [
+      "写真",
+      "画像",
+      "スクリーンショット",
+      "キャプチャ"
+    ],
+    "document": [
+      "ファイル",
+      "文書",
+      "ドキュメント",
+      "pdf"
+    ],
+    "audio": [
+      "音声",
+      "録音"
+    ],
+    "video": [
+      "動画",
+      "ビデオ"
+    ],
+    "archive": [
+      "zip",
+      "アーカイブ"
+    ],
+    "code": [
+      "コード",
+      "スクリプト"
+    ]
+  },
+  "patterns": [
+    {
+      "id": "this_image",
+      "kind": "singular",
+      "artifact_bias": "image",
+      "phrases": [
+        "この写真",
+        "この画像",
+        "その写真",
+        "このスクリーンショット"
+      ]
+    },
+    {
+      "id": "these_documents",
+      "kind": "plural",
+      "artifact_bias": "document",
+      "phrases": [
+        "これらのファイル",
+        "そのファイルたち"
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "text": "この写真を切り抜けますか？",
+      "expected": {
+        "count": 1,
+        "artifact_bias": "image"
+      }
+    },
+    {
+      "text": "これらのファイルを要約して",
+      "expected": {
+        "count": 2,
+        "artifact_bias": "document"
+      }
+    }
+  ]
+}

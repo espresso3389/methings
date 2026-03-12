@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "locale": "en",
+  "display_name": "English",
+  "generated": false,
+  "expires_at": 0,
+  "quality_score": 1.0,
+  "tokens": {
+    "deictic_singular": [
+      "this",
+      "that",
+      "it",
+      "this one",
+      "that one"
+    ],
+    "deictic_plural": [
+      "these",
+      "those",
+      "them"
+    ]
+  },
+  "artifact_terms": {
+    "image": [
+      "image",
+      "photo",
+      "picture",
+      "screenshot"
+    ],
+    "document": [
+      "document",
+      "file",
+      "pdf"
+    ],
+    "audio": [
+      "audio",
+      "recording",
+      "voice note"
+    ],
+    "video": [
+      "video",
+      "clip"
+    ],
+    "archive": [
+      "zip",
+      "archive"
+    ],
+    "code": [
+      "code",
+      "script",
+      "source file"
+    ]
+  },
+  "patterns": [
+    {
+      "id": "this_image",
+      "kind": "singular",
+      "artifact_bias": "image",
+      "phrases": [
+        "this photo",
+        "this image",
+        "that picture",
+        "this screenshot"
+      ]
+    },
+    {
+      "id": "these_documents",
+      "kind": "plural",
+      "artifact_bias": "document",
+      "phrases": [
+        "these files",
+        "those documents"
+      ]
+    }
+  ],
+  "examples": [
+    {
+      "text": "Can you crop this image?",
+      "expected": {
+        "count": 1,
+        "artifact_bias": "image"
+      }
+    },
+    {
+      "text": "Summarize these files.",
+      "expected": {
+        "count": 2,
+        "artifact_bias": "document"
+      }
+    }
+  ]
+}

@@ -3524,6 +3524,26 @@
         return String((req && req.request_body) || "");
       }
 
+      function payloadBlockFromText(role, text, extra) {
+        return Object.assign({
+          role: role,
+          text: text || "(empty)",
+          kind: "text",
+          toolUseId: "",
+          toolName: "",
+        }, extra || {});
+      }
+
+      function payloadBlockText(value) {
+        if (typeof value === "string") return value;
+        if (value == null) return "";
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (_) {
+          return String(value);
+        }
+      }
+
       function extractPayloadContentBlocks(bodyStr) {
         try {
           const obj = JSON.parse(bodyStr);
@@ -3531,13 +3551,13 @@
           const msgs = [];
           // system prompt (Anthropic string or OpenAI instructions)
           if (typeof obj.system === "string" && obj.system.trim()) {
-            msgs.push({ role: "system", text: obj.system.trim() });
+            msgs.push(payloadBlockFromText("system", obj.system.trim(), { kind: "system" }));
           } else if (Array.isArray(obj.system)) {
             const sysText = obj.system.map(b => typeof b === "string" ? b : (b && b.text) || "").filter(Boolean).join("\n");
-            if (sysText) msgs.push({ role: "system", text: sysText });
+            if (sysText) msgs.push(payloadBlockFromText("system", sysText, { kind: "system" }));
           }
           if (typeof obj.instructions === "string" && obj.instructions.trim()) {
-            msgs.push({ role: "system", text: obj.instructions.trim() });
+            msgs.push(payloadBlockFromText("system", obj.instructions.trim(), { kind: "system" }));
           }
           // messages (OpenAI Chat / Anthropic Messages)
           const msgArr = Array.isArray(obj.messages) ? obj.messages : Array.isArray(obj.input) ? obj.input : null;
@@ -3545,36 +3565,93 @@
             for (const m of msgArr) {
               if (!m || typeof m !== "object") continue;
               const role = String(m.role || m.type || "unknown");
-              let text = "";
-              if (typeof m.content === "string") {
-                text = m.content;
+              let pushed = false;
+              if (Array.isArray(m.tool_calls) && m.tool_calls.length) {
+                for (const tc of m.tool_calls) {
+                  if (!tc || typeof tc !== "object") continue;
+                  const functionName = (tc.function && tc.function.name) || tc.name || tc.id || "";
+                  const functionArgs = (tc.function && tc.function.arguments) != null ? tc.function.arguments : tc.arguments;
+                  msgs.push(payloadBlockFromText(role, "[tool_use: " + functionName + "]\n" + payloadBlockText(functionArgs), {
+                    kind: "tool_use",
+                    toolUseId: String(tc.id || tc.call_id || ""),
+                    toolName: String(functionName || ""),
+                  }));
+                  pushed = true;
+                }
+              }
+              if (typeof m.content === "string" && role !== "tool" && !m.tool_call_id) {
+                msgs.push(payloadBlockFromText(role, m.content));
+                pushed = true;
               } else if (Array.isArray(m.content)) {
-                const parts = [];
                 for (const b of m.content) {
                   if (!b) continue;
-                  if (typeof b === "string") { parts.push(b); continue; }
-                  if (b.type === "text" && b.text) parts.push(b.text);
-                  else if (b.type === "tool_use") parts.push("[tool_use: " + (b.name || b.id || "") + "]\n" + (typeof b.input === "string" ? b.input : JSON.stringify(b.input, null, 2)));
-                  else if (b.type === "tool_result") parts.push("[tool_result" + (b.tool_use_id ? " " + b.tool_use_id : "") + "]\n" + (typeof b.content === "string" ? b.content : JSON.stringify(b.content, null, 2)));
-                  else if (b.type === "image_url" || b.type === "image") parts.push("[image]");
-                  else parts.push(JSON.stringify(b, null, 2));
+                  if (typeof b === "string") {
+                    msgs.push(payloadBlockFromText(role, b));
+                    pushed = true;
+                    continue;
+                  }
+                  if (b.type === "text" && b.text) {
+                    msgs.push(payloadBlockFromText(role, b.text));
+                    pushed = true;
+                  } else if (b.type === "tool_use") {
+                    msgs.push(payloadBlockFromText(role, "[tool_use: " + (b.name || b.id || "") + "]\n" + payloadBlockText(b.input), {
+                      kind: "tool_use",
+                      toolUseId: String(b.id || b.tool_use_id || ""),
+                      toolName: String(b.name || ""),
+                    }));
+                    pushed = true;
+                  } else if (b.type === "tool_result") {
+                    msgs.push(payloadBlockFromText(role, "[tool_result" + (b.tool_use_id ? " " + b.tool_use_id : "") + "]\n" + payloadBlockText(b.content), {
+                      kind: "tool_result",
+                      toolUseId: String(b.tool_use_id || b.id || ""),
+                    }));
+                    pushed = true;
+                  } else if (b.type === "image_url" || b.type === "image") {
+                    msgs.push(payloadBlockFromText(role, "[image]", { kind: "image" }));
+                    pushed = true;
+                  } else {
+                    msgs.push(payloadBlockFromText(role, payloadBlockText(b), { kind: String(b.type || "json") }));
+                    pushed = true;
+                  }
                 }
-                text = parts.join("\n");
-              } else if (m.content != null) {
-                text = JSON.stringify(m.content, null, 2);
+              } else if (m.content != null && role !== "tool" && !m.tool_call_id) {
+                msgs.push(payloadBlockFromText(role, payloadBlockText(m.content)));
+                pushed = true;
+              }
+              if (m.type === "function_call") {
+                const fnName = m.name || "";
+                msgs.push(payloadBlockFromText(role, "[tool_use: " + fnName + "]\n" + payloadBlockText(m.arguments), {
+                  kind: "tool_use",
+                  toolUseId: String(m.call_id || m.id || ""),
+                  toolName: String(fnName || ""),
+                }));
+                pushed = true;
+              } else if (m.type === "function_call_output") {
+                msgs.push(payloadBlockFromText(role, "[tool_result" + (m.call_id ? " " + m.call_id : "") + "]\n" + payloadBlockText(m.output), {
+                  kind: "tool_result",
+                  toolUseId: String(m.call_id || m.tool_use_id || m.id || ""),
+                  toolName: String(m.name || ""),
+                }));
+                pushed = true;
+              } else if ((role === "tool" || m.tool_call_id) && !Array.isArray(m.content) && m.content != null) {
+                msgs.push(payloadBlockFromText(role, "[tool_result" + (m.tool_call_id ? " " + m.tool_call_id : "") + "]\n" + payloadBlockText(m.content), {
+                  kind: "tool_result",
+                  toolUseId: String(m.tool_call_id || m.id || ""),
+                  toolName: String(m.name || ""),
+                }));
+                pushed = true;
               }
               // OpenAI Responses API: item with type
-              if (!text && m.type) {
-                text = JSON.stringify(m, null, 2);
+              if (!pushed && m.type) {
+                msgs.push(payloadBlockFromText(role, payloadBlockText(m), { kind: String(m.type || "json") }));
               }
-              msgs.push({ role: role, text: text || "(empty)" });
             }
           }
           // tools/tool definitions - summarize count
           const tools = obj.tools;
           if (Array.isArray(tools) && tools.length) {
             const names = tools.map(t => (t && (t.name || (t.function && t.function.name))) || "?").slice(0, 20);
-            msgs.push({ role: "tools", text: tools.length + " tool(s): " + names.join(", ") + (tools.length > 20 ? " ..." : "") });
+            msgs.push(payloadBlockFromText("tools", tools.length + " tool(s): " + names.join(", ") + (tools.length > 20 ? " ..." : ""), { kind: "tools" }));
           }
           return msgs.length ? msgs : null;
         } catch (_) {
@@ -3648,7 +3725,30 @@
             diffStart = 0;
           }
           if (diffStart < blocks.length) {
-            timeline.push({ req: req, blocks: blocks.slice(diffStart) });
+            var selected = blocks.slice(diffStart);
+            var includeIndices = [];
+            var includedToolUseIds = new Set();
+            for (var si = 0; si < selected.length; si++) {
+              var block = selected[si];
+              if (block && block.kind === "tool_use" && block.toolUseId) includedToolUseIds.add(block.toolUseId);
+            }
+            for (var si2 = 0; si2 < selected.length; si2++) {
+              var resultBlock = selected[si2];
+              if (!resultBlock || resultBlock.kind !== "tool_result" || !resultBlock.toolUseId || includedToolUseIds.has(resultBlock.toolUseId)) continue;
+              for (var bi2 = diffStart - 1; bi2 >= 0; bi2--) {
+                var prior = blocks[bi2];
+                if (!prior || prior.kind !== "tool_use" || prior.toolUseId !== resultBlock.toolUseId) continue;
+                includeIndices.push(bi2);
+                includedToolUseIds.add(resultBlock.toolUseId);
+                break;
+              }
+            }
+            if (includeIndices.length) {
+              includeIndices.sort(function(a, b) { return a - b; });
+              var prefix = includeIndices.map(function(idx) { return blocks[idx]; });
+              selected = prefix.concat(selected);
+            }
+            timeline.push({ req: req, blocks: selected });
           }
           prevBlocks = blocks;
         }
