@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "me_me_signaling": {
+      "presence": {
+        "$deviceId": {
+          ".read": true,
+          ".write": true,
+          ".validate": "newData.hasChildren(['device_id','online','updated_at'])"
+        }
+      },
+      "inbox": {
+        "$deviceId": {
+          ".read": true,
+          "$messageId": {
+            ".write": true,
+            ".validate": "newData.hasChildren(['type','from','created_at'])"
+          }
+        }
+      }
+    }
+  }
+}

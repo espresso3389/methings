@@ -1,0 +1,40 @@
+{
+  "rules": {
+    "me_me_signaling": {
+      "presence": {
+        "$deviceId": {
+          ".read": "auth != null && auth.uid === $deviceId",
+          ".write": "auth != null && auth.uid === $deviceId",
+          ".validate": "newData.hasChildren(['device_id','online','updated_at']) && newData.child('device_id').val() === $deviceId"
+        }
+      },
+      "inbox": {
+        "$deviceId": {
+          ".read": "auth != null && auth.uid === $deviceId",
+          ".write": "auth != null && auth.uid === $deviceId && !newData.exists()",
+          "$messageId": {
+            ".write": "auth != null && ((!data.exists() && newData.hasChildren(['type','from','created_at']) && newData.child('from').isString() && auth.uid === newData.child('from').val()) || (!newData.exists() && auth.uid === $deviceId))"
+          }
+        }
+      }
+    },
+    "me_me_signaling_v2": {
+      "presence": {
+        "$deviceId": {
+          ".read": "auth != null && auth.uid === $deviceId",
+          ".write": "auth != null && auth.uid === $deviceId",
+          ".validate": "newData.hasChildren(['device_id','online','updated_at']) && newData.child('device_id').val() === $deviceId"
+        }
+      },
+      "inbox": {
+        "$deviceId": {
+          ".read": "auth != null && auth.uid === $deviceId",
+          ".write": "auth != null && auth.uid === $deviceId && !newData.exists()",
+          "$messageId": {
+            ".write": "auth != null && ((!data.exists() && newData.hasChildren(['type','from','created_at']) && newData.child('from').isString() && auth.uid === newData.child('from').val()) || (!newData.exists() && auth.uid === $deviceId))"
+          }
+        }
+      }
+    }
+  }
+}

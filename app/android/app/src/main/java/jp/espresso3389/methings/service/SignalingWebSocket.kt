@@ -19,7 +19,7 @@ class SignalingWebSocket(
     private val onDisconnected: (code: Int, reason: String) -> Unit = { _, _ -> },
     private val onError: (Exception) -> Unit = {},
     private val logger: (String, Throwable?) -> Unit = { _, _ -> }
-) {
+) : SignalingTransport {
     private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
         Thread(r, "SignalingWS-scheduler").apply { isDaemon = true }
     }
@@ -27,16 +27,16 @@ class SignalingWebSocket(
     private val reconnectAttempt = AtomicInteger(0)
     private var reconnectFuture: ScheduledFuture<*>? = null
     private val active = AtomicBoolean(false)
-    @Volatile var isConnected = false
+    @Volatile override var isConnected = false
         private set
 
-    fun connect() {
+    override fun connect() {
         active.set(true)
         reconnectAttempt.set(0)
         createAndConnect()
     }
 
-    fun disconnect() {
+    override fun disconnect() {
         active.set(false)
         reconnectFuture?.cancel(false)
         reconnectFuture = null
@@ -45,7 +45,7 @@ class SignalingWebSocket(
         isConnected = false
     }
 
-    fun send(msg: JSONObject): Boolean {
+    override fun send(msg: JSONObject): Boolean {
         val c = client ?: return false
         return runCatching {
             c.send(msg.toString())
@@ -53,7 +53,7 @@ class SignalingWebSocket(
         }.getOrDefault(false)
     }
 
-    fun reconnect() {
+    override fun reconnect() {
         runCatching { client?.close() }
         client = null
         isConnected = false
@@ -63,7 +63,7 @@ class SignalingWebSocket(
         }
     }
 
-    fun shutdown() {
+    override fun shutdown() {
         disconnect()
         runCatching { scheduler.shutdownNow() }
     }

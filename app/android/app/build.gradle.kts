@@ -54,6 +54,8 @@ android {
         buildConfigField("String", "GIT_SHA", "\"$appGitSha\"")
         buildConfigField("String", "REPO_URL", "\"$appRepoUrl\"")
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${localEnv("GOOGLE_WEB_CLIENT_ID")}\"")
+        buildConfigField("String", "ME_ME_RTDB_DATABASE_URL", "\"${localEnv("ME_ME_RTDB_DATABASE_URL")}\"")
+        buildConfigField("String", "ME_ME_RTDB_ROOT_PATH", "\"${localEnv("ME_ME_RTDB_ROOT_PATH")}\"")
 
         // Target only arm64 for now (Android 14+ devices). This also keeps the
         // bundled native deps (libusb/libuvc) consistent and smaller.
@@ -443,7 +445,9 @@ dependencies {
     implementation("com.google.zxing:core:3.5.3")
     // Firebase Cloud Messaging
     implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-messaging")
+    implementation("com.google.firebase:firebase-database")
     // WebRTC DataChannel (me.me P2P transport)
     implementation("io.getstream:stream-webrtc-android:1.3.7")
     implementation("org.java-websocket:Java-WebSocket:1.5.7")

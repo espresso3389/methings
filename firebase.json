@@ -1,0 +1,8 @@
+{
+  "database": [
+    {
+      "target": "methings-signaling",
+      "rules": "firebase/rtdb.rules.authenticated.json"
+    }
+  ]
+}

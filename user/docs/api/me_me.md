@@ -22,6 +22,30 @@ Refresh device list from gateway. Also auto-refreshed via push when siblings cha
 
 **Returns:** `user_subject`, `devices` (updated array)
 
+## me.me.p2p.config
+
+Configure WebRTC P2P signaling and ICE settings.
+
+**Common params:**
+- `enabled` (bool, optional)
+- `auto_connect` (bool, optional)
+- `ice_servers` (JSON string, optional)
+
+**WebSocket signaling params:**
+- `signaling_transport` = `"websocket"`
+- `signaling_url` (string, optional)
+- `signaling_token` (string, optional)
+
+**RTDB signaling params:**
+- `signaling_transport` = `"rtdb"`
+- `rtdb_database_url` (string, required for RTDB mode)
+- `rtdb_root_path` (string, optional): default `me_me_signaling`
+
+**Notes:**
+- WebSocket remains the legacy/default transport.
+- RTDB mode is the planned replacement for Cloud Run signaling.
+- `signaling_token` is still used for WebSocket mode; RTDB mode is expected to rely on Firebase-side access control.
+
 ## me.me.message.send
 
 Permission: `device.me_me`

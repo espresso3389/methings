@@ -12,6 +12,7 @@ import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -26,7 +27,10 @@ class MeMeP2pManager(
 ) {
     data class P2pConfig(
         val enabled: Boolean = false,
+        val signalingTransport: String = "websocket",
         val signalingUrl: String = "",
+        val rtdbDatabaseUrl: String = "",
+        val rtdbRootPath: String = "me_me_signaling",
         val iceServersJson: String = "[]",
         val autoConnect: Boolean = false,
         val signalingToken: String = ""
@@ -43,9 +47,10 @@ class MeMeP2pManager(
 
     @Volatile private var config = P2pConfig()
     @Volatile private var peerConnectionFactory: PeerConnectionFactory? = null
-    @Volatile private var signalingWs: SignalingWebSocket? = null
+    @Volatile private var signalingTransport: SignalingTransport? = null
     @Volatile private var initialized = false
     private val peers = ConcurrentHashMap<String, P2pPeerState>()
+    private val pendingRemoteCandidates = ConcurrentHashMap<String, MutableList<IceCandidate>>()
     private val dcOpenLatches = ConcurrentHashMap<String, CountDownLatch>()
     private val executor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "MeMeP2p").apply { isDaemon = true }
@@ -75,31 +80,20 @@ class MeMeP2pManager(
                 .setOptions(PeerConnectionFactory.Options())
                 .createPeerConnectionFactory()
         }
-        signalingWs?.shutdown()
-        if (cfg.signalingUrl.isNotBlank() && cfg.signalingToken.isNotBlank()) {
-            signalingWs = SignalingWebSocket(
-                signalingUrl = cfg.signalingUrl,
-                deviceId = deviceId,
-                token = cfg.signalingToken,
-                onMessage = { msg -> executor.execute { handleSignalingMessage(msg) } },
-                onConnected = { logger("P2P: signaling connected", null) },
-                onDisconnected = { code, reason -> logger("P2P: signaling disconnected code=$code reason=$reason", null) },
-                onError = { ex -> logger("P2P: signaling error", ex) },
-                logger = logger
-            ).also { it.connect() }
-        }
+        signalingTransport?.shutdown()
+        signalingTransport = createSignalingTransport(cfg)?.also { it.connect() }
         initialized = true
-        logger("P2P: initialized (iceServers=${cfg.iceServersJson})", null)
+        logger("P2P: initialized (transport=${cfg.signalingTransport}, iceServers=${cfg.iceServersJson})", null)
     }
 
     fun shutdown() {
         initialized = false
         for ((peerId, _) in peers) {
-            disconnectPeer(peerId)
+            disconnectPeer(peerId, sendHangup = false, reason = "shutdown")
         }
         peers.clear()
-        signalingWs?.shutdown()
-        signalingWs = null
+        signalingTransport?.shutdown()
+        signalingTransport = null
         runCatching {
             peerConnectionFactory?.dispose()
             peerConnectionFactory = null
@@ -113,7 +107,10 @@ class MeMeP2pManager(
             shutdown()
             return
         }
-        if (prev.signalingUrl != newConfig.signalingUrl ||
+        if (prev.signalingTransport != newConfig.signalingTransport ||
+            prev.signalingUrl != newConfig.signalingUrl ||
+            prev.rtdbDatabaseUrl != newConfig.rtdbDatabaseUrl ||
+            prev.rtdbRootPath != newConfig.rtdbRootPath ||
             prev.signalingToken != newConfig.signalingToken ||
             prev.iceServersJson != newConfig.iceServersJson ||
             !initialized
@@ -161,17 +158,16 @@ class MeMeP2pManager(
         }
     }
 
-    fun disconnectPeer(peerDeviceId: String) {
+    fun disconnectPeer(peerDeviceId: String, sendHangup: Boolean = true, reason: String = "manual") {
         val state = peers.remove(peerDeviceId) ?: return
+        pendingRemoteCandidates.remove(peerDeviceId)
         runCatching { state.dataChannel?.close() }
         runCatching { state.peerConnection.close() }
-        runCatching {
-            signalingWs?.send(
-                JSONObject().put("type", "hangup").put("to", peerDeviceId)
-            )
+        if (sendHangup) runCatching {
+            signalingTransport?.send(JSONObject().put("type", "hangup").put("to", peerDeviceId))
         }
         onConnectionStateChanged(peerDeviceId, "disconnected")
-        logger("P2P: disconnected peer $peerDeviceId", null)
+        logger("P2P: disconnected peer $peerDeviceId reason=$reason sendHangup=$sendHangup", null)
     }
 
     fun isConnected(peerDeviceId: String): Boolean {
@@ -194,8 +190,11 @@ class MeMeP2pManager(
         return JSONObject()
             .put("enabled", config.enabled)
             .put("initialized", initialized)
-            .put("signaling_connected", signalingWs?.isConnected == true)
+            .put("signaling_connected", signalingTransport?.isConnected == true)
+            .put("signaling_transport", config.signalingTransport)
             .put("signaling_url", config.signalingUrl)
+            .put("rtdb_database_url", config.rtdbDatabaseUrl)
+            .put("rtdb_root_path", config.rtdbRootPath)
             .put("peer_count", peers.size)
             .put("connected_peer_count", peers.values.count { it.dcState == "open" })
     }
@@ -240,7 +239,7 @@ class MeMeP2pManager(
                 val from = msg.optString("from", "").trim()
                 if (from.isNotBlank()) {
                     logger("P2P: received hangup from $from", null)
-                    disconnectPeer(from)
+                    disconnectPeer(from, sendHangup = false, reason = "remote_hangup")
                 }
             }
             "peer_online" -> {
@@ -305,6 +304,7 @@ class MeMeP2pManager(
             runCatching { existing.dataChannel?.close() }
             runCatching { existing.peerConnection.close() }
             peers.remove(peerDeviceId)
+            pendingRemoteCandidates.remove(peerDeviceId)
         }
         val state = getOrCreatePeerConnection(peerDeviceId)
         val pc = state.peerConnection
@@ -324,14 +324,20 @@ class MeMeP2pManager(
         pc.createOffer(object : SimpleSdpObserver("createOffer($peerDeviceId)") {
             override fun onCreateSuccess(sdp: SessionDescription?) {
                 if (sdp == null) return
-                pc.setLocalDescription(SimpleSdpObserver("setLocalDesc-offer($peerDeviceId)"), sdp)
-                signalingWs?.send(
-                    JSONObject()
-                        .put("type", "offer")
-                        .put("to", peerDeviceId)
-                        .put("sdp", sdp.description)
-                )
-                logger("P2P: sent offer to $peerDeviceId", null)
+                logger("P2P: created offer for $peerDeviceId", null)
+                pc.setLocalDescription(object : SimpleSdpObserver("setLocalDesc-offer($peerDeviceId)") {
+                    override fun onSetSuccess() {
+                        logger("P2P: local offer applied for $peerDeviceId", null)
+                        signalingTransport?.send(
+                            JSONObject()
+                                .put("type", "offer")
+                                .put("to", peerDeviceId)
+                                .put("sdp", sdp.description)
+                        )
+                        logger("P2P: sent offer to $peerDeviceId", null)
+                        flushPendingRemoteCandidates(peerDeviceId, "local_offer_set")
+                    }
+                }, sdp)
             }
         }, constraints)
     }
@@ -350,53 +356,86 @@ class MeMeP2pManager(
                     return
                 }
                 logger("P2P: glare with $from — polite peer yielding (signalingState=$sigState)", null)
-                runCatching { existing.dataChannel?.close() }
-                runCatching { existing.peerConnection.close() }
-                peers.remove(from)
+                disconnectPeer(from, sendHangup = false, reason = "glare_yield")
             }
         }
         val state = getOrCreatePeerConnection(from)
         val pc = state.peerConnection
+        logger("P2P: applying remote offer from $from", null)
         pc.setRemoteDescription(
-            SimpleSdpObserver("setRemoteDesc-offer($from)"),
+            object : SimpleSdpObserver("setRemoteDesc-offer($from)") {
+                override fun onSetSuccess() {
+                    logger("P2P: remote offer applied for $from", null)
+                    flushPendingRemoteCandidates(from, "remote_offer_set")
+                    val constraints = MediaConstraints().apply {
+                        mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "false"))
+                        mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "false"))
+                    }
+                    pc.createAnswer(object : SimpleSdpObserver("createAnswer($from)") {
+                        override fun onCreateSuccess(sdp: SessionDescription?) {
+                            if (sdp == null) return
+                            logger("P2P: created answer for $from", null)
+                            pc.setLocalDescription(object : SimpleSdpObserver("setLocalDesc-answer($from)") {
+                                override fun onSetSuccess() {
+                                    logger("P2P: local answer applied for $from", null)
+                                    signalingTransport?.send(
+                                        JSONObject()
+                                            .put("type", "answer")
+                                            .put("to", from)
+                                            .put("sdp", sdp.description)
+                                    )
+                                    logger("P2P: sent answer to $from", null)
+                                    flushPendingRemoteCandidates(from, "local_answer_set")
+                                }
+                            }, sdp)
+                        }
+                    }, constraints)
+                }
+            }
+            ,
             SessionDescription(SessionDescription.Type.OFFER, sdp)
         )
-        val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "false"))
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "false"))
-        }
-        pc.createAnswer(object : SimpleSdpObserver("createAnswer($from)") {
-            override fun onCreateSuccess(sdp: SessionDescription?) {
-                if (sdp == null) return
-                pc.setLocalDescription(SimpleSdpObserver("setLocalDesc-answer($from)"), sdp)
-                signalingWs?.send(
-                    JSONObject()
-                        .put("type", "answer")
-                        .put("to", from)
-                        .put("sdp", sdp.description)
-                )
-                logger("P2P: sent answer to $from", null)
-            }
-        }, constraints)
     }
 
     private fun handleRemoteAnswer(from: String, sdp: String) {
         logger("P2P: received answer from $from", null)
         val state = peers[from] ?: return
+        val sigState = state.peerConnection.signalingState()
+        if (sigState != PeerConnection.SignalingState.HAVE_LOCAL_OFFER) {
+            logger("P2P: ignoring answer from $from (signalingState=$sigState)", null)
+            return
+        }
+        logger("P2P: applying remote answer from $from", null)
         state.peerConnection.setRemoteDescription(
-            SimpleSdpObserver("setRemoteDesc-answer($from)"),
+            object : SimpleSdpObserver("setRemoteDesc-answer($from)") {
+                override fun onSetSuccess() {
+                    logger("P2P: remote answer applied for $from", null)
+                    flushPendingRemoteCandidates(from, "remote_answer_set")
+                }
+            },
             SessionDescription(SessionDescription.Type.ANSWER, sdp)
         )
     }
 
     private fun handleRemoteCandidate(from: String, candidateObj: JSONObject) {
-        val state = peers[from] ?: return
         val candidate = IceCandidate(
             candidateObj.optString("sdpMid", ""),
             candidateObj.optInt("sdpMLineIndex", 0),
             candidateObj.optString("candidate", "")
         )
-        state.peerConnection.addIceCandidate(candidate)
+        logger("P2P: received candidate from $from mid=${candidate.sdpMid} mline=${candidate.sdpMLineIndex}", null)
+        val state = peers[from]
+        if (state == null) {
+            queueRemoteCandidate(from, candidate, "missing_peer")
+            return
+        }
+        val remoteDescription = state.peerConnection.remoteDescription
+        if (remoteDescription == null) {
+            queueRemoteCandidate(from, candidate, "remote_description_not_set")
+            return
+        }
+        val added = state.peerConnection.addIceCandidate(candidate)
+        logger("P2P: addIceCandidate from $from result=$added", null)
     }
 
     // -- Observers --
@@ -413,11 +452,18 @@ class MeMeP2pManager(
                 ) {
                     logger("P2P: ICE $stateStr for $peerDeviceId, cleaning up", null)
                 }
+                if (newState == PeerConnection.IceConnectionState.CLOSED) {
+                    logger("P2P: ICE closed for $peerDeviceId", null)
+                }
             }
 
             override fun onIceCandidate(candidate: IceCandidate?) {
                 if (candidate == null) return
-                signalingWs?.send(
+                logger(
+                    "P2P: local candidate for $peerDeviceId mid=${candidate.sdpMid} mline=${candidate.sdpMLineIndex}",
+                    null
+                )
+                signalingTransport?.send(
                     JSONObject()
                         .put("type", "candidate")
                         .put("to", peerDeviceId)
@@ -436,7 +482,9 @@ class MeMeP2pManager(
                 peers[peerDeviceId]?.dataChannel = dc
             }
 
-            override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
+            override fun onSignalingChange(state: PeerConnection.SignalingState?) {
+                logger("P2P: signaling state $peerDeviceId -> ${state?.name ?: "unknown"}", null)
+            }
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
@@ -444,6 +492,38 @@ class MeMeP2pManager(
             override fun onRemoveStream(stream: org.webrtc.MediaStream?) {}
             override fun onRenegotiationNeeded() {}
         }
+    }
+
+    private fun queueRemoteCandidate(peerDeviceId: String, candidate: IceCandidate, reason: String) {
+        val queue = pendingRemoteCandidates.computeIfAbsent(peerDeviceId) {
+            Collections.synchronizedList(mutableListOf())
+        }
+        queue.add(candidate)
+        logger(
+            "P2P: queued remote candidate for $peerDeviceId reason=$reason size=${queue.size} mid=${candidate.sdpMid} mline=${candidate.sdpMLineIndex}",
+            null
+        )
+    }
+
+    private fun flushPendingRemoteCandidates(peerDeviceId: String, reason: String) {
+        val state = peers[peerDeviceId] ?: return
+        if (state.peerConnection.remoteDescription == null) {
+            logger("P2P: skip candidate flush for $peerDeviceId reason=$reason remoteDescription=null", null)
+            return
+        }
+        val queue = pendingRemoteCandidates[peerDeviceId] ?: return
+        val drained = synchronized(queue) {
+            val copy = queue.toList()
+            queue.clear()
+            copy
+        }
+        if (drained.isEmpty()) return
+        logger("P2P: flushing ${drained.size} queued candidates for $peerDeviceId reason=$reason", null)
+        for (candidate in drained) {
+            val added = state.peerConnection.addIceCandidate(candidate)
+            logger("P2P: addIceCandidate flush for $peerDeviceId result=$added", null)
+        }
+        pendingRemoteCandidates.remove(peerDeviceId, queue)
     }
 
     private fun createDataChannelObserver(peerDeviceId: String): DataChannel.Observer {
@@ -526,6 +606,51 @@ class MeMeP2pManager(
         }
         override fun onSetFailure(error: String?) {
             logger("P2P: SDP $tag set failed: $error", null)
+        }
+    }
+
+    private fun createSignalingTransport(cfg: P2pConfig): SignalingTransport? {
+        val onMessageCb = { msg: JSONObject -> executor.execute { handleSignalingMessage(msg) } }
+        val onConnectedCb = { logger("P2P: signaling connected", null) }
+        val onDisconnectedCb = { code: Int, reason: String ->
+            logger("P2P: signaling disconnected code=$code reason=$reason", null)
+        }
+        val onErrorCb = { ex: Exception -> logger("P2P: signaling error", ex) }
+        return when (cfg.signalingTransport.trim().lowercase()) {
+            "rtdb" -> {
+                if (cfg.rtdbDatabaseUrl.isBlank()) {
+                    logger("P2P: RTDB signaling selected but rtdbDatabaseUrl is blank", null)
+                    null
+                } else {
+                    RtdbSignalingTransport(
+                        databaseUrl = cfg.rtdbDatabaseUrl,
+                        rootPath = cfg.rtdbRootPath.ifBlank { "me_me_signaling" },
+                        deviceId = deviceId,
+                        onMessage = onMessageCb,
+                        onConnected = onConnectedCb,
+                        onDisconnected = onDisconnectedCb,
+                        onError = onErrorCb,
+                        logger = logger
+                    )
+                }
+            }
+            else -> {
+                if (cfg.signalingUrl.isBlank() || cfg.signalingToken.isBlank()) {
+                    logger("P2P: WebSocket signaling selected but URL/token is missing", null)
+                    null
+                } else {
+                    SignalingWebSocket(
+                        signalingUrl = cfg.signalingUrl,
+                        deviceId = deviceId,
+                        token = cfg.signalingToken,
+                        onMessage = onMessageCb,
+                        onConnected = onConnectedCb,
+                        onDisconnected = onDisconnectedCb,
+                        onError = onErrorCb,
+                        logger = logger
+                    )
+                }
+            }
         }
     }
 }

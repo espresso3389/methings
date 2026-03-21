@@ -428,7 +428,7 @@ class LocalHttpServer(
             meMeExecutor.execute {
                 runCatching { meMeDiscovery.applyConfig(currentMeMeDiscoveryConfig()) }
                 runCatching {
-                    val p2pCfg = currentMeMeP2pConfig()
+                    val p2pCfg = prepareP2pRuntimeConfig(currentMeMeP2pConfig())
                     if (p2pCfg.enabled) meMeP2pManager.initialize(buildP2pManagerConfig(p2pCfg))
                 }
                 // Refresh provisioned device list from gateway on startup
@@ -13811,15 +13811,29 @@ class LocalHttpServer(
     private fun maybeAutoConnectP2p(peerDeviceId: String) {
         val p2pCfg = currentMeMeP2pConfig()
         if (p2pCfg.enabled && p2pCfg.autoConnect) {
+            if (!shouldInitiateAutoConnect(peerDeviceId)) {
+                Log.d(TAG, "P2P: auto-connect skipped for $peerDeviceId (waiting for initiator)")
+                return
+            }
             meMeExecutor.execute {
                 runCatching { meMeP2pManager.connectToPeer(peerDeviceId) }
             }
         }
     }
 
+    private fun shouldInitiateAutoConnect(peerDeviceId: String): Boolean {
+        val selfId = currentMeMeConfig().deviceId.trim()
+        val otherId = peerDeviceId.trim()
+        if (selfId.isBlank() || otherId.isBlank()) return false
+        return selfId < otherId
+    }
+
     private data class MeMeP2pConfig(
         val enabled: Boolean,
+        val signalingTransport: String,
         val signalingUrl: String,
+        val rtdbDatabaseUrl: String,
+        val rtdbRootPath: String,
         val iceServersJson: String,
         val autoConnect: Boolean,
         val signalingToken: String
@@ -13827,7 +13841,10 @@ class LocalHttpServer(
         fun toJson(includeSecrets: Boolean): JSONObject {
             val out = JSONObject()
                 .put("enabled", enabled)
+                .put("signaling_transport", signalingTransport)
                 .put("signaling_url", signalingUrl)
+                .put("rtdb_database_url", rtdbDatabaseUrl)
+                .put("rtdb_root_path", rtdbRootPath)
                 .put("ice_servers", iceServersJson)
                 .put("auto_connect", autoConnect)
                 .put("signaling_token_configured", signalingToken.isNotBlank())
@@ -13844,7 +13861,15 @@ class LocalHttpServer(
         }.getOrDefault("")
         return MeMeP2pConfig(
             enabled = meMePrefs.getBoolean("p2p_enabled", false),
+            signalingTransport = (meMePrefs.getString("p2p_signaling_transport", DEFAULT_ME_ME_SIGNALING_TRANSPORT) ?: DEFAULT_ME_ME_SIGNALING_TRANSPORT)
+                .trim()
+                .ifBlank { DEFAULT_ME_ME_SIGNALING_TRANSPORT },
             signalingUrl = (meMePrefs.getString("p2p_signaling_url", DEFAULT_ME_ME_SIGNALING_URL) ?: DEFAULT_ME_ME_SIGNALING_URL).trim().ifBlank { DEFAULT_ME_ME_SIGNALING_URL },
+            rtdbDatabaseUrl = (meMePrefs.getString("p2p_rtdb_database_url", DEFAULT_ME_ME_RTDB_DATABASE_URL) ?: DEFAULT_ME_ME_RTDB_DATABASE_URL)
+                .trim(),
+            rtdbRootPath = (meMePrefs.getString("p2p_rtdb_root_path", DEFAULT_ME_ME_RTDB_ROOT_PATH) ?: DEFAULT_ME_ME_RTDB_ROOT_PATH)
+                .trim()
+                .ifBlank { DEFAULT_ME_ME_RTDB_ROOT_PATH },
             iceServersJson = (meMePrefs.getString("p2p_ice_servers", "[]") ?: "[]").trim().ifBlank { "[]" },
             autoConnect = meMePrefs.getBoolean("p2p_auto_connect", false),
             signalingToken = token
@@ -13858,7 +13883,10 @@ class LocalHttpServer(
     ) {
         meMePrefs.edit()
             .putBoolean("p2p_enabled", cfg.enabled)
+            .putString("p2p_signaling_transport", cfg.signalingTransport.trim().ifBlank { DEFAULT_ME_ME_SIGNALING_TRANSPORT })
             .putString("p2p_signaling_url", cfg.signalingUrl.trim().ifBlank { DEFAULT_ME_ME_SIGNALING_URL })
+            .putString("p2p_rtdb_database_url", cfg.rtdbDatabaseUrl.trim())
+            .putString("p2p_rtdb_root_path", cfg.rtdbRootPath.trim().ifBlank { DEFAULT_ME_ME_RTDB_ROOT_PATH })
             .putString("p2p_ice_servers", cfg.iceServersJson.trim().ifBlank { "[]" })
             .putBoolean("p2p_auto_connect", cfg.autoConnect)
             .apply()
@@ -13874,10 +13902,42 @@ class LocalHttpServer(
         }
     }
 
+    private fun prepareP2pRuntimeConfig(cfg: MeMeP2pConfig): MeMeP2pConfig {
+        if (!cfg.enabled) return cfg
+        if (cfg.signalingTransport.trim().lowercase(Locale.US) != "rtdb") return cfg
+
+        val relayCfg = currentMeMeRelayConfig()
+        val runtimeDeviceId = currentMeMeConfig().deviceId
+        val pullSecret = NotifyGatewayClient.loadPullSecretPublic(context).trim()
+        val signIn = MeMeFirebaseAuthManager.ensureSignedIn(
+            gatewayBaseUrl = relayCfg.gatewayBaseUrl,
+            deviceId = runtimeDeviceId,
+            pullSecret = pullSecret,
+            currentDatabaseUrl = cfg.rtdbDatabaseUrl,
+            currentRootPath = cfg.rtdbRootPath,
+            logger = { msg, err -> Log.w(TAG, msg, err) }
+        )
+        if (!signIn.ok) {
+            throw IllegalStateException("rtdb_firebase_auth_failed:${signIn.error}")
+        }
+
+        val next = cfg.copy(
+            rtdbDatabaseUrl = signIn.rtdbDatabaseUrl.ifBlank { cfg.rtdbDatabaseUrl },
+            rtdbRootPath = signIn.rtdbRootPath.ifBlank { cfg.rtdbRootPath }
+        )
+        if (next != cfg) {
+            saveMeMeP2pConfig(next, tokenOverride = null, clearToken = false)
+        }
+        return next
+    }
+
     private fun buildP2pManagerConfig(cfg: MeMeP2pConfig): MeMeP2pManager.P2pConfig {
         return MeMeP2pManager.P2pConfig(
             enabled = cfg.enabled,
+            signalingTransport = cfg.signalingTransport,
             signalingUrl = cfg.signalingUrl,
+            rtdbDatabaseUrl = cfg.rtdbDatabaseUrl,
+            rtdbRootPath = cfg.rtdbRootPath,
             iceServersJson = cfg.iceServersJson,
             autoConnect = cfg.autoConnect,
             signalingToken = cfg.signalingToken
@@ -13907,7 +13967,10 @@ class LocalHttpServer(
         val prev = currentMeMeP2pConfig()
         val next = MeMeP2pConfig(
             enabled = if (payload.has("enabled")) payload.optBoolean("enabled", prev.enabled) else prev.enabled,
+            signalingTransport = payload.optString("signaling_transport", prev.signalingTransport).trim().ifBlank { prev.signalingTransport },
             signalingUrl = payload.optString("signaling_url", prev.signalingUrl).trim().ifBlank { prev.signalingUrl },
+            rtdbDatabaseUrl = payload.optString("rtdb_database_url", prev.rtdbDatabaseUrl).trim(),
+            rtdbRootPath = payload.optString("rtdb_root_path", prev.rtdbRootPath).trim().ifBlank { prev.rtdbRootPath },
             iceServersJson = payload.optString("ice_servers", prev.iceServersJson).trim().ifBlank { prev.iceServersJson },
             autoConnect = if (payload.has("auto_connect")) payload.optBoolean("auto_connect", prev.autoConnect) else prev.autoConnect,
             signalingToken = prev.signalingToken
@@ -13916,13 +13979,23 @@ class LocalHttpServer(
         val clearToken = payload.optBoolean("clear_signaling_token", false)
         saveMeMeP2pConfig(next, tokenOverride = tokenOverride, clearToken = clearToken)
         val saved = currentMeMeP2pConfig()
+        val runtimeCfg = try {
+            prepareP2pRuntimeConfig(saved)
+        } catch (ex: Exception) {
+            Log.w(TAG, "Failed to prepare P2P runtime config", ex)
+            return jsonError(
+                Response.Status.SERVICE_UNAVAILABLE,
+                "rtdb_firebase_auth_failed",
+                JSONObject().put("detail", ex.message ?: "runtime_prepare_failed")
+            )
+        }
         meMeExecutor.execute {
-            runCatching { meMeP2pManager.updateConfig(buildP2pManagerConfig(saved)) }
+            runCatching { meMeP2pManager.updateConfig(buildP2pManagerConfig(runtimeCfg)) }
         }
         return jsonResponse(
             JSONObject()
                 .put("status", "ok")
-                .put("config", saved.toJson(includeSecrets = false))
+                .put("config", runtimeCfg.toJson(includeSecrets = false))
         )
     }
 
@@ -14020,7 +14093,12 @@ class LocalHttpServer(
                 clearToken = false
             )
             meMeExecutor.execute {
-                runCatching { meMeP2pManager.updateConfig(buildP2pManagerConfig(currentMeMeP2pConfig())) }
+                runCatching {
+                    val runtimeCfg = prepareP2pRuntimeConfig(currentMeMeP2pConfig())
+                    meMeP2pManager.updateConfig(buildP2pManagerConfig(runtimeCfg))
+                }.onFailure {
+                    Log.w(TAG, "Provision claim completed, but RTDB P2P auth failed", it)
+                }
             }
         }
 
@@ -14156,6 +14234,7 @@ class LocalHttpServer(
             saveMeMeP2pConfig(p2pCfg, tokenOverride = null, clearToken = true)
             meMeP2pManager.shutdown()
         }
+        MeMeFirebaseAuthManager.signOut { msg, err -> Log.w(TAG, msg, err) }
 
         return jsonResponse(JSONObject().put("status", "ok"))
     }
@@ -16679,7 +16758,10 @@ class LocalHttpServer(
         private const val ME_ME_PREFS = "me_me_prefs"
         private const val DEFAULT_ME_ME_RELAY_BASE_URL = "https://hooks.methings.org"
         private const val ME_ME_RELAY_GATEWAY_ADMIN_SECRET_CREDENTIAL = "me_me.relay.gateway_admin_secret"
+        private val DEFAULT_ME_ME_SIGNALING_TRANSPORT = if (BuildConfig.ME_ME_RTDB_DATABASE_URL.isNotBlank()) "rtdb" else "websocket"
         private const val DEFAULT_ME_ME_SIGNALING_URL = "wss://hooks.methings.org/signaling"
+        private val DEFAULT_ME_ME_RTDB_DATABASE_URL = BuildConfig.ME_ME_RTDB_DATABASE_URL
+        private val DEFAULT_ME_ME_RTDB_ROOT_PATH = BuildConfig.ME_ME_RTDB_ROOT_PATH.ifBlank { "me_me_signaling" }
         private const val ME_ME_P2P_SIGNALING_TOKEN_CREDENTIAL = "me_me.p2p.signaling_token"
         private const val ME_ME_RELAY_PULL_MIN_INTERVAL_MS = 15_000L
         private const val HOUSEKEEPING_INITIAL_DELAY_SEC = 120L

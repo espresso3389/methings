@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "me-things-service"
+  },
+  "targets": {
+    "me-things-service": {
+      "database": {
+        "methings-signaling": [
+          "methings-signaling"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

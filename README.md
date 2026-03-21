@@ -134,6 +134,8 @@ third_party/            Git submodules (libusb, libuvc, dropbear)
    Create `.local_config/local.env` with your build variables:
    ```
    GOOGLE_WEB_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
+   ME_ME_RTDB_DATABASE_URL=https://<your-db>.firebasedatabase.app
+   ME_ME_RTDB_ROOT_PATH=me_me_signaling
    ```
 
    Place your Firebase config:
@@ -178,6 +180,8 @@ Environment variables override values in this file. Supported keys:
 | Key | Description |
 |---|---|
 | `GOOGLE_WEB_CLIENT_ID` | Google OAuth Web Client ID for Credential Manager sign-in |
+| `ME_ME_RTDB_DATABASE_URL` | Firebase Realtime Database URL for me.me signaling |
+| `ME_ME_RTDB_ROOT_PATH` | RTDB root path for me.me signaling, default `me_me_signaling` |
 
 ### `.local_config/google-services.json`
 
@@ -196,6 +200,11 @@ Download from [Firebase Console](https://console.firebase.google.com/) -> Projec
    - **Android** (release) -- same package + release keystore SHA-1
 4. Add a Firebase Android app with the same package name to get `google-services.json`
 5. Set the Web Client ID and secret as `GOOGLE_OAUTH_CLIENT_ID` / `GOOGLE_OAUTH_CLIENT_SECRET` on the gateway service (see [methings-notify-gateway](https://github.com/espresso3389/methings-notify-gateway))
+
+### RTDB Signaling
+
+RTDB signaling setup notes live at `docs/rtdb_signaling_setup.md`.
+Auth/rules hardening plan lives at `docs/rtdb_auth_plan.md`.
 
 ## GitHub Actions (CI)
 
