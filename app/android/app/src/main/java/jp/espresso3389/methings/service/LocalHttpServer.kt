@@ -7260,8 +7260,26 @@ class LocalHttpServer(
         }
 
         if (uri == "/ws/ble/events") {
+            val params = handshake.parameters
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.ble",
+                        capability = "ble",
+                        detail = "Open BLE events websocket"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
                     ble.addWsClient(this)
                 }
                 override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {

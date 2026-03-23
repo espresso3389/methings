@@ -105,6 +105,12 @@ Unsubscribe from GATT notifications.
 
 All BLE events are delivered on `/ws/ble/events` as JSON messages:
 
+**Query params:**
+- `permission_id` (string, optional): Existing BLE permission grant ID
+- `identity` (string, optional): Caller identity for reusable permission lookup
+
+If permission is missing, the socket sends `{"type":"permission_required","request":...}` and closes.
+
 - `{"type":"ble","event":"scan_result", ...}` -- discovered device
 - `{"type":"ble","event":"scan_started"}` -- scan started
 - `{"type":"ble","event":"scan_stopped"}` -- scan stopped
