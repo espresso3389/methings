@@ -6,7 +6,7 @@ Speech recognition via Android SpeechRecognizer (live mic only).
 
 Get speech recognition status.
 
-`Permission: device.stt`
+`Permission: device.mic`
 
 **Returns:**
 - `listening` (boolean): Whether speech recognition is currently active.
@@ -15,7 +15,7 @@ Get speech recognition status.
 
 Start speech recognition. Events are delivered over WebSocket.
 
-`Permission: device.stt`
+`Permission: device.mic`
 
 **Params:**
 - `locale` (string, optional): BCP-47 locale tag (e.g. `en-US`).
@@ -28,6 +28,12 @@ Start speech recognition. Events are delivered over WebSocket.
 ### WebSocket
 
 Connect to the returned `ws_path`. Messages are JSON:
+
+**Query params:**
+- `permission_id` (string, optional): Existing STT permission grant ID
+- `identity` (string, optional): Caller identity for reusable permission lookup
+
+If permission is missing, the socket sends `{"type":"permission_required","request":...}` and closes.
 
 - `{"type":"stt","event":"ready"}` — recognizer ready
 - `{"type":"stt","event":"partial","results":[...]}` — partial results

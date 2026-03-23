@@ -2,7 +2,7 @@
 
 Decode audio/video files to real-time PCM or frame streams over WebSocket.
 
-## media_stream.status
+## media.stream.status
 
 Permission: `device.media`
 
@@ -14,7 +14,7 @@ Get active media decode streams.
   - `type` (string): `audio` | `video`
   - `source_file` (string): Source file path
 
-## media_stream.audio.start
+## media.stream.audio.start
 
 Permission: `device.media`
 
@@ -33,7 +33,13 @@ Start decoding an audio file to raw PCM samples.
 
 Connect to `ws_path` (e.g. `/ws/media/stream/<stream_id>`) to receive raw PCM sample data.
 
-## media_stream.video.start
+**Query params:**
+- `permission_id` (string, optional): Existing media-stream permission grant ID
+- `identity` (string, optional): Caller identity for reusable permission lookup
+
+If permission is missing, the socket sends `{"type":"permission_required","request":...}` and closes.
+
+## media.stream.video.start
 
 Permission: `device.media`
 
@@ -53,7 +59,13 @@ Start decoding a video file to JPEG or RGBA frames.
 
 Connect to `ws_path` (e.g. `/ws/media/stream/<stream_id>`) to receive decoded frames.
 
-## media_stream.stop
+**Query params:**
+- `permission_id` (string, optional): Existing media-stream permission grant ID
+- `identity` (string, optional): Caller identity for reusable permission lookup
+
+If permission is missing, the socket sends `{"type":"permission_required","request":...}` and closes.
+
+## media.stream.stop
 
 Permission: `device.media`
 

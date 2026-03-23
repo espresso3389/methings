@@ -2,7 +2,7 @@
 
 Screen recording to MP4 (H.265/H.264).
 
-## screen_record.status
+## screenrec.status
 
 Permission: `device.screen`
 
@@ -15,7 +15,7 @@ Get current screen recording state.
 - `recording_codec` (string, nullable): Active codec
 - `last_error` (string, nullable): Last error message
 
-## screen_record.start
+## screenrec.start
 
 Permission: `device.screen`
 
@@ -36,7 +36,7 @@ Start screen recording. Requires system MediaProjection consent dialog each time
 - `max_duration_s` (integer): Actual max duration
 - `container` (string): `mp4`
 
-## screen_record.stop
+## screenrec.stop
 
 Permission: `device.screen`
 
@@ -50,7 +50,7 @@ Stop screen recording.
 - `size_bytes` (integer): File size
 - `codec` (string): Codec used
 
-## screen_record.config.get
+## screenrec.config.get
 
 Permission: `device.screen`
 
@@ -61,7 +61,7 @@ Get current screen recording configuration.
 - `codec` (string): Configured codec
 - `bitrate` (integer): Configured bitrate
 
-## screen_record.config.set
+## screenrec.config.set
 
 Permission: `device.screen`
 

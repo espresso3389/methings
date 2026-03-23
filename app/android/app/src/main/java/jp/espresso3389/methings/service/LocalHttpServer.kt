@@ -672,6 +672,15 @@ class LocalHttpServer(
                 handleAppUpdateCheck()
             }
             uri == "/app/update/install" && session.method == Method.POST -> {
+                val payload = JSONObject((postBody ?: "").ifBlank { "{}" })
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.app",
+                    capability = "update_install",
+                    detail = "Install downloaded app update"
+                )
+                if (!ok.first) return ok.second!!
                 handleAppUpdateInstall()
             }
             uri == "/app/update/install_permission" && session.method == Method.GET -> {
@@ -1829,6 +1838,14 @@ class LocalHttpServer(
                 val body = postBody ?: ""
                 val payload = runCatching { JSONObject(body) }.getOrNull()
                     ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.brain",
+                    capability = "memory",
+                    detail = "Update persistent brain memory"
+                )
+                if (!ok.first) return ok.second!!
                 writeMemory(payload.optString("content", ""))
                 jsonResponse(JSONObject().put("status", "ok"))
             }
@@ -7294,8 +7311,26 @@ class LocalHttpServer(
         }
 
         if (uri == "/ws/camera/preview") {
+            val params = handshake.parameters
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.camera",
+                        capability = "camera",
+                        detail = "Open camera preview websocket"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
                     camera.addWsClient(this)
                 }
                 override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
@@ -7310,8 +7345,26 @@ class LocalHttpServer(
         }
 
         if (uri == "/ws/stt/events") {
+            val params = handshake.parameters
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.mic",
+                        capability = "stt",
+                        detail = "Open STT events websocket"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
                     stt.addWsClient(this)
                 }
                 override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
@@ -7326,8 +7379,26 @@ class LocalHttpServer(
         }
 
         if (uri == "/ws/audio/pcm") {
+            val params = handshake.parameters
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.mic",
+                        capability = "recording",
+                        detail = "Open live audio PCM websocket"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
                     audioRecord.addWsClient(this)
                 }
                 override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
@@ -7342,8 +7413,26 @@ class LocalHttpServer(
         }
 
         if (uri == "/ws/video/frames") {
+            val params = handshake.parameters
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.camera",
+                        capability = "recording",
+                        detail = "Open live video frames websocket"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
                     videoRecord.addWsClient(this)
                 }
                 override fun onClose(code: NanoWSD.WebSocketFrame.CloseCode?, reason: String?, initiatedByRemote: Boolean) {
@@ -7360,8 +7449,26 @@ class LocalHttpServer(
         val mediaStreamPrefix = "/ws/media/stream/"
         if (uri.startsWith(mediaStreamPrefix)) {
             val streamId = uri.removePrefix(mediaStreamPrefix).trim()
+            val params = handshake.parameters
+            val permissionId = (params["permission_id"]?.firstOrNull() ?: "").trim()
+            val identityQ = (params["identity"]?.firstOrNull() ?: "").trim()
             return object : NanoWSD.WebSocket(handshake) {
                 override fun onOpen() {
+                    val permission = ensureDevicePermissionForWs(
+                        session = handshake,
+                        permissionId = permissionId,
+                        identityFromQuery = identityQ,
+                        tool = "device.media",
+                        capability = "media_stream",
+                        detail = "Open media decode stream websocket"
+                    )
+                    if (permission != null) {
+                        runCatching {
+                            send(JSONObject().put("type", "permission_required").put("request", permission).toString())
+                            close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "permission_required", false)
+                        }
+                        return
+                    }
                     if (!mediaStream.addWsClient(streamId, this)) {
                         runCatching { close(NanoWSD.WebSocketFrame.CloseCode.PolicyViolation, "stream_not_found", false) }
                     }
@@ -16673,6 +16780,14 @@ class LocalHttpServer(
                 } catch (_: Exception) {
                     return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
                 }
+                val ok = ensureDevicePermission(
+                    session,
+                    payload,
+                    tool = "device.android",
+                    capability = "permissions",
+                    detail = "Request Android runtime permissions"
+                )
+                if (!ok.first) return ok.second!!
                 val permsArr = payload.optJSONArray("permissions")
                     ?: return jsonError(Response.Status.BAD_REQUEST, "missing_permissions")
                 if (permsArr.length() == 0)

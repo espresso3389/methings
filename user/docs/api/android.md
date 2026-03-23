@@ -48,6 +48,8 @@ Get Android permission dialog timing status for in-flight and recent requests.
 
 Request Android runtime permissions via system dialog. Blocks until user responds or 60s timeout.
 
+Permission: `device.android`
+
 **Params:**
 - `permissions` (string[], required): fully-qualified Android permission names (e.g. `["android.permission.BLUETOOTH_SCAN"]`)
 

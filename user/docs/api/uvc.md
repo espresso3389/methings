@@ -2,7 +2,7 @@
 
 USB Video Class webcam capture and diagnostics.
 
-## uvc.mjpeg_capture
+## uvc.mjpeg.capture
 
 Capture one MJPEG frame from a USB webcam. Negotiates UVC stream format via VS PROBE/COMMIT, reads payloads until a full JPEG frame is assembled.
 

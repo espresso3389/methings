@@ -17,11 +17,13 @@ Get current brain / LLM configuration. API key is never returned.
 Get persistent brain memory.
 
 **Returns:**
-- `memory` (string): Persistent memory text.
+- `content` (string): Persistent memory text.
 
 ## brain.memory.set
 
 Update persistent brain memory.
 
+Permission: `device.brain`
+
 **Params:**
-- `memory` (string, required): New memory content to store.
+- `content` (string, required): New memory content to store.

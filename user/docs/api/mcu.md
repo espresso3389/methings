@@ -2,7 +2,7 @@
 
 MCU programming and serial communication over USB.
 
-All actions except `mcu.models` and `mcu.flash_plan` require `Permission: device.usb`.
+All actions except `mcu.models` and `mcu.flash.plan` require `Permission: device.usb`.
 
 ## mcu.models
 
@@ -44,7 +44,7 @@ Flash an MCU image via serial protocol over USB.
 **Returns:**
 - `segment_count` (integer), `segments` (array: `{path, offset, size, md5, blocks_written, block_size}`), `blocks_written_total`, `elapsed_ms`
 
-## mcu.flash_plan
+## mcu.flash.plan
 
 Build a flash segment plan from a `flasher_args.json` file. No permission required.
 
@@ -55,7 +55,7 @@ Build a flash segment plan from a `flasher_args.json` file. No permission requir
 **Returns:**
 - `segment_count` (integer), `segments` (array: `{path, offset, exists, size}`), `missing_files` (array)
 
-## mcu.diag_serial
+## mcu.diag.serial
 
 Active MCU serial diagnostic -- sends sync probe.
 
@@ -111,7 +111,7 @@ The following actions share common serial params:
 
 **Notes:** Avoid mixing `handle` and `serial_handle` for the same session. For multi-step workflows, open serial once and reuse `serial_handle`. Determine whether MicroPython is present from serial or REPL responses, not from board family alone. The `model` field mainly selects transport helpers and reset behavior; it does not decide whether a board can run MicroPython.
 
-### mcu.micropython_exec
+### mcu.micropython.exec
 
 Execute Python in MicroPython raw REPL over USB serial.
 
@@ -120,7 +120,7 @@ Execute Python in MicroPython raw REPL over USB serial.
 - `code_b64` (string, optional): Base64-encoded Python source
 - `settle_ms` (integer, optional): Default: 80
 
-### mcu.micropython_write_file
+### mcu.micropython.write_file
 
 Upload a file to MicroPython filesystem over raw REPL.
 
@@ -131,7 +131,7 @@ Upload a file to MicroPython filesystem over raw REPL.
 - `make_dirs` (boolean, optional): Default: true
 - `chunk_size` (integer, optional): 64-2048. Default: 768
 
-### mcu.micropython_soft_reset
+### mcu.micropython.soft_reset
 
 Send soft reset (Ctrl-C/Ctrl-D) and capture boot output as a `lines` array.
 

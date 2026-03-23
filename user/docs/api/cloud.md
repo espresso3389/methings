@@ -4,7 +4,7 @@ Send cloud API requests via the broker with secret injection from vault.
 
 ## cloud.request
 
-Permission: `device.cloud`
+Permission: broker-managed session approval (`cloud.http` or `cloud.media_upload`, host-scoped)
 
 Send a cloud API request. Two modes:
 
@@ -40,8 +40,12 @@ Send a cloud API request. Two modes:
 Get file transfer preferences (cloud uploads + me.me). See also: [me.me guide](../me_me.md).
 
 **Returns:**
-- `image_resize` (object): Image resize settings for transfers
-- `upload_threshold` (object): Upload size threshold settings
+- `auto_upload_no_confirm_mb` (number): Auto-upload threshold in MiB
+- `allow_auto_upload_payload_size_less_than_mb` (number): Alias of `auto_upload_no_confirm_mb`
+- `min_transfer_kbps` (number): Minimum accepted transfer rate
+- `image_resize_enabled` (boolean): Whether image resize is enabled
+- `image_resize_max_dim_px` (integer): Maximum image dimension in pixels
+- `image_resize_jpeg_quality` (integer): JPEG quality for resized images
 
 ## file_transfer.prefs.set
 

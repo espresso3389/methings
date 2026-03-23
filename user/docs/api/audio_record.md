@@ -88,6 +88,12 @@ Start live PCM audio stream. Connect to WebSocket for signed 16-bit LE samples.
 
 Connect to `/ws/audio/pcm` after starting the stream.
 
+**Query params:**
+- `permission_id` (string, optional): Existing audio recording permission grant ID
+- `identity` (string, optional): Caller identity for reusable permission lookup
+
+If permission is missing, the socket sends `{"type":"permission_required","request":...}` and closes.
+
 - Server sends text `hello` message, then binary frames of signed 16-bit LE PCM samples.
 
 ## audio.stream.stop

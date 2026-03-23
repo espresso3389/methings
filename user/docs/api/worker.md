@@ -7,8 +7,11 @@ Embedded Python worker lifecycle management.
 Get embedded worker status.
 
 **Returns:**
-- `status` (string): Worker status — `ok`, `offline`, `starting`, or `stopping`.
+- `worker_status` (string): Current worker status. The embedded worker currently reports `not_applicable`.
 
 ## worker.restart
 
-Restart the embedded worker. No parameters required.
+Restart the embedded worker.
+
+**Returns:**
+- `status` (string): Currently `not_applicable`.

@@ -14,7 +14,7 @@ Get BLE adapter and connection state.
 - `scanning` (boolean): Whether a scan is active
 - `connections` (array of string): Connected device addresses
 
-## ble.scan_start
+## ble.scan.start
 
 Start BLE scan. Results are delivered over WebSocket.
 
@@ -24,7 +24,7 @@ Start BLE scan. Results are delivered over WebSocket.
 **Returns:**
 - `ws_path` (string): `/ws/ble/events`
 
-## ble.scan_stop
+## ble.scan.stop
 
 Stop BLE scan.
 
@@ -46,7 +46,7 @@ Disconnect a BLE device.
 **Params:**
 - `address` (string, required): BLE MAC address
 
-## ble.gatt_services
+## ble.gatt.services
 
 List GATT services of a connected device.
 
@@ -56,7 +56,7 @@ List GATT services of a connected device.
 **Returns:**
 - `services` (array): Each: `{uuid, type, characteristics: [{uuid, properties, permissions}]}`
 
-## ble.gatt_read
+## ble.gatt.read
 
 Request a GATT characteristic read.
 
@@ -72,7 +72,7 @@ Request a GATT characteristic read.
 - The read value is delivered asynchronously over `/ws/ble/events` as a `char_read` event.
 - This API does not return `value_b64` inline.
 
-## ble.gatt_write
+## ble.gatt.write
 
 Write a GATT characteristic.
 
@@ -83,7 +83,7 @@ Write a GATT characteristic.
 - `value_b64` (string, required): Base64-encoded value to write
 - `with_response` (boolean, optional): Use write-with-response. Default: true
 
-## ble.gatt_notify_start
+## ble.gatt.notify.start
 
 Subscribe to GATT notifications. Values are delivered over WebSocket as `char_notify` events.
 
@@ -92,7 +92,7 @@ Subscribe to GATT notifications. Values are delivered over WebSocket as `char_no
 - `service_uuid` (string, required): GATT service UUID
 - `char_uuid` (string, required): Characteristic UUID
 
-## ble.gatt_notify_stop
+## ble.gatt.notify.stop
 
 Unsubscribe from GATT notifications.
 

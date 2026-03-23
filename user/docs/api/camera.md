@@ -47,6 +47,12 @@ Start low-FPS JPEG preview stream.
 
 Connect to `/ws/camera/preview`. Binary messages are raw JPEG bytes.
 
+**Query params:**
+- `permission_id` (string, optional): Existing camera permission grant ID
+- `identity` (string, optional): Caller identity for reusable permission lookup
+
+If permission is missing, the socket sends `{"type":"permission_required","request":...}` and closes.
+
 ## camera.preview.stop
 
 Stop preview stream.
