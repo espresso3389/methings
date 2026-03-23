@@ -18,8 +18,10 @@ List connected USB devices.
 Get USB subsystem status.
 
 **Returns:**
-- `has_permission` (boolean): Whether USB permission is granted
-- `open_handles` (array of string): Currently open device handles
+- `now_ms` (integer): Current time in Unix epoch millis
+- `count` (integer): Number of connected USB devices
+- `devices` (array): Device entries from `usb.list`, plus `has_permission` and optional `permission_request`
+- `pending_permission_requests` (array): Outstanding Android USB permission requests
 
 ## usb.open
 
@@ -58,7 +60,7 @@ Claim a USB interface.
 **Params:**
 - `handle` (string, required): USB handle
 - `interface_id` (integer, required): Interface number to claim
-- `force` (boolean, optional): Force claim (detach kernel driver). Default: false
+- `force` (boolean, optional): Force claim. Default: true
 
 ## usb.release_interface
 
@@ -92,10 +94,10 @@ Perform a USB bulk transfer.
 
 **Params:**
 - `handle` (string, required): USB handle
-- `endpoint` (integer, required): Endpoint address
+- `endpoint_address` (integer, required): Endpoint address
 - `data_b64` (string, optional): Base64-encoded data for OUT transfers
 - `length` (integer, optional): Expected read length for IN transfers
-- `timeout_ms` (integer, optional): Default: 5000
+- `timeout_ms` (integer, optional): Default: 2000
 
 **Returns:**
 - `transferred` (integer): Number of bytes transferred
@@ -107,13 +109,24 @@ Perform a USB isochronous transfer (low-level, native usbfs workaround).
 
 **Params:**
 - `handle` (string, required): USB handle
-- `endpoint` (integer, required): Endpoint address
-- `packet_count` (integer, optional): Number of packets per URB
+- `endpoint_address` (integer, required): Endpoint address
+- `interface_id` (integer, optional): Restrict endpoint search to this interface ID
+- `alt_setting` (integer, optional): Restrict endpoint search to this alternate setting
 - `packet_size` (integer, optional): Max packet size
-- `timeout_ms` (integer, optional): Default: 5000
+- `num_packets` (integer, optional): Number of packets per URB
+- `force` (boolean, optional): Force-claim the interface before transfer. Default: true
+- `timeout_ms` (integer, optional): Default: 800
 
 **Returns:**
-- `data` (Uint8Array / `data_b64` string via HTTP): KISO blob
+- `handle` (string): USB handle
+- `interface_id` (integer): Claimed interface ID
+- `alt_setting` (integer): Claimed alternate setting
+- `endpoint_address` (integer): Endpoint address used
+- `packet_size` (integer): Packet size used
+- `num_packets` (integer): Number of packets used
+- `payload_length` (integer): Decoded payload size in bytes
+- `packets` (array): Per-packet metadata, each `{status, actual_length}`
+- `data` (Uint8Array / `data_b64` string via HTTP): Decoded payload bytes
 
 ## usb.stream_start
 
@@ -121,7 +134,7 @@ Start high-rate USB streaming for bulk or isochronous endpoints. Prefer streamin
 
 **Params:**
 - `handle` (string, required): USB handle
-- `endpoint` (integer, required): Endpoint address
+- `endpoint_address` (integer, required): Endpoint address
 - `transfer_type` (string, optional): `bulk` or `iso`
 
 **Returns:**

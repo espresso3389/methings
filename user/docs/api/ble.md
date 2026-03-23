@@ -9,9 +9,10 @@ All actions require `Permission: device.ble`.
 Get BLE adapter and connection state.
 
 **Returns:**
-- `bluetooth_enabled` (boolean): Whether Bluetooth is on
+- `available` (boolean): Whether a Bluetooth adapter is present
+- `enabled` (boolean): Whether Bluetooth is on
 - `scanning` (boolean): Whether a scan is active
-- `connected_devices` (array of string): Connected device addresses
+- `connections` (array of string): Connected device addresses
 
 ## ble.scan_start
 
@@ -53,11 +54,11 @@ List GATT services of a connected device.
 - `address` (string, required): BLE MAC address
 
 **Returns:**
-- `services` (array): Each: `{uuid, characteristics: [{uuid, properties: [string]}]}`
+- `services` (array): Each: `{uuid, type, characteristics: [{uuid, properties, permissions}]}`
 
 ## ble.gatt_read
 
-Read a GATT characteristic.
+Request a GATT characteristic read.
 
 **Params:**
 - `address` (string, required): BLE MAC address
@@ -65,7 +66,11 @@ Read a GATT characteristic.
 - `char_uuid` (string, required): Characteristic UUID
 
 **Returns:**
-- `value_b64` (string): Base64-encoded characteristic value
+- `requested` (boolean): Whether the read request was accepted
+
+**Notes:**
+- The read value is delivered asynchronously over `/ws/ble/events` as a `char_read` event.
+- This API does not return `value_b64` inline.
 
 ## ble.gatt_write
 
@@ -101,6 +106,13 @@ Unsubscribe from GATT notifications.
 All BLE events are delivered on `/ws/ble/events` as JSON messages:
 
 - `{"type":"ble","event":"scan_result", ...}` -- discovered device
+- `{"type":"ble","event":"scan_started"}` -- scan started
+- `{"type":"ble","event":"scan_stopped"}` -- scan stopped
+- `{"type":"ble","event":"scan_failed","code":...}` -- scan start failed
+- `{"type":"ble","event":"connect_start","address":"..."}` -- connection attempt started
 - `{"type":"ble","event":"connected","address":"..."}` -- GATT connected
+- `{"type":"ble","event":"disconnected","address":"..."}` -- GATT disconnected
 - `{"type":"ble","event":"services","services":[...]}` -- service discovery complete
+- `{"type":"ble","event":"char_read","value_b64":"..."}` -- characteristic read result
+- `{"type":"ble","event":"char_write","address":"...", ...}` -- characteristic write result
 - `{"type":"ble","event":"char_notify","value_b64":"..."}` -- characteristic notification

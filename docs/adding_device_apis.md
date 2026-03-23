@@ -51,9 +51,10 @@ File: `app/android/app/src/main/java/jp/espresso3389/methings/service/LocalHttpS
 For core API actions: add a thin wrapper using `coreApiResponse(action, session, postBody)`.
 For other actions: add the HTTP route handler directly.
 
-## 5. OpenAPI spec (if agent-facing)
+## 5. Agent-facing API docs (if agent-facing)
 
-Directory: `user/docs/openapi/`
+Directory: `user/docs/api/`
 
-Update the relevant `paths/*.yaml` file and `openapi.yaml` per the API docs
-policy in `AGENTS.md`.
+Add or update the relevant Markdown doc so it matches the implemented route,
+parameters, response shape, permission requirements, and any WebSocket
+behavior. Follow the API docs policy in `AGENTS.md`.

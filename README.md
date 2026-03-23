@@ -105,7 +105,7 @@ libusb, libuvc, Dropbear, methingssh, methingspy
 ```
 app/                    Android project (app + native)
 server/                 On-device server code and tools
-user/                   User-modifiable defaults, docs, OpenAPI spec
+user/                   User-modifiable defaults, docs, examples, helper libs
 scripts/                Build scripts (native libs, utilities)
 docs/                   Design and debugging docs
 third_party/            Git submodules (libusb, libuvc, dropbear)

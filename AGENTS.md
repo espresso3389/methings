@@ -67,9 +67,9 @@ Build an Android 14+ app that provides an agentic device environment with:
 - Add concise comments only when logic is non-obvious.
 - Keep security prompts minimal but explicit.
 - No silent elevation or background actions.
-- API docs policy: the canonical API reference is the OpenAPI 3.1.0 spec under `user/docs/openapi/`. When adding or changing endpoints, update the relevant `paths/*.yaml` file and `openapi.yaml`. Agent-side tool conventions (runtime helpers, chat shortcuts) are in `user/docs/agent_tools.md`.
-- Adding device APIs: when adding new `device_api` actions, follow the checklist in `docs/adding_device_apis.md` (ACTIONS map, CapabilityMap, route handler, OpenAPI spec).
-- API scope policy: the OpenAPI spec is agent-facing only. Include user/agent-invokable APIs (for example BLE device-operation APIs), but exclude internal plumbing/debug-only endpoints (for example me.me/me.sync internal transport wiring); document those in `docs/DEBUGGING.md` instead.
+- API docs policy: the canonical agent-facing API reference lives under `user/docs/api/`. When adding or changing endpoints, update the relevant Markdown doc there to match the implementation. Agent-side tool conventions (runtime helpers, chat shortcuts) are in `user/docs/agent_tools.md`.
+- Adding device APIs: when adding new `device_api` actions, follow the checklist in `docs/adding_device_apis.md` (ACTIONS map, CapabilityMap, route handler, agent-facing API docs).
+- API scope policy: the agent-facing API docs should include user/agent-invokable APIs (for example BLE device-operation APIs), but exclude internal plumbing/debug-only endpoints (for example me.me/me.sync internal transport wiring); document those in `docs/DEBUGGING.md` instead.
 - Built-in execution: `run_js` (QuickJS engine with async/await, fetch, WebSocket, file I/O) and `run_curl` (native HTTP) are always available.
 - On-device shell tooling: `run_shell`/`shell_session`/`run_python`/`run_pip` use the embedded worker (self-hosted Python runtime). Host-side app development must use uv.
 - WSL usage is allowed but only when the user explicitly opts in for that session.
