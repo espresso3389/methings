@@ -115,6 +115,13 @@ data class AgentConfig(
                 "max_actions" to 8,
                 "max_tool_output_chars" to 9000,
             ),
+            "gemma4-e2b-it" to mapOf(
+                "dialogue_window_user_assistant" to 24,
+                "dialogue_raw_fetch_limit" to 180,
+                "max_tool_rounds" to 12,
+                "max_actions" to 8,
+                "max_tool_output_chars" to 8000,
+            ),
             // gemini-3.1 must precede gemini-3 (substring match: "gemini-3.1-x" contains "gemini-3")
             "gemini-3.1" to mapOf(
                 "dialogue_window_user_assistant" to 64,
@@ -256,12 +263,15 @@ class AgentConfigManager(private val context: Context) {
                     .trimEnd('/')
                 "$cleanBase/v1beta"
             }
+            "embedded" -> "embedded://local"
             else -> "$baseUrl/chat/completions"
         }
     }
 
     fun isConfigured(): Boolean {
-        return getBaseUrl().isNotEmpty() && getModel().isNotEmpty() && getApiKey().isNotEmpty()
+        val vendor = getVendor()
+        val needsApiKey = !vendor.equals("embedded", ignoreCase = true)
+        return getBaseUrl().isNotEmpty() && getModel().isNotEmpty() && (!needsApiKey || getApiKey().isNotEmpty())
     }
 
     fun brainKeySlotFor(vendor: String, baseUrl: String): String {

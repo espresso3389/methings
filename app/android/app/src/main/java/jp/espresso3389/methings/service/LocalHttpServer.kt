@@ -203,6 +203,7 @@ class LocalHttpServer(
     private val mediaStream = MediaStreamManager(context)
     private val appUpdateManager = AppUpdateManager(context)
     private val workJobManager = WorkJobManager(context)
+    private val embeddedBackendRegistry = EmbeddedBackendRegistry(context)
     private val meSyncTransfers = ConcurrentHashMap<String, MeSyncTransfer>()
     private val meSyncV3Tickets = ConcurrentHashMap<String, MeSyncV3Ticket>()
 
@@ -286,6 +287,7 @@ class LocalHttpServer(
                 toolExecutor = agentToolExecutor,
                 llmClient = agentLlmClient,
                 configManager = agentConfigManager,
+                embeddedBackendRegistry = embeddedBackendRegistry,
                 emitLog = { name, payload -> broadcastBrainEvent(name, payload) },
             )
             runtime.onEvent = { name, payload -> broadcastBrainEvent(name, payload) }
@@ -1824,6 +1826,13 @@ class LocalHttpServer(
             uri == "/brain/config" && session.method == Method.POST -> {
                 val body = postBody ?: ""
                 handleBrainConfigSet(body)
+            }
+            uri == "/brain/embedded/status" && session.method == Method.GET -> {
+                handleBrainEmbeddedStatus(session)
+            }
+            uri == "/brain/embedded/install" && session.method == Method.POST -> {
+                val body = postBody ?: ""
+                handleBrainEmbeddedInstall(body)
             }
             uri == "/brain/agent/bootstrap" && session.method == Method.POST -> {
                 handleBrainAgentBootstrap()
@@ -9459,13 +9468,113 @@ class LocalHttpServer(
         val baseUrl = brainPrefs.getString("base_url", "") ?: ""
         val model = brainPrefs.getString("model", "") ?: ""
         val hasKey = !brainPrefs.getString("api_key", "").isNullOrEmpty()
+        val requiresApiKey = !vendor.equals("embedded", ignoreCase = true)
         return jsonResponse(
             JSONObject()
                 .put("vendor", vendor)
                 .put("base_url", baseUrl)
                 .put("model", model)
                 .put("has_api_key", hasKey)
+                .put("requires_api_key", requiresApiKey)
         )
+    }
+
+    private fun handleBrainEmbeddedStatus(session: IHTTPSession): Response {
+        val vendor = brainPrefs.getString("vendor", "")?.trim().orEmpty()
+        val configuredModel = brainPrefs.getString("model", "")?.trim().orEmpty()
+        val requestedModel = session.parms["model"]?.trim().orEmpty()
+        val model = requestedModel.ifBlank { configuredModel }
+        if (model.isBlank()) {
+            return jsonResponse(
+                JSONObject()
+                    .put("configured", false)
+                    .put("detail", "No embedded model is selected.")
+            )
+        }
+        val status = embeddedBackendRegistry.statusFor(model)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "unknown_embedded_model", JSONObject().put("model", model))
+        return jsonResponse(
+            JSONObject()
+                .put("configured", vendor.equals("embedded", ignoreCase = true) && configuredModel.equals(model, ignoreCase = true))
+                .put("selected_model", model)
+                .put("status", status.toJson())
+        )
+    }
+
+    private fun handleBrainEmbeddedInstall(body: String): Response {
+        val payload = runCatching { JSONObject(body) }.getOrNull()
+            ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+        val configuredModel = brainPrefs.getString("model", "")?.trim().orEmpty()
+        val model = payload.optString("model", configuredModel).trim().ifBlank { configuredModel }
+        val url = payload.optString("url", "").trim()
+        if (model.isBlank()) {
+            return jsonError(Response.Status.BAD_REQUEST, "embedded_model_required")
+        }
+        if (url.isBlank()) {
+            return jsonError(Response.Status.BAD_REQUEST, "url_required")
+        }
+        val uri = runCatching { URI(url) }.getOrNull()
+            ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_url")
+        val scheme = uri.scheme?.lowercase(Locale.US).orEmpty()
+        if (scheme != "https" && scheme != "http") {
+            return jsonError(Response.Status.BAD_REQUEST, "unsupported_url_scheme", JSONObject().put("scheme", scheme))
+        }
+
+        val targetDir = File(context.filesDir, "user/models/embedded/${model.lowercase(Locale.US)}")
+        if (!targetDir.exists() && !targetDir.mkdirs()) {
+            return jsonError(Response.Status.INTERNAL_ERROR, "model_dir_create_failed")
+        }
+        val extension = detectEmbeddedModelExtension(url)
+        val destFile = File(targetDir, "model.$extension")
+        val tempFile = File(targetDir, "model.$extension.part")
+
+        var conn: HttpURLConnection? = null
+        return try {
+            conn = (java.net.URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 20_000
+                readTimeout = 120_000
+                instanceFollowRedirects = true
+            }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val detail = runCatching { (conn.errorStream ?: conn.inputStream)?.bufferedReader()?.use { it.readText().take(400) } ?: "" }.getOrDefault("")
+                return jsonError(Response.Status.BAD_GATEWAY, "download_failed", JSONObject().put("status", code).put("detail", detail))
+            }
+            conn.inputStream.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output, DEFAULT_COPY_BUFFER_SIZE)
+                }
+            }
+            if (destFile.exists()) destFile.delete()
+            if (!tempFile.renameTo(destFile)) {
+                tempFile.copyTo(destFile, overwrite = true)
+                tempFile.delete()
+            }
+            val status = embeddedBackendRegistry.statusFor(model)
+            jsonResponse(JSONObject().apply {
+                put("status", "ok")
+                put("model", model)
+                put("saved_path", destFile.absolutePath)
+                if (status != null) put("embedded_status", status.toJson())
+            })
+        } catch (e: Exception) {
+            runCatching { tempFile.delete() }
+            jsonError(Response.Status.BAD_GATEWAY, "download_failed", JSONObject().put("detail", e.message ?: ""))
+        } finally {
+            conn?.disconnect()
+        }
+    }
+
+    private fun detectEmbeddedModelExtension(url: String): String {
+        val path = runCatching { URI(url).path ?: "" }.getOrDefault("").lowercase(Locale.US)
+        return when {
+            path.endsWith(".litertlm") -> "litertlm"
+            path.endsWith(".task") -> "task"
+            path.endsWith(".tflite") -> "tflite"
+            path.endsWith(".bin") -> "bin"
+            else -> "bin"
+        }
     }
 
     private fun sanitizeVendor(vendor: String): String {
@@ -9533,8 +9642,9 @@ class LocalHttpServer(
         val baseUrl = brainPrefs.getString("base_url", "")?.trim()?.trimEnd('/').orEmpty()
         val model = brainPrefs.getString("model", "")?.trim().orEmpty()
         val apiKey = brainPrefs.getString("api_key", "")?.trim().orEmpty()
+        val requiresApiKey = !vendor.equals("embedded", ignoreCase = true)
 
-        if (baseUrl.isEmpty() || model.isEmpty() || apiKey.isEmpty()) {
+        if (baseUrl.isEmpty() || model.isEmpty() || (requiresApiKey && apiKey.isEmpty())) {
             return jsonError(Response.Status.BAD_REQUEST, "brain_not_configured")
         }
         // NOTE: Anthropic is now supported natively — no vendor rejection.
@@ -9564,6 +9674,13 @@ class LocalHttpServer(
         val baseUrl = brainPrefs.getString("base_url", "") ?: ""
         val model = brainPrefs.getString("model", "") ?: ""
         val apiKey = brainPrefs.getString("api_key", "") ?: ""
+        if (vendor.equals("embedded", ignoreCase = true)) {
+            return jsonError(
+                Response.Status.NOT_IMPLEMENTED,
+                "embedded_direct_chat_not_supported",
+                JSONObject().put("detail", "Use the built-in agent runtime path for embedded models. See docs/embedded_gemma4.md.")
+            )
+        }
         if (baseUrl.isEmpty() || model.isEmpty() || apiKey.isEmpty()) {
             return jsonError(Response.Status.BAD_REQUEST, "brain_not_configured")
         }

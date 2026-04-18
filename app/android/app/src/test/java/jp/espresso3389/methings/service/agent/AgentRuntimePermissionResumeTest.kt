@@ -468,6 +468,7 @@ class AgentRuntimePermissionResumeTest {
         whenever(configManager.getBaseUrl()).thenReturn(providerUrl.substringBefore("/chat/completions"))
         whenever(configManager.getApiKey()).thenReturn("test-key")
         whenever(configManager.resolveProviderUrl(any(), any())).thenReturn(providerUrl)
+        val embeddedBackendRegistry = mock<EmbeddedBackendRegistry>()
 
         val runtime = AgentRuntime(
             userDir = userDir,
@@ -477,6 +478,7 @@ class AgentRuntimePermissionResumeTest {
             toolExecutor = toolExecutor,
             llmClient = llmClient,
             configManager = configManager,
+            embeddedBackendRegistry = embeddedBackendRegistry,
             emitLog = { _, _ -> },
         )
         return Harness(runtime, storage, llmClient, userDir)

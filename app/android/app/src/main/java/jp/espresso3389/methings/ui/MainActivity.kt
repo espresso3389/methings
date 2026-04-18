@@ -14,6 +14,7 @@ import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.provider.OpenableColumns
 import android.text.TextUtils
 import android.util.TypedValue
 import android.view.ViewGroup
@@ -59,6 +60,8 @@ import jp.espresso3389.methings.perm.DevicePermissionPolicy
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.CountDownLatch
+import java.io.File
+import java.io.FileOutputStream
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 
@@ -153,12 +156,30 @@ class MainActivity : AppCompatActivity() {
     private var pendingFilePathCallback: ValueCallback<Array<Uri>>? = null
     private var pendingFileChooserMimeTypes: Array<String> = arrayOf("*/*")
     private var pendingFileChooserMultiple: Boolean = false
+    private val pendingEmbeddedImportModelId = AtomicReference<String?>(null)
     private val openDocumentLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             val cb = pendingFilePathCallback
             pendingFilePathCallback = null
             if (cb == null) return@registerForActivityResult
             if (uri == null) cb.onReceiveValue(null) else cb.onReceiveValue(arrayOf(uri))
+        }
+    private val embeddedImportLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            val modelId = pendingEmbeddedImportModelId.getAndSet(null)?.trim().orEmpty()
+            if (modelId.isBlank()) return@registerForActivityResult
+            if (uri == null) {
+                evalJs("window.onEmbeddedModelImportResult && window.onEmbeddedModelImportResult({ok:false,cancelled:true})")
+                return@registerForActivityResult
+            }
+            val payload = runCatching { importEmbeddedModelFromUri(modelId, uri) }.getOrElse { ex ->
+                org.json.JSONObject()
+                    .put("ok", false)
+                    .put("error", "import_failed")
+                    .put("detail", ex.message ?: "")
+            }
+            val escaped = jsString(payload.toString())
+            evalJs("window.onEmbeddedModelImportResult && window.onEmbeddedModelImportResult(JSON.parse('$escaped'))")
         }
     private val openMultipleDocumentsLauncher =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -1155,6 +1176,67 @@ pre code.hljs{padding:12px;font-size:12px;line-height:1.5;background:#0e0e10}
             }
         }
         chatCameraPermLauncher.launch(Manifest.permission.CAMERA)
+    }
+
+    fun openEmbeddedModelImport(modelId: String) {
+        val normalized = modelId.trim().lowercase()
+        if (normalized.isBlank()) {
+            evalJs("window.onEmbeddedModelImportResult && window.onEmbeddedModelImportResult({ok:false,error:'model_required'})")
+            return
+        }
+        pendingEmbeddedImportModelId.set(normalized)
+        try {
+            embeddedImportLauncher.launch(arrayOf("*/*"))
+        } catch (_: Exception) {
+            pendingEmbeddedImportModelId.set(null)
+            evalJs("window.onEmbeddedModelImportResult && window.onEmbeddedModelImportResult({ok:false,error:'picker_unavailable'})")
+        }
+    }
+
+    private fun importEmbeddedModelFromUri(modelId: String, uri: Uri): org.json.JSONObject {
+        val modelDir = File(filesDir, "user/models/embedded/$modelId").apply { mkdirs() }
+        val displayName = queryDisplayName(uri).ifBlank { uri.lastPathSegment ?: "" }
+        val ext = detectEmbeddedModelExtension(displayName)
+        val dest = File(modelDir, "model.$ext")
+        val temp = File(modelDir, "model.$ext.part")
+        contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(temp).use { output ->
+                input.copyTo(output)
+            }
+        } ?: throw IllegalStateException("failed_to_open_input_stream")
+        if (dest.exists()) dest.delete()
+        if (!temp.renameTo(dest)) {
+            temp.copyTo(dest, overwrite = true)
+            temp.delete()
+        }
+        return org.json.JSONObject()
+            .put("ok", true)
+            .put("model", modelId)
+            .put("saved_path", dest.absolutePath)
+            .put("display_name", displayName)
+    }
+
+    private fun queryDisplayName(uri: Uri): String {
+        return runCatching {
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) return@runCatching cursor.getString(idx).orEmpty()
+                }
+                ""
+            } ?: ""
+        }.getOrDefault("")
+    }
+
+    private fun detectEmbeddedModelExtension(name: String): String {
+        val lower = name.trim().lowercase()
+        return when {
+            lower.endsWith(".litertlm") -> "litertlm"
+            lower.endsWith(".task") -> "task"
+            lower.endsWith(".tflite") -> "tflite"
+            lower.endsWith(".bin") -> "bin"
+            else -> "bin"
+        }
     }
 
     private fun maybeHandlePermissionIntent(intent: Intent?) {

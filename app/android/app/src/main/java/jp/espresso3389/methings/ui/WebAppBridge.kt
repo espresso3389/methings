@@ -331,6 +331,13 @@ class WebAppBridge(private val activity: MainActivity) {
     }
 
     @JavascriptInterface
+    fun importEmbeddedModel(modelId: String) {
+        handler.post {
+            activity.openEmbeddedModelImport(modelId)
+        }
+    }
+
+    @JavascriptInterface
     fun getTaskCompleteNotifyAndroid(): Boolean {
         return notifPrefs.getBoolean("notify_android", true)
     }

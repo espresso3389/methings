@@ -434,6 +434,7 @@ dependencies {
     // On-device inference runtime. We keep Python for orchestration and use Android-side TFLite for performance.
     implementation("org.tensorflow:tensorflow-lite:2.17.0")
     implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
+    implementation("com.google.mediapipe:tasks-genai:0.10.27")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     kapt("androidx.room:room-compiler:2.6.1")

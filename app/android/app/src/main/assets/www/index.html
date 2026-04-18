@@ -2420,6 +2420,7 @@
             <label>Provider</label>
             <select id="brainProvider">
               <option value="" disabled selected>Choose a provider...</option>
+              <option value="embedded">Embedded</option>
               <option value="openai">OpenAI</option>
               <option value="gemini">Gemini</option>
               <option value="anthropic">Anthropic</option>
@@ -2439,6 +2440,18 @@
             <select id="brainModelPreset">
               <option value="" disabled selected>Choose a model...</option>
             </select>
+            <div class="muted" id="brainEmbeddedStatus" style="margin-top:4px;display:none;"></div>
+          </div>
+          <div class="field" id="brainEmbeddedInstallField" style="display:none;">
+            <label>Embedded Model</label>
+            <div class="btn-group" style="margin-bottom:8px;">
+              <button class="btn" id="brainEmbeddedImportBtn" type="button">Import File</button>
+              <button class="btn" id="brainEmbeddedDownloadBtn" type="button">Download URL</button>
+            </div>
+            <input type="url" id="brainEmbeddedDownloadUrl" placeholder="https://.../model.litertlm" />
+            <div class="muted" id="brainEmbeddedInstallHint" style="margin-top:4px;">
+              Saves to app storage under `user/models/embedded/&lt;model&gt;/`.
+            </div>
           </div>
           <div class="field" id="brainBaseUrlField" style="display:none;">
             <label>Base URL</label>
@@ -4087,6 +4100,29 @@
           vendor: String(state.vendor || ""),
           base_url: String(state.base_url || "").trim(),
         };
+      }
+      function syncBrainKeyUi(data) {
+        try {
+          const state = readBrainUiState ? readBrainUiState() : { vendor: "", base_url: "", model: "" };
+          const vendor = String((state && state.vendor) || "").trim();
+          const needsKey = typeof (data && data.requires_api_key) === "boolean"
+            ? !!data.requires_api_key
+            : brainProviderNeedsApiKey(vendor);
+          const keyEl = $("brainApiKey");
+          const statusEl = $("brainKeyStatus");
+          const fieldEl = keyEl ? keyEl.closest(".field") : null;
+          if (!keyEl || !statusEl || !fieldEl) return;
+          if (!needsKey) {
+            fieldEl.style.display = "none";
+            statusEl.textContent = "API key is not required for embedded models.";
+            lockSecretField(keyEl);
+            return;
+          }
+          fieldEl.style.display = "";
+          if (data) {
+            statusEl.textContent = data.has_api_key ? "API key is set." : "No API key configured.";
+          }
+        } catch (_) {}
       }
       function syncBrainKeyUsername() {
         try {
@@ -9316,7 +9352,17 @@
       const brainModelField = $("brainModelField");
       const brainBaseUrlField = $("brainBaseUrlField");
       const brainModelIdField = $("brainModelIdField");
+      const brainEmbeddedInstallField = $("brainEmbeddedInstallField");
+      const brainEmbeddedDownloadUrl = $("brainEmbeddedDownloadUrl");
+      const brainEmbeddedImportBtn = $("brainEmbeddedImportBtn");
+      const brainEmbeddedDownloadBtn = $("brainEmbeddedDownloadBtn");
       const BRAIN_PROVIDER_PRESETS = {
+        embedded: {
+          base_url: "embedded://local",
+          models: [
+            { id: "gemma4-e2b-it", label: "Gemma4-E2B-it" },
+          ],
+        },
         openai: {
           base_url: "https://api.openai.com/v1",
           models: [
@@ -9354,6 +9400,82 @@
       function getProviderPreset(vendor) {
         const key = String(vendor || "").trim().toLowerCase();
         return BRAIN_PROVIDER_PRESETS[key] || null;
+      }
+      function brainProviderNeedsApiKey(vendor) {
+        const key = String(vendor || "").trim().toLowerCase();
+        return !!key && key !== "embedded";
+      }
+      function currentEmbeddedModelId() {
+        const preset = getSelectedPreset ? getSelectedPreset() : null;
+        const provider = String((preset && preset.vendor) || "").trim().toLowerCase();
+        if (provider !== "embedded") return "";
+        return String((preset && preset.model) || "").trim().toLowerCase();
+      }
+      async function refreshEmbeddedBrainStatus() {
+        const statusEl = $("brainEmbeddedStatus");
+        if (!statusEl) return;
+        const provider = String(brainProviderSelect.value || "").trim().toLowerCase();
+        const model = currentEmbeddedModelId();
+        if (provider !== "embedded") {
+          statusEl.style.display = "none";
+          statusEl.textContent = "";
+          return;
+        }
+        statusEl.style.display = "block";
+        statusEl.textContent = "Checking local model status...";
+        try {
+          const qs = model ? ("?model=" + encodeURIComponent(model)) : "";
+          const res = await fetch(API + "/brain/embedded/status" + qs);
+          const data = await res.json();
+          if (!res.ok) {
+            statusEl.textContent = (data && (data.detail || data.error)) || "Failed to get embedded model status.";
+            return;
+          }
+          const st = data.status || {};
+          if (!data.configured && !st.primary_model_path) {
+            statusEl.textContent = String(data.detail || "Embedded provider is not currently selected.");
+            return;
+          }
+          const parts = [String(st.detail || "").trim(), String(st.primary_model_path || "").trim()].filter(Boolean);
+          statusEl.textContent = parts.join(" ");
+        } catch (_) {
+          statusEl.textContent = "Failed to get embedded model status.";
+        }
+      }
+      async function downloadEmbeddedModel() {
+        const model = currentEmbeddedModelId();
+        const url = String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim();
+        if (!model) { showToast("Choose an embedded model first"); return; }
+        if (!url) { showToast("Enter a model URL"); return; }
+        try {
+          const res = await fetch(API + "/brain/embedded/install", {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ model: model, url: url }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(String(data.detail || data.error || "Download failed"));
+            return;
+          }
+          showToast("Model downloaded");
+          await refreshEmbeddedBrainStatus();
+        } catch (_) {
+          showToast("Download failed");
+        }
+      }
+      function importEmbeddedModel() {
+        const model = currentEmbeddedModelId();
+        if (!model) { showToast("Choose an embedded model first"); return; }
+        try {
+          if (typeof AndroidBridge !== "undefined" && AndroidBridge.importEmbeddedModel) {
+            AndroidBridge.importEmbeddedModel(model);
+          } else {
+            showToast("Native import is unavailable");
+          }
+        } catch (_) {
+          showToast("Import failed");
+        }
       }
 
       // --- OpenRouter fetch + cache ---
@@ -9518,9 +9640,11 @@
         const isCustomProvider = provider === "custom";
         const isCustomModel = !isCustomProvider && modelChoice === "__custom__";
         const isOpenRouter = provider === "openrouter";
+        const isEmbedded = provider === "embedded";
 
         // Hide OpenRouter vendor field for all non-openrouter providers
         if (!isOpenRouter) $("brainOrVendorField").style.display = "none";
+        if (brainEmbeddedInstallField) brainEmbeddedInstallField.style.display = isEmbedded ? "block" : "none";
 
         if (!provider) {
           brainModelField.style.display = "block";
@@ -9602,7 +9726,9 @@
           }
           initOpenRouterUI(savedVendor, savedModel);
           syncBrainCustomFields();
+          try { syncBrainKeyUi(); } catch (_) {}
           try { lockSecretField($("brainApiKey")); } catch (_) {}
+          try { refreshEmbeddedBrainStatus(); } catch (_) {}
           try { syncBrainKeyUsername(); } catch (_) {}
           try { updateBrainSaveEnabled(); } catch (_) {}
           return;
@@ -9628,17 +9754,33 @@
           if (brainModelSelect.value !== "__custom__") $("brainModelId").value = "";
         }
         syncBrainCustomFields();
+        try { syncBrainKeyUi(); } catch (_) {}
         // Switching providers changes which API key slot will be used. Keep the key field locked
         // until the user taps it and authenticates.
-        try { lockSecretField($("brainApiKey")); } catch (_) {}
+        if (brainProviderNeedsApiKey(provider)) {
+          try { lockSecretField($("brainApiKey")); } catch (_) {}
+        }
+        try { refreshEmbeddedBrainStatus(); } catch (_) {}
         try { syncBrainKeyUsername(); } catch (_) {}
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
       brainModelSelect.addEventListener("change", () => {
         syncBrainCustomFields();
+        try { syncBrainKeyUi(); } catch (_) {}
+        try { refreshEmbeddedBrainStatus(); } catch (_) {}
         try { syncBrainKeyUsername(); } catch (_) {}
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
+      if (brainEmbeddedImportBtn) {
+        brainEmbeddedImportBtn.addEventListener("click", () => {
+          importEmbeddedModel();
+        });
+      }
+      if (brainEmbeddedDownloadBtn) {
+        brainEmbeddedDownloadBtn.addEventListener("click", async () => {
+          await downloadEmbeddedModel();
+        });
+      }
       $("brainOrVendor").addEventListener("change", () => {
         const vendor = String($("brainOrVendor").value || "").trim();
         if (_orModelsLoaded) renderOrModelOptions(_orModelsLoaded, vendor, "");
@@ -9678,7 +9820,6 @@
           const res = await fetch(API + "/brain/config");
           if (!res.ok) return;
           const data = await res.json();
-          $("brainKeyStatus").textContent = data.has_api_key ? "API key is set." : "No API key configured.";
 
           const vendor = String(data.vendor || "").trim();
           const model = String(data.model || "").trim();
@@ -9723,7 +9864,11 @@
           }
           syncBrainCustomFields();
           brainInitial = { vendor: data.vendor || "", base_url: data.base_url || "", model: data.model || "" };
-          try { lockSecretField($("brainApiKey")); } catch (_) {}
+          if (brainProviderNeedsApiKey(vendor)) {
+            try { lockSecretField($("brainApiKey")); } catch (_) {}
+          }
+          try { syncBrainKeyUi(data); } catch (_) {}
+          try { refreshEmbeddedBrainStatus(); } catch (_) {}
           try { syncBrainKeyUsername(); } catch (_) {}
           updateBrainSaveEnabled();
         } catch (_) {}
@@ -9762,9 +9907,10 @@
         }
 
         const keyEl = $("brainApiKey");
+        const needsKey = brainProviderNeedsApiKey(String(payload.vendor || ""));
         const keyUnlocked = String((keyEl && keyEl.dataset ? keyEl.dataset.secretLocked : "1") || "1") === "0";
         const apiKey = keyUnlocked ? String(keyEl.value || "").trim() : "";
-        const keyDirty = keyUnlocked && isSecretDirty(keyEl);
+        const keyDirty = needsKey && keyUnlocked && isSecretDirty(keyEl);
         if (keyDirty) {
           if (!(await ensureSensitiveUnlocked())) return;
           payload.api_key = apiKey;
@@ -9789,6 +9935,7 @@
           });
           if (!res.ok) { showToast("Failed to save config"); return; }
           await loadBrainConfig();
+          try { refreshEmbeddedBrainStatus(); } catch (_) {}
           showToast("Brain config saved");
         } catch (_) {
           showToast("Connection error");
@@ -9796,6 +9943,17 @@
       });
 
       loadBrainConfig();
+
+      window.onEmbeddedModelImportResult = async function(payload) {
+        const p = payload || {};
+        if (p.ok) {
+          showToast("Model imported");
+          await refreshEmbeddedBrainStatus();
+          return;
+        }
+        if (p.cancelled) return;
+        showToast(String(p.detail || p.error || "Import failed"));
+      };
 
       // Autofill detection: when a password manager fills brainKeyUsername,
       // apply the vendor/model back to the UI dropdowns.

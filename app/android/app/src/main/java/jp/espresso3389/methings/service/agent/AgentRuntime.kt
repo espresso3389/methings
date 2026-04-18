@@ -167,6 +167,7 @@ class AgentRuntime(
     private val toolExecutor: ToolExecutor,
     private val llmClient: LlmClient,
     private val configManager: AgentConfigManager,
+    private val embeddedBackendRegistry: EmbeddedBackendRegistry,
     private val emitLog: (String, JSONObject) -> Unit,
 ) {
     private val lock = Any()
@@ -525,16 +526,82 @@ class AgentRuntime(
         val baseUrl = configManager.getBaseUrl()
         val apiKey = configManager.getApiKey()
         val providerUrl = configManager.resolveProviderUrl(vendor, baseUrl)
+        val providerKind = llmClient.detectProviderKind(providerUrl, vendor)
+        val embeddedSpec = if (providerKind == ProviderKind.EMBEDDED) EmbeddedModelCatalog.find(model) else null
+        val requiresApiKey = providerKind != ProviderKind.EMBEDDED
 
-        if (model.isEmpty() || providerUrl.isEmpty() || apiKey.isEmpty()) {
+        if (model.isEmpty() || providerUrl.isEmpty() || (requiresApiKey && apiKey.isEmpty())) {
             recordMessage("assistant",
                 "Brain is not configured yet. Configure it in Settings -> Brain.",
                 JSONObject().put("item_id", item.optString("id")).put("session_id", sessionId))
             return
         }
 
-        val providerKind = llmClient.detectProviderKind(providerUrl, vendor)
         Log.i(TAG, "Provider: kind=$providerKind, vendor=$vendor, url=$providerUrl, model=$model")
+        if (providerKind == ProviderKind.EMBEDDED) {
+            val backendStatus = embeddedBackendRegistry.statusFor(model)
+            if (embeddedSpec != null && backendStatus?.runnable == true) {
+                val dialogueLimit = config.intWithProfile("dialogue_window_user_assistant", 40, 10, 120)
+                val dialogueRawLimit = config.intWithProfile("dialogue_raw_fetch_limit", 320, 40, 2000)
+                val persistentMemory = getPersistentMemory()
+                val journalCurrent = journalStore.getCurrent(sessionId).optString("text", "")
+                val dialogue = listDialogue(sessionId, dialogueLimit, dialogueRawLimit)
+                val curText = item.optString("text", "")
+                val filteredDialogue = if (dialogue.isNotEmpty() &&
+                    dialogue.last().optString("role") == "user" &&
+                    dialogue.last().optString("text") == curText
+                ) dialogue.dropLast(1) else dialogue
+                val systemPrompt = buildSystemPrompt(config, emptySet()) +
+                    "\n\nEmbedded execution note: Tool calling is not wired yet in this build. Respond directly in text."
+                val journalBlob = buildJournalBlob(journalCurrent, sessionId, persistentMemory)
+                val pendingInput = buildInitialInput(
+                    kind = ProviderKind.EMBEDDED,
+                    dialogue = filteredDialogue,
+                    journalBlob = journalBlob,
+                    curText = curText,
+                    item = item,
+                    supportedMedia = emptySet(),
+                )
+                val prompt = renderEmbeddedPrompt(systemPrompt, pendingInput)
+                val reply = runCatching { embeddedBackendRegistry.generateText(model, prompt) }.getOrElse { ex ->
+                    "Embedded inference failed: ${ex.message ?: ex.javaClass.simpleName}"
+                }.trim()
+                val finalReply = if (reply.isNotBlank()) reply else "Embedded inference returned an empty response."
+                recordMessage(
+                    "assistant",
+                    finalReply,
+                    JSONObject().put("item_id", item.optString("id")).put("session_id", sessionId),
+                )
+                emitLog("brain_response", JSONObject()
+                    .put("item_id", item.optString("id"))
+                    .put("text", finalReply.take(300)))
+                return
+            }
+            val detail = when {
+                embeddedSpec == null -> "Unknown embedded model '$model'."
+                backendStatus == null -> "Embedded model '$model' is not registered."
+                else -> buildString {
+                    append(backendStatus.detail)
+                    append(" Expected path: ")
+                    append(backendStatus.primaryModelPath)
+                    if (backendStatus.candidatePaths.size > 1) {
+                        append(" (alternatives: ")
+                        append(backendStatus.candidatePaths.drop(1).joinToString(", "))
+                        append(")")
+                    }
+                }
+            }
+            val msg = "$detail See docs/embedded_gemma4.md for the recommended implementation path."
+            recordMessage(
+                "assistant",
+                msg,
+                JSONObject().put("item_id", item.optString("id")).put("session_id", sessionId),
+            )
+            emitLog("brain_response", JSONObject()
+                .put("item_id", item.optString("id"))
+                .put("text", msg.take(300)))
+            return
+        }
         val extraCfg = mutableMapOf<String, String>()
         if (providerKind == ProviderKind.ANTHROPIC && config.boolWithProfile("extended_thinking", false)) {
             extraCfg["anthropic-beta"] = "interleaved-thinking-2025-05-14"
@@ -569,6 +636,7 @@ class AgentRuntime(
             ProviderKind.OPENAI_CHAT -> ToolDefinitions.chatTools(ToolDefinitions.deviceApiActionNames())
             ProviderKind.ANTHROPIC -> ToolDefinitions.anthropicTools(ToolDefinitions.deviceApiActionNames())
             ProviderKind.GOOGLE_GEMINI -> ToolDefinitions.geminiTools(ToolDefinitions.deviceApiActionNames())
+            ProviderKind.EMBEDDED -> ToolDefinitions.chatTools(ToolDefinitions.deviceApiActionNames())
         }
 
         // Determine which media types the provider supports natively
@@ -576,6 +644,7 @@ class AgentRuntime(
             ProviderKind.GOOGLE_GEMINI -> setOf("image", "audio")
             ProviderKind.ANTHROPIC, ProviderKind.OPENAI_RESPONSES -> setOf("image")
             ProviderKind.OPENAI_CHAT -> if (!providerUrl.contains("generativelanguage.googleapis.com")) setOf("image") else emptySet()
+            ProviderKind.EMBEDDED -> emptySet()
         }
 
         // Expose supported media types to ToolExecutor so analyze_image/analyze_audio can guard early
@@ -1222,6 +1291,7 @@ class AgentRuntime(
                         JSONObject().put("mode", "ANY")))
                 }
             }
+            ProviderKind.EMBEDDED -> throw UnsupportedOperationException("Embedded providers do not build remote request bodies")
         }
     }
 
@@ -1231,6 +1301,7 @@ class AgentRuntime(
             ProviderKind.OPENAI_CHAT -> parseOpenAiChatResponse(payload)
             ProviderKind.ANTHROPIC -> parseAnthropicResponse(payload)
             ProviderKind.GOOGLE_GEMINI -> parseGeminiResponse(payload)
+            ProviderKind.EMBEDDED -> throw UnsupportedOperationException("Embedded providers do not parse remote payloads")
         }
     }
 
@@ -1703,6 +1774,7 @@ class AgentRuntime(
                 ProviderKind.GOOGLE_GEMINI -> {
                     JSONArray().put(JSONObject().put("text", text))
                 }
+                ProviderKind.EMBEDDED -> text
                 else -> text  // OPENAI_CHAT and ANTHROPIC accept plain strings
             }
         }
@@ -1768,6 +1840,7 @@ class AgentRuntime(
                 }
                 arr
             }
+            ProviderKind.EMBEDDED -> text
         }
     }
 
@@ -1886,6 +1959,16 @@ class AgentRuntime(
                 // Current user message with journal + media
                 val parts = buildMultimodalUserContent(kind, finalUserText, userMedia)
                 input.put(JSONObject().put("role", "user").put("parts", parts))
+            }
+            ProviderKind.EMBEDDED -> {
+                for (msg in dialogue) {
+                    val role = msg.optString("role")
+                    val text = sanitizeHistoricalDialogueText(msg.optString("text", ""))
+                    if (role in setOf("user", "assistant") && text.isNotBlank()) {
+                        input.put(JSONObject().put("role", role).put("content", text))
+                    }
+                }
+                input.put(JSONObject().put("role", "user").put("content", finalUserText))
             }
         }
         return input
@@ -2008,6 +2091,13 @@ class AgentRuntime(
                 }
                 input.put(JSONObject().put("role", "user").put("parts", parts))
             }
+            ProviderKind.EMBEDDED -> {
+                input.put(JSONObject().apply {
+                    put("role", "tool")
+                    put("tool_call_id", callId)
+                    put("content", result.toString())
+                })
+            }
         }
     }
 
@@ -2053,8 +2143,46 @@ class AgentRuntime(
                 input.put(JSONObject().put("role", "user")
                     .put("parts", JSONArray().put(JSONObject().put("text", nudge))))
             }
+            ProviderKind.EMBEDDED -> {
+                input.put(JSONObject().put("role", "user").put("content", nudge))
+            }
         }
         return input
+    }
+
+    private fun renderEmbeddedPrompt(systemPrompt: String, input: JSONArray): String {
+        val sb = StringBuilder()
+        sb.append("System:\n")
+        sb.append(systemPrompt.trim())
+        sb.append("\n\nConversation:\n")
+        for (i in 0 until input.length()) {
+            val msg = input.optJSONObject(i) ?: continue
+            val role = msg.optString("role", "user").ifBlank { "user" }
+            val content = msg.opt("content")
+            val text = when (content) {
+                is String -> content
+                is JSONArray -> {
+                    buildString {
+                        for (j in 0 until content.length()) {
+                            val part = content.optJSONObject(j) ?: continue
+                            val t = part.optString("text", "").trim()
+                            if (t.isNotEmpty()) {
+                                if (isNotEmpty()) append("\n")
+                                append(t)
+                            }
+                        }
+                    }
+                }
+                else -> msg.optString("text", "")
+            }.trim()
+            if (text.isEmpty()) continue
+            sb.append(role.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() })
+            sb.append(": ")
+            sb.append(text)
+            sb.append("\n\n")
+        }
+        sb.append("Assistant:")
+        return sb.toString().trim()
     }
 
     private fun shouldUseDirectMediaFallback(kind: ProviderKind, providerUrl: String, model: String): Boolean {
@@ -2127,7 +2255,7 @@ class AgentRuntime(
         // Append provider media capability info so the agent knows what's available
         val mediaInfo = if (supportedMediaTypes.isNotEmpty()) {
             val types = supportedMediaTypes.sorted().joinToString(", ")
-            val suffix = if ("audio" !in supportedMediaTypes) " Audio analysis requires switching to a Gemini model." else ""
+            val suffix = if ("audio" !in supportedMediaTypes) " Audio analysis requires a model/runtime with audio support." else ""
             "\nCurrent provider supports: $types.$suffix"
         } else {
             "\nCurrent provider does not support multimodal media input."

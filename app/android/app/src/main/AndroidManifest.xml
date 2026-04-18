@@ -34,6 +34,9 @@
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-native-library android:name="libOpenCL.so" android:required="false" />
+    <uses-native-library android:name="libOpenCL-car.so" android:required="false" />
+    <uses-native-library android:name="libOpenCL-pixel.so" android:required="false" />
 
     <application
         android:name=".MethingsApp"

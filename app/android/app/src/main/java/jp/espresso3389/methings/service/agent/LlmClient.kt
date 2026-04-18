@@ -9,7 +9,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
 
-enum class ProviderKind { ANTHROPIC, OPENAI_RESPONSES, OPENAI_CHAT, GOOGLE_GEMINI }
+enum class ProviderKind { ANTHROPIC, OPENAI_RESPONSES, OPENAI_CHAT, GOOGLE_GEMINI, EMBEDDED }
 
 class LlmClient {
 
@@ -17,6 +17,7 @@ class LlmClient {
         val v = vendor.trim().lowercase(Locale.US)
         val u = url.trim().lowercase(Locale.US)
         return when {
+            v == "embedded" || u.startsWith("embedded://") -> ProviderKind.EMBEDDED
             v == "anthropic" || u.contains("anthropic.com") -> ProviderKind.ANTHROPIC
             // When vendor is "gemini", always use native Gemini (URL is cleaned by resolveProviderUrl).
             // Also detect googleapis.com URLs that aren't using the /openai/ compat layer.
@@ -42,6 +43,9 @@ class LlmClient {
             ProviderKind.GOOGLE_GEMINI -> {
                 // Gemini uses API key as URL query param, not in headers
             }
+            ProviderKind.EMBEDDED -> {
+                // Embedded models execute locally and do not use HTTP auth headers.
+            }
         }
         return headers
     }
@@ -64,6 +68,9 @@ class LlmClient {
         interruptCheck: () -> Boolean = { false },
     ): JSONObject {
         val streamBody = JSONObject(body.toString())
+        if (kind == ProviderKind.EMBEDDED) {
+            throw UnsupportedOperationException("Embedded providers do not use HTTP streamingPost")
+        }
         if (kind != ProviderKind.GOOGLE_GEMINI) {
             // Gemini uses alt=sse in URL, not a body param
             streamBody.put("stream", true)
@@ -104,6 +111,7 @@ class LlmClient {
                 ProviderKind.OPENAI_CHAT -> parseOpenAiChatSse(conn, interruptCheck)
                 ProviderKind.ANTHROPIC -> parseAnthropicSse(conn, interruptCheck)
                 ProviderKind.GOOGLE_GEMINI -> parseGeminiSse(conn, interruptCheck)
+                ProviderKind.EMBEDDED -> throw UnsupportedOperationException("Embedded providers do not use HTTP SSE parsing")
             }
         } finally {
             conn.disconnect()
