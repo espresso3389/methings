@@ -297,6 +297,7 @@ class EmbeddedProviderRegressionTest {
                 failedTools = listOf("mkdir"),
                 toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
                 repairUsed = true,
+                repairAttemptCount = 1,
                 fallbackUsed = false,
                 lastSummary = "calls=1 text=0",
                 updatedAtMs = 789L,
@@ -315,6 +316,7 @@ class EmbeddedProviderRegressionTest {
         assertEquals("mkdir", failures.getJSONObject(0).getString("name"))
         assertEquals("invalid_arguments", failures.getJSONObject(0).getString("reason"))
         assertEquals(true, diagnostics.getBoolean("repair_used"))
+        assertEquals(1, diagnostics.getInt("repair_attempt_count"))
         assertEquals(false, diagnostics.getBoolean("fallback_used"))
         assertEquals(789L, diagnostics.getLong("updated_at_ms"))
     }
@@ -329,6 +331,7 @@ class EmbeddedProviderRegressionTest {
             failedTools = emptyList(),
             toolFailures = emptyList(),
             repairUsed = false,
+            repairAttemptCount = 0,
             fallbackUsed = false,
         )
         EmbeddedTurnProtocol.mergeDiagnosticsState(
@@ -337,6 +340,7 @@ class EmbeddedProviderRegressionTest {
             failedTools = listOf("mkdir"),
             toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
             repairUsed = false,
+            repairAttemptCount = 0,
             fallbackUsed = false,
         )
         EmbeddedTurnProtocol.mergeDiagnosticsState(
@@ -345,12 +349,14 @@ class EmbeddedProviderRegressionTest {
             failedTools = emptyList(),
             toolFailures = emptyList(),
             repairUsed = true,
+            repairAttemptCount = 1,
             fallbackUsed = false,
         )
 
         assertEquals(listOf("write_file", "mkdir"), state.selectedTools.toList())
         assertEquals(mapOf("mkdir" to "invalid_arguments"), state.toolFailures)
         assertTrue(state.repairUsed)
+        assertEquals(1, state.repairAttemptCount)
         assertFalse(state.fallbackUsed)
     }
 
@@ -409,6 +415,7 @@ class EmbeddedProviderRegressionTest {
                     failedTools = emptyList(),
                     toolFailures = emptyList(),
                     repairUsed = false,
+                    repairAttemptCount = 0,
                     fallbackUsed = false,
                     lastSummary = "selected=1 text=0",
                     updatedAtMs = 3L,

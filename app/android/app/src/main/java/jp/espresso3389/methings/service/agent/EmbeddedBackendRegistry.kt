@@ -40,6 +40,7 @@ data class EmbeddedTurnDiagnostics(
     val failedTools: List<String>,
     val toolFailures: List<EmbeddedToolFailure>,
     val repairUsed: Boolean,
+    val repairAttemptCount: Int,
     val fallbackUsed: Boolean,
     val lastSummary: String,
     val updatedAtMs: Long,
@@ -51,6 +52,7 @@ data class EmbeddedTurnDiagnostics(
         put("failed_tools", JSONArray(failedTools))
         put("tool_failures", JSONArray(toolFailures.map { it.toJson() }))
         put("repair_used", repairUsed)
+        put("repair_attempt_count", repairAttemptCount)
         put("fallback_used", fallbackUsed)
         put("last_summary", lastSummary)
         put("updated_at_ms", updatedAtMs)
@@ -71,6 +73,7 @@ internal data class EmbeddedTurnDiagnosticsState(
     val selectedTools: LinkedHashSet<String> = linkedSetOf(),
     val toolFailures: LinkedHashMap<String, String> = linkedMapOf(),
     var repairUsed: Boolean = false,
+    var repairAttemptCount: Int = 0,
     var fallbackUsed: Boolean = false,
 )
 
@@ -269,6 +272,7 @@ private class LiteRtBundleEmbeddedBackend(
             failedTools = emptyList(),
             toolFailures = emptyList(),
             repairUsed = false,
+            repairAttemptCount = 0,
             fallbackUsed = false,
             summary = "selected=${plan.calls.length()} text=${plan.messageTexts.size}",
         )
@@ -311,6 +315,7 @@ private class LiteRtBundleEmbeddedBackend(
                         failedTools = listOf(toolName),
                         toolFailures = toolFailures,
                         repairUsed = false,
+                        repairAttemptCount = 0,
                         fallbackUsed = false,
                         summary = "tool=$toolName no_output",
                     )
@@ -331,6 +336,7 @@ private class LiteRtBundleEmbeddedBackend(
                     failedTools = toolFailures.map { it.name },
                     toolFailures = toolFailures,
                     repairUsed = false,
+                    repairAttemptCount = 0,
                     fallbackUsed = false,
                     summary = "tool=$toolName validCalls=${parsedArgs.calls.length()} text=${parsedArgs.messageTexts.size}",
                 )
@@ -378,6 +384,7 @@ private class LiteRtBundleEmbeddedBackend(
             failedTools = emptyList(),
             toolFailures = emptyList(),
             repairUsed = false,
+            repairAttemptCount = 0,
             fallbackUsed = false,
             summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
         )
@@ -401,6 +408,7 @@ private class LiteRtBundleEmbeddedBackend(
                 failedTools = emptyList(),
                 toolFailures = emptyList(),
                 repairUsed = true,
+                repairAttemptCount = 0,
                 fallbackUsed = false,
                 summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
             )
@@ -428,6 +436,7 @@ private class LiteRtBundleEmbeddedBackend(
                     failedTools = emptyList(),
                     toolFailures = emptyList(),
                     repairUsed = true,
+                    repairAttemptCount = 1,
                     fallbackUsed = false,
                     summary = "calls=${repaired.calls.length()} text=${repaired.messageTexts.size}",
                 )
@@ -455,6 +464,7 @@ private class LiteRtBundleEmbeddedBackend(
                     failedTools = toolSpecs.map { it.name },
                     toolFailures = toolSpecs.map { EmbeddedToolFailure(it.name, "required_tool_fallback") },
                     repairUsed = true,
+                    repairAttemptCount = 0,
                     fallbackUsed = true,
                     summary = "required-tool fallback",
                 )
@@ -551,6 +561,7 @@ private class LiteRtBundleEmbeddedBackend(
         failedTools: List<String>,
         toolFailures: List<EmbeddedToolFailure>,
         repairUsed: Boolean,
+        repairAttemptCount: Int,
         fallbackUsed: Boolean,
         summary: String,
     ) {
@@ -560,6 +571,7 @@ private class LiteRtBundleEmbeddedBackend(
             failedTools = failedTools,
             toolFailures = toolFailures,
             repairUsed = repairUsed,
+            repairAttemptCount = repairAttemptCount,
             fallbackUsed = fallbackUsed,
         )
         diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
@@ -569,6 +581,7 @@ private class LiteRtBundleEmbeddedBackend(
             failedTools = state.toolFailures.keys.toList(),
             toolFailures = state.toolFailures.entries.map { EmbeddedToolFailure(name = it.key, reason = it.value) },
             repairUsed = state.repairUsed,
+            repairAttemptCount = state.repairAttemptCount,
             fallbackUsed = state.fallbackUsed,
             lastSummary = summary,
             updatedAtMs = System.currentTimeMillis(),
@@ -598,6 +611,7 @@ internal object EmbeddedTurnProtocol {
         failedTools: List<String>,
         toolFailures: List<EmbeddedToolFailure>,
         repairUsed: Boolean,
+        repairAttemptCount: Int,
         fallbackUsed: Boolean,
     ) {
         selectedTools
@@ -613,6 +627,7 @@ internal object EmbeddedTurnProtocol {
             .filter { it.isNotEmpty() && !state.toolFailures.containsKey(it) }
             .forEach { state.toolFailures[it] = "unknown" }
         state.repairUsed = state.repairUsed || repairUsed
+        state.repairAttemptCount += repairAttemptCount
         state.fallbackUsed = state.fallbackUsed || fallbackUsed
     }
 

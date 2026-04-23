@@ -9473,7 +9473,11 @@
             lines.push("tools=" + (tools.length ? tools.join(", ") : "none"));
             if (toolFailures.length) lines.push("tool_failures=" + toolFailures.join(", "));
             if (failedTools.length) lines.push("failed_tools=" + failedTools.join(", "));
-            lines.push("repair_used=" + (!!diag.repair_used) + " fallback_used=" + (!!diag.fallback_used));
+            lines.push(
+              "repair_used=" + (!!diag.repair_used) +
+              " repair_attempt_count=" + Number(diag.repair_attempt_count || 0) +
+              " fallback_used=" + (!!diag.fallback_used)
+            );
             if (diag.last_summary) lines.push(String(diag.last_summary));
           }
           statusEl.textContent = lines.join("\n");

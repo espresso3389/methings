@@ -42,6 +42,7 @@ Returns:
     - `failed_tools` (array)
     - `tool_failures` (array of `{name, reason}`)
     - `repair_used` (boolean)
+    - `repair_attempt_count` (number)
     - `fallback_used` (boolean)
     - `last_summary` (string)
     - `updated_at_ms` (number)
