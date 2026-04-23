@@ -61,6 +61,54 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
+    fun embeddedPlanParserKeepsOnlyKnownToolNames() {
+        val toolSpecs = listOf(
+            EmbeddedToolSpec(
+                name = "write_file",
+                description = "Write a file",
+                allowedArgumentNames = setOf("path", "content"),
+                requiredArgumentNames = setOf("path", "content"),
+                enumStringValues = emptyMap(),
+                allowAdditionalProperties = false,
+            )
+        )
+        val plan = EmbeddedTurnProtocol.parsePlanResponse(
+            """{"assistant_message":"planning","tool_calls":[{"name":"write_file"},{"name":"fake_tool"}]}""",
+            toolSpecs,
+        )
+
+        assertEquals(listOf("planning"), plan.messageTexts)
+        assertEquals(1, plan.calls.length())
+        assertEquals("write_file", plan.calls.getJSONObject(0).getString("name"))
+    }
+
+    @Test
+    fun embeddedMergePlanAndArgumentsUsesPlannedOrder() {
+        val plan = EmbeddedGenerationResult(
+            messageTexts = listOf("planning"),
+            calls = org.json.JSONArray()
+                .put(org.json.JSONObject().put("name", "write_file").put("arguments", org.json.JSONObject()).put("call_id", "c1"))
+                .put(org.json.JSONObject().put("name", "mkdir").put("arguments", org.json.JSONObject()).put("call_id", "c2")),
+            rawText = "plan",
+        )
+        val args = EmbeddedGenerationResult(
+            messageTexts = emptyList(),
+            calls = org.json.JSONArray()
+                .put(org.json.JSONObject().put("name", "mkdir").put("arguments", org.json.JSONObject().put("path", "dir")))
+                .put(org.json.JSONObject().put("name", "write_file").put("arguments", org.json.JSONObject().put("path", "a.txt").put("content", "hi"))),
+            rawText = "args",
+        )
+
+        val merged = EmbeddedTurnProtocol.mergePlanAndArguments(plan, args)
+
+        assertEquals(2, merged.calls.length())
+        assertEquals("write_file", merged.calls.getJSONObject(0).getString("name"))
+        assertEquals("a.txt", merged.calls.getJSONObject(0).getJSONObject("arguments").getString("path"))
+        assertEquals("mkdir", merged.calls.getJSONObject(1).getString("name"))
+        assertEquals("dir", merged.calls.getJSONObject(1).getJSONObject("arguments").getString("path"))
+    }
+
+    @Test
     fun embeddedParserDropsUnknownToolCalls() {
         val toolSpecs = listOf(
             EmbeddedToolSpec(
@@ -169,6 +217,29 @@ class EmbeddedProviderRegressionTest {
         assertEquals(0, invalid.calls.length())
         assertEquals(1, valid.calls.length())
         assertEquals("read", valid.calls.getJSONObject(0).getJSONObject("arguments").getString("action"))
+    }
+
+    @Test
+    fun embeddedRequiredToolFallbackReturnsExplicitBlockerMessage() {
+        val toolSpecs = listOf(
+            EmbeddedToolSpec(
+                name = "write_file",
+                description = "Write a file",
+                allowedArgumentNames = setOf("path", "content"),
+                requiredArgumentNames = setOf("path", "content"),
+                enumStringValues = emptyMap(),
+                allowAdditionalProperties = false,
+            )
+        )
+        val fallback = EmbeddedTurnProtocol.buildRequiredToolFallback(
+            originalText = "not valid json",
+            repairedText = "",
+            toolSpecs = toolSpecs,
+        )
+
+        assertEquals(0, fallback.calls.length())
+        assertTrue(fallback.messageTexts.single().contains("could not produce a valid tool call"))
+        assertTrue(fallback.messageTexts.single().contains("write_file"))
     }
 
     @Test

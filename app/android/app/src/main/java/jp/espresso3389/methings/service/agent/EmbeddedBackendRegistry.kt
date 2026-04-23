@@ -204,23 +204,49 @@ private class LiteRtBundleEmbeddedBackend(
         request: EmbeddedGenerationRequest,
     ): EmbeddedGenerationResult {
         val toolSpecs = EmbeddedTurnProtocol.extractToolSpecs(request.tools)
-        val prompt = EmbeddedTurnProtocol.renderPrompt(
+        val planPrompt = EmbeddedTurnProtocol.renderPlanPrompt(
             systemPrompt = request.systemPrompt,
             input = request.input,
             tools = request.tools,
             requireTool = request.requireTool,
         )
-        val raw = generateText(spec, prompt).trim()
-        val parsed = EmbeddedTurnProtocol.parseResponse(raw, toolSpecs)
+        val rawPlan = generateText(spec, planPrompt).trim()
+        val plan = EmbeddedTurnProtocol.parsePlanResponse(rawPlan, toolSpecs)
+        var parsed = if (plan.calls.length() > 0) {
+            val rawArgs = runCatching {
+                generateText(spec, EmbeddedTurnProtocol.renderArgumentPrompt(rawPlan, toolSpecs, plan.calls)).trim()
+            }.getOrDefault("")
+            if (rawArgs.isNotBlank()) {
+                EmbeddedTurnProtocol.mergePlanAndArguments(
+                    plan = plan,
+                    argumentsResult = EmbeddedTurnProtocol.parseResponse(rawArgs, toolSpecs),
+                ).copy(rawText = buildString {
+                    append(rawPlan)
+                    append("\n\n-- arguments --\n")
+                    append(rawArgs)
+                }.trim())
+            } else {
+                plan
+            }
+        } else {
+            plan
+        }
         if (EmbeddedTurnProtocol.needsRepair(parsed, request.requireTool, toolSpecs)) {
             val repairedRaw = runCatching {
-                generateText(spec, EmbeddedTurnProtocol.renderRepairPrompt(raw, toolSpecs, request.requireTool)).trim()
+                generateText(spec, EmbeddedTurnProtocol.renderRepairPrompt(parsed.rawText, toolSpecs, request.requireTool)).trim()
             }.getOrDefault("")
             if (repairedRaw.isNotBlank()) {
                 val repaired = EmbeddedTurnProtocol.parseResponse(repairedRaw, toolSpecs)
                 if (!EmbeddedTurnProtocol.needsRepair(repaired, request.requireTool, toolSpecs)) {
                     return repaired.copy(rawText = repairedRaw)
                 }
+            }
+            if (request.requireTool) {
+                return EmbeddedTurnProtocol.buildRequiredToolFallback(
+                    originalText = parsed.rawText,
+                    repairedText = repairedRaw,
+                    toolSpecs = toolSpecs,
+                )
             }
         }
         return parsed
@@ -346,7 +372,7 @@ internal object EmbeddedTurnProtocol {
         return specs
     }
 
-    fun renderPrompt(
+    fun renderPlanPrompt(
         systemPrompt: String,
         input: JSONArray,
         tools: JSONArray,
@@ -365,14 +391,58 @@ internal object EmbeddedTurnProtocol {
             append(base)
             append("\n\nAvailable tools:\n")
             append(toolGuide)
-            append("\n\nOutput contract:\n")
+            append("\n\nPlanning output contract:\n")
             append("- Return exactly one JSON object.\n")
             append("- Keys: assistant_message (string), tool_calls (array).\n")
-            append("- Each tool_calls item must have: name (string), arguments (object).\n")
+            append("- At this phase, each tool_calls item should contain only: name.\n")
             append("- Do not wrap the JSON in markdown fences.\n")
             append("- If no tool is needed, return an empty tool_calls array.\n")
             append("- ")
             append(toolRule)
+        }
+    }
+
+    fun renderArgumentPrompt(
+        rawPlanText: String,
+        toolSpecs: List<EmbeddedToolSpec>,
+        selectedCalls: JSONArray,
+    ): String {
+        val selectedNames = mutableListOf<String>()
+        for (i in 0 until selectedCalls.length()) {
+            val call = selectedCalls.optJSONObject(i) ?: continue
+            val name = call.optString("name", "").trim()
+            if (name.isNotEmpty()) selectedNames.add(name)
+        }
+        val selectedSpecLines = if (selectedNames.isEmpty()) {
+            "- none"
+        } else {
+            selectedNames.joinToString("\n") { name ->
+                val spec = toolSpecs.firstOrNull { it.name == name }
+                val required = spec?.requiredArgumentNames?.sorted()?.joinToString(", ").orEmpty()
+                val allowed = spec?.allowedArgumentNames?.sorted()?.joinToString(", ").orEmpty()
+                buildString {
+                    append("- ")
+                    append(name)
+                    append(": allowed args [")
+                    append(allowed)
+                    append("]")
+                    if (required.isNotEmpty()) {
+                        append(", required [")
+                        append(required)
+                        append("]")
+                    }
+                }
+            }
+        }
+        return buildString {
+            append("Convert the selected tool names below into exactly one valid JSON object.\n")
+            append("Return only JSON. No markdown fences.\n")
+            append("Keys: assistant_message (string), tool_calls (array).\n")
+            append("Each tool_calls item must have: name (string), arguments (object).\n")
+            append("Only include these selected tools:\n")
+            append(selectedSpecLines)
+            append("\n\nPlanner output:\n")
+            append(rawPlanText)
         }
     }
 
@@ -442,6 +512,66 @@ internal object EmbeddedTurnProtocol {
         )
     }
 
+    fun parsePlanResponse(rawText: String, toolSpecs: List<EmbeddedToolSpec>): EmbeddedGenerationResult {
+        val parsed = extractJsonObject(rawText)?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (parsed == null) {
+            return EmbeddedGenerationResult(
+                messageTexts = listOf(rawText).filter { it.isNotBlank() },
+                calls = JSONArray(),
+                rawText = rawText,
+            )
+        }
+        val message = parsed.optString("assistant_message", "").trim()
+        val calls = JSONArray()
+        val toolSpecByName = toolSpecs.associateBy { it.name }
+        val rawCalls = parsed.optJSONArray("tool_calls") ?: JSONArray()
+        for (i in 0 until rawCalls.length()) {
+            val call = rawCalls.optJSONObject(i) ?: continue
+            val name = call.optString("name", "").trim()
+            if (name.isEmpty()) continue
+            if (!toolSpecByName.containsKey(name)) continue
+            calls.put(JSONObject().apply {
+                put("name", name)
+                put("arguments", JSONObject())
+                put("call_id", "embedded_plan_${i}_${name}")
+            })
+        }
+        return EmbeddedGenerationResult(
+            messageTexts = listOf(message).filter { it.isNotBlank() },
+            calls = calls,
+            rawText = rawText,
+        )
+    }
+
+    fun mergePlanAndArguments(
+        plan: EmbeddedGenerationResult,
+        argumentsResult: EmbeddedGenerationResult,
+    ): EmbeddedGenerationResult {
+        val argCallsByName = linkedMapOf<String, JSONObject>()
+        for (i in 0 until argumentsResult.calls.length()) {
+            val call = argumentsResult.calls.optJSONObject(i) ?: continue
+            val name = call.optString("name", "").trim()
+            if (name.isEmpty()) continue
+            argCallsByName.putIfAbsent(name, call.optJSONObject("arguments") ?: JSONObject())
+        }
+        val mergedCalls = JSONArray()
+        for (i in 0 until plan.calls.length()) {
+            val call = plan.calls.optJSONObject(i) ?: continue
+            val name = call.optString("name", "").trim()
+            if (name.isEmpty()) continue
+            mergedCalls.put(JSONObject().apply {
+                put("name", name)
+                put("arguments", argCallsByName[name] ?: JSONObject())
+                put("call_id", call.optString("call_id", "embedded_merge_${i}_${name}"))
+            })
+        }
+        return EmbeddedGenerationResult(
+            messageTexts = if (plan.messageTexts.isNotEmpty()) plan.messageTexts else argumentsResult.messageTexts,
+            calls = mergedCalls,
+            rawText = argumentsResult.rawText,
+        )
+    }
+
     fun needsRepair(
         result: EmbeddedGenerationResult,
         requireTool: Boolean,
@@ -454,6 +584,46 @@ internal object EmbeddedTurnProtocol {
             return true
         }
         return false
+    }
+
+    fun buildRequiredToolFallback(
+        originalText: String,
+        repairedText: String,
+        toolSpecs: List<EmbeddedToolSpec>,
+    ): EmbeddedGenerationResult {
+        val availableTools = if (toolSpecs.isEmpty()) {
+            "none"
+        } else {
+            toolSpecs.joinToString(", ") { it.name }
+        }
+        val detailSource = repairedText.ifBlank { originalText }.trim()
+        val detail = detailSource.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.isNotEmpty() }
+            ?.take(240)
+            .orEmpty()
+        val message = buildString {
+            append("Embedded backend could not produce a valid tool call for this required-tools turn.")
+            append(" Available tools: ")
+            append(availableTools)
+            append(".")
+            if (detail.isNotEmpty()) {
+                append(" Last model output: ")
+                append(detail)
+            }
+        }
+        val combinedRaw = buildString {
+            append(originalText)
+            if (repairedText.isNotBlank()) {
+                append("\n\n-- repair --\n")
+                append(repairedText)
+            }
+        }.trim()
+        return EmbeddedGenerationResult(
+            messageTexts = listOf(message),
+            calls = JSONArray(),
+            rawText = combinedRaw,
+        )
     }
 
     private fun sanitizeArguments(arguments: JSONObject, toolSpec: EmbeddedToolSpec?): JSONObject {
