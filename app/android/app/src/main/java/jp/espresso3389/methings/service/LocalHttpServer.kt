@@ -1830,6 +1830,14 @@ class LocalHttpServer(
             uri == "/brain/embedded/status" && session.method == Method.GET -> {
                 handleBrainEmbeddedStatus(session)
             }
+            uri == "/brain/embedded/warm" && session.method == Method.POST -> {
+                val body = postBody ?: ""
+                handleBrainEmbeddedWarm(body)
+            }
+            uri == "/brain/embedded/unload" && session.method == Method.POST -> {
+                val body = postBody ?: ""
+                handleBrainEmbeddedUnload(body)
+            }
             uri == "/brain/embedded/install" && session.method == Method.POST -> {
                 val body = postBody ?: ""
                 handleBrainEmbeddedInstall(body)
@@ -9501,6 +9509,80 @@ class LocalHttpServer(
         )
     }
 
+    fun warmConfiguredEmbeddedModel() {
+        val vendor = brainPrefs.getString("vendor", "")?.trim().orEmpty()
+        val model = brainPrefs.getString("model", "")?.trim().orEmpty()
+        if (!vendor.equals("embedded", ignoreCase = true) || model.isBlank()) return
+        Thread {
+            runCatching { embeddedBackendRegistry.warm(model) }
+                .onFailure { ex ->
+                    Log.w(TAG, "Embedded warmup failed for model=$model", ex)
+                }
+        }.apply {
+            isDaemon = true
+            name = "EmbeddedWarmup"
+            start()
+        }
+    }
+
+    fun onTrimMemory(level: Int) {
+        embeddedBackendRegistry.onTrimMemory(level)
+    }
+
+    private fun resolveEmbeddedModelFromBody(body: String): String {
+        val configuredModel = brainPrefs.getString("model", "")?.trim().orEmpty()
+        if (body.isBlank()) return configuredModel
+        val payload = runCatching { JSONObject(body) }.getOrNull() ?: return configuredModel
+        return payload.optString("model", configuredModel).trim().ifBlank { configuredModel }
+    }
+
+    private fun handleBrainEmbeddedWarm(body: String): Response {
+        val model = resolveEmbeddedModelFromBody(body)
+        if (model.isBlank()) {
+            return jsonError(Response.Status.BAD_REQUEST, "embedded_model_required")
+        }
+        val status = runCatching { embeddedBackendRegistry.warm(model) }.getOrElse { ex ->
+            return jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "embedded_warm_failed",
+                JSONObject()
+                    .put("model", model)
+                    .put("detail", ex.message ?: ex.javaClass.simpleName)
+            )
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("model", model)
+                .put("embedded_status", status.toJson())
+        )
+    }
+
+    private fun handleBrainEmbeddedUnload(body: String): Response {
+        val model = resolveEmbeddedModelFromBody(body)
+        if (model.isBlank()) {
+            return jsonError(Response.Status.BAD_REQUEST, "embedded_model_required")
+        }
+        val unloaded = runCatching { embeddedBackendRegistry.unload(model) }.getOrElse { ex ->
+            return jsonError(
+                Response.Status.INTERNAL_ERROR,
+                "embedded_unload_failed",
+                JSONObject()
+                    .put("model", model)
+                    .put("detail", ex.message ?: ex.javaClass.simpleName)
+            )
+        }
+        val status = embeddedBackendRegistry.statusFor(model)
+            ?: return jsonError(Response.Status.BAD_REQUEST, "unknown_embedded_model", JSONObject().put("model", model))
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("model", model)
+                .put("unloaded", unloaded)
+                .put("embedded_status", status.toJson())
+        )
+    }
+
     private fun handleBrainEmbeddedInstall(body: String): Response {
         val payload = runCatching { JSONObject(body) }.getOrNull()
             ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
@@ -9539,11 +9621,11 @@ class LocalHttpServer(
             val code = conn.responseCode
             if (code !in 200..299) {
                 val detail = runCatching { (conn.errorStream ?: conn.inputStream)?.bufferedReader()?.use { it.readText().take(400) } ?: "" }.getOrDefault("")
-                return jsonError(Response.Status.BAD_GATEWAY, "download_failed", JSONObject().put("status", code).put("detail", detail))
+                return jsonError(Response.Status.INTERNAL_ERROR, "download_failed", JSONObject().put("status", code).put("detail", detail))
             }
             conn.inputStream.use { input ->
                 FileOutputStream(tempFile).use { output ->
-                    input.copyTo(output, DEFAULT_COPY_BUFFER_SIZE)
+                    input.copyTo(output, DEFAULT_BUFFER_SIZE)
                 }
             }
             if (destFile.exists()) destFile.delete()
@@ -9560,7 +9642,7 @@ class LocalHttpServer(
             })
         } catch (e: Exception) {
             runCatching { tempFile.delete() }
-            jsonError(Response.Status.BAD_GATEWAY, "download_failed", JSONObject().put("detail", e.message ?: ""))
+            jsonError(Response.Status.INTERNAL_ERROR, "download_failed", JSONObject().put("detail", e.message ?: ""))
         } finally {
             conn?.disconnect()
         }

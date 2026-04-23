@@ -142,6 +142,34 @@ class ApiAlignmentRegressionTest {
         }
     }
 
+    @Test
+    fun embeddedBrainLifecycleRoutesAndDocsExist() {
+        val serverSource = readText(
+            repoRoot().resolve("app/android/app/src/main/java/jp/espresso3389/methings/service/LocalHttpServer.kt")
+        )
+        val brainDocs = readText(repoRoot().resolve("user/docs/api/brain.md"))
+
+        val routeMarkers = listOf(
+            """uri == "/brain/embedded/status" && session.method == Method.GET""",
+            """uri == "/brain/embedded/warm" && session.method == Method.POST""",
+            """uri == "/brain/embedded/unload" && session.method == Method.POST""",
+            """uri == "/brain/embedded/install" && session.method == Method.POST""",
+        )
+        for (marker in routeMarkers) {
+            assertTrue("Expected embedded route marker: $marker", serverSource.contains(marker))
+        }
+
+        val docHeadings = listOf(
+            "## GET /brain/embedded/status",
+            "## POST /brain/embedded/warm",
+            "## POST /brain/embedded/unload",
+            "## POST /brain/embedded/install",
+        )
+        for (heading in docHeadings) {
+            assertTrue("Expected embedded brain doc heading: $heading", brainDocs.contains(heading))
+        }
+    }
+
     private fun extractWsBlock(source: String, endpoint: String): String {
         val marker = if (endpoint.endsWith("/")) {
             """val mediaStreamPrefix = "$endpoint""""

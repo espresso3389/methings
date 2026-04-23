@@ -1,19 +1,50 @@
 package jp.espresso3389.methings.service.agent
 
 import android.content.Context
+import android.content.ComponentCallbacks2
+import android.util.Log
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+data class EmbeddedGenerationRequest(
+    val systemPrompt: String,
+    val input: JSONArray,
+    val tools: JSONArray,
+    val requireTool: Boolean,
+)
+
+data class EmbeddedGenerationResult(
+    val messageTexts: List<String>,
+    val calls: JSONArray,
+    val rawText: String,
+)
+
+internal data class EmbeddedToolSpec(
+    val name: String,
+    val description: String,
+    val allowedArgumentNames: Set<String>,
+    val requiredArgumentNames: Set<String>,
+    val enumStringValues: Map<String, Set<String>>,
+    val allowAdditionalProperties: Boolean,
+)
 
 data class EmbeddedBackendStatus(
     val model: EmbeddedModelSpec,
     val backendId: String,
     val installed: Boolean,
     val runnable: Boolean,
+    val loaded: Boolean,
+    val warm: Boolean,
     val detail: String,
     val primaryModelPath: String,
     val candidatePaths: List<String>,
+    val lastError: String,
+    val lastLoadedAtMs: Long,
+    val lastUsedAtMs: Long,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("model", model.id)
@@ -21,9 +52,14 @@ data class EmbeddedBackendStatus(
         put("backend", backendId)
         put("installed", installed)
         put("runnable", runnable)
+        put("loaded", loaded)
+        put("warm", warm)
         put("detail", detail)
         put("primary_model_path", primaryModelPath)
         put("candidate_paths", JSONArray(candidatePaths))
+        put("last_error", lastError)
+        put("last_loaded_at_ms", lastLoadedAtMs)
+        put("last_used_at_ms", lastUsedAtMs)
         put("supports_tool_calling", model.supportsToolCalling)
         put("supports_image_input", model.supportsImageInput)
         put("supports_audio_input", model.supportsAudioInput)
@@ -34,16 +70,28 @@ interface EmbeddedBackend {
     val backendId: String
     fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus
     fun generateText(spec: EmbeddedModelSpec, prompt: String): String
+    fun generateTurn(spec: EmbeddedModelSpec, request: EmbeddedGenerationRequest): EmbeddedGenerationResult
+    fun warm(spec: EmbeddedModelSpec): EmbeddedBackendStatus
+    fun unload(spec: EmbeddedModelSpec): Boolean
+    fun unloadAll()
 }
 
 class EmbeddedBackendRegistry(
     context: Context,
+    private val backendOverride: List<EmbeddedBackend>? = null,
 ) {
-    private val modelManager = EmbeddedModelManager(context)
-    private val appContext = context.applicationContext
-    private val backends: List<EmbeddedBackend> = listOf(
-        LiteRtBundleEmbeddedBackend(appContext, modelManager),
-    )
+    private val backends: List<EmbeddedBackend>
+
+    init {
+        backends = backendOverride ?: run {
+            val modelManager = EmbeddedModelManager(context)
+            val appContext = context.applicationContext
+            listOf(
+                LiteRtBundleEmbeddedBackend(appContext, modelManager),
+            )
+        }
+        require(backends.isNotEmpty()) { "embedded_backends_required" }
+    }
 
     fun statusFor(modelId: String): EmbeddedBackendStatus? {
         val spec = EmbeddedModelCatalog.find(modelId) ?: return null
@@ -55,6 +103,35 @@ class EmbeddedBackendRegistry(
             ?: throw IllegalArgumentException("unknown_embedded_model")
         return backends.first().generateText(spec, prompt)
     }
+
+    fun generateTurn(
+        modelId: String,
+        request: EmbeddedGenerationRequest,
+    ): EmbeddedGenerationResult {
+        val spec = EmbeddedModelCatalog.find(modelId)
+            ?: throw IllegalArgumentException("unknown_embedded_model")
+        return backends.first().generateTurn(spec, request)
+    }
+
+    fun warm(modelId: String): EmbeddedBackendStatus {
+        val spec = EmbeddedModelCatalog.find(modelId)
+            ?: throw IllegalArgumentException("unknown_embedded_model")
+        return backends.first().warm(spec)
+    }
+
+    fun unload(modelId: String): Boolean {
+        val spec = EmbeddedModelCatalog.find(modelId)
+            ?: throw IllegalArgumentException("unknown_embedded_model")
+        return backends.first().unload(spec)
+    }
+
+    fun onTrimMemory(level: Int) {
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        ) {
+            backends.forEach { it.unloadAll() }
+        }
+    }
 }
 
 private class LiteRtBundleEmbeddedBackend(
@@ -62,14 +139,30 @@ private class LiteRtBundleEmbeddedBackend(
     private val modelManager: EmbeddedModelManager,
 ) : EmbeddedBackend {
     override val backendId: String = "litert_bundle"
+    private data class LoadedInference(
+        val modelPath: String,
+        val inference: LlmInference,
+        val loadedAtMs: Long,
+        val lastUsedAtMs: AtomicLong = AtomicLong(loadedAtMs),
+        @Volatile var warmed: Boolean = false,
+        @Volatile var lastError: String = "",
+    )
+
+    private val loaded = ConcurrentHashMap<String, LoadedInference>()
 
     override fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
         val resolved = modelManager.resolve(spec.id)
         val installed = resolved.primaryFile != null
         val runtimeAvailable = isRuntimeAvailable()
+        val cacheKey = spec.id.trim().lowercase()
+        val cached = loaded[cacheKey]
         val detail = if (installed) {
             if (runtimeAvailable) {
-                "Model bundle found. MediaPipe LLM Inference runtime is available."
+                if (cached != null) {
+                    "Model bundle found. MediaPipe LLM Inference runtime is available and cached in memory."
+                } else {
+                    "Model bundle found. MediaPipe LLM Inference runtime is available."
+                }
             } else {
                 "Model bundle found, but MediaPipe LLM Inference runtime is not linked in this build."
             }
@@ -81,27 +174,92 @@ private class LiteRtBundleEmbeddedBackend(
             backendId = backendId,
             installed = installed,
             runnable = installed && runtimeAvailable,
+            loaded = cached != null,
+            warm = cached?.warmed == true,
             detail = detail,
             primaryModelPath = resolved.primaryFile?.absolutePath ?: resolved.defaultPrimaryPath.absolutePath,
             candidatePaths = resolved.candidateFiles.map { it.absolutePath },
+            lastError = cached?.lastError ?: "",
+            lastLoadedAtMs = cached?.loadedAtMs ?: 0L,
+            lastUsedAtMs = cached?.lastUsedAtMs?.get() ?: 0L,
         )
     }
 
     override fun generateText(spec: EmbeddedModelSpec, prompt: String): String {
-        val resolved = modelManager.resolve(spec.id)
-        val modelFile = resolved.primaryFile ?: throw IllegalStateException("embedded_model_not_installed")
-        val options = LlmInference.LlmInferenceOptions.builder()
-            .setModelPath(modelFile.absolutePath)
-            .setMaxTokens(1024)
-            .build()
-        val inference = LlmInference.createFromOptions(context, options)
-        return try {
-            inference.generateResponse(prompt).trim()
-        } finally {
-            runCatching {
-                inference.javaClass.methods.firstOrNull { it.name == "close" && it.parameterCount == 0 }
-                    ?.invoke(inference)
+        val instance = ensureLoaded(spec)
+        synchronized(instance) {
+            instance.lastUsedAtMs.set(System.currentTimeMillis())
+            return try {
+                instance.inference.generateResponse(prompt).trim()
+            } catch (ex: Exception) {
+                instance.lastError = ex.message ?: ex.javaClass.simpleName
+                runCatching { unload(spec) }
+                throw ex
             }
+        }
+    }
+
+    override fun generateTurn(
+        spec: EmbeddedModelSpec,
+        request: EmbeddedGenerationRequest,
+    ): EmbeddedGenerationResult {
+        val toolSpecs = EmbeddedTurnProtocol.extractToolSpecs(request.tools)
+        val prompt = EmbeddedTurnProtocol.renderPrompt(
+            systemPrompt = request.systemPrompt,
+            input = request.input,
+            tools = request.tools,
+            requireTool = request.requireTool,
+        )
+        val raw = generateText(spec, prompt).trim()
+        val parsed = EmbeddedTurnProtocol.parseResponse(raw, toolSpecs)
+        if (EmbeddedTurnProtocol.needsRepair(parsed, request.requireTool, toolSpecs)) {
+            val repairedRaw = runCatching {
+                generateText(spec, EmbeddedTurnProtocol.renderRepairPrompt(raw, toolSpecs, request.requireTool)).trim()
+            }.getOrDefault("")
+            if (repairedRaw.isNotBlank()) {
+                val repaired = EmbeddedTurnProtocol.parseResponse(repairedRaw, toolSpecs)
+                if (!EmbeddedTurnProtocol.needsRepair(repaired, request.requireTool, toolSpecs)) {
+                    return repaired.copy(rawText = repairedRaw)
+                }
+            }
+        }
+        return parsed
+    }
+
+    override fun warm(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
+        val instance = ensureLoaded(spec)
+        synchronized(instance) {
+            if (!instance.warmed) {
+                runCatching {
+                    instance.lastUsedAtMs.set(System.currentTimeMillis())
+                    instance.inference.generateResponse("Reply with OK.")
+                    instance.warmed = true
+                    instance.lastError = ""
+                }.onFailure { ex ->
+                    instance.lastError = ex.message ?: ex.javaClass.simpleName
+                    runCatching { unload(spec) }
+                    throw ex
+                }
+            }
+        }
+        return status(spec)
+    }
+
+    override fun unload(spec: EmbeddedModelSpec): Boolean {
+        val key = spec.id.trim().lowercase()
+        val existing = loaded.remove(key) ?: return false
+        runCatching {
+            existing.inference.javaClass.methods.firstOrNull { it.name == "close" && it.parameterCount == 0 }
+                ?.invoke(existing.inference)
+        }
+        return true
+    }
+
+    override fun unloadAll() {
+        val keys = loaded.keys().toList()
+        for (key in keys) {
+            val spec = EmbeddedModelCatalog.find(key) ?: continue
+            unload(spec)
         }
     }
 
@@ -110,6 +268,333 @@ private class LiteRtBundleEmbeddedBackend(
             Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInference")
             true
         }.getOrDefault(false)
+    }
+
+    private fun ensureLoaded(spec: EmbeddedModelSpec): LoadedInference {
+        val key = spec.id.trim().lowercase()
+        loaded[key]?.let { return it }
+        synchronized(this) {
+            loaded[key]?.let { return it }
+            val resolved = modelManager.resolve(spec.id)
+            val modelFile = resolved.primaryFile ?: throw IllegalStateException("embedded_model_not_installed")
+            val options = LlmInference.LlmInferenceOptions.builder()
+                .setModelPath(modelFile.absolutePath)
+                .setMaxTokens(1024)
+                .build()
+            val inference = LlmInference.createFromOptions(context, options)
+            val now = System.currentTimeMillis()
+            val created = LoadedInference(
+                modelPath = modelFile.absolutePath,
+                inference = inference,
+                loadedAtMs = now,
+            )
+            loaded[key] = created
+            Log.i("EmbeddedBackend", "Loaded embedded model ${spec.id} from ${modelFile.absolutePath}")
+            return created
+        }
+    }
+}
+
+internal object EmbeddedTurnProtocol {
+    fun extractToolSpecs(tools: JSONArray): List<EmbeddedToolSpec> {
+        val specs = mutableListOf<EmbeddedToolSpec>()
+        for (i in 0 until tools.length()) {
+            val wrapper = tools.optJSONObject(i) ?: continue
+            val fn = wrapper.optJSONObject("function") ?: wrapper
+            val name = fn.optString("name", "").trim()
+            if (name.isEmpty()) continue
+            val params = fn.optJSONObject("parameters")
+            val properties = params?.optJSONObject("properties")
+            val allowedArgumentNames = mutableSetOf<String>()
+            val enumStringValues = linkedMapOf<String, Set<String>>()
+            if (properties != null) {
+                val keys = properties.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    allowedArgumentNames.add(key)
+                    val prop = properties.optJSONObject(key)
+                    val enumArr = prop?.optJSONArray("enum")
+                    if (enumArr != null) {
+                        val values = mutableSetOf<String>()
+                        for (j in 0 until enumArr.length()) {
+                            val value = enumArr.optString(j, "").trim()
+                            if (value.isNotEmpty()) values.add(value)
+                        }
+                        if (values.isNotEmpty()) enumStringValues[key] = values
+                    }
+                }
+            }
+            val requiredArgumentNames = mutableSetOf<String>()
+            val required = params?.optJSONArray("required")
+            if (required != null) {
+                for (j in 0 until required.length()) {
+                    val key = required.optString(j, "").trim()
+                    if (key.isNotEmpty()) requiredArgumentNames.add(key)
+                }
+            }
+            specs.add(
+                EmbeddedToolSpec(
+                    name = name,
+                    description = fn.optString("description", "").trim(),
+                    allowedArgumentNames = allowedArgumentNames,
+                    requiredArgumentNames = requiredArgumentNames,
+                    enumStringValues = enumStringValues,
+                    allowAdditionalProperties = params?.optBoolean("additionalProperties", false) ?: false,
+                )
+            )
+        }
+        return specs
+    }
+
+    fun renderPrompt(
+        systemPrompt: String,
+        input: JSONArray,
+        tools: JSONArray,
+        requireTool: Boolean,
+    ): String {
+        val base = renderConversation(systemPrompt, input)
+        val toolGuide = summarizeTools(tools)
+        val toolRule = if (tools.length() == 0) {
+            "Tool calls are disabled for this turn. Return only the final answer."
+        } else if (requireTool) {
+            "You MUST call one or more tools unless a hard blocker prevents progress."
+        } else {
+            "Call tools when they are needed to complete the task. Otherwise answer directly."
+        }
+        return buildString {
+            append(base)
+            append("\n\nAvailable tools:\n")
+            append(toolGuide)
+            append("\n\nOutput contract:\n")
+            append("- Return exactly one JSON object.\n")
+            append("- Keys: assistant_message (string), tool_calls (array).\n")
+            append("- Each tool_calls item must have: name (string), arguments (object).\n")
+            append("- Do not wrap the JSON in markdown fences.\n")
+            append("- If no tool is needed, return an empty tool_calls array.\n")
+            append("- ")
+            append(toolRule)
+        }
+    }
+
+    fun renderRepairPrompt(
+        rawText: String,
+        toolSpecs: List<EmbeddedToolSpec>,
+        requireTool: Boolean,
+    ): String {
+        val toolLines = if (toolSpecs.isEmpty()) {
+            "- none"
+        } else {
+            toolSpecs.joinToString("\n") { spec -> "- ${spec.name}: ${spec.description}" }
+        }
+        val toolRule = if (toolSpecs.isEmpty()) {
+            "Tool calls are not allowed in this repair task."
+        } else if (requireTool) {
+            "At least one valid tool call is required unless the text clearly explains a hard blocker."
+        } else {
+            "Use tool_calls only if the response is actually invoking a listed tool."
+        }
+        return buildString {
+            append("Rewrite the following model output into exactly one valid JSON object.\n")
+            append("Return only JSON. No markdown fences.\n")
+            append("Allowed keys: assistant_message (string), tool_calls (array).\n")
+            append("Each tool_calls item must have: name (string), arguments (object).\n")
+            append("Allowed tools:\n")
+            append(toolLines)
+            append("\n")
+            append(toolRule)
+            append("\n\nOriginal output:\n")
+            append(rawText)
+        }
+    }
+
+    fun parseResponse(rawText: String, toolSpecs: List<EmbeddedToolSpec> = emptyList()): EmbeddedGenerationResult {
+        val parsed = extractJsonObject(rawText)?.let { runCatching { JSONObject(it) }.getOrNull() }
+        if (parsed == null) {
+            return EmbeddedGenerationResult(
+                messageTexts = listOf(rawText).filter { it.isNotBlank() },
+                calls = JSONArray(),
+                rawText = rawText,
+            )
+        }
+        val message = parsed.optString("assistant_message", "").trim()
+        val calls = JSONArray()
+        val toolSpecByName = toolSpecs.associateBy { it.name }
+        val rawCalls = parsed.optJSONArray("tool_calls") ?: JSONArray()
+        for (i in 0 until rawCalls.length()) {
+            val call = rawCalls.optJSONObject(i) ?: continue
+            val name = call.optString("name", "").trim()
+            if (name.isEmpty()) continue
+            val toolSpec = toolSpecByName[name]
+            if (toolSpecs.isNotEmpty() && toolSpec == null) continue
+            val rawArguments = call.optJSONObject("arguments") ?: JSONObject()
+            val arguments = sanitizeArguments(rawArguments, toolSpec)
+            if (toolSpec != null && !hasRequiredArguments(arguments, toolSpec)) continue
+            calls.put(JSONObject().apply {
+                put("name", name)
+                put("arguments", arguments)
+                put("call_id", "embedded_${i}_${name}")
+            })
+        }
+        return EmbeddedGenerationResult(
+            messageTexts = listOf(message).filter { it.isNotBlank() },
+            calls = calls,
+            rawText = rawText,
+        )
+    }
+
+    fun needsRepair(
+        result: EmbeddedGenerationResult,
+        requireTool: Boolean,
+        toolSpecs: List<EmbeddedToolSpec>,
+    ): Boolean {
+        if (requireTool && toolSpecs.isNotEmpty() && result.calls.length() == 0) {
+            return true
+        }
+        if (result.messageTexts.isEmpty() && result.calls.length() == 0) {
+            return true
+        }
+        return false
+    }
+
+    private fun sanitizeArguments(arguments: JSONObject, toolSpec: EmbeddedToolSpec?): JSONObject {
+        if (toolSpec == null) return JSONObject(arguments.toString())
+        if (toolSpec.allowAdditionalProperties && toolSpec.enumStringValues.isEmpty()) {
+            return JSONObject(arguments.toString())
+        }
+        val sanitized = JSONObject()
+        val keys = arguments.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            if (!toolSpec.allowAdditionalProperties && !toolSpec.allowedArgumentNames.contains(key)) continue
+            val value = arguments.opt(key)
+            val enumValues = toolSpec.enumStringValues[key]
+            if (enumValues != null) {
+                val stringValue = (value as? String)?.trim().orEmpty()
+                if (!enumValues.contains(stringValue)) continue
+                sanitized.put(key, stringValue)
+                continue
+            }
+            sanitized.put(key, value)
+        }
+        return sanitized
+    }
+
+    private fun hasRequiredArguments(arguments: JSONObject, toolSpec: EmbeddedToolSpec): Boolean {
+        for (key in toolSpec.requiredArgumentNames) {
+            if (!arguments.has(key) || arguments.isNull(key)) return false
+            if ((arguments.opt(key) as? String)?.trim()?.isEmpty() == true) return false
+        }
+        return true
+    }
+
+    private fun summarizeTools(tools: JSONArray): String {
+        if (tools.length() == 0) return "- none"
+        val lines = mutableListOf<String>()
+        for (i in 0 until tools.length()) {
+            val wrapper = tools.optJSONObject(i) ?: continue
+            val fn = wrapper.optJSONObject("function") ?: wrapper
+            val name = fn.optString("name", "").trim()
+            if (name.isEmpty()) continue
+            val description = fn.optString("description", "").trim()
+            val params = fn.optJSONObject("parameters")
+            val properties = params?.optJSONObject("properties")
+            val required = params?.optJSONArray("required")
+            val argNames = mutableListOf<String>()
+            if (properties != null) {
+                val keys = properties.keys()
+                while (keys.hasNext()) argNames.add(keys.next())
+            }
+            argNames.sort()
+            val requiredSet = mutableSetOf<String>()
+            if (required != null) {
+                for (j in 0 until required.length()) {
+                    val key = required.optString(j, "").trim()
+                    if (key.isNotEmpty()) requiredSet.add(key)
+                }
+            }
+            val argsSummary = if (argNames.isEmpty()) {
+                "no arguments"
+            } else {
+                argNames.joinToString(", ") { key ->
+                    if (requiredSet.contains(key)) "$key*" else key
+                }
+            }
+            lines.add("- $name($argsSummary): $description")
+        }
+        return if (lines.isEmpty()) "- none" else lines.joinToString("\n")
+    }
+
+    private fun renderConversation(systemPrompt: String, input: JSONArray): String {
+        val sb = StringBuilder()
+        sb.append("System:\n")
+        sb.append(systemPrompt.trim())
+        sb.append("\n\nConversation:\n")
+        for (i in 0 until input.length()) {
+            val msg = input.optJSONObject(i) ?: continue
+            val role = msg.optString("role", "user").ifBlank { "user" }
+            val content = msg.opt("content")
+            val text = when (content) {
+                is String -> content
+                is JSONArray -> {
+                    buildString {
+                        for (j in 0 until content.length()) {
+                            val part = content.optJSONObject(j) ?: continue
+                            val t = part.optString("text", "").trim()
+                            if (t.isNotEmpty()) {
+                                if (isNotEmpty()) append("\n")
+                                append(t)
+                            }
+                        }
+                    }
+                }
+                else -> msg.optString("text", "")
+            }.trim()
+            if (text.isEmpty()) continue
+            sb.append(role.replaceFirstChar {
+                if (it.isLowerCase()) it.titlecase() else it.toString()
+            })
+            sb.append(": ")
+            sb.append(text)
+            sb.append("\n\n")
+        }
+        sb.append("Assistant:")
+        return sb.toString().trim()
+    }
+
+    private fun extractJsonObject(rawText: String): String? {
+        val trimmed = rawText.trim()
+        if (trimmed.isEmpty()) return null
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed
+        val fenceMatch = Regex("```(?:json)?\\s*(\\{.*?\\})\\s*```", RegexOption.DOT_MATCHES_ALL)
+            .find(trimmed)
+        if (fenceMatch != null) return fenceMatch.groupValues[1]
+        val first = trimmed.indexOf('{')
+        if (first < 0) return null
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in first until trimmed.length) {
+            val ch = trimmed[i]
+            if (inString) {
+                if (escaped) {
+                    escaped = false
+                } else if (ch == '\\') {
+                    escaped = true
+                } else if (ch == '"') {
+                    inString = false
+                }
+                continue
+            }
+            when (ch) {
+                '"' -> inString = true
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return trimmed.substring(first, i + 1)
+                }
+            }
+        }
+        return null
     }
 }
 

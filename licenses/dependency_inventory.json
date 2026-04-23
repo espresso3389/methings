@@ -157,6 +157,13 @@
     },
     {
       "ecosystem": "android-gradle",
+      "name": "com.google.mediapipe:tasks-genai",
+      "version": "0.10.27",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
       "name": "com.google.zxing:core",
       "version": "3.5.3",
       "source_path": "app/android/app/build.gradle.kts",

@@ -86,6 +86,7 @@ class AgentService : LifecycleService() {
             sshNoAuthManager
         ).also {
             it.startServer()
+            it.warmConfiguredEmbeddedModel()
         }
         sshdManager.startIfEnabled()
         if (sshdManager.isEnabled()) localServer?.syncAuthorizedKeys()
@@ -128,6 +129,11 @@ class AgentService : LifecycleService() {
         localServer?.stopServer()
         localServer = null
         super.onDestroy()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        localServer?.onTrimMemory(level)
     }
 
     private fun tickBrainWorkNotification() {

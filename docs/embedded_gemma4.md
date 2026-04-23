@@ -150,12 +150,16 @@ This repo now has:
 - the config/runtime seams for an `Embedded` provider
 - a backend registry abstraction
 - model install status detection
+- a prompt-driven local tool-calling bridge that keeps embedded turns inside the existing agent/tool loop
+- LiteRT backend instance caching with warm/load state reporting
+- service-start warmup for the configured embedded model
+- memory-pressure unload handling wired from the Android service lifecycle
 - a fixed on-device placement convention:
   - `files/user/models/embedded/gemma4-e2b-it/model.litertlm`
   - or `model.task`
   - or `model.tflite`
 
-It still does not have the actual native Gemma execution backend yet. Exposing the provider before the runtime lands is acceptable for development builds, but production should gate it on backend availability.
+It still does not have a production-grade native Gemma tool-calling SDK path yet. The normalized embedded backend seam now exists in code, and the current LiteRT-backed implementation fulfills it with a structured JSON prompt/response contract behind that backend boundary. Production should still replace that prompt-driven implementation with a native structured output/tool-calling path when the runtime supports it.
 
 ## Current install flow
 

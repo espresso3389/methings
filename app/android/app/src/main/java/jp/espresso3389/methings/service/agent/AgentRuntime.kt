@@ -541,42 +541,8 @@ class AgentRuntime(
         if (providerKind == ProviderKind.EMBEDDED) {
             val backendStatus = embeddedBackendRegistry.statusFor(model)
             if (embeddedSpec != null && backendStatus?.runnable == true) {
-                val dialogueLimit = config.intWithProfile("dialogue_window_user_assistant", 40, 10, 120)
-                val dialogueRawLimit = config.intWithProfile("dialogue_raw_fetch_limit", 320, 40, 2000)
-                val persistentMemory = getPersistentMemory()
-                val journalCurrent = journalStore.getCurrent(sessionId).optString("text", "")
-                val dialogue = listDialogue(sessionId, dialogueLimit, dialogueRawLimit)
-                val curText = item.optString("text", "")
-                val filteredDialogue = if (dialogue.isNotEmpty() &&
-                    dialogue.last().optString("role") == "user" &&
-                    dialogue.last().optString("text") == curText
-                ) dialogue.dropLast(1) else dialogue
-                val systemPrompt = buildSystemPrompt(config, emptySet()) +
-                    "\n\nEmbedded execution note: Tool calling is not wired yet in this build. Respond directly in text."
-                val journalBlob = buildJournalBlob(journalCurrent, sessionId, persistentMemory)
-                val pendingInput = buildInitialInput(
-                    kind = ProviderKind.EMBEDDED,
-                    dialogue = filteredDialogue,
-                    journalBlob = journalBlob,
-                    curText = curText,
-                    item = item,
-                    supportedMedia = emptySet(),
-                )
-                val prompt = renderEmbeddedPrompt(systemPrompt, pendingInput)
-                val reply = runCatching { embeddedBackendRegistry.generateText(model, prompt) }.getOrElse { ex ->
-                    "Embedded inference failed: ${ex.message ?: ex.javaClass.simpleName}"
-                }.trim()
-                val finalReply = if (reply.isNotBlank()) reply else "Embedded inference returned an empty response."
-                recordMessage(
-                    "assistant",
-                    finalReply,
-                    JSONObject().put("item_id", item.optString("id")).put("session_id", sessionId),
-                )
-                emitLog("brain_response", JSONObject()
-                    .put("item_id", item.optString("id"))
-                    .put("text", finalReply.take(300)))
-                return
-            }
+                // Continue into the normal tool-planning loop below.
+            } else {
             val detail = when {
                 embeddedSpec == null -> "Unknown embedded model '$model'."
                 backendStatus == null -> "Embedded model '$model' is not registered."
@@ -601,6 +567,7 @@ class AgentRuntime(
                 .put("item_id", item.optString("id"))
                 .put("text", msg.take(300)))
             return
+            }
         }
         val extraCfg = mutableMapOf<String, String>()
         if (providerKind == ProviderKind.ANTHROPIC && config.boolWithProfile("extended_thinking", false)) {
@@ -701,98 +668,113 @@ class AgentRuntime(
 
             val usingResumedCalls = resumedCalls != null
             val calls: JSONArray
+            var providerPayload: JSONObject? = null
             if (usingResumedCalls) {
                 calls = resumedCalls ?: JSONArray()
             } else {
-                val body = buildRequestBody(providerKind, model, tools, pendingInput, systemPrompt, toolRequiredUnsatisfied)
-                if (providerKind == ProviderKind.OPENAI_RESPONSES && roundIdx > 0 && lastResponsesResponseId.isNotBlank()) {
-                    body.put("previous_response_id", lastResponsesResponseId)
-                }
-
-                try {
-                    val inputArr = pendingInput as? JSONArray
-                    if (inputArr != null) {
-                        val summary = (0 until inputArr.length()).joinToString(", ") { i ->
-                            val o = inputArr.optJSONObject(i)
-                            val role = o?.optString("role", "?") ?: "?"
-                            val text = o?.optString("text", "") ?: ""
-                            val content = o?.opt("content")
-                            val textLen = when {
-                                text.isNotEmpty() -> text.length
-                                content is String -> content.length
-                                content is JSONArray -> {
-                                    (0 until content.length()).sumOf { j ->
-                                        content.optJSONObject(j)?.optString("text", "")?.length ?: 0
-                                    }
-                                }
-                                else -> 0
-                            }
-                            "$role($textLen)"
-                        }
-                        Log.i(TAG, "Round $roundIdx input: [$summary] system=${systemPrompt.length}chars tools=${tools.length()}")
+                val parseResult = if (providerKind == ProviderKind.EMBEDDED) {
+                    embeddedBackendRegistry.generateTurn(
+                        modelId = model,
+                        request = EmbeddedGenerationRequest(
+                            systemPrompt = systemPrompt,
+                            input = pendingInput,
+                            tools = tools,
+                            requireTool = toolRequiredUnsatisfied,
+                        ),
+                    )
+                } else {
+                    val body = buildRequestBody(providerKind, model, tools, pendingInput, systemPrompt, toolRequiredUnsatisfied)
+                    if (providerKind == ProviderKind.OPENAI_RESPONSES && roundIdx > 0 && lastResponsesResponseId.isNotBlank()) {
+                        body.put("previous_response_id", lastResponsesResponseId)
                     }
-                } catch (_: Exception) {}
-                if (providerKind == ProviderKind.GOOGLE_GEMINI) {
-                    logGeminiRequestStructure(body)
-                }
 
-                var payload: JSONObject? = null
-                var lastEx: Exception? = null
-                for (attempt in 0..maxRetries) {
                     try {
-                        recordProviderRequest(
-                            sessionId = sessionId,
-                            itemId = item.optString("id"),
-                            providerKind = providerKind,
-                            providerUrl = effectiveProviderUrl,
-                            model = model,
-                            phase = "round_${roundIdx}_attempt_${attempt}",
-                            body = body,
-                        )
-                        payload = llmClient.streamingPost(
-                            effectiveProviderUrl, headers, body, providerKind,
-                            connectTimeoutMs, readTimeoutMs,
-                            interruptCheck = { interruptFlag }
-                        )
-                        lastEx = null
-                        break
-                    } catch (ex: InterruptedException) {
-                        throw ex
-                    } catch (ex: Exception) {
-                        lastEx = ex
-                        if (body.has("tool_choice")) {
-                            try {
-                                val body2 = JSONObject(body.toString())
-                                body2.remove("tool_choice")
-                                recordProviderRequest(
-                                    sessionId = sessionId,
-                                    itemId = item.optString("id"),
-                                    providerKind = providerKind,
-                                    providerUrl = effectiveProviderUrl,
-                                    model = model,
-                                    phase = "round_${roundIdx}_attempt_${attempt}_fallback_no_tool_choice",
-                                    body = body2,
-                                )
-                                payload = llmClient.streamingPost(
-                                    effectiveProviderUrl, headers, body2, providerKind,
-                                    connectTimeoutMs, readTimeoutMs,
-                                    interruptCheck = { interruptFlag }
-                                )
-                                lastEx = null
-                                break
-                            } catch (_: Exception) {}
+                        val inputArr = pendingInput as? JSONArray
+                        if (inputArr != null) {
+                            val summary = (0 until inputArr.length()).joinToString(", ") { i ->
+                                val o = inputArr.optJSONObject(i)
+                                val role = o?.optString("role", "?") ?: "?"
+                                val text = o?.optString("text", "") ?: ""
+                                val content = o?.opt("content")
+                                val textLen = when {
+                                    text.isNotEmpty() -> text.length
+                                    content is String -> content.length
+                                    content is JSONArray -> {
+                                        (0 until content.length()).sumOf { j ->
+                                            content.optJSONObject(j)?.optString("text", "")?.length ?: 0
+                                        }
+                                    }
+                                    else -> 0
+                                }
+                                "$role($textLen)"
+                            }
+                            Log.i(TAG, "Round $roundIdx input: [$summary] system=${systemPrompt.length}chars tools=${tools.length()}")
                         }
-                        val isTransient = ex is java.net.SocketTimeoutException || ex is java.net.ConnectException
-                        if (!isTransient || attempt >= maxRetries) throw ex
-                        Thread.sleep((300L * (attempt + 1)).coerceAtMost(1500))
+                    } catch (_: Exception) {}
+                    if (providerKind == ProviderKind.GOOGLE_GEMINI) {
+                        logGeminiRequestStructure(body)
                     }
-                }
-                if (lastEx != null) throw lastEx
-                if (payload == null) throw RuntimeException("No response from provider")
 
-                val parseResult = parseProviderResponse(providerKind, payload)
-                val messageTexts = parseResult.first
-                calls = parseResult.second
+                    var payload: JSONObject? = null
+                    var lastEx: Exception? = null
+                    for (attempt in 0..maxRetries) {
+                        try {
+                            recordProviderRequest(
+                                sessionId = sessionId,
+                                itemId = item.optString("id"),
+                                providerKind = providerKind,
+                                providerUrl = effectiveProviderUrl,
+                                model = model,
+                                phase = "round_${roundIdx}_attempt_${attempt}",
+                                body = body,
+                            )
+                            payload = llmClient.streamingPost(
+                                effectiveProviderUrl, headers, body, providerKind,
+                                connectTimeoutMs, readTimeoutMs,
+                                interruptCheck = { interruptFlag }
+                            )
+                            lastEx = null
+                            break
+                        } catch (ex: InterruptedException) {
+                            throw ex
+                        } catch (ex: Exception) {
+                            lastEx = ex
+                            if (body.has("tool_choice")) {
+                                try {
+                                    val body2 = JSONObject(body.toString())
+                                    body2.remove("tool_choice")
+                                    recordProviderRequest(
+                                        sessionId = sessionId,
+                                        itemId = item.optString("id"),
+                                        providerKind = providerKind,
+                                        providerUrl = effectiveProviderUrl,
+                                        model = model,
+                                        phase = "round_${roundIdx}_attempt_${attempt}_fallback_no_tool_choice",
+                                        body = body2,
+                                    )
+                                    payload = llmClient.streamingPost(
+                                        effectiveProviderUrl, headers, body2, providerKind,
+                                        connectTimeoutMs, readTimeoutMs,
+                                        interruptCheck = { interruptFlag }
+                                    )
+                                    lastEx = null
+                                    break
+                                } catch (_: Exception) {}
+                            }
+                            val isTransient = ex is java.net.SocketTimeoutException || ex is java.net.ConnectException
+                            if (!isTransient || attempt >= maxRetries) throw ex
+                            Thread.sleep((300L * (attempt + 1)).coerceAtMost(1500))
+                        }
+                    }
+                    if (lastEx != null) throw lastEx
+                    if (payload == null) throw RuntimeException("No response from provider")
+
+                    providerPayload = payload
+                    val pair = parseProviderResponse(providerKind, payload)
+                    EmbeddedGenerationResult(pair.first, pair.second, payload.toString())
+                }
+                val messageTexts = parseResult.messageTexts
+                calls = parseResult.calls
                 toolCallsRequested += calls.length()
 
                 if (calls.length() == 0) {
@@ -924,7 +906,7 @@ class AgentRuntime(
                 }
 
                 if (providerKind == ProviderKind.ANTHROPIC) {
-                    val rawContent = payload.optJSONArray("content")
+                    val rawContent = providerPayload?.optJSONArray("content")
                     if (rawContent != null) {
                         pendingInput.put(JSONObject().put("role", "assistant").put("content", rawContent))
                     } else {
@@ -962,6 +944,12 @@ class AgentRuntime(
                         })
                     }
                     pendingInput.put(JSONObject().put("role", "model").put("parts", parts))
+                }
+
+                if (providerKind == ProviderKind.EMBEDDED) {
+                    if (messageTexts.isNotEmpty()) {
+                        pendingInput.put(JSONObject().put("role", "assistant").put("content", messageTexts.joinToString("\n")))
+                    }
                 }
             }
 
@@ -1162,41 +1150,53 @@ class AgentRuntime(
                 "\n- Summarize what was accomplished and what remains." +
                 "\n- Do NOT ask the user to say '続けて' or 'continue'. If the task is incomplete, just say what was done and what is left." +
                 stallInfo).trim()
-            val finalBody = buildRequestBody(providerKind, model, JSONArray(), pendingInput, finalPrompt, false)
-            if (providerKind == ProviderKind.OPENAI_RESPONSES && lastResponsesResponseId.isNotBlank()) {
-                finalBody.put("previous_response_id", lastResponsesResponseId)
-            }
-            finalBody.put("tool_choice", "none")
-
-            val finalPayload = try {
-                recordProviderRequest(
-                    sessionId = sessionId,
-                    itemId = item.optString("id"),
-                    providerKind = providerKind,
-                    providerUrl = effectiveProviderUrl,
-                    model = model,
-                    phase = "finalization",
-                    body = finalBody,
+            val finalResult = if (providerKind == ProviderKind.EMBEDDED) {
+                val embedded = embeddedBackendRegistry.generateTurn(
+                    modelId = model,
+                    request = EmbeddedGenerationRequest(
+                        systemPrompt = finalPrompt,
+                        input = pendingInput,
+                        tools = JSONArray(),
+                        requireTool = false,
+                    ),
                 )
-                llmClient.streamingPost(effectiveProviderUrl, headers, finalBody, providerKind, connectTimeoutMs, readTimeoutMs,
-                    interruptCheck = { interruptFlag })
-            } catch (_: Exception) {
-                val body2 = JSONObject(finalBody.toString())
-                body2.remove("tool_choice")
-                recordProviderRequest(
-                    sessionId = sessionId,
-                    itemId = item.optString("id"),
-                    providerKind = providerKind,
-                    providerUrl = effectiveProviderUrl,
-                    model = model,
-                    phase = "finalization_fallback_no_tool_choice",
-                    body = body2,
-                )
-                llmClient.streamingPost(effectiveProviderUrl, headers, body2, providerKind, connectTimeoutMs, readTimeoutMs,
-                    interruptCheck = { interruptFlag })
-            }
+                Pair(embedded.messageTexts, embedded.calls)
+            } else {
+                val finalBody = buildRequestBody(providerKind, model, JSONArray(), pendingInput, finalPrompt, false)
+                if (providerKind == ProviderKind.OPENAI_RESPONSES && lastResponsesResponseId.isNotBlank()) {
+                    finalBody.put("previous_response_id", lastResponsesResponseId)
+                }
+                finalBody.put("tool_choice", "none")
 
-            val finalResult = parseProviderResponse(providerKind, finalPayload)
+                val finalPayload = try {
+                    recordProviderRequest(
+                        sessionId = sessionId,
+                        itemId = item.optString("id"),
+                        providerKind = providerKind,
+                        providerUrl = effectiveProviderUrl,
+                        model = model,
+                        phase = "finalization",
+                        body = finalBody,
+                    )
+                    llmClient.streamingPost(effectiveProviderUrl, headers, finalBody, providerKind, connectTimeoutMs, readTimeoutMs,
+                        interruptCheck = { interruptFlag })
+                } catch (_: Exception) {
+                    val body2 = JSONObject(finalBody.toString())
+                    body2.remove("tool_choice")
+                    recordProviderRequest(
+                        sessionId = sessionId,
+                        itemId = item.optString("id"),
+                        providerKind = providerKind,
+                        providerUrl = effectiveProviderUrl,
+                        model = model,
+                        phase = "finalization_fallback_no_tool_choice",
+                        body = body2,
+                    )
+                    llmClient.streamingPost(effectiveProviderUrl, headers, body2, providerKind, connectTimeoutMs, readTimeoutMs,
+                        interruptCheck = { interruptFlag })
+                }
+                parseProviderResponse(providerKind, finalPayload)
+            }
             val finalToolSummary = buildToolHistorySummary(toolHistory)
             for ((idx, text) in finalResult.first.withIndex()) {
                 val recorded = if (idx == finalResult.first.lastIndex && finalToolSummary.isNotEmpty()) {
@@ -2148,41 +2148,6 @@ class AgentRuntime(
             }
         }
         return input
-    }
-
-    private fun renderEmbeddedPrompt(systemPrompt: String, input: JSONArray): String {
-        val sb = StringBuilder()
-        sb.append("System:\n")
-        sb.append(systemPrompt.trim())
-        sb.append("\n\nConversation:\n")
-        for (i in 0 until input.length()) {
-            val msg = input.optJSONObject(i) ?: continue
-            val role = msg.optString("role", "user").ifBlank { "user" }
-            val content = msg.opt("content")
-            val text = when (content) {
-                is String -> content
-                is JSONArray -> {
-                    buildString {
-                        for (j in 0 until content.length()) {
-                            val part = content.optJSONObject(j) ?: continue
-                            val t = part.optString("text", "").trim()
-                            if (t.isNotEmpty()) {
-                                if (isNotEmpty()) append("\n")
-                                append(t)
-                            }
-                        }
-                    }
-                }
-                else -> msg.optString("text", "")
-            }.trim()
-            if (text.isEmpty()) continue
-            sb.append(role.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString() })
-            sb.append(": ")
-            sb.append(text)
-            sb.append("\n\n")
-        }
-        sb.append("Assistant:")
-        return sb.toString().trim()
     }
 
     private fun shouldUseDirectMediaFallback(kind: ProviderKind, providerUrl: String, model: String): Boolean {
