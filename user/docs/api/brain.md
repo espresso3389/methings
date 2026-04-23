@@ -36,6 +36,7 @@ Returns:
   - `last_loaded_at_ms` (number)
   - `last_used_at_ms` (number)
   - `last_turn_diagnostics` (object, optional), including:
+    - `turn_id` (number)
     - `last_phase` (string)
     - `selected_tools` (array)
     - `failed_tools` (array)

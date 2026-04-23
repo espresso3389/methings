@@ -34,6 +34,7 @@ data class EmbeddedToolFailure(
 }
 
 data class EmbeddedTurnDiagnostics(
+    val turnId: Long,
     val lastPhase: String,
     val selectedTools: List<String>,
     val failedTools: List<String>,
@@ -44,6 +45,7 @@ data class EmbeddedTurnDiagnostics(
     val updatedAtMs: Long,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
+        put("turn_id", turnId)
         put("last_phase", lastPhase)
         put("selected_tools", JSONArray(selectedTools))
         put("failed_tools", JSONArray(failedTools))
@@ -65,6 +67,7 @@ internal data class EmbeddedToolSpec(
 )
 
 internal data class EmbeddedTurnDiagnosticsState(
+    val turnId: Long,
     val selectedTools: LinkedHashSet<String> = linkedSetOf(),
     val toolFailures: LinkedHashMap<String, String> = linkedMapOf(),
     var repairUsed: Boolean = false,
@@ -192,6 +195,7 @@ private class LiteRtBundleEmbeddedBackend(
 
     private val loaded = ConcurrentHashMap<String, LoadedInference>()
     private val diagnostics = ConcurrentHashMap<String, EmbeddedTurnDiagnostics>()
+    private val turnCounter = AtomicLong(0L)
 
     override fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
         val resolved = modelManager.resolve(spec.id)
@@ -247,7 +251,7 @@ private class LiteRtBundleEmbeddedBackend(
         spec: EmbeddedModelSpec,
         request: EmbeddedGenerationRequest,
     ): EmbeddedGenerationResult {
-        val turnDiagnostics = EmbeddedTurnDiagnosticsState()
+        val turnDiagnostics = EmbeddedTurnDiagnosticsState(turnId = turnCounter.incrementAndGet())
         val toolSpecs = EmbeddedTurnProtocol.extractToolSpecs(request.tools)
         val planPrompt = EmbeddedTurnProtocol.renderPlanPrompt(
             systemPrompt = request.systemPrompt,
@@ -559,6 +563,7 @@ private class LiteRtBundleEmbeddedBackend(
             fallbackUsed = fallbackUsed,
         )
         diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
+            turnId = state.turnId,
             lastPhase = phase,
             selectedTools = state.selectedTools.toList(),
             failedTools = state.toolFailures.keys.toList(),

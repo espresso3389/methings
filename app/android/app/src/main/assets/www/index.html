@@ -9468,6 +9468,7 @@
                   .filter(Boolean)
               : [];
             lines.push("Last turn:");
+            if (diag.turn_id !== undefined && diag.turn_id !== null) lines.push("turn_id=" + String(diag.turn_id));
             lines.push("phase=" + String(diag.last_phase || "unknown"));
             lines.push("tools=" + (tools.length ? tools.join(", ") : "none"));
             if (toolFailures.length) lines.push("tool_failures=" + toolFailures.join(", "));

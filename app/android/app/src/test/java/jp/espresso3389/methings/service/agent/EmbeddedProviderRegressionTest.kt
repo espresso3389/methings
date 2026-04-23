@@ -291,6 +291,7 @@ class EmbeddedProviderRegressionTest {
             lastLoadedAtMs = 123L,
             lastUsedAtMs = 456L,
             lastTurnDiagnostics = EmbeddedTurnDiagnostics(
+                turnId = 12L,
                 lastPhase = "merged",
                 selectedTools = listOf("write_file"),
                 failedTools = listOf("mkdir"),
@@ -307,6 +308,7 @@ class EmbeddedProviderRegressionTest {
         assertEquals(123L, json.getLong("last_loaded_at_ms"))
         assertEquals(456L, json.getLong("last_used_at_ms"))
         val diagnostics = json.getJSONObject("last_turn_diagnostics")
+        assertEquals(12L, diagnostics.getLong("turn_id"))
         assertEquals("merged", diagnostics.getString("last_phase"))
         assertEquals("mkdir", diagnostics.getJSONArray("failed_tools").getString(0))
         val failures = diagnostics.getJSONArray("tool_failures")
@@ -319,7 +321,7 @@ class EmbeddedProviderRegressionTest {
 
     @Test
     fun mergeDiagnosticsStateAccumulatesFailuresAcrossPhases() {
-        val state = EmbeddedTurnDiagnosticsState()
+        val state = EmbeddedTurnDiagnosticsState(turnId = 33L)
 
         EmbeddedTurnProtocol.mergeDiagnosticsState(
             state = state,
@@ -401,6 +403,7 @@ class EmbeddedProviderRegressionTest {
                 lastLoadedAtMs = 1L,
                 lastUsedAtMs = 2L,
                 lastTurnDiagnostics = EmbeddedTurnDiagnostics(
+                    turnId = 1L,
                     lastPhase = "plan",
                     selectedTools = listOf("write_file"),
                     failedTools = emptyList(),
