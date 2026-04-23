@@ -2440,13 +2440,15 @@
             <select id="brainModelPreset">
               <option value="" disabled selected>Choose a model...</option>
             </select>
-            <div class="muted" id="brainEmbeddedStatus" style="margin-top:4px;display:none;"></div>
+            <div class="muted" id="brainEmbeddedStatus" style="margin-top:4px;display:none;white-space:pre-wrap;"></div>
           </div>
           <div class="field" id="brainEmbeddedInstallField" style="display:none;">
             <label>Embedded Model</label>
             <div class="btn-group" style="margin-bottom:8px;">
               <button class="btn" id="brainEmbeddedImportBtn" type="button">Import File</button>
               <button class="btn" id="brainEmbeddedDownloadBtn" type="button">Download URL</button>
+              <button class="btn" id="brainEmbeddedWarmBtn" type="button">Warm</button>
+              <button class="btn" id="brainEmbeddedUnloadBtn" type="button">Unload</button>
             </div>
             <input type="url" id="brainEmbeddedDownloadUrl" placeholder="https://.../model.litertlm" />
             <div class="muted" id="brainEmbeddedInstallHint" style="margin-top:4px;">
@@ -9356,6 +9358,8 @@
       const brainEmbeddedDownloadUrl = $("brainEmbeddedDownloadUrl");
       const brainEmbeddedImportBtn = $("brainEmbeddedImportBtn");
       const brainEmbeddedDownloadBtn = $("brainEmbeddedDownloadBtn");
+      const brainEmbeddedWarmBtn = $("brainEmbeddedWarmBtn");
+      const brainEmbeddedUnloadBtn = $("brainEmbeddedUnloadBtn");
       const BRAIN_PROVIDER_PRESETS = {
         embedded: {
           base_url: "embedded://local",
@@ -9436,10 +9440,50 @@
             statusEl.textContent = String(data.detail || "Embedded provider is not currently selected.");
             return;
           }
-          const parts = [String(st.detail || "").trim(), String(st.primary_model_path || "").trim()].filter(Boolean);
-          statusEl.textContent = parts.join(" ");
+          const diag = st.last_turn_diagnostics || {};
+          const lines = [];
+          const summaryParts = [
+            String(st.detail || "").trim(),
+            String(st.primary_model_path || "").trim(),
+          ].filter(Boolean);
+          if (summaryParts.length) lines.push(summaryParts.join(" "));
+          const runtimeFlags = [];
+          runtimeFlags.push("installed=" + (!!st.installed));
+          runtimeFlags.push("runnable=" + (!!st.runnable));
+          runtimeFlags.push("loaded=" + (!!st.loaded));
+          runtimeFlags.push("warm=" + (!!st.warm));
+          lines.push("Runtime: " + runtimeFlags.join(" "));
+          if (diag && Object.keys(diag).length) {
+            const tools = Array.isArray(diag.selected_tools) ? diag.selected_tools.filter(Boolean) : [];
+            lines.push("Last turn:");
+            lines.push("phase=" + String(diag.last_phase || "unknown"));
+            lines.push("tools=" + (tools.length ? tools.join(", ") : "none"));
+            lines.push("repair_used=" + (!!diag.repair_used) + " fallback_used=" + (!!diag.fallback_used));
+            if (diag.last_summary) lines.push(String(diag.last_summary));
+          }
+          statusEl.textContent = lines.join("\n");
         } catch (_) {
           statusEl.textContent = "Failed to get embedded model status.";
+        }
+      }
+      async function embeddedModelAction(path, successText) {
+        const model = currentEmbeddedModelId();
+        if (!model) { showToast("Choose an embedded model first"); return; }
+        try {
+          const res = await fetch(API + path, {
+            method: "POST",
+            headers: { "Content-Type": "application/json; charset=utf-8" },
+            body: JSON.stringify({ model: model }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            showToast(String(data.detail || data.error || "Embedded action failed"));
+            return;
+          }
+          showToast(successText);
+          await refreshEmbeddedBrainStatus();
+        } catch (_) {
+          showToast("Embedded action failed");
         }
       }
       async function downloadEmbeddedModel() {
@@ -9779,6 +9823,16 @@
       if (brainEmbeddedDownloadBtn) {
         brainEmbeddedDownloadBtn.addEventListener("click", async () => {
           await downloadEmbeddedModel();
+        });
+      }
+      if (brainEmbeddedWarmBtn) {
+        brainEmbeddedWarmBtn.addEventListener("click", async () => {
+          await embeddedModelAction("/brain/embedded/warm", "Model warmed");
+        });
+      }
+      if (brainEmbeddedUnloadBtn) {
+        brainEmbeddedUnloadBtn.addEventListener("click", async () => {
+          await embeddedModelAction("/brain/embedded/unload", "Model unloaded");
         });
       }
       $("brainOrVendor").addEventListener("change", () => {

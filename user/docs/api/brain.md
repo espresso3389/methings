@@ -35,6 +35,13 @@ Returns:
   - `last_error` (string)
   - `last_loaded_at_ms` (number)
   - `last_used_at_ms` (number)
+  - `last_turn_diagnostics` (object, optional), including:
+    - `last_phase` (string)
+    - `selected_tools` (array)
+    - `repair_used` (boolean)
+    - `fallback_used` (boolean)
+    - `last_summary` (string)
+    - `updated_at_ms` (number)
   - capability flags such as `supports_tool_calling`
 
 ## POST /brain/embedded/install

@@ -99,13 +99,45 @@ class EmbeddedProviderRegressionTest {
             rawText = "args",
         )
 
-        val merged = EmbeddedTurnProtocol.mergePlanAndArguments(plan, args)
+        val merged = EmbeddedTurnProtocol.mergePlanAndArguments(plan, listOf(args))
 
         assertEquals(2, merged.calls.length())
         assertEquals("write_file", merged.calls.getJSONObject(0).getString("name"))
         assertEquals("a.txt", merged.calls.getJSONObject(0).getJSONObject("arguments").getString("path"))
         assertEquals("mkdir", merged.calls.getJSONObject(1).getString("name"))
         assertEquals("dir", merged.calls.getJSONObject(1).getJSONObject("arguments").getString("path"))
+    }
+
+    @Test
+    fun embeddedSingleArgumentPromptScopesToOneTool() {
+        val toolSpecs = listOf(
+            EmbeddedToolSpec(
+                name = "write_file",
+                description = "Write a file",
+                allowedArgumentNames = setOf("path", "content"),
+                requiredArgumentNames = setOf("path", "content"),
+                enumStringValues = emptyMap(),
+                allowAdditionalProperties = false,
+            ),
+            EmbeddedToolSpec(
+                name = "mkdir",
+                description = "Create a directory",
+                allowedArgumentNames = setOf("path", "parents"),
+                requiredArgumentNames = setOf("path"),
+                enumStringValues = emptyMap(),
+                allowAdditionalProperties = false,
+            ),
+        )
+
+        val prompt = EmbeddedTurnProtocol.renderSingleArgumentPrompt(
+            rawPlanText = """{"assistant_message":"planning","tool_calls":[{"name":"write_file"},{"name":"mkdir"}]}""",
+            toolSpecs = toolSpecs,
+            toolName = "mkdir",
+        )
+
+        assertTrue(prompt.contains("Only include this selected tool"))
+        assertTrue(prompt.contains("- mkdir:"))
+        assertFalse(prompt.contains("- write_file:"))
     }
 
     @Test
@@ -258,12 +290,25 @@ class EmbeddedProviderRegressionTest {
             lastError = "",
             lastLoadedAtMs = 123L,
             lastUsedAtMs = 456L,
+            lastTurnDiagnostics = EmbeddedTurnDiagnostics(
+                lastPhase = "merged",
+                selectedTools = listOf("write_file"),
+                repairUsed = true,
+                fallbackUsed = false,
+                lastSummary = "calls=1 text=0",
+                updatedAtMs = 789L,
+            ),
         ).toJson()
 
         assertTrue(json.getBoolean("loaded"))
         assertTrue(json.getBoolean("warm"))
         assertEquals(123L, json.getLong("last_loaded_at_ms"))
         assertEquals(456L, json.getLong("last_used_at_ms"))
+        val diagnostics = json.getJSONObject("last_turn_diagnostics")
+        assertEquals("merged", diagnostics.getString("last_phase"))
+        assertEquals(true, diagnostics.getBoolean("repair_used"))
+        assertEquals(false, diagnostics.getBoolean("fallback_used"))
+        assertEquals(789L, diagnostics.getLong("updated_at_ms"))
     }
 
     @Test
@@ -314,6 +359,14 @@ class EmbeddedProviderRegressionTest {
                 lastError = "",
                 lastLoadedAtMs = 1L,
                 lastUsedAtMs = 2L,
+                lastTurnDiagnostics = EmbeddedTurnDiagnostics(
+                    lastPhase = "plan",
+                    selectedTools = listOf("write_file"),
+                    repairUsed = false,
+                    fallbackUsed = false,
+                    lastSummary = "selected=1 text=0",
+                    updatedAtMs = 3L,
+                ),
             )
         }
 

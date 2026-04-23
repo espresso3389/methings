@@ -23,6 +23,24 @@ data class EmbeddedGenerationResult(
     val rawText: String,
 )
 
+data class EmbeddedTurnDiagnostics(
+    val lastPhase: String,
+    val selectedTools: List<String>,
+    val repairUsed: Boolean,
+    val fallbackUsed: Boolean,
+    val lastSummary: String,
+    val updatedAtMs: Long,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("last_phase", lastPhase)
+        put("selected_tools", JSONArray(selectedTools))
+        put("repair_used", repairUsed)
+        put("fallback_used", fallbackUsed)
+        put("last_summary", lastSummary)
+        put("updated_at_ms", updatedAtMs)
+    }
+}
+
 internal data class EmbeddedToolSpec(
     val name: String,
     val description: String,
@@ -45,6 +63,7 @@ data class EmbeddedBackendStatus(
     val lastError: String,
     val lastLoadedAtMs: Long,
     val lastUsedAtMs: Long,
+    val lastTurnDiagnostics: EmbeddedTurnDiagnostics? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("model", model.id)
@@ -60,6 +79,7 @@ data class EmbeddedBackendStatus(
         put("last_error", lastError)
         put("last_loaded_at_ms", lastLoadedAtMs)
         put("last_used_at_ms", lastUsedAtMs)
+        if (lastTurnDiagnostics != null) put("last_turn_diagnostics", lastTurnDiagnostics.toJson())
         put("supports_tool_calling", model.supportsToolCalling)
         put("supports_image_input", model.supportsImageInput)
         put("supports_audio_input", model.supportsAudioInput)
@@ -139,6 +159,7 @@ private class LiteRtBundleEmbeddedBackend(
     private val modelManager: EmbeddedModelManager,
 ) : EmbeddedBackend {
     override val backendId: String = "litert_bundle"
+    private val tag = "EmbeddedBackend"
     private data class LoadedInference(
         val modelPath: String,
         val inference: LlmInference,
@@ -149,6 +170,7 @@ private class LiteRtBundleEmbeddedBackend(
     )
 
     private val loaded = ConcurrentHashMap<String, LoadedInference>()
+    private val diagnostics = ConcurrentHashMap<String, EmbeddedTurnDiagnostics>()
 
     override fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
         val resolved = modelManager.resolve(spec.id)
@@ -182,6 +204,7 @@ private class LiteRtBundleEmbeddedBackend(
             lastError = cached?.lastError ?: "",
             lastLoadedAtMs = cached?.loadedAtMs ?: 0L,
             lastUsedAtMs = cached?.lastUsedAtMs?.get() ?: 0L,
+            lastTurnDiagnostics = diagnostics[cacheKey],
         )
     }
 
@@ -212,18 +235,78 @@ private class LiteRtBundleEmbeddedBackend(
         )
         val rawPlan = generateText(spec, planPrompt).trim()
         val plan = EmbeddedTurnProtocol.parsePlanResponse(rawPlan, toolSpecs)
+        updateDiagnostics(
+            spec = spec,
+            phase = "plan",
+            selectedTools = EmbeddedTurnProtocol.callNames(plan.calls),
+            repairUsed = false,
+            fallbackUsed = false,
+            summary = "selected=${plan.calls.length()} text=${plan.messageTexts.size}",
+        )
+        Log.i(tag, buildString {
+            append("embedded_turn phase=plan")
+            append(" model=")
+            append(spec.id)
+            append(" requireTool=")
+            append(request.requireTool)
+            append(" selectedTools=")
+            append(plan.calls.length())
+            append(" toolNames=")
+            append(EmbeddedTurnProtocol.callNamesSummary(plan.calls))
+            append(" textCount=")
+            append(plan.messageTexts.size)
+        })
         var parsed = if (plan.calls.length() > 0) {
-            val rawArgs = runCatching {
-                generateText(spec, EmbeddedTurnProtocol.renderArgumentPrompt(rawPlan, toolSpecs, plan.calls)).trim()
-            }.getOrDefault("")
-            if (rawArgs.isNotBlank()) {
+            val argumentPasses = mutableListOf<Pair<String, EmbeddedGenerationResult>>()
+            for (i in 0 until plan.calls.length()) {
+                val selectedCall = plan.calls.optJSONObject(i) ?: continue
+                val toolName = selectedCall.optString("name", "").trim()
+                if (toolName.isEmpty()) continue
+                val rawArgs = runCatching {
+                    generateText(
+                        spec,
+                        EmbeddedTurnProtocol.renderSingleArgumentPrompt(
+                            rawPlanText = rawPlan,
+                            toolSpecs = toolSpecs,
+                            toolName = toolName,
+                        )
+                    ).trim()
+                }.getOrDefault("")
+                if (rawArgs.isBlank()) continue
+                val parsedArgs = EmbeddedTurnProtocol.parseResponse(rawArgs, toolSpecs)
+                updateDiagnostics(
+                    spec = spec,
+                    phase = "arguments",
+                    selectedTools = listOf(toolName),
+                    repairUsed = false,
+                    fallbackUsed = false,
+                    summary = "tool=$toolName validCalls=${parsedArgs.calls.length()} text=${parsedArgs.messageTexts.size}",
+                )
+                Log.i(tag, buildString {
+                    append("embedded_turn phase=arguments")
+                    append(" model=")
+                    append(spec.id)
+                    append(" tool=")
+                    append(toolName)
+                    append(" validCalls=")
+                    append(parsedArgs.calls.length())
+                    append(" textCount=")
+                    append(parsedArgs.messageTexts.size)
+                })
+                argumentPasses += rawArgs to parsedArgs
+            }
+            if (argumentPasses.isNotEmpty()) {
                 EmbeddedTurnProtocol.mergePlanAndArguments(
                     plan = plan,
-                    argumentsResult = EmbeddedTurnProtocol.parseResponse(rawArgs, toolSpecs),
+                    argumentResults = argumentPasses.map { it.second },
                 ).copy(rawText = buildString {
                     append(rawPlan)
-                    append("\n\n-- arguments --\n")
-                    append(rawArgs)
+                    for ((idx, pair) in argumentPasses.withIndex()) {
+                        append("\n\n-- arguments ")
+                        append(idx + 1)
+                        append(" --\n")
+                        append(pair.first)
+                    }
                 }.trim())
             } else {
                 plan
@@ -231,17 +314,89 @@ private class LiteRtBundleEmbeddedBackend(
         } else {
             plan
         }
+        updateDiagnostics(
+            spec = spec,
+            phase = "merged",
+            selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
+            repairUsed = false,
+            fallbackUsed = false,
+            summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
+        )
+        Log.i(tag, buildString {
+            append("embedded_turn phase=merged")
+            append(" model=")
+            append(spec.id)
+            append(" finalCalls=")
+            append(parsed.calls.length())
+            append(" toolNames=")
+            append(EmbeddedTurnProtocol.callNamesSummary(parsed.calls))
+            append(" textCount=")
+            append(parsed.messageTexts.size)
+        })
         if (EmbeddedTurnProtocol.needsRepair(parsed, request.requireTool, toolSpecs)) {
+            updateDiagnostics(
+                spec = spec,
+                phase = "repair_needed",
+                selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
+                repairUsed = true,
+                fallbackUsed = false,
+                summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
+            )
+            Log.w(tag, buildString {
+                append("embedded_turn phase=repair_needed")
+                append(" model=")
+                append(spec.id)
+                append(" requireTool=")
+                append(request.requireTool)
+                append(" calls=")
+                append(parsed.calls.length())
+                append(" textCount=")
+                append(parsed.messageTexts.size)
+            })
             val repairedRaw = runCatching {
                 generateText(spec, EmbeddedTurnProtocol.renderRepairPrompt(parsed.rawText, toolSpecs, request.requireTool)).trim()
             }.getOrDefault("")
             if (repairedRaw.isNotBlank()) {
                 val repaired = EmbeddedTurnProtocol.parseResponse(repairedRaw, toolSpecs)
+                updateDiagnostics(
+                    spec = spec,
+                    phase = "repair_result",
+                    selectedTools = EmbeddedTurnProtocol.callNames(repaired.calls),
+                    repairUsed = true,
+                    fallbackUsed = false,
+                    summary = "calls=${repaired.calls.length()} text=${repaired.messageTexts.size}",
+                )
+                Log.i(tag, buildString {
+                    append("embedded_turn phase=repair_result")
+                    append(" model=")
+                    append(spec.id)
+                    append(" calls=")
+                    append(repaired.calls.length())
+                    append(" toolNames=")
+                    append(EmbeddedTurnProtocol.callNamesSummary(repaired.calls))
+                    append(" textCount=")
+                    append(repaired.messageTexts.size)
+                })
                 if (!EmbeddedTurnProtocol.needsRepair(repaired, request.requireTool, toolSpecs)) {
                     return repaired.copy(rawText = repairedRaw)
                 }
             }
             if (request.requireTool) {
+                updateDiagnostics(
+                    spec = spec,
+                    phase = "fallback",
+                    selectedTools = toolSpecs.map { it.name },
+                    repairUsed = true,
+                    fallbackUsed = true,
+                    summary = "required-tool fallback",
+                )
+                Log.w(tag, buildString {
+                    append("embedded_turn phase=fallback")
+                    append(" model=")
+                    append(spec.id)
+                    append(" selectedTools=")
+                    append(toolSpecs.joinToString(",") { it.name })
+                })
                 return EmbeddedTurnProtocol.buildRequiredToolFallback(
                     originalText = parsed.rawText,
                     repairedText = repairedRaw,
@@ -315,13 +470,46 @@ private class LiteRtBundleEmbeddedBackend(
                 loadedAtMs = now,
             )
             loaded[key] = created
-            Log.i("EmbeddedBackend", "Loaded embedded model ${spec.id} from ${modelFile.absolutePath}")
+            Log.i(tag, "Loaded embedded model ${spec.id} from ${modelFile.absolutePath}")
             return created
         }
+    }
+
+    private fun updateDiagnostics(
+        spec: EmbeddedModelSpec,
+        phase: String,
+        selectedTools: List<String>,
+        repairUsed: Boolean,
+        fallbackUsed: Boolean,
+        summary: String,
+    ) {
+        diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
+            lastPhase = phase,
+            selectedTools = selectedTools,
+            repairUsed = repairUsed,
+            fallbackUsed = fallbackUsed,
+            lastSummary = summary,
+            updatedAtMs = System.currentTimeMillis(),
+        )
     }
 }
 
 internal object EmbeddedTurnProtocol {
+    fun callNames(calls: JSONArray): List<String> {
+        val names = mutableListOf<String>()
+        for (i in 0 until calls.length()) {
+            val call = calls.optJSONObject(i) ?: continue
+            val name = call.optString("name", "").trim()
+            if (name.isNotEmpty()) names += name
+        }
+        return names
+    }
+
+    fun callNamesSummary(calls: JSONArray): String {
+        val names = callNames(calls)
+        return if (names.isEmpty()) "none" else names.joinToString(",")
+    }
+
     fun extractToolSpecs(tools: JSONArray): List<EmbeddedToolSpec> {
         val specs = mutableListOf<EmbeddedToolSpec>()
         for (i in 0 until tools.length()) {
@@ -402,44 +590,35 @@ internal object EmbeddedTurnProtocol {
         }
     }
 
-    fun renderArgumentPrompt(
+    fun renderSingleArgumentPrompt(
         rawPlanText: String,
         toolSpecs: List<EmbeddedToolSpec>,
-        selectedCalls: JSONArray,
+        toolName: String,
     ): String {
-        val selectedNames = mutableListOf<String>()
-        for (i in 0 until selectedCalls.length()) {
-            val call = selectedCalls.optJSONObject(i) ?: continue
-            val name = call.optString("name", "").trim()
-            if (name.isNotEmpty()) selectedNames.add(name)
-        }
-        val selectedSpecLines = if (selectedNames.isEmpty()) {
-            "- none"
-        } else {
-            selectedNames.joinToString("\n") { name ->
-                val spec = toolSpecs.firstOrNull { it.name == name }
-                val required = spec?.requiredArgumentNames?.sorted()?.joinToString(", ").orEmpty()
-                val allowed = spec?.allowedArgumentNames?.sorted()?.joinToString(", ").orEmpty()
-                buildString {
-                    append("- ")
-                    append(name)
-                    append(": allowed args [")
-                    append(allowed)
+        val selectedSpecLines = toolSpecs.firstOrNull { it.name == toolName }?.let { spec ->
+            val required = spec.requiredArgumentNames.sorted().joinToString(", ")
+            val allowed = spec.allowedArgumentNames.sorted().joinToString(", ")
+            buildString {
+                append("- ")
+                append(toolName)
+                append(": allowed args [")
+                append(allowed)
+                append("]")
+                if (required.isNotEmpty()) {
+                    append(", required [")
+                    append(required)
                     append("]")
-                    if (required.isNotEmpty()) {
-                        append(", required [")
-                        append(required)
-                        append("]")
-                    }
                 }
             }
+        } ?: run {
+            "- none"
         }
         return buildString {
             append("Convert the selected tool names below into exactly one valid JSON object.\n")
             append("Return only JSON. No markdown fences.\n")
             append("Keys: assistant_message (string), tool_calls (array).\n")
             append("Each tool_calls item must have: name (string), arguments (object).\n")
-            append("Only include these selected tools:\n")
+            append("Only include this selected tool:\n")
             append(selectedSpecLines)
             append("\n\nPlanner output:\n")
             append(rawPlanText)
@@ -545,14 +724,16 @@ internal object EmbeddedTurnProtocol {
 
     fun mergePlanAndArguments(
         plan: EmbeddedGenerationResult,
-        argumentsResult: EmbeddedGenerationResult,
+        argumentResults: List<EmbeddedGenerationResult>,
     ): EmbeddedGenerationResult {
         val argCallsByName = linkedMapOf<String, JSONObject>()
-        for (i in 0 until argumentsResult.calls.length()) {
-            val call = argumentsResult.calls.optJSONObject(i) ?: continue
-            val name = call.optString("name", "").trim()
-            if (name.isEmpty()) continue
-            argCallsByName.putIfAbsent(name, call.optJSONObject("arguments") ?: JSONObject())
+        for (argumentsResult in argumentResults) {
+            for (i in 0 until argumentsResult.calls.length()) {
+                val call = argumentsResult.calls.optJSONObject(i) ?: continue
+                val name = call.optString("name", "").trim()
+                if (name.isEmpty()) continue
+                argCallsByName.putIfAbsent(name, call.optJSONObject("arguments") ?: JSONObject())
+            }
         }
         val mergedCalls = JSONArray()
         for (i in 0 until plan.calls.length()) {
@@ -566,9 +747,13 @@ internal object EmbeddedTurnProtocol {
             })
         }
         return EmbeddedGenerationResult(
-            messageTexts = if (plan.messageTexts.isNotEmpty()) plan.messageTexts else argumentsResult.messageTexts,
+            messageTexts = if (plan.messageTexts.isNotEmpty()) {
+                plan.messageTexts
+            } else {
+                argumentResults.firstOrNull { it.messageTexts.isNotEmpty() }?.messageTexts ?: emptyList()
+            },
             calls = mergedCalls,
-            rawText = argumentsResult.rawText,
+            rawText = argumentResults.joinToString("\n\n") { it.rawText }.trim(),
         )
     }
 
