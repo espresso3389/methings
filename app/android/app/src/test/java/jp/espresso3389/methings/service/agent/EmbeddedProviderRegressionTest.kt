@@ -293,6 +293,7 @@ class EmbeddedProviderRegressionTest {
             lastTurnDiagnostics = EmbeddedTurnDiagnostics(
                 turnId = 12L,
                 lastPhase = "merged",
+                responseSource = "repaired",
                 selectedTools = listOf("write_file"),
                 failedTools = listOf("mkdir"),
                 toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
@@ -311,6 +312,7 @@ class EmbeddedProviderRegressionTest {
         val diagnostics = json.getJSONObject("last_turn_diagnostics")
         assertEquals(12L, diagnostics.getLong("turn_id"))
         assertEquals("merged", diagnostics.getString("last_phase"))
+        assertEquals("repaired", diagnostics.getString("response_source"))
         assertEquals("mkdir", diagnostics.getJSONArray("failed_tools").getString(0))
         val failures = diagnostics.getJSONArray("tool_failures")
         assertEquals("mkdir", failures.getJSONObject(0).getString("name"))
@@ -327,6 +329,7 @@ class EmbeddedProviderRegressionTest {
 
         EmbeddedTurnProtocol.mergeDiagnosticsState(
             state = state,
+            responseSource = "pending",
             selectedTools = listOf("write_file"),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -336,6 +339,7 @@ class EmbeddedProviderRegressionTest {
         )
         EmbeddedTurnProtocol.mergeDiagnosticsState(
             state = state,
+            responseSource = "pending",
             selectedTools = listOf("mkdir"),
             failedTools = listOf("mkdir"),
             toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
@@ -345,6 +349,7 @@ class EmbeddedProviderRegressionTest {
         )
         EmbeddedTurnProtocol.mergeDiagnosticsState(
             state = state,
+            responseSource = "repaired",
             selectedTools = listOf("write_file"),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -354,6 +359,7 @@ class EmbeddedProviderRegressionTest {
         )
 
         assertEquals(listOf("write_file", "mkdir"), state.selectedTools.toList())
+        assertEquals("repaired", state.responseSource)
         assertEquals(mapOf("mkdir" to "invalid_arguments"), state.toolFailures)
         assertTrue(state.repairUsed)
         assertEquals(1, state.repairAttemptCount)
@@ -411,6 +417,7 @@ class EmbeddedProviderRegressionTest {
                 lastTurnDiagnostics = EmbeddedTurnDiagnostics(
                     turnId = 1L,
                     lastPhase = "plan",
+                    responseSource = "pending",
                     selectedTools = listOf("write_file"),
                     failedTools = emptyList(),
                     toolFailures = emptyList(),

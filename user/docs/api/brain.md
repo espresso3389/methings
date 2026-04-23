@@ -38,6 +38,7 @@ Returns:
   - `last_turn_diagnostics` (object, optional), including:
     - `turn_id` (number)
     - `last_phase` (string)
+    - `response_source` (string: `pending`, `original`, `repaired`, or `fallback`)
     - `selected_tools` (array)
     - `failed_tools` (array)
     - `tool_failures` (array of `{name, reason}`)
