@@ -39,6 +39,7 @@ Returns:
     - `turn_id` (number)
     - `last_phase` (string)
     - `response_source` (string: `pending`, `original`, `repaired`, or `fallback`)
+    - `final_tool_call_count` (number)
     - `selected_tools` (array)
     - `failed_tools` (array)
     - `tool_failures` (array of `{name, reason}`)

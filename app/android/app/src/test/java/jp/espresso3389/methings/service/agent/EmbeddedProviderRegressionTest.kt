@@ -294,6 +294,7 @@ class EmbeddedProviderRegressionTest {
                 turnId = 12L,
                 lastPhase = "merged",
                 responseSource = "repaired",
+                finalToolCallCount = 1,
                 selectedTools = listOf("write_file"),
                 failedTools = listOf("mkdir"),
                 toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
@@ -313,6 +314,7 @@ class EmbeddedProviderRegressionTest {
         assertEquals(12L, diagnostics.getLong("turn_id"))
         assertEquals("merged", diagnostics.getString("last_phase"))
         assertEquals("repaired", diagnostics.getString("response_source"))
+        assertEquals(1, diagnostics.getInt("final_tool_call_count"))
         assertEquals("mkdir", diagnostics.getJSONArray("failed_tools").getString(0))
         val failures = diagnostics.getJSONArray("tool_failures")
         assertEquals("mkdir", failures.getJSONObject(0).getString("name"))
@@ -330,6 +332,7 @@ class EmbeddedProviderRegressionTest {
         EmbeddedTurnProtocol.mergeDiagnosticsState(
             state = state,
             responseSource = "pending",
+            finalToolCallCount = 0,
             selectedTools = listOf("write_file"),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -340,6 +343,7 @@ class EmbeddedProviderRegressionTest {
         EmbeddedTurnProtocol.mergeDiagnosticsState(
             state = state,
             responseSource = "pending",
+            finalToolCallCount = 0,
             selectedTools = listOf("mkdir"),
             failedTools = listOf("mkdir"),
             toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
@@ -350,6 +354,7 @@ class EmbeddedProviderRegressionTest {
         EmbeddedTurnProtocol.mergeDiagnosticsState(
             state = state,
             responseSource = "repaired",
+            finalToolCallCount = 1,
             selectedTools = listOf("write_file"),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -360,6 +365,7 @@ class EmbeddedProviderRegressionTest {
 
         assertEquals(listOf("write_file", "mkdir"), state.selectedTools.toList())
         assertEquals("repaired", state.responseSource)
+        assertEquals(1, state.finalToolCallCount)
         assertEquals(mapOf("mkdir" to "invalid_arguments"), state.toolFailures)
         assertTrue(state.repairUsed)
         assertEquals(1, state.repairAttemptCount)
@@ -418,6 +424,7 @@ class EmbeddedProviderRegressionTest {
                     turnId = 1L,
                     lastPhase = "plan",
                     responseSource = "pending",
+                    finalToolCallCount = 0,
                     selectedTools = listOf("write_file"),
                     failedTools = emptyList(),
                     toolFailures = emptyList(),

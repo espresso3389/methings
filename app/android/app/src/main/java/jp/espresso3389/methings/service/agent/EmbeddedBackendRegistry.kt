@@ -37,6 +37,7 @@ data class EmbeddedTurnDiagnostics(
     val turnId: Long,
     val lastPhase: String,
     val responseSource: String,
+    val finalToolCallCount: Int,
     val selectedTools: List<String>,
     val failedTools: List<String>,
     val toolFailures: List<EmbeddedToolFailure>,
@@ -50,6 +51,7 @@ data class EmbeddedTurnDiagnostics(
         put("turn_id", turnId)
         put("last_phase", lastPhase)
         put("response_source", responseSource)
+        put("final_tool_call_count", finalToolCallCount)
         put("selected_tools", JSONArray(selectedTools))
         put("failed_tools", JSONArray(failedTools))
         put("tool_failures", JSONArray(toolFailures.map { it.toJson() }))
@@ -73,6 +75,7 @@ internal data class EmbeddedToolSpec(
 internal data class EmbeddedTurnDiagnosticsState(
     val turnId: Long,
     var responseSource: String = "pending",
+    var finalToolCallCount: Int = 0,
     val selectedTools: LinkedHashSet<String> = linkedSetOf(),
     val toolFailures: LinkedHashMap<String, String> = linkedMapOf(),
     var repairUsed: Boolean = false,
@@ -272,6 +275,7 @@ private class LiteRtBundleEmbeddedBackend(
             state = turnDiagnostics,
             phase = "plan",
             responseSource = "pending",
+            finalToolCallCount = 0,
             selectedTools = EmbeddedTurnProtocol.callNames(plan.calls),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -316,6 +320,7 @@ private class LiteRtBundleEmbeddedBackend(
                         state = turnDiagnostics,
                         phase = "arguments",
                         responseSource = "pending",
+                        finalToolCallCount = 0,
                         selectedTools = listOf(toolName),
                         failedTools = listOf(toolName),
                         toolFailures = toolFailures,
@@ -338,6 +343,7 @@ private class LiteRtBundleEmbeddedBackend(
                     state = turnDiagnostics,
                     phase = "arguments",
                     responseSource = "pending",
+                    finalToolCallCount = 0,
                     selectedTools = listOf(toolName),
                     failedTools = toolFailures.map { it.name },
                     toolFailures = toolFailures,
@@ -387,6 +393,7 @@ private class LiteRtBundleEmbeddedBackend(
             state = turnDiagnostics,
             phase = "merged",
             responseSource = "original",
+            finalToolCallCount = parsed.calls.length(),
             selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -412,6 +419,7 @@ private class LiteRtBundleEmbeddedBackend(
                 state = turnDiagnostics,
                 phase = "repair_needed",
                 responseSource = "original",
+                finalToolCallCount = parsed.calls.length(),
                 selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
                 failedTools = emptyList(),
                 toolFailures = emptyList(),
@@ -441,6 +449,7 @@ private class LiteRtBundleEmbeddedBackend(
                     state = turnDiagnostics,
                     phase = "repair_result",
                     responseSource = "repaired",
+                    finalToolCallCount = repaired.calls.length(),
                     selectedTools = EmbeddedTurnProtocol.callNames(repaired.calls),
                     failedTools = emptyList(),
                     toolFailures = emptyList(),
@@ -470,6 +479,7 @@ private class LiteRtBundleEmbeddedBackend(
                     state = turnDiagnostics,
                     phase = "fallback",
                     responseSource = "fallback",
+                    finalToolCallCount = 0,
                     selectedTools = toolSpecs.map { it.name },
                     failedTools = toolSpecs.map { it.name },
                     toolFailures = toolSpecs.map { EmbeddedToolFailure(it.name, "required_tool_fallback") },
@@ -568,6 +578,7 @@ private class LiteRtBundleEmbeddedBackend(
         state: EmbeddedTurnDiagnosticsState,
         phase: String,
         responseSource: String,
+        finalToolCallCount: Int,
         selectedTools: List<String>,
         failedTools: List<String>,
         toolFailures: List<EmbeddedToolFailure>,
@@ -579,6 +590,7 @@ private class LiteRtBundleEmbeddedBackend(
         EmbeddedTurnProtocol.mergeDiagnosticsState(
             state = state,
             responseSource = responseSource,
+            finalToolCallCount = finalToolCallCount,
             selectedTools = selectedTools,
             failedTools = failedTools,
             toolFailures = toolFailures,
@@ -590,6 +602,7 @@ private class LiteRtBundleEmbeddedBackend(
             turnId = state.turnId,
             lastPhase = phase,
             responseSource = state.responseSource,
+            finalToolCallCount = state.finalToolCallCount,
             selectedTools = state.selectedTools.toList(),
             failedTools = state.toolFailures.keys.toList(),
             toolFailures = state.toolFailures.entries.map { EmbeddedToolFailure(name = it.key, reason = it.value) },
@@ -621,6 +634,7 @@ internal object EmbeddedTurnProtocol {
     fun mergeDiagnosticsState(
         state: EmbeddedTurnDiagnosticsState,
         responseSource: String,
+        finalToolCallCount: Int,
         selectedTools: List<String>,
         failedTools: List<String>,
         toolFailures: List<EmbeddedToolFailure>,
@@ -630,6 +644,9 @@ internal object EmbeddedTurnProtocol {
     ) {
         if (responseSource.isNotBlank() && responseSource != "pending") {
             state.responseSource = responseSource
+        }
+        if (finalToolCallCount >= 0) {
+            state.finalToolCallCount = finalToolCallCount
         }
         selectedTools
             .map { it.trim() }
