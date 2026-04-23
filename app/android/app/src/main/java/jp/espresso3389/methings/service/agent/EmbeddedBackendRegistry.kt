@@ -26,6 +26,7 @@ data class EmbeddedGenerationResult(
 data class EmbeddedTurnDiagnostics(
     val lastPhase: String,
     val selectedTools: List<String>,
+    val failedTools: List<String>,
     val repairUsed: Boolean,
     val fallbackUsed: Boolean,
     val lastSummary: String,
@@ -34,6 +35,7 @@ data class EmbeddedTurnDiagnostics(
     fun toJson(): JSONObject = JSONObject().apply {
         put("last_phase", lastPhase)
         put("selected_tools", JSONArray(selectedTools))
+        put("failed_tools", JSONArray(failedTools))
         put("repair_used", repairUsed)
         put("fallback_used", fallbackUsed)
         put("last_summary", lastSummary)
@@ -239,6 +241,7 @@ private class LiteRtBundleEmbeddedBackend(
             spec = spec,
             phase = "plan",
             selectedTools = EmbeddedTurnProtocol.callNames(plan.calls),
+            failedTools = emptyList(),
             repairUsed = false,
             fallbackUsed = false,
             summary = "selected=${plan.calls.length()} text=${plan.messageTexts.size}",
@@ -258,6 +261,7 @@ private class LiteRtBundleEmbeddedBackend(
         })
         var parsed = if (plan.calls.length() > 0) {
             val argumentPasses = mutableListOf<Pair<String, EmbeddedGenerationResult>>()
+            val failedTools = mutableListOf<String>()
             for (i in 0 until plan.calls.length()) {
                 val selectedCall = plan.calls.optJSONObject(i) ?: continue
                 val toolName = selectedCall.optString("name", "").trim()
@@ -272,12 +276,27 @@ private class LiteRtBundleEmbeddedBackend(
                         )
                     ).trim()
                 }.getOrDefault("")
-                if (rawArgs.isBlank()) continue
+                if (rawArgs.isBlank()) {
+                    failedTools += toolName
+                    updateDiagnostics(
+                        spec = spec,
+                        phase = "arguments",
+                        selectedTools = listOf(toolName),
+                        failedTools = listOf(toolName),
+                        repairUsed = false,
+                        fallbackUsed = false,
+                        summary = "tool=$toolName no_output",
+                    )
+                    continue
+                }
                 val parsedArgs = EmbeddedTurnProtocol.parseResponse(rawArgs, toolSpecs)
+                val failedForTool = if (parsedArgs.calls.length() == 0) listOf(toolName) else emptyList()
+                if (failedForTool.isNotEmpty()) failedTools += toolName
                 updateDiagnostics(
                     spec = spec,
                     phase = "arguments",
                     selectedTools = listOf(toolName),
+                    failedTools = failedForTool,
                     repairUsed = false,
                     fallbackUsed = false,
                     summary = "tool=$toolName validCalls=${parsedArgs.calls.length()} text=${parsedArgs.messageTexts.size}",
@@ -318,6 +337,7 @@ private class LiteRtBundleEmbeddedBackend(
             spec = spec,
             phase = "merged",
             selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
+            failedTools = emptyList(),
             repairUsed = false,
             fallbackUsed = false,
             summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
@@ -338,6 +358,7 @@ private class LiteRtBundleEmbeddedBackend(
                 spec = spec,
                 phase = "repair_needed",
                 selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
+                failedTools = emptyList(),
                 repairUsed = true,
                 fallbackUsed = false,
                 summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
@@ -362,6 +383,7 @@ private class LiteRtBundleEmbeddedBackend(
                     spec = spec,
                     phase = "repair_result",
                     selectedTools = EmbeddedTurnProtocol.callNames(repaired.calls),
+                    failedTools = emptyList(),
                     repairUsed = true,
                     fallbackUsed = false,
                     summary = "calls=${repaired.calls.length()} text=${repaired.messageTexts.size}",
@@ -386,6 +408,7 @@ private class LiteRtBundleEmbeddedBackend(
                     spec = spec,
                     phase = "fallback",
                     selectedTools = toolSpecs.map { it.name },
+                    failedTools = toolSpecs.map { it.name },
                     repairUsed = true,
                     fallbackUsed = true,
                     summary = "required-tool fallback",
@@ -479,6 +502,7 @@ private class LiteRtBundleEmbeddedBackend(
         spec: EmbeddedModelSpec,
         phase: String,
         selectedTools: List<String>,
+        failedTools: List<String>,
         repairUsed: Boolean,
         fallbackUsed: Boolean,
         summary: String,
@@ -486,6 +510,7 @@ private class LiteRtBundleEmbeddedBackend(
         diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
             lastPhase = phase,
             selectedTools = selectedTools,
+            failedTools = failedTools,
             repairUsed = repairUsed,
             fallbackUsed = fallbackUsed,
             lastSummary = summary,

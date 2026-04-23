@@ -293,6 +293,7 @@ class EmbeddedProviderRegressionTest {
             lastTurnDiagnostics = EmbeddedTurnDiagnostics(
                 lastPhase = "merged",
                 selectedTools = listOf("write_file"),
+                failedTools = listOf("mkdir"),
                 repairUsed = true,
                 fallbackUsed = false,
                 lastSummary = "calls=1 text=0",
@@ -306,6 +307,7 @@ class EmbeddedProviderRegressionTest {
         assertEquals(456L, json.getLong("last_used_at_ms"))
         val diagnostics = json.getJSONObject("last_turn_diagnostics")
         assertEquals("merged", diagnostics.getString("last_phase"))
+        assertEquals("mkdir", diagnostics.getJSONArray("failed_tools").getString(0))
         assertEquals(true, diagnostics.getBoolean("repair_used"))
         assertEquals(false, diagnostics.getBoolean("fallback_used"))
         assertEquals(789L, diagnostics.getLong("updated_at_ms"))
@@ -362,6 +364,7 @@ class EmbeddedProviderRegressionTest {
                 lastTurnDiagnostics = EmbeddedTurnDiagnostics(
                     lastPhase = "plan",
                     selectedTools = listOf("write_file"),
+                    failedTools = emptyList(),
                     repairUsed = false,
                     fallbackUsed = false,
                     lastSummary = "selected=1 text=0",
