@@ -23,10 +23,21 @@ data class EmbeddedGenerationResult(
     val rawText: String,
 )
 
+data class EmbeddedToolFailure(
+    val name: String,
+    val reason: String,
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("name", name)
+        put("reason", reason)
+    }
+}
+
 data class EmbeddedTurnDiagnostics(
     val lastPhase: String,
     val selectedTools: List<String>,
     val failedTools: List<String>,
+    val toolFailures: List<EmbeddedToolFailure>,
     val repairUsed: Boolean,
     val fallbackUsed: Boolean,
     val lastSummary: String,
@@ -36,6 +47,7 @@ data class EmbeddedTurnDiagnostics(
         put("last_phase", lastPhase)
         put("selected_tools", JSONArray(selectedTools))
         put("failed_tools", JSONArray(failedTools))
+        put("tool_failures", JSONArray(toolFailures.map { it.toJson() }))
         put("repair_used", repairUsed)
         put("fallback_used", fallbackUsed)
         put("last_summary", lastSummary)
@@ -242,6 +254,7 @@ private class LiteRtBundleEmbeddedBackend(
             phase = "plan",
             selectedTools = EmbeddedTurnProtocol.callNames(plan.calls),
             failedTools = emptyList(),
+            toolFailures = emptyList(),
             repairUsed = false,
             fallbackUsed = false,
             summary = "selected=${plan.calls.length()} text=${plan.messageTexts.size}",
@@ -261,7 +274,6 @@ private class LiteRtBundleEmbeddedBackend(
         })
         var parsed = if (plan.calls.length() > 0) {
             val argumentPasses = mutableListOf<Pair<String, EmbeddedGenerationResult>>()
-            val failedTools = mutableListOf<String>()
             for (i in 0 until plan.calls.length()) {
                 val selectedCall = plan.calls.optJSONObject(i) ?: continue
                 val toolName = selectedCall.optString("name", "").trim()
@@ -277,41 +289,51 @@ private class LiteRtBundleEmbeddedBackend(
                     ).trim()
                 }.getOrDefault("")
                 if (rawArgs.isBlank()) {
-                    failedTools += toolName
+                    val toolFailures = listOf(EmbeddedToolFailure(toolName, "no_output"))
                     updateDiagnostics(
                         spec = spec,
                         phase = "arguments",
                         selectedTools = listOf(toolName),
                         failedTools = listOf(toolName),
+                        toolFailures = toolFailures,
                         repairUsed = false,
                         fallbackUsed = false,
                         summary = "tool=$toolName no_output",
                     )
+                    Log.w(tag, "embedded_turn phase=arguments model=${spec.id} tool=$toolName failure=no_output")
                     continue
                 }
                 val parsedArgs = EmbeddedTurnProtocol.parseResponse(rawArgs, toolSpecs)
-                val failedForTool = if (parsedArgs.calls.length() == 0) listOf(toolName) else emptyList()
-                if (failedForTool.isNotEmpty()) failedTools += toolName
+                val toolFailures = if (parsedArgs.calls.length() == 0) {
+                    listOf(EmbeddedToolFailure(toolName, "invalid_arguments"))
+                } else {
+                    emptyList()
+                }
                 updateDiagnostics(
                     spec = spec,
                     phase = "arguments",
                     selectedTools = listOf(toolName),
-                    failedTools = failedForTool,
+                    failedTools = toolFailures.map { it.name },
+                    toolFailures = toolFailures,
                     repairUsed = false,
                     fallbackUsed = false,
                     summary = "tool=$toolName validCalls=${parsedArgs.calls.length()} text=${parsedArgs.messageTexts.size}",
                 )
-                Log.i(tag, buildString {
-                    append("embedded_turn phase=arguments")
-                    append(" model=")
-                    append(spec.id)
-                    append(" tool=")
-                    append(toolName)
-                    append(" validCalls=")
-                    append(parsedArgs.calls.length())
-                    append(" textCount=")
-                    append(parsedArgs.messageTexts.size)
-                })
+                if (toolFailures.isEmpty()) {
+                    Log.i(tag, buildString {
+                        append("embedded_turn phase=arguments")
+                        append(" model=")
+                        append(spec.id)
+                        append(" tool=")
+                        append(toolName)
+                        append(" validCalls=")
+                        append(parsedArgs.calls.length())
+                        append(" textCount=")
+                        append(parsedArgs.messageTexts.size)
+                    })
+                } else {
+                    Log.w(tag, "embedded_turn phase=arguments model=${spec.id} tool=$toolName failure=invalid_arguments")
+                }
                 argumentPasses += rawArgs to parsedArgs
             }
             if (argumentPasses.isNotEmpty()) {
@@ -338,6 +360,7 @@ private class LiteRtBundleEmbeddedBackend(
             phase = "merged",
             selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
             failedTools = emptyList(),
+            toolFailures = emptyList(),
             repairUsed = false,
             fallbackUsed = false,
             summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
@@ -359,6 +382,7 @@ private class LiteRtBundleEmbeddedBackend(
                 phase = "repair_needed",
                 selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
                 failedTools = emptyList(),
+                toolFailures = emptyList(),
                 repairUsed = true,
                 fallbackUsed = false,
                 summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
@@ -384,6 +408,7 @@ private class LiteRtBundleEmbeddedBackend(
                     phase = "repair_result",
                     selectedTools = EmbeddedTurnProtocol.callNames(repaired.calls),
                     failedTools = emptyList(),
+                    toolFailures = emptyList(),
                     repairUsed = true,
                     fallbackUsed = false,
                     summary = "calls=${repaired.calls.length()} text=${repaired.messageTexts.size}",
@@ -409,6 +434,7 @@ private class LiteRtBundleEmbeddedBackend(
                     phase = "fallback",
                     selectedTools = toolSpecs.map { it.name },
                     failedTools = toolSpecs.map { it.name },
+                    toolFailures = toolSpecs.map { EmbeddedToolFailure(it.name, "required_tool_fallback") },
                     repairUsed = true,
                     fallbackUsed = true,
                     summary = "required-tool fallback",
@@ -503,14 +529,23 @@ private class LiteRtBundleEmbeddedBackend(
         phase: String,
         selectedTools: List<String>,
         failedTools: List<String>,
+        toolFailures: List<EmbeddedToolFailure>,
         repairUsed: Boolean,
         fallbackUsed: Boolean,
         summary: String,
     ) {
+        val normalizedFailures = toolFailures
+            .filter { it.name.isNotBlank() && it.reason.isNotBlank() }
+            .distinctBy { "${it.name}:${it.reason}" }
         diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
             lastPhase = phase,
             selectedTools = selectedTools,
-            failedTools = failedTools,
+            failedTools = if (normalizedFailures.isNotEmpty()) {
+                normalizedFailures.map { it.name }.distinct()
+            } else {
+                failedTools.distinct()
+            },
+            toolFailures = normalizedFailures,
             repairUsed = repairUsed,
             fallbackUsed = fallbackUsed,
             lastSummary = summary,

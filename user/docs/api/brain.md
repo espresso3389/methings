@@ -39,6 +39,7 @@ Returns:
     - `last_phase` (string)
     - `selected_tools` (array)
     - `failed_tools` (array)
+    - `tool_failures` (array of `{name, reason}`)
     - `repair_used` (boolean)
     - `fallback_used` (boolean)
     - `last_summary` (string)

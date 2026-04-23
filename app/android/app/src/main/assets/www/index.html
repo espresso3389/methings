@@ -9456,9 +9456,21 @@
           if (diag && Object.keys(diag).length) {
             const tools = Array.isArray(diag.selected_tools) ? diag.selected_tools.filter(Boolean) : [];
             const failedTools = Array.isArray(diag.failed_tools) ? diag.failed_tools.filter(Boolean) : [];
+            const toolFailures = Array.isArray(diag.tool_failures)
+              ? diag.tool_failures
+                  .map((entry) => {
+                    if (!entry || typeof entry !== "object") return "";
+                    const name = String(entry.name || "").trim();
+                    const reason = String(entry.reason || "").trim();
+                    if (!name) return "";
+                    return reason ? (name + "(" + reason + ")") : name;
+                  })
+                  .filter(Boolean)
+              : [];
             lines.push("Last turn:");
             lines.push("phase=" + String(diag.last_phase || "unknown"));
             lines.push("tools=" + (tools.length ? tools.join(", ") : "none"));
+            if (toolFailures.length) lines.push("tool_failures=" + toolFailures.join(", "));
             if (failedTools.length) lines.push("failed_tools=" + failedTools.join(", "));
             lines.push("repair_used=" + (!!diag.repair_used) + " fallback_used=" + (!!diag.fallback_used));
             if (diag.last_summary) lines.push(String(diag.last_summary));
