@@ -64,6 +64,13 @@ internal data class EmbeddedToolSpec(
     val allowAdditionalProperties: Boolean,
 )
 
+internal data class EmbeddedTurnDiagnosticsState(
+    val selectedTools: LinkedHashSet<String> = linkedSetOf(),
+    val toolFailures: LinkedHashMap<String, String> = linkedMapOf(),
+    var repairUsed: Boolean = false,
+    var fallbackUsed: Boolean = false,
+)
+
 data class EmbeddedBackendStatus(
     val model: EmbeddedModelSpec,
     val backendId: String,
@@ -240,6 +247,7 @@ private class LiteRtBundleEmbeddedBackend(
         spec: EmbeddedModelSpec,
         request: EmbeddedGenerationRequest,
     ): EmbeddedGenerationResult {
+        val turnDiagnostics = EmbeddedTurnDiagnosticsState()
         val toolSpecs = EmbeddedTurnProtocol.extractToolSpecs(request.tools)
         val planPrompt = EmbeddedTurnProtocol.renderPlanPrompt(
             systemPrompt = request.systemPrompt,
@@ -251,6 +259,7 @@ private class LiteRtBundleEmbeddedBackend(
         val plan = EmbeddedTurnProtocol.parsePlanResponse(rawPlan, toolSpecs)
         updateDiagnostics(
             spec = spec,
+            state = turnDiagnostics,
             phase = "plan",
             selectedTools = EmbeddedTurnProtocol.callNames(plan.calls),
             failedTools = emptyList(),
@@ -292,6 +301,7 @@ private class LiteRtBundleEmbeddedBackend(
                     val toolFailures = listOf(EmbeddedToolFailure(toolName, "no_output"))
                     updateDiagnostics(
                         spec = spec,
+                        state = turnDiagnostics,
                         phase = "arguments",
                         selectedTools = listOf(toolName),
                         failedTools = listOf(toolName),
@@ -311,6 +321,7 @@ private class LiteRtBundleEmbeddedBackend(
                 }
                 updateDiagnostics(
                     spec = spec,
+                    state = turnDiagnostics,
                     phase = "arguments",
                     selectedTools = listOf(toolName),
                     failedTools = toolFailures.map { it.name },
@@ -357,6 +368,7 @@ private class LiteRtBundleEmbeddedBackend(
         }
         updateDiagnostics(
             spec = spec,
+            state = turnDiagnostics,
             phase = "merged",
             selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
             failedTools = emptyList(),
@@ -379,6 +391,7 @@ private class LiteRtBundleEmbeddedBackend(
         if (EmbeddedTurnProtocol.needsRepair(parsed, request.requireTool, toolSpecs)) {
             updateDiagnostics(
                 spec = spec,
+                state = turnDiagnostics,
                 phase = "repair_needed",
                 selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
                 failedTools = emptyList(),
@@ -405,6 +418,7 @@ private class LiteRtBundleEmbeddedBackend(
                 val repaired = EmbeddedTurnProtocol.parseResponse(repairedRaw, toolSpecs)
                 updateDiagnostics(
                     spec = spec,
+                    state = turnDiagnostics,
                     phase = "repair_result",
                     selectedTools = EmbeddedTurnProtocol.callNames(repaired.calls),
                     failedTools = emptyList(),
@@ -431,6 +445,7 @@ private class LiteRtBundleEmbeddedBackend(
             if (request.requireTool) {
                 updateDiagnostics(
                     spec = spec,
+                    state = turnDiagnostics,
                     phase = "fallback",
                     selectedTools = toolSpecs.map { it.name },
                     failedTools = toolSpecs.map { it.name },
@@ -526,6 +541,7 @@ private class LiteRtBundleEmbeddedBackend(
 
     private fun updateDiagnostics(
         spec: EmbeddedModelSpec,
+        state: EmbeddedTurnDiagnosticsState,
         phase: String,
         selectedTools: List<String>,
         failedTools: List<String>,
@@ -534,20 +550,21 @@ private class LiteRtBundleEmbeddedBackend(
         fallbackUsed: Boolean,
         summary: String,
     ) {
-        val normalizedFailures = toolFailures
-            .filter { it.name.isNotBlank() && it.reason.isNotBlank() }
-            .distinctBy { "${it.name}:${it.reason}" }
-        diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
-            lastPhase = phase,
+        EmbeddedTurnProtocol.mergeDiagnosticsState(
+            state = state,
             selectedTools = selectedTools,
-            failedTools = if (normalizedFailures.isNotEmpty()) {
-                normalizedFailures.map { it.name }.distinct()
-            } else {
-                failedTools.distinct()
-            },
-            toolFailures = normalizedFailures,
+            failedTools = failedTools,
+            toolFailures = toolFailures,
             repairUsed = repairUsed,
             fallbackUsed = fallbackUsed,
+        )
+        diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
+            lastPhase = phase,
+            selectedTools = state.selectedTools.toList(),
+            failedTools = state.toolFailures.keys.toList(),
+            toolFailures = state.toolFailures.entries.map { EmbeddedToolFailure(name = it.key, reason = it.value) },
+            repairUsed = state.repairUsed,
+            fallbackUsed = state.fallbackUsed,
             lastSummary = summary,
             updatedAtMs = System.currentTimeMillis(),
         )
@@ -568,6 +585,30 @@ internal object EmbeddedTurnProtocol {
     fun callNamesSummary(calls: JSONArray): String {
         val names = callNames(calls)
         return if (names.isEmpty()) "none" else names.joinToString(",")
+    }
+
+    fun mergeDiagnosticsState(
+        state: EmbeddedTurnDiagnosticsState,
+        selectedTools: List<String>,
+        failedTools: List<String>,
+        toolFailures: List<EmbeddedToolFailure>,
+        repairUsed: Boolean,
+        fallbackUsed: Boolean,
+    ) {
+        selectedTools
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .forEach { state.selectedTools += it }
+        val normalizedFailures = toolFailures
+            .filter { it.name.isNotBlank() && it.reason.isNotBlank() }
+            .distinctBy { "${it.name}:${it.reason}" }
+        normalizedFailures.forEach { state.toolFailures[it.name] = it.reason }
+        failedTools
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !state.toolFailures.containsKey(it) }
+            .forEach { state.toolFailures[it] = "unknown" }
+        state.repairUsed = state.repairUsed || repairUsed
+        state.fallbackUsed = state.fallbackUsed || fallbackUsed
     }
 
     fun extractToolSpecs(tools: JSONArray): List<EmbeddedToolSpec> {

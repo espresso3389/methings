@@ -318,6 +318,41 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
+    fun mergeDiagnosticsStateAccumulatesFailuresAcrossPhases() {
+        val state = EmbeddedTurnDiagnosticsState()
+
+        EmbeddedTurnProtocol.mergeDiagnosticsState(
+            state = state,
+            selectedTools = listOf("write_file"),
+            failedTools = emptyList(),
+            toolFailures = emptyList(),
+            repairUsed = false,
+            fallbackUsed = false,
+        )
+        EmbeddedTurnProtocol.mergeDiagnosticsState(
+            state = state,
+            selectedTools = listOf("mkdir"),
+            failedTools = listOf("mkdir"),
+            toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
+            repairUsed = false,
+            fallbackUsed = false,
+        )
+        EmbeddedTurnProtocol.mergeDiagnosticsState(
+            state = state,
+            selectedTools = listOf("write_file"),
+            failedTools = emptyList(),
+            toolFailures = emptyList(),
+            repairUsed = true,
+            fallbackUsed = false,
+        )
+
+        assertEquals(listOf("write_file", "mkdir"), state.selectedTools.toList())
+        assertEquals(mapOf("mkdir" to "invalid_arguments"), state.toolFailures)
+        assertTrue(state.repairUsed)
+        assertFalse(state.fallbackUsed)
+    }
+
+    @Test
     fun registryWarmAndUnloadDelegateToBackend() {
         val fake = RecordingEmbeddedBackend()
         val registry = EmbeddedBackendRegistry(
