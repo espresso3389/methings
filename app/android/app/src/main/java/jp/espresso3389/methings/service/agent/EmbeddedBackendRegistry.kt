@@ -3,7 +3,6 @@ package jp.espresso3389.methings.service.agent
 import android.content.Context
 import android.content.ComponentCallbacks2
 import android.util.Log
-import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -198,7 +197,7 @@ private class LiteRtBundleEmbeddedBackend(
     private val tag = "EmbeddedBackend"
     private data class LoadedInference(
         val modelPath: String,
-        val inference: LlmInference,
+        val inference: Any,
         val loadedAtMs: Long,
         val lastUsedAtMs: AtomicLong = AtomicLong(loadedAtMs),
         @Volatile var warmed: Boolean = false,
@@ -250,7 +249,7 @@ private class LiteRtBundleEmbeddedBackend(
         synchronized(instance) {
             instance.lastUsedAtMs.set(System.currentTimeMillis())
             return try {
-                instance.inference.generateResponse(prompt).trim()
+                invokeGenerateResponse(instance.inference, prompt).trim()
             } catch (ex: Exception) {
                 instance.lastError = ex.message ?: ex.javaClass.simpleName
                 runCatching { unload(spec) }
@@ -521,7 +520,7 @@ private class LiteRtBundleEmbeddedBackend(
             if (!instance.warmed) {
                 runCatching {
                     instance.lastUsedAtMs.set(System.currentTimeMillis())
-                    instance.inference.generateResponse("Reply with OK.")
+                    invokeGenerateResponse(instance.inference, "Reply with OK.")
                     instance.warmed = true
                     instance.lastError = ""
                 }.onFailure { ex ->
@@ -566,11 +565,7 @@ private class LiteRtBundleEmbeddedBackend(
             loaded[key]?.let { return it }
             val resolved = modelManager.resolve(spec.id)
             val modelFile = resolved.primaryFile ?: throw IllegalStateException("embedded_model_not_installed")
-            val options = LlmInference.LlmInferenceOptions.builder()
-                .setModelPath(modelFile.absolutePath)
-                .setMaxTokens(1024)
-                .build()
-            val inference = LlmInference.createFromOptions(context, options)
+            val inference = createInference(modelFile)
             val now = System.currentTimeMillis()
             val created = LoadedInference(
                 modelPath = modelFile.absolutePath,
@@ -581,6 +576,27 @@ private class LiteRtBundleEmbeddedBackend(
             Log.i(tag, "Loaded embedded model ${spec.id} from ${modelFile.absolutePath}")
             return created
         }
+    }
+
+    private fun createInference(modelFile: File): Any {
+        val inferenceClass = Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInference")
+        val optionsClass = Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInference\$LlmInferenceOptions")
+        val builderClass = Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInference\$LlmInferenceOptions\$Builder")
+        val builder = optionsClass.getMethod("builder").invoke(null)
+        builderClass.getMethod("setModelPath", String::class.java).invoke(builder, modelFile.absolutePath)
+        builderClass.getMethod("setMaxTokens", Int::class.javaPrimitiveType).invoke(builder, 1024)
+        val options = builderClass.getMethod("build").invoke(builder)
+        return inferenceClass
+            .getMethod("createFromOptions", Context::class.java, optionsClass)
+            .invoke(null, context, options)
+            ?: throw IllegalStateException("embedded_inference_create_failed")
+    }
+
+    private fun invokeGenerateResponse(inference: Any, prompt: String): String {
+        return inference.javaClass
+            .getMethod("generateResponse", String::class.java)
+            .invoke(inference, prompt) as? String
+            ?: ""
     }
 
     private fun updateDiagnostics(
