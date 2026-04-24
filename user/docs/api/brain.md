@@ -90,6 +90,12 @@ Returns:
 - `unloaded` (boolean): Whether a loaded instance was actually removed.
 - `embedded_status` (object): Refreshed embedded backend status after unload.
 
+Status panel reading guide:
+- `response_source` tells you whether the final embedded result came from the original merged output, a repaired output, or the required-tool fallback path.
+- `final_tool_call_count` and `final_message_count` describe the final result shape returned by the embedded backend.
+- `tool_failures` lists per-tool normalization failures from the last turn; this is the fastest field to inspect when local tool use did not behave as expected.
+- `repair_attempt_count` shows whether the backend actually consumed its repair pass, not just whether the turn entered a repair-needed state.
+
 ## brain.memory.get
 
 Get persistent brain memory.

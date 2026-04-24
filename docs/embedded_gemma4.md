@@ -190,6 +190,36 @@ Both paths save into:
 - or `model.tflite`
 - or `model.bin`
 
+## Troubleshooting
+
+When checking embedded status or the WebView Embedded panel, these fields are the fastest way to understand what happened on the last turn:
+
+- `response_source`
+  - `original`: the first merged embedded result was accepted
+  - `repaired`: the backend had to run one repair pass and used that repaired result
+  - `fallback`: required-tool execution failed and the backend returned the explicit blocker message
+- `tool_failures`
+  - `no_output`: the per-tool argument pass returned nothing usable
+  - `invalid_arguments`: the model returned arguments that failed schema validation
+  - `required_tool_fallback`: the turn ended in the required-tool fallback path
+- `final_tool_call_count`
+  - how many tool calls the embedded backend finally returned to the agent loop
+- `final_message_count`
+  - how many assistant text messages were returned in that final embedded result
+- `repair_attempt_count`
+  - how many repair generations were actually consumed in the last turn
+
+Common patterns:
+
+- `response_source=original` with `final_tool_call_count>0`
+  - normal successful local tool planning
+- `response_source=repaired`
+  - the first output was malformed or too weak, but repair recovered it
+- `response_source=fallback` with `tool_failures`
+  - the embedded backend could not produce valid required tool calls; inspect the listed failure reasons first
+- `final_tool_call_count=0` and `final_message_count=1`
+  - the model returned assistant text only; this may be correct for non-tool turns, but suspicious for tool-heavy tasks
+
 ## Sources
 
 - Android Developers blog, “Gemma 4: The new standard for local agentic intelligence on Android” (April 2, 2026): https://developer.android.com/blog/posts/gemma-4-the-new-standard-for-local-agentic-intelligence-on-android
