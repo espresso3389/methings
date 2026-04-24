@@ -211,10 +211,13 @@ private class LiteRtBundleEmbeddedBackend(
     override fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
         val resolved = modelManager.resolve(spec.id)
         val installed = resolved.primaryFile != null
+        val invalidReason = resolved.primaryFile?.let { EmbeddedModelFileValidator.invalidReason(it) }.orEmpty()
         val runtimeAvailable = isRuntimeAvailable()
         val cacheKey = spec.id.trim().lowercase()
         val cached = loaded[cacheKey]
-        val detail = if (installed) {
+        val detail = if (installed && invalidReason.isNotEmpty()) {
+            "Model bundle looks invalid: $invalidReason"
+        } else if (installed) {
             if (runtimeAvailable) {
                 if (cached != null) {
                     "Model bundle found. MediaPipe LLM Inference runtime is available and cached in memory."
@@ -231,13 +234,13 @@ private class LiteRtBundleEmbeddedBackend(
             model = spec,
             backendId = backendId,
             installed = installed,
-            runnable = installed && runtimeAvailable,
+            runnable = installed && invalidReason.isEmpty() && runtimeAvailable,
             loaded = cached != null,
             warm = cached?.warmed == true,
             detail = detail,
             primaryModelPath = resolved.primaryFile?.absolutePath ?: resolved.defaultPrimaryPath.absolutePath,
             candidatePaths = resolved.candidateFiles.map { it.absolutePath },
-            lastError = cached?.lastError ?: "",
+            lastError = cached?.lastError ?: invalidReason,
             lastLoadedAtMs = cached?.loadedAtMs ?: 0L,
             lastUsedAtMs = cached?.lastUsedAtMs?.get() ?: 0L,
             lastTurnDiagnostics = diagnostics[cacheKey],
@@ -565,6 +568,9 @@ private class LiteRtBundleEmbeddedBackend(
             loaded[key]?.let { return it }
             val resolved = modelManager.resolve(spec.id)
             val modelFile = resolved.primaryFile ?: throw IllegalStateException("embedded_model_not_installed")
+            EmbeddedModelFileValidator.invalidReason(modelFile)?.let { reason ->
+                throw IllegalStateException("embedded_model_invalid:$reason")
+            }
             val inference = createInference(modelFile)
             val now = System.currentTimeMillis()
             val created = LoadedInference(
@@ -1253,5 +1259,33 @@ private class EmbeddedModelManager(
             defaultPrimaryPath = candidateFiles.first(),
             candidateFiles = candidateFiles,
         )
+    }
+}
+
+internal object EmbeddedModelFileValidator {
+    fun invalidReason(file: File): String? {
+        if (!file.isFile) return null
+        if (file.length() <= 0L) return "file is empty"
+        val prefix = runCatching {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(4096)
+                val read = input.read(buffer)
+                if (read <= 0) return@use ""
+                String(buffer, 0, read, Charsets.UTF_8)
+            }
+        }.getOrDefault("")
+        val normalized = prefix
+            .trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+            .lowercase()
+        if (
+            normalized.startsWith("<!doctype html") ||
+            normalized.startsWith("<html") ||
+            normalized.startsWith("<head") ||
+            normalized.contains("<title>hugging face") ||
+            normalized.contains("<script")
+        ) {
+            return "downloaded content looks like HTML, not a LiteRT model"
+        }
+        return null
     }
 }

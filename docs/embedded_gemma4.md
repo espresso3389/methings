@@ -222,6 +222,9 @@ Common patterns:
   - the embedded backend could not produce valid required tool calls; inspect the listed failure reasons first
 - `final_tool_call_count=0` and `final_message_count=1`
   - the model returned assistant text only; this may be correct for non-tool turns, but suspicious for tool-heavy tasks
+- embedded status says `Model bundle looks invalid`
+  - the cached file on disk failed basic validation before runtime load
+  - a common cause is downloading a Hugging Face `/blob/...` page instead of a `/resolve/...` file URL
 
 ## Sources
 

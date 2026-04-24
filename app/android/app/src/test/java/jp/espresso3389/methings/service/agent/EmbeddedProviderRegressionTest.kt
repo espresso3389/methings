@@ -11,6 +11,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.junit.runner.RunWith
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = Application::class)
@@ -58,6 +59,16 @@ class EmbeddedProviderRegressionTest {
 
         assertEquals(listOf("Plain text fallback"), result.messageTexts)
         assertEquals(0, result.calls.length())
+    }
+
+    @Test
+    fun embeddedModelFileValidatorRejectsHtmlPayload() {
+        val file = kotlin.io.path.createTempFile(suffix = ".litertlm").toFile()
+        file.writeText("<!DOCTYPE html><html><head><title>Hugging Face</title></head><body>not a model</body></html>")
+
+        val reason = EmbeddedModelFileValidator.invalidReason(file)
+
+        assertEquals("downloaded content looks like HTML, not a LiteRT model", reason)
     }
 
     @Test
@@ -439,6 +450,28 @@ class EmbeddedProviderRegressionTest {
         assertEquals(1, diagnostics.getInt("repair_attempt_count"))
         assertEquals(false, diagnostics.getBoolean("fallback_used"))
         assertEquals(789L, diagnostics.getLong("updated_at_ms"))
+    }
+
+    @Test
+    fun embeddedStatusMarksInvalidInstalledModelAsNotRunnable() {
+        val app = RuntimeEnvironment.getApplication()
+        val modelDir = File(app.filesDir, "user/models/embedded/gemma4-e2b-it")
+        modelDir.mkdirs()
+        val modelFile = File(modelDir, "model.litertlm")
+        modelFile.writeText("<html><body>not a model</body></html>")
+        try {
+            val registry = EmbeddedBackendRegistry(context = app)
+
+            val status = registry.statusFor("gemma4-e2b-it")!!
+
+            assertTrue(status.installed)
+            assertFalse(status.runnable)
+            assertTrue(status.detail.contains("looks invalid"))
+            assertTrue(status.lastError.contains("HTML"))
+        } finally {
+            modelFile.delete()
+            modelDir.delete()
+        }
     }
 
     @Test
