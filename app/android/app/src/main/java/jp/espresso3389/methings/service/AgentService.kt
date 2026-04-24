@@ -86,7 +86,6 @@ class AgentService : LifecycleService() {
             sshNoAuthManager
         ).also {
             it.startServer()
-            it.warmConfiguredEmbeddedModel()
         }
         sshdManager.startIfEnabled()
         if (sshdManager.isEnabled()) localServer?.syncAuthorizedKeys()

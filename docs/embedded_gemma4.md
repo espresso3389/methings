@@ -139,7 +139,7 @@ The embedded Python worker can still be useful for:
 - Keep `Gemma4-E2B-it` as the always-on planner model.
 - Avoid shipping a monolithic multimodal runtime in the first iteration.
 - Cache tokenizer/model state once per process.
-- Add explicit warmup on service start or first use.
+- Add explicit warmup on first successful setup or first user-requested use.
 - Bound context windows more aggressively than cloud defaults.
 - Treat image/audio as tool outputs unless the embedded backend proves it can handle them efficiently.
 
@@ -157,7 +157,7 @@ This repo now has:
 - duplicate planned tool names are suppressed while preserving order
 - oversized/noisy model outputs are normalized before parse/repair
 - LiteRT backend instance caching with warm/load state reporting
-- service-start warmup for the configured embedded model
+- transactional save-time warmup for the selected embedded model
 - memory-pressure unload handling wired from the Android service lifecycle
 - embedded backend diagnostics surfaced through status/UI, including:
   - final response source (`original`, `repaired`, `fallback`)
