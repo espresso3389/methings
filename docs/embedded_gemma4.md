@@ -183,6 +183,15 @@ The app now supports two provisioning paths for embedded model files:
 - import a local file through the Android document picker
 - download a file from a direct `http` or `https` URL
 
+In the current WebView settings UI, embedded model changes are transactional:
+
+- choose provider `Embedded`
+- choose the target embedded model
+- fill the direct model download URL
+- press `Save`
+
+`Save` now stages the download, validates it, warms the model, and only then commits the new embedded brain selection. If download, validation, or warmup fails, the previously selected brain model remains active.
+
 Both paths save into:
 
 - `files/user/models/embedded/gemma4-e2b-it/model.litertlm`

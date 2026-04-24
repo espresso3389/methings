@@ -40,6 +40,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.CancellationException
 import org.json.JSONObject
 import jp.espresso3389.methings.perm.PermissionStoreFacade
 import jp.espresso3389.methings.BuildConfig
@@ -337,6 +338,9 @@ class LocalHttpServer(
 
     private val meSyncImportProgressLock = Any()
     @Volatile private var meSyncImportProgress = MeSyncImportProgress()
+    private val embeddedSetupProgressLock = Any()
+    @Volatile private var embeddedSetupProgress = EmbeddedSetupProgress()
+    @Volatile private var embeddedSetupActiveJob: EmbeddedSetupJob? = null
     private val meMePrefs = context.getSharedPreferences(ME_ME_PREFS, Context.MODE_PRIVATE)
     private val meMeConnectIntents = ConcurrentHashMap<String, MeMeConnectIntent>()
     private val meMeConnections = ConcurrentHashMap<String, MeMeConnection>()
@@ -404,6 +408,44 @@ class LocalHttpServer(
     @Volatile private var meMeDiscoveryFuture: ScheduledFuture<*>? = null
     private val meMeConnectionCheckScheduler = Executors.newSingleThreadScheduledExecutor()
     @Volatile private var meMeConnectionCheckFuture: ScheduledFuture<*>? = null
+
+    private data class EmbeddedSetupJob(
+        val jobId: String,
+        val cancel: AtomicBoolean = AtomicBoolean(false),
+    )
+
+    private data class EmbeddedSetupProgress(
+        val state: String = "idle",
+        val phase: String = "idle",
+        val message: String = "",
+        val jobId: String = "",
+        val model: String = "",
+        val url: String = "",
+        val startedAt: Long = 0L,
+        val updatedAt: Long = 0L,
+        val bytesDownloaded: Long = 0L,
+        val totalBytes: Long = 0L,
+        val detail: String = "",
+        val canCancel: Boolean = false,
+        val committed: Boolean = false,
+    ) {
+        fun toJson(now: Long, active: Boolean): JSONObject = JSONObject()
+            .put("active", active)
+            .put("state", state)
+            .put("phase", phase)
+            .put("message", message)
+            .put("job_id", if (jobId.isNotBlank()) jobId else JSONObject.NULL)
+            .put("model", if (model.isNotBlank()) model else JSONObject.NULL)
+            .put("url", if (url.isNotBlank()) url else JSONObject.NULL)
+            .put("started_at", if (startedAt > 0L) startedAt else JSONObject.NULL)
+            .put("updated_at", if (updatedAt > 0L) updatedAt else JSONObject.NULL)
+            .put("age_ms", if (updatedAt > 0L) now - updatedAt else JSONObject.NULL)
+            .put("bytes_downloaded", bytesDownloaded.coerceAtLeast(0L))
+            .put("total_bytes", if (totalBytes > 0L) totalBytes else JSONObject.NULL)
+            .put("can_cancel", canCancel)
+            .put("committed", committed)
+            .put("detail", if (detail.isNotBlank()) detail else JSONObject.NULL)
+    }
 
     fun startServer(): Boolean {
         return try {
@@ -1829,6 +1871,16 @@ class LocalHttpServer(
             }
             uri == "/brain/embedded/status" && session.method == Method.GET -> {
                 handleBrainEmbeddedStatus(session)
+            }
+            uri == "/brain/embedded/setup/status" && session.method == Method.GET -> {
+                handleBrainEmbeddedSetupStatus()
+            }
+            uri == "/brain/embedded/setup" && session.method == Method.POST -> {
+                val body = postBody ?: ""
+                handleBrainEmbeddedSetup(body)
+            }
+            uri == "/brain/embedded/setup/cancel" && session.method == Method.POST -> {
+                handleBrainEmbeddedSetupCancel()
             }
             uri == "/brain/embedded/warm" && session.method == Method.POST -> {
                 val body = postBody ?: ""
@@ -9507,6 +9559,287 @@ class LocalHttpServer(
                 .put("selected_model", model)
                 .put("status", status.toJson())
         )
+    }
+
+    private fun handleBrainEmbeddedSetupStatus(): Response {
+        val now = System.currentTimeMillis()
+        val progress = synchronized(embeddedSetupProgressLock) { embeddedSetupProgress }
+        val active = progress.state == "running" || (progress.state != "idle" && (now - progress.updatedAt) <= 60_000L)
+        return jsonResponse(
+            JSONObject()
+                .put("status", "ok")
+                .put("active", active)
+                .put("setup", progress.toJson(now, active))
+        )
+    }
+
+    private fun handleBrainEmbeddedSetupCancel(): Response {
+        val job = embeddedSetupActiveJob
+            ?: return jsonResponse(JSONObject().put("status", "ok").put("cancel_requested", false))
+        job.cancel.set(true)
+        updateEmbeddedSetupProgress(
+            state = "running",
+            phase = "cancelling",
+            message = "Cancelling download...",
+            jobId = job.jobId,
+            canCancel = false,
+        )
+        return jsonResponse(JSONObject().put("status", "ok").put("cancel_requested", true).put("job_id", job.jobId))
+    }
+
+    private fun handleBrainEmbeddedSetup(body: String): Response {
+        val payload = runCatching { JSONObject(body) }.getOrNull()
+            ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
+        val model = payload.optString("model", "").trim()
+        val url = payload.optString("url", "").trim()
+        if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "embedded_model_required")
+        if (url.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "url_required")
+        val uri = runCatching { URI(url) }.getOrNull()
+            ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_url")
+        val scheme = uri.scheme?.lowercase(Locale.US).orEmpty()
+        if (scheme != "https" && scheme != "http") {
+            return jsonError(Response.Status.BAD_REQUEST, "unsupported_url_scheme", JSONObject().put("scheme", scheme))
+        }
+        val directUrlError = validateEmbeddedModelDownloadUrl(uri)
+        if (directUrlError != null) return directUrlError
+        synchronized(embeddedSetupProgressLock) {
+            if (embeddedSetupProgress.state == "running") {
+                return jsonError(
+                    Response.Status.CONFLICT,
+                    "embedded_setup_busy",
+                    JSONObject().put("setup", embeddedSetupProgress.toJson(System.currentTimeMillis(), true))
+                )
+            }
+            val jobId = "embedded_setup_" + System.currentTimeMillis()
+            val job = EmbeddedSetupJob(jobId = jobId)
+            embeddedSetupActiveJob = job
+            embeddedSetupProgress = EmbeddedSetupProgress(
+                state = "running",
+                phase = "preparing",
+                message = "Preparing embedded model setup...",
+                jobId = jobId,
+                model = model,
+                url = url,
+                startedAt = System.currentTimeMillis(),
+                updatedAt = System.currentTimeMillis(),
+                canCancel = true,
+            )
+            Thread {
+                runEmbeddedSetupTransaction(job, model, url)
+            }.apply {
+                isDaemon = true
+                name = "EmbeddedSetup-$jobId"
+                start()
+            }
+        }
+        return jsonResponse(
+            JSONObject()
+                .put("status", "started")
+                .put("setup", synchronized(embeddedSetupProgressLock) { embeddedSetupProgress.toJson(System.currentTimeMillis(), true) })
+        )
+    }
+
+    private fun updateEmbeddedSetupProgress(
+        state: String,
+        phase: String,
+        message: String,
+        jobId: String = "",
+        model: String? = null,
+        url: String? = null,
+        bytesDownloaded: Long? = null,
+        totalBytes: Long? = null,
+        detail: String? = null,
+        canCancel: Boolean? = null,
+        committed: Boolean? = null,
+    ) {
+        synchronized(embeddedSetupProgressLock) {
+            val prev = embeddedSetupProgress
+            val now = System.currentTimeMillis()
+            val effectiveJobId = jobId.ifBlank { prev.jobId }
+            val startedAt = when {
+                state == "running" && prev.state != "running" -> now
+                prev.startedAt > 0L -> prev.startedAt
+                state == "running" -> now
+                else -> prev.startedAt
+            }
+            embeddedSetupProgress = EmbeddedSetupProgress(
+                state = state,
+                phase = phase,
+                message = message,
+                jobId = effectiveJobId,
+                model = model ?: prev.model,
+                url = url ?: prev.url,
+                startedAt = startedAt,
+                updatedAt = now,
+                bytesDownloaded = bytesDownloaded ?: prev.bytesDownloaded,
+                totalBytes = totalBytes ?: prev.totalBytes,
+                detail = detail ?: prev.detail,
+                canCancel = canCancel ?: prev.canCancel,
+                committed = committed ?: prev.committed,
+            )
+        }
+    }
+
+    private fun runEmbeddedSetupTransaction(job: EmbeddedSetupJob, model: String, url: String) {
+        val extension = detectEmbeddedModelExtension(url)
+        val targetDir = File(context.filesDir, "user/models/embedded/${model.lowercase(Locale.US)}")
+        val finalFile = File(targetDir, "model.$extension")
+        val tempFile = File(targetDir, "model.$extension.part")
+        val backupFile = File(targetDir, "model.$extension.bak_setup")
+        var conn: HttpURLConnection? = null
+        try {
+            if (!targetDir.exists() && !targetDir.mkdirs()) throw IllegalStateException("model_dir_create_failed")
+            runCatching { embeddedBackendRegistry.unload(model) }
+            throwIfEmbeddedSetupCancelled(job)
+            updateEmbeddedSetupProgress(
+                state = "running",
+                phase = "downloading",
+                message = "Downloading embedded model...",
+                jobId = job.jobId,
+                model = model,
+                url = url,
+                bytesDownloaded = 0L,
+                totalBytes = 0L,
+                canCancel = true,
+                committed = false,
+                detail = "",
+            )
+            conn = (java.net.URL(url).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 20_000
+                readTimeout = 120_000
+                instanceFollowRedirects = true
+            }
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val detail = runCatching { (conn.errorStream ?: conn.inputStream)?.bufferedReader()?.use { it.readText().take(400) } ?: "" }.getOrDefault("")
+                throw IllegalStateException(if (detail.isNotBlank()) "download_failed_status_$code: $detail" else "download_failed_status_$code")
+            }
+            val contentType = (conn.contentType ?: "").lowercase(Locale.US)
+            if (looksLikeHtmlContentType(contentType)) {
+                throw IllegalArgumentException("downloaded_html_instead_of_model")
+            }
+            val totalBytes = conn.contentLengthLong.takeIf { it > 0L } ?: 0L
+            conn.inputStream.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    val sniff = ByteArray(4096)
+                    var sniffSize = 0
+                    var totalRead = 0L
+                    while (true) {
+                        throwIfEmbeddedSetupCancelled(job)
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        if (sniffSize < sniff.size) {
+                            val copySize = minOf(read, sniff.size - sniffSize)
+                            System.arraycopy(buffer, 0, sniff, sniffSize, copySize)
+                            sniffSize += copySize
+                        }
+                        output.write(buffer, 0, read)
+                        totalRead += read.toLong()
+                        updateEmbeddedSetupProgress(
+                            state = "running",
+                            phase = "downloading",
+                            message = "Downloading embedded model...",
+                            jobId = job.jobId,
+                            bytesDownloaded = totalRead,
+                            totalBytes = totalBytes,
+                            canCancel = true,
+                        )
+                    }
+                    output.flush()
+                    if (looksLikeHtmlPayload(sniff, sniffSize)) {
+                        throw IllegalArgumentException("downloaded_html_instead_of_model")
+                    }
+                }
+            }
+            EmbeddedModelFileValidator.invalidReason(tempFile)?.let { reason ->
+                throw IllegalArgumentException("embedded_model_invalid:$reason")
+            }
+            throwIfEmbeddedSetupCancelled(job)
+            updateEmbeddedSetupProgress(
+                state = "running",
+                phase = "warming",
+                message = "Validating and warming embedded model...",
+                jobId = job.jobId,
+                canCancel = true,
+            )
+            if (backupFile.exists()) backupFile.delete()
+            if (finalFile.exists() && !finalFile.renameTo(backupFile)) {
+                finalFile.copyTo(backupFile, overwrite = true)
+                finalFile.delete()
+            }
+            if (finalFile.exists()) finalFile.delete()
+            if (!tempFile.renameTo(finalFile)) {
+                tempFile.copyTo(finalFile, overwrite = true)
+                tempFile.delete()
+            }
+            EmbeddedModelFileValidator.invalidReason(finalFile)?.let { reason ->
+                throw IllegalArgumentException("embedded_model_invalid:$reason")
+            }
+            throwIfEmbeddedSetupCancelled(job)
+            embeddedBackendRegistry.warm(model)
+            handleBrainConfigSet(
+                JSONObject()
+                    .put("vendor", "embedded")
+                    .put("base_url", "embedded://local")
+                    .put("model", model)
+                    .toString()
+            )
+            if (backupFile.exists()) backupFile.delete()
+            updateEmbeddedSetupProgress(
+                state = "completed",
+                phase = "completed",
+                message = "Embedded model is ready.",
+                jobId = job.jobId,
+                canCancel = false,
+                committed = true,
+                detail = "",
+            )
+        } catch (ex: Exception) {
+            runCatching {
+                embeddedBackendRegistry.unload(model)
+            }
+            runCatching {
+                if (backupFile.exists()) {
+                    if (finalFile.exists()) finalFile.delete()
+                    if (!backupFile.renameTo(finalFile)) {
+                        backupFile.copyTo(finalFile, overwrite = true)
+                        backupFile.delete()
+                    }
+                } else if (finalFile.exists() && finalFile.name.endsWith(".$extension")) {
+                    finalFile.delete()
+                }
+            }
+            runCatching { tempFile.delete() }
+            val isCancelled = ex is CancellationException
+            val detail = when {
+                isCancelled -> "Cancelled"
+                ex is IllegalArgumentException && ex.message == "downloaded_html_instead_of_model" ->
+                    "The downloaded content looked like HTML, not a LiteRT model. Use a direct file URL such as Hugging Face /resolve/... rather than /blob/..."
+                ex is IllegalArgumentException && (ex.message ?: "").startsWith("embedded_model_invalid:") ->
+                    (ex.message ?: "").removePrefix("embedded_model_invalid:")
+                else -> ex.message ?: ex.javaClass.simpleName
+            }
+            updateEmbeddedSetupProgress(
+                state = if (isCancelled) "cancelled" else "failed",
+                phase = if (isCancelled) "cancelled" else "failed",
+                message = if (isCancelled) "Embedded setup cancelled." else "Embedded setup failed.",
+                jobId = job.jobId,
+                canCancel = false,
+                committed = false,
+                detail = detail,
+            )
+        } finally {
+            conn?.disconnect()
+            synchronized(embeddedSetupProgressLock) {
+                if (embeddedSetupActiveJob?.jobId == job.jobId) embeddedSetupActiveJob = null
+            }
+        }
+    }
+
+    private fun throwIfEmbeddedSetupCancelled(job: EmbeddedSetupJob) {
+        if (job.cancel.get()) throw CancellationException("cancelled")
     }
 
     fun warmConfiguredEmbeddedModel() {

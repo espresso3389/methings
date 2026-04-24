@@ -2443,16 +2443,10 @@
             <div class="muted" id="brainEmbeddedStatus" style="margin-top:4px;display:none;white-space:pre-wrap;"></div>
           </div>
           <div class="field" id="brainEmbeddedInstallField" style="display:none;">
-            <label>Embedded Model</label>
-            <div class="btn-group" style="margin-bottom:8px;">
-              <button class="btn" id="brainEmbeddedImportBtn" type="button">Import File</button>
-              <button class="btn" id="brainEmbeddedDownloadBtn" type="button">Download URL</button>
-              <button class="btn" id="brainEmbeddedWarmBtn" type="button">Warm</button>
-              <button class="btn" id="brainEmbeddedUnloadBtn" type="button">Unload</button>
-            </div>
+            <label>Model Download URL</label>
             <input type="url" id="brainEmbeddedDownloadUrl" placeholder="https://.../model.litertlm" />
             <div class="muted" id="brainEmbeddedInstallHint" style="margin-top:4px;">
-              Saves to app storage under `user/models/embedded/&lt;model&gt;/`.
+              Save downloads, validates, and warms the selected embedded model before applying the config change.
             </div>
           </div>
           <div class="field" id="brainBaseUrlField" style="display:none;">
@@ -2877,6 +2871,21 @@
           <input type="text" id="dialogInput" autocomplete="off" autocapitalize="none" spellcheck="false" />
         </div>
         <div class="btn-group" id="dialogButtons"></div>
+      </div>
+    </div>
+    <div class="modal" id="embeddedSetupModal" role="dialog" aria-modal="true" aria-labelledby="embeddedSetupTitle">
+      <div class="modal-card" style="max-width:360px; text-align:left;">
+        <div class="card-title" id="embeddedSetupTitle">Preparing Embedded Model</div>
+        <div class="muted" id="embeddedSetupStatus" style="white-space:pre-wrap; margin-bottom:10px;">Starting...</div>
+        <div class="progress-wrap" style="margin-bottom:10px;">
+          <div class="progress-bar">
+            <div class="progress-fill" id="embeddedSetupProgressFill"></div>
+          </div>
+          <div class="progress-caption" id="embeddedSetupProgressCaption">Waiting...</div>
+        </div>
+        <div class="btn-group">
+          <button class="btn" id="embeddedSetupCancelBtn" type="button">Cancel</button>
+        </div>
       </div>
     </div>
 
@@ -9356,10 +9365,11 @@
       const brainModelIdField = $("brainModelIdField");
       const brainEmbeddedInstallField = $("brainEmbeddedInstallField");
       const brainEmbeddedDownloadUrl = $("brainEmbeddedDownloadUrl");
-      const brainEmbeddedImportBtn = $("brainEmbeddedImportBtn");
-      const brainEmbeddedDownloadBtn = $("brainEmbeddedDownloadBtn");
-      const brainEmbeddedWarmBtn = $("brainEmbeddedWarmBtn");
-      const brainEmbeddedUnloadBtn = $("brainEmbeddedUnloadBtn");
+      const embeddedSetupModal = $("embeddedSetupModal");
+      const embeddedSetupStatus = $("embeddedSetupStatus");
+      const embeddedSetupProgressFill = $("embeddedSetupProgressFill");
+      const embeddedSetupProgressCaption = $("embeddedSetupProgressCaption");
+      const embeddedSetupCancelBtn = $("embeddedSetupCancelBtn");
       const BRAIN_PROVIDER_PRESETS = {
         embedded: {
           base_url: "embedded://local",
@@ -9508,39 +9518,121 @@
           showToast("Embedded action failed");
         }
       }
-      async function downloadEmbeddedModel() {
-        const model = currentEmbeddedModelId();
-        const url = String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim();
-        if (!model) { showToast("Choose an embedded model first"); return; }
-        if (!url) { showToast("Enter a model URL"); return; }
+      let embeddedSetupPollTimer = 0;
+      let embeddedSetupLastState = "idle";
+
+      function closeEmbeddedSetupModal() {
+        if (embeddedSetupPollTimer) {
+          clearTimeout(embeddedSetupPollTimer);
+          embeddedSetupPollTimer = 0;
+        }
+        embeddedSetupLastState = "idle";
+        if (embeddedSetupModal) embeddedSetupModal.classList.remove("show");
+      }
+
+      function setEmbeddedSetupProgress(bytes, total) {
+        if (!embeddedSetupProgressFill || !embeddedSetupProgressCaption) return;
+        const done = Number(bytes || 0);
+        const max = Number(total || 0);
+        if (max > 0 && done >= 0) {
+          const pct = Math.max(0, Math.min(100, (done / max) * 100));
+          embeddedSetupProgressFill.classList.remove("indeterminate");
+          embeddedSetupProgressFill.style.width = pct.toFixed(1) + "%";
+          embeddedSetupProgressCaption.textContent = pct.toFixed(1) + "%";
+        } else {
+          embeddedSetupProgressFill.classList.add("indeterminate");
+          embeddedSetupProgressFill.style.width = "100%";
+          embeddedSetupProgressCaption.textContent = "Working...";
+        }
+      }
+
+      function renderEmbeddedSetupProgress(setup) {
+        const state = String((setup && setup.state) || "idle");
+        embeddedSetupLastState = state;
+        const phase = String((setup && setup.phase) || "idle");
+        const message = String((setup && setup.message) || "").trim();
+        const detail = String((setup && setup.detail) || "").trim();
+        const model = String((setup && setup.model) || "").trim();
+        if (embeddedSetupStatus) {
+          const lines = [];
+          if (model) lines.push("Model: " + model);
+          lines.push("Phase: " + phase);
+          if (message) lines.push(message);
+          if (detail) lines.push(detail);
+          embeddedSetupStatus.textContent = lines.join("\n");
+        }
+        setEmbeddedSetupProgress(setup && setup.bytes_downloaded, setup && setup.total_bytes);
+        if (embeddedSetupCancelBtn) {
+          embeddedSetupCancelBtn.disabled = state !== "running";
+          embeddedSetupCancelBtn.textContent = state === "running" ? "Cancel" : "Close";
+        }
+      }
+
+      async function pollEmbeddedSetupProgress() {
         try {
-          const res = await fetch(API + "/brain/embedded/install", {
+          const res = await fetch(API + "/brain/embedded/setup/status");
+          const data = await res.json().catch(() => ({}));
+          const setup = data && data.setup ? data.setup : {};
+          renderEmbeddedSetupProgress(setup);
+          const state = String(setup.state || "idle");
+          const active = !!(data && data.active);
+          if (state === "running") {
+            embeddedSetupPollTimer = window.setTimeout(pollEmbeddedSetupProgress, 500);
+            return;
+          }
+          embeddedSetupPollTimer = 0;
+          const detail = String(setup.detail || "").trim();
+          if (state === "completed") {
+            closeEmbeddedSetupModal();
+            await loadBrainConfig();
+            try { await refreshEmbeddedBrainStatus(); } catch (_) {}
+            showToast("Embedded model saved");
+            return;
+          }
+          closeEmbeddedSetupModal();
+          await loadBrainConfig();
+          if (state === "cancelled") {
+            showToast(detail || "Embedded setup cancelled");
+            return;
+          }
+          if (!active && !detail) {
+            showToast("Embedded setup failed");
+            return;
+          }
+          showToast(detail || "Embedded setup failed");
+        } catch (_) {
+          closeEmbeddedSetupModal();
+          await loadBrainConfig();
+          showToast("Embedded setup failed");
+        }
+      }
+
+      async function startEmbeddedSetupSave(model, url) {
+        if (!embeddedSetupModal) return false;
+        embeddedSetupModal.classList.add("show");
+        renderEmbeddedSetupProgress({ state: "running", phase: "preparing", message: "Starting embedded setup...", model: model });
+        try {
+          const res = await fetch(API + "/brain/embedded/setup", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
             body: JSON.stringify({ model: model, url: url }),
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
-            showToast(String(data.detail || data.error || "Download failed"));
-            return;
+            closeEmbeddedSetupModal();
+            showToast(String(data.detail || data.error || "Embedded setup failed"));
+            await loadBrainConfig();
+            return false;
           }
-          showToast("Model downloaded");
-          await refreshEmbeddedBrainStatus();
+          const setup = data && data.setup ? data.setup : {};
+          renderEmbeddedSetupProgress(setup);
+          embeddedSetupPollTimer = window.setTimeout(pollEmbeddedSetupProgress, 250);
+          return true;
         } catch (_) {
-          showToast("Download failed");
-        }
-      }
-      function importEmbeddedModel() {
-        const model = currentEmbeddedModelId();
-        if (!model) { showToast("Choose an embedded model first"); return; }
-        try {
-          if (typeof AndroidBridge !== "undefined" && AndroidBridge.importEmbeddedModel) {
-            AndroidBridge.importEmbeddedModel(model);
-          } else {
-            showToast("Native import is unavailable");
-          }
-        } catch (_) {
-          showToast("Import failed");
+          closeEmbeddedSetupModal();
+          await loadBrainConfig();
+          showToast("Embedded setup failed");
+          return false;
         }
       }
 
@@ -9837,24 +9929,16 @@
         try { syncBrainKeyUsername(); } catch (_) {}
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
-      if (brainEmbeddedImportBtn) {
-        brainEmbeddedImportBtn.addEventListener("click", () => {
-          importEmbeddedModel();
-        });
-      }
-      if (brainEmbeddedDownloadBtn) {
-        brainEmbeddedDownloadBtn.addEventListener("click", async () => {
-          await downloadEmbeddedModel();
-        });
-      }
-      if (brainEmbeddedWarmBtn) {
-        brainEmbeddedWarmBtn.addEventListener("click", async () => {
-          await embeddedModelAction("/brain/embedded/warm", "Model warmed");
-        });
-      }
-      if (brainEmbeddedUnloadBtn) {
-        brainEmbeddedUnloadBtn.addEventListener("click", async () => {
-          await embeddedModelAction("/brain/embedded/unload", "Model unloaded");
+      if (embeddedSetupCancelBtn) {
+        embeddedSetupCancelBtn.addEventListener("click", async () => {
+          if (embeddedSetupLastState !== "running") {
+            closeEmbeddedSetupModal();
+            return;
+          }
+          try {
+            embeddedSetupCancelBtn.disabled = true;
+            await fetch(API + "/brain/embedded/setup/cancel", { method: "POST" });
+          } catch (_) {}
         });
       }
       $("brainOrVendor").addEventListener("change", () => {
@@ -9880,12 +9964,14 @@
       function updateBrainSaveEnabled() {
         try {
           const cur = readBrainUiState();
+          const isEmbedded = String(cur.vendor || "").trim().toLowerCase() === "embedded";
+          const embeddedUrlReady = !isEmbedded || String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim().length > 0;
           const configDirty =
             String(cur.vendor || "") !== String(brainInitial.vendor || "") ||
             String(cur.base_url || "") !== String(brainInitial.base_url || "") ||
             String(cur.model || "") !== String(brainInitial.model || "");
           const keyDirty = isSecretDirty($("brainApiKey"));
-          $("brainSave").disabled = !(configDirty || keyDirty);
+          $("brainSave").disabled = !embeddedUrlReady || !(configDirty || keyDirty || isEmbedded);
         } catch (_) {
           try { $("brainSave").disabled = false; } catch (_) {}
         }
@@ -9982,6 +10068,13 @@
           return;
         }
 
+        if (String(payload.vendor || "").trim().toLowerCase() === "embedded") {
+          const url = String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim();
+          if (!url) { showToast("Enter a model URL"); return; }
+          await startEmbeddedSetupSave(String(payload.model || "").trim(), url);
+          return;
+        }
+
         const keyEl = $("brainApiKey");
         const needsKey = brainProviderNeedsApiKey(String(payload.vendor || ""));
         const keyUnlocked = String((keyEl && keyEl.dataset ? keyEl.dataset.secretLocked : "1") || "1") === "0";
@@ -10074,6 +10167,7 @@
         });
         $("brainBaseUrl").addEventListener("input", updateBrainSaveEnabled);
         $("brainModelId").addEventListener("input", updateBrainSaveEnabled);
+        if (brainEmbeddedDownloadUrl) brainEmbeddedDownloadUrl.addEventListener("input", updateBrainSaveEnabled);
       } catch (_) {}
 
       try {

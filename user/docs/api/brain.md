@@ -51,9 +51,62 @@ Returns:
     - `updated_at_ms` (number)
   - capability flags such as `supports_tool_calling`
 
+## POST /brain/embedded/setup
+
+Start transactional embedded model setup for the selected model.
+
+This is the high-level flow used by the WebView `Save` button for embedded models:
+- download to a staged file
+- validate that the payload is really a model file
+- warm/load the model
+- only then commit `brain.config` to the new embedded model
+
+If download, validation, or warmup fails, the previous brain selection is kept.
+
+Body:
+- `model` (string, required): Embedded model id.
+- `url` (string, required): Direct download URL.
+  - For Hugging Face, use `/resolve/...` URLs, not `/blob/...` page URLs.
+
+Returns:
+- `status` (string): `started` on success.
+- `setup` (object): Initial setup progress snapshot.
+
+## GET /brain/embedded/setup/status
+
+Get current embedded setup progress.
+
+Returns:
+- `status` (string): `ok`
+- `active` (boolean): Whether a setup job is still active or still in its short sticky post-run window.
+- `setup` (object):
+  - `active` (boolean)
+  - `state` (string): `idle`, `running`, `completed`, `failed`, or `cancelled`
+  - `phase` (string)
+  - `message` (string)
+  - `job_id` (string)
+  - `model` (string)
+  - `url` (string)
+  - `bytes_downloaded` (number)
+  - `total_bytes` (number, optional)
+  - `can_cancel` (boolean)
+  - `committed` (boolean): Whether `brain.config` was finally updated
+  - `detail` (string, optional)
+
+## POST /brain/embedded/setup/cancel
+
+Request cancellation of the active embedded setup job.
+
+Returns:
+- `status` (string): `ok`
+- `cancel_requested` (boolean)
+- `job_id` (string, optional)
+
 ## POST /brain/embedded/install
 
 Download an embedded model bundle from a direct `http` or `https` URL into the app sandbox.
+
+This is a low-level install endpoint. It does not update `brain.config` and does not provide transactional rollback for the selected brain model.
 
 Body:
 - `model` (string, required unless already configured): Embedded model id.

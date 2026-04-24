@@ -151,6 +151,9 @@ class ApiAlignmentRegressionTest {
 
         val routeMarkers = listOf(
             """uri == "/brain/embedded/status" && session.method == Method.GET""",
+            """uri == "/brain/embedded/setup/status" && session.method == Method.GET""",
+            """uri == "/brain/embedded/setup" && session.method == Method.POST""",
+            """uri == "/brain/embedded/setup/cancel" && session.method == Method.POST""",
             """uri == "/brain/embedded/warm" && session.method == Method.POST""",
             """uri == "/brain/embedded/unload" && session.method == Method.POST""",
             """uri == "/brain/embedded/install" && session.method == Method.POST""",
@@ -161,6 +164,9 @@ class ApiAlignmentRegressionTest {
 
         val docHeadings = listOf(
             "## GET /brain/embedded/status",
+            "## POST /brain/embedded/setup",
+            "## GET /brain/embedded/setup/status",
+            "## POST /brain/embedded/setup/cancel",
             "## POST /brain/embedded/warm",
             "## POST /brain/embedded/unload",
             "## POST /brain/embedded/install",
