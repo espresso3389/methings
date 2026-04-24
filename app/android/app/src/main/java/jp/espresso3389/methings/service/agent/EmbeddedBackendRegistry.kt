@@ -211,7 +211,10 @@ private class LiteRtBundleEmbeddedBackend(
     override fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
         val resolved = modelManager.resolve(spec.id)
         val installed = resolved.primaryFile != null
-        val invalidReason = resolved.primaryFile?.let { EmbeddedModelFileValidator.invalidReason(it) }.orEmpty()
+        val invalidReason = resolved.primaryFile?.let {
+            EmbeddedModelFileValidator.invalidReason(it)
+                ?: EmbeddedModelCompatibilityValidator.incompatibleReason(spec, it)
+        }.orEmpty()
         val runtimeAvailable = isRuntimeAvailable()
         val cacheKey = spec.id.trim().lowercase()
         val cached = loaded[cacheKey]
@@ -569,6 +572,9 @@ private class LiteRtBundleEmbeddedBackend(
             val resolved = modelManager.resolve(spec.id)
             val modelFile = resolved.primaryFile ?: throw IllegalStateException("embedded_model_not_installed")
             EmbeddedModelFileValidator.invalidReason(modelFile)?.let { reason ->
+                throw IllegalStateException("embedded_model_invalid:$reason")
+            }
+            EmbeddedModelCompatibilityValidator.incompatibleReason(spec, modelFile)?.let { reason ->
                 throw IllegalStateException("embedded_model_invalid:$reason")
             }
             val inference = createInference(modelFile)
@@ -1285,6 +1291,16 @@ internal object EmbeddedModelFileValidator {
             normalized.contains("<script")
         ) {
             return "downloaded content looks like HTML, not a LiteRT model"
+        }
+        return null
+    }
+}
+
+internal object EmbeddedModelCompatibilityValidator {
+    fun incompatibleReason(spec: EmbeddedModelSpec, file: File): String? {
+        val extension = file.extension.lowercase()
+        if (spec.id.equals("gemma4-e2b-it", ignoreCase = true) && extension == "litertlm") {
+            return "this build's MediaPipe runtime cannot load the current Gemma4 LiteRT-LM bundle yet; it aborts natively during warmup instead of returning a recoverable error"
         }
         return null
     }
