@@ -38,6 +38,7 @@ data class EmbeddedTurnDiagnostics(
     val lastPhase: String,
     val responseSource: String,
     val finalToolCallCount: Int,
+    val finalMessageCount: Int,
     val selectedTools: List<String>,
     val failedTools: List<String>,
     val toolFailures: List<EmbeddedToolFailure>,
@@ -52,6 +53,7 @@ data class EmbeddedTurnDiagnostics(
         put("last_phase", lastPhase)
         put("response_source", responseSource)
         put("final_tool_call_count", finalToolCallCount)
+        put("final_message_count", finalMessageCount)
         put("selected_tools", JSONArray(selectedTools))
         put("failed_tools", JSONArray(failedTools))
         put("tool_failures", JSONArray(toolFailures.map { it.toJson() }))
@@ -76,6 +78,7 @@ internal data class EmbeddedTurnDiagnosticsState(
     val turnId: Long,
     var responseSource: String = "pending",
     var finalToolCallCount: Int = 0,
+    var finalMessageCount: Int = 0,
     val selectedTools: LinkedHashSet<String> = linkedSetOf(),
     val toolFailures: LinkedHashMap<String, String> = linkedMapOf(),
     var repairUsed: Boolean = false,
@@ -276,6 +279,7 @@ private class LiteRtBundleEmbeddedBackend(
             phase = "plan",
             responseSource = "pending",
             finalToolCallCount = 0,
+            finalMessageCount = plan.messageTexts.size,
             selectedTools = EmbeddedTurnProtocol.callNames(plan.calls),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -321,6 +325,7 @@ private class LiteRtBundleEmbeddedBackend(
                         phase = "arguments",
                         responseSource = "pending",
                         finalToolCallCount = 0,
+                        finalMessageCount = 0,
                         selectedTools = listOf(toolName),
                         failedTools = listOf(toolName),
                         toolFailures = toolFailures,
@@ -344,6 +349,7 @@ private class LiteRtBundleEmbeddedBackend(
                     phase = "arguments",
                     responseSource = "pending",
                     finalToolCallCount = 0,
+                    finalMessageCount = parsedArgs.messageTexts.size,
                     selectedTools = listOf(toolName),
                     failedTools = toolFailures.map { it.name },
                     toolFailures = toolFailures,
@@ -394,6 +400,7 @@ private class LiteRtBundleEmbeddedBackend(
             phase = "merged",
             responseSource = "original",
             finalToolCallCount = parsed.calls.length(),
+            finalMessageCount = parsed.messageTexts.size,
             selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -420,6 +427,7 @@ private class LiteRtBundleEmbeddedBackend(
                 phase = "repair_needed",
                 responseSource = "original",
                 finalToolCallCount = parsed.calls.length(),
+                finalMessageCount = parsed.messageTexts.size,
                 selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
                 failedTools = emptyList(),
                 toolFailures = emptyList(),
@@ -450,6 +458,7 @@ private class LiteRtBundleEmbeddedBackend(
                     phase = "repair_result",
                     responseSource = "repaired",
                     finalToolCallCount = repaired.calls.length(),
+                    finalMessageCount = repaired.messageTexts.size,
                     selectedTools = EmbeddedTurnProtocol.callNames(repaired.calls),
                     failedTools = emptyList(),
                     toolFailures = emptyList(),
@@ -480,6 +489,7 @@ private class LiteRtBundleEmbeddedBackend(
                     phase = "fallback",
                     responseSource = "fallback",
                     finalToolCallCount = 0,
+                    finalMessageCount = 1,
                     selectedTools = toolSpecs.map { it.name },
                     failedTools = toolSpecs.map { it.name },
                     toolFailures = toolSpecs.map { EmbeddedToolFailure(it.name, "required_tool_fallback") },
@@ -579,6 +589,7 @@ private class LiteRtBundleEmbeddedBackend(
         phase: String,
         responseSource: String,
         finalToolCallCount: Int,
+        finalMessageCount: Int,
         selectedTools: List<String>,
         failedTools: List<String>,
         toolFailures: List<EmbeddedToolFailure>,
@@ -591,6 +602,7 @@ private class LiteRtBundleEmbeddedBackend(
             state = state,
             responseSource = responseSource,
             finalToolCallCount = finalToolCallCount,
+            finalMessageCount = finalMessageCount,
             selectedTools = selectedTools,
             failedTools = failedTools,
             toolFailures = toolFailures,
@@ -603,6 +615,7 @@ private class LiteRtBundleEmbeddedBackend(
             lastPhase = phase,
             responseSource = state.responseSource,
             finalToolCallCount = state.finalToolCallCount,
+            finalMessageCount = state.finalMessageCount,
             selectedTools = state.selectedTools.toList(),
             failedTools = state.toolFailures.keys.toList(),
             toolFailures = state.toolFailures.entries.map { EmbeddedToolFailure(name = it.key, reason = it.value) },
@@ -616,6 +629,8 @@ private class LiteRtBundleEmbeddedBackend(
 }
 
 internal object EmbeddedTurnProtocol {
+    private const val MAX_MODEL_OUTPUT_CHARS = 16_000
+
     fun callNames(calls: JSONArray): List<String> {
         val names = mutableListOf<String>()
         for (i in 0 until calls.length()) {
@@ -635,6 +650,7 @@ internal object EmbeddedTurnProtocol {
         state: EmbeddedTurnDiagnosticsState,
         responseSource: String,
         finalToolCallCount: Int,
+        finalMessageCount: Int,
         selectedTools: List<String>,
         failedTools: List<String>,
         toolFailures: List<EmbeddedToolFailure>,
@@ -647,6 +663,9 @@ internal object EmbeddedTurnProtocol {
         }
         if (finalToolCallCount >= 0) {
             state.finalToolCallCount = finalToolCallCount
+        }
+        if (finalMessageCount >= 0) {
+            state.finalMessageCount = finalMessageCount
         }
         selectedTools
             .map { it.trim() }
@@ -807,17 +826,18 @@ internal object EmbeddedTurnProtocol {
             append("\n")
             append(toolRule)
             append("\n\nOriginal output:\n")
-            append(rawText)
+            append(normalizeGeneratedOutput(rawText))
         }
     }
 
     fun parseResponse(rawText: String, toolSpecs: List<EmbeddedToolSpec> = emptyList()): EmbeddedGenerationResult {
-        val parsed = extractJsonObject(rawText)?.let { runCatching { JSONObject(it) }.getOrNull() }
+        val normalizedRawText = normalizeGeneratedOutput(rawText)
+        val parsed = extractJsonObject(normalizedRawText)?.let { runCatching { JSONObject(it) }.getOrNull() }
         if (parsed == null) {
             return EmbeddedGenerationResult(
-                messageTexts = listOf(rawText).filter { it.isNotBlank() },
+                messageTexts = listOf(normalizedRawText).filter { it.isNotBlank() },
                 calls = JSONArray(),
-                rawText = rawText,
+                rawText = normalizedRawText,
             )
         }
         val message = parsed.optString("assistant_message", "").trim()
@@ -842,28 +862,31 @@ internal object EmbeddedTurnProtocol {
         return EmbeddedGenerationResult(
             messageTexts = listOf(message).filter { it.isNotBlank() },
             calls = calls,
-            rawText = rawText,
+            rawText = normalizedRawText,
         )
     }
 
     fun parsePlanResponse(rawText: String, toolSpecs: List<EmbeddedToolSpec>): EmbeddedGenerationResult {
-        val parsed = extractJsonObject(rawText)?.let { runCatching { JSONObject(it) }.getOrNull() }
+        val normalizedRawText = normalizeGeneratedOutput(rawText)
+        val parsed = extractJsonObject(normalizedRawText)?.let { runCatching { JSONObject(it) }.getOrNull() }
         if (parsed == null) {
             return EmbeddedGenerationResult(
-                messageTexts = listOf(rawText).filter { it.isNotBlank() },
+                messageTexts = listOf(normalizedRawText).filter { it.isNotBlank() },
                 calls = JSONArray(),
-                rawText = rawText,
+                rawText = normalizedRawText,
             )
         }
         val message = parsed.optString("assistant_message", "").trim()
         val calls = JSONArray()
         val toolSpecByName = toolSpecs.associateBy { it.name }
+        val seenToolNames = linkedSetOf<String>()
         val rawCalls = parsed.optJSONArray("tool_calls") ?: JSONArray()
         for (i in 0 until rawCalls.length()) {
             val call = rawCalls.optJSONObject(i) ?: continue
             val name = call.optString("name", "").trim()
             if (name.isEmpty()) continue
             if (!toolSpecByName.containsKey(name)) continue
+            if (!seenToolNames.add(name)) continue
             calls.put(JSONObject().apply {
                 put("name", name)
                 put("arguments", JSONObject())
@@ -873,7 +896,7 @@ internal object EmbeddedTurnProtocol {
         return EmbeddedGenerationResult(
             messageTexts = listOf(message).filter { it.isNotBlank() },
             calls = calls,
-            rawText = rawText,
+            rawText = normalizedRawText,
         )
     }
 
@@ -891,10 +914,12 @@ internal object EmbeddedTurnProtocol {
             }
         }
         val mergedCalls = JSONArray()
+        val seenPlannedNames = linkedSetOf<String>()
         for (i in 0 until plan.calls.length()) {
             val call = plan.calls.optJSONObject(i) ?: continue
             val name = call.optString("name", "").trim()
             if (name.isEmpty()) continue
+            if (!seenPlannedNames.add(name)) continue
             mergedCalls.put(JSONObject().apply {
                 put("name", name)
                 put("arguments", argCallsByName[name] ?: JSONObject())
@@ -918,6 +943,9 @@ internal object EmbeddedTurnProtocol {
         toolSpecs: List<EmbeddedToolSpec>,
     ): Boolean {
         if (requireTool && toolSpecs.isNotEmpty() && result.calls.length() == 0) {
+            return true
+        }
+        if (toolSpecs.isNotEmpty() && result.calls.length() == 0 && isLowSignalResult(result.messageTexts)) {
             return true
         }
         if (result.messageTexts.isEmpty() && result.calls.length() == 0) {
@@ -1071,19 +1099,42 @@ internal object EmbeddedTurnProtocol {
         return sb.toString().trim()
     }
 
+    fun normalizeGeneratedOutput(rawText: String, maxChars: Int = MAX_MODEL_OUTPUT_CHARS): String {
+        val cleaned = rawText
+            .replace("\u0000", "")
+            .trim()
+        if (cleaned.isEmpty()) return ""
+        if (cleaned.length <= maxChars) return cleaned
+        val jsonCandidate = extractJsonObject(cleaned)
+        if (jsonCandidate != null && jsonCandidate.length <= maxChars) return jsonCandidate
+        val head = maxChars / 2
+        val tail = maxChars - head
+        return buildString {
+            append(cleaned.take(head))
+            append("\n...[truncated]...\n")
+            append(cleaned.takeLast(tail))
+        }.trim()
+    }
+
     private fun extractJsonObject(rawText: String): String? {
         val trimmed = rawText.trim()
         if (trimmed.isEmpty()) return null
-        if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed
-        val fenceMatch = Regex("```(?:json)?\\s*(\\{.*?\\})\\s*```", RegexOption.DOT_MATCHES_ALL)
-            .find(trimmed)
-        if (fenceMatch != null) return fenceMatch.groupValues[1]
-        val first = trimmed.indexOf('{')
-        if (first < 0) return null
+        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+            runCatching { JSONObject(trimmed) }.getOrNull()?.let { parsed ->
+                if (looksLikeStructuredAssistantPayload(parsed)) return trimmed
+            }
+        }
+        val candidates = mutableListOf<String>()
+        val fenceMatches = Regex("```(?:json)?\\s*(\\{.*?\\})\\s*```", RegexOption.DOT_MATCHES_ALL)
+            .findAll(trimmed)
+            .map { it.groupValues[1] }
+            .toList()
+        candidates.addAll(fenceMatches)
         var depth = 0
         var inString = false
         var escaped = false
-        for (i in first until trimmed.length) {
+        var start = -1
+        for (i in trimmed.indices) {
             val ch = trimmed[i]
             if (inString) {
                 if (escaped) {
@@ -1097,14 +1148,65 @@ internal object EmbeddedTurnProtocol {
             }
             when (ch) {
                 '"' -> inString = true
-                '{' -> depth++
+                '{' -> {
+                    if (depth == 0) start = i
+                    depth++
+                }
                 '}' -> {
+                    if (depth == 0) continue
                     depth--
-                    if (depth == 0) return trimmed.substring(first, i + 1)
+                    if (depth == 0 && start >= 0) {
+                        candidates += trimmed.substring(start, i + 1)
+                        start = -1
+                    }
                 }
             }
         }
+        val ranked = candidates.mapNotNull { candidate ->
+            val parsed = runCatching { JSONObject(candidate) }.getOrNull() ?: return@mapNotNull null
+            val keyScore = structuredPayloadScore(parsed)
+            Triple(candidate, parsed, keyScore)
+        }
+        val bestStructured = ranked
+            .filter { it.third > 0 }
+            .maxWithOrNull(compareBy<Triple<String, JSONObject, Int>>({ it.third }, { it.first.length }))
+        if (bestStructured != null) return bestStructured.first
+        val bestAny = ranked.maxByOrNull { it.first.length }
+        if (bestAny != null) return bestAny.first
         return null
+    }
+
+    private fun looksLikeStructuredAssistantPayload(json: JSONObject): Boolean {
+        return structuredPayloadScore(json) > 0
+    }
+
+    private fun structuredPayloadScore(json: JSONObject): Int {
+        var score = 0
+        if (json.has("assistant_message")) score += 2
+        if (json.has("tool_calls")) score += 3
+        return score
+    }
+
+    private fun isLowSignalResult(messageTexts: List<String>): Boolean {
+        if (messageTexts.isEmpty()) return false
+        return messageTexts.all { text ->
+            val normalized = text
+                .lowercase()
+                .replace(Regex("[^a-z0-9\\s]"), " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            normalized in setOf(
+                "ok",
+                "okay",
+                "sure",
+                "done",
+                "planning",
+                "working on it",
+                "trying tools",
+                "let me do that",
+                "i will do that",
+            )
+        }
     }
 }
 

@@ -151,15 +151,30 @@ This repo now has:
 - a backend registry abstraction
 - model install status detection
 - a prompt-driven local tool-calling bridge that keeps embedded turns inside the existing agent/tool loop
+- a bounded two-phase local tool flow:
+  - plan tool names first
+  - normalize arguments per selected tool
+- duplicate planned tool names are suppressed while preserving order
+- oversized/noisy model outputs are normalized before parse/repair
 - LiteRT backend instance caching with warm/load state reporting
 - service-start warmup for the configured embedded model
 - memory-pressure unload handling wired from the Android service lifecycle
+- embedded backend diagnostics surfaced through status/UI, including:
+  - final response source (`original`, `repaired`, `fallback`)
+  - final tool/message counts
+  - per-tool normalization failures
+  - repair/fallback usage
 - a fixed on-device placement convention:
   - `files/user/models/embedded/gemma4-e2b-it/model.litertlm`
   - or `model.task`
   - or `model.tflite`
 
 It still does not have a production-grade native Gemma tool-calling SDK path yet. The normalized embedded backend seam now exists in code, and the current LiteRT-backed implementation fulfills it with a structured JSON prompt/response contract behind that backend boundary. Production should still replace that prompt-driven implementation with a native structured output/tool-calling path when the runtime supports it.
+
+What remains external to this repo:
+
+- a native structured tool-calling/runtime API from the underlying embedded stack
+- a second embedded backend implementation that can replace the prompt-driven LiteRT path behind the same registry seam
 
 ## Current install flow
 

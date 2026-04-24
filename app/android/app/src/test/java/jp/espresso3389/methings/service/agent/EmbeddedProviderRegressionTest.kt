@@ -83,6 +83,74 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
+    fun embeddedParserPrefersStructuredJsonOverEarlierNoiseObject() {
+        val toolSpecs = listOf(
+            EmbeddedToolSpec(
+                name = "write_file",
+                description = "Write a file",
+                allowedArgumentNames = setOf("path", "content"),
+                requiredArgumentNames = setOf("path", "content"),
+                enumStringValues = emptyMap(),
+                allowAdditionalProperties = false,
+            )
+        )
+        val raw = """
+            First draft metadata: {"note":"ignore me"}
+
+            ```json
+            {"assistant_message":"Working on it","tool_calls":[{"name":"write_file","arguments":{"path":"note.txt","content":"hello"}}]}
+            ```
+        """.trimIndent()
+
+        val result = EmbeddedTurnProtocol.parseResponse(raw, toolSpecs)
+
+        assertEquals(listOf("Working on it"), result.messageTexts)
+        assertEquals(1, result.calls.length())
+        assertEquals("write_file", result.calls.getJSONObject(0).getString("name"))
+    }
+
+    @Test
+    fun embeddedNormalizeGeneratedOutputKeepsTrailingJsonWhenOverlong() {
+        val raw = "x".repeat(20_000) + """{"assistant_message":"ok","tool_calls":[]}"""
+
+        val normalized = EmbeddedTurnProtocol.normalizeGeneratedOutput(raw, maxChars = 512)
+
+        assertTrue(normalized.startsWith("{"))
+        assertTrue(normalized.contains("assistant_message"))
+        assertTrue(normalized.length <= 512)
+    }
+
+    @Test
+    fun embeddedPlanParserDeduplicatesRepeatedToolNames() {
+        val toolSpecs = listOf(
+            EmbeddedToolSpec(
+                name = "write_file",
+                description = "Write a file",
+                allowedArgumentNames = setOf("path", "content"),
+                requiredArgumentNames = setOf("path", "content"),
+                enumStringValues = emptyMap(),
+                allowAdditionalProperties = false,
+            ),
+            EmbeddedToolSpec(
+                name = "mkdir",
+                description = "Create a directory",
+                allowedArgumentNames = setOf("path"),
+                requiredArgumentNames = setOf("path"),
+                enumStringValues = emptyMap(),
+                allowAdditionalProperties = false,
+            ),
+        )
+        val plan = EmbeddedTurnProtocol.parsePlanResponse(
+            """{"assistant_message":"planning","tool_calls":[{"name":"write_file"},{"name":"write_file"},{"name":"mkdir"},{"name":"mkdir"}]}""",
+            toolSpecs,
+        )
+
+        assertEquals(2, plan.calls.length())
+        assertEquals("write_file", plan.calls.getJSONObject(0).getString("name"))
+        assertEquals("mkdir", plan.calls.getJSONObject(1).getString("name"))
+    }
+
+    @Test
     fun embeddedMergePlanAndArgumentsUsesPlannedOrder() {
         val plan = EmbeddedGenerationResult(
             messageTexts = listOf("planning"),
@@ -106,6 +174,31 @@ class EmbeddedProviderRegressionTest {
         assertEquals("a.txt", merged.calls.getJSONObject(0).getJSONObject("arguments").getString("path"))
         assertEquals("mkdir", merged.calls.getJSONObject(1).getString("name"))
         assertEquals("dir", merged.calls.getJSONObject(1).getJSONObject("arguments").getString("path"))
+    }
+
+    @Test
+    fun embeddedMergePlanAndArgumentsDropsDuplicatePlannedTools() {
+        val plan = EmbeddedGenerationResult(
+            messageTexts = listOf("planning"),
+            calls = org.json.JSONArray()
+                .put(org.json.JSONObject().put("name", "write_file").put("arguments", org.json.JSONObject()).put("call_id", "c1"))
+                .put(org.json.JSONObject().put("name", "write_file").put("arguments", org.json.JSONObject()).put("call_id", "c2"))
+                .put(org.json.JSONObject().put("name", "mkdir").put("arguments", org.json.JSONObject()).put("call_id", "c3")),
+            rawText = "plan",
+        )
+        val args = EmbeddedGenerationResult(
+            messageTexts = emptyList(),
+            calls = org.json.JSONArray()
+                .put(org.json.JSONObject().put("name", "write_file").put("arguments", org.json.JSONObject().put("path", "a.txt").put("content", "hi")))
+                .put(org.json.JSONObject().put("name", "mkdir").put("arguments", org.json.JSONObject().put("path", "dir"))),
+            rawText = "args",
+        )
+
+        val merged = EmbeddedTurnProtocol.mergePlanAndArguments(plan, listOf(args))
+
+        assertEquals(2, merged.calls.length())
+        assertEquals("write_file", merged.calls.getJSONObject(0).getString("name"))
+        assertEquals("mkdir", merged.calls.getJSONObject(1).getString("name"))
     }
 
     @Test
@@ -180,6 +273,27 @@ class EmbeddedProviderRegressionTest {
         )
 
         assertTrue(EmbeddedTurnProtocol.needsRepair(result, requireTool = true, toolSpecs = toolSpecs))
+    }
+
+    @Test
+    fun embeddedRepairIsRequestedForLowSignalNoToolReplyWhenToolsExist() {
+        val toolSpecs = listOf(
+            EmbeddedToolSpec(
+                name = "write_file",
+                description = "Write a file",
+                allowedArgumentNames = setOf("path", "content"),
+                requiredArgumentNames = setOf("path", "content"),
+                enumStringValues = emptyMap(),
+                allowAdditionalProperties = false,
+            )
+        )
+        val result = EmbeddedGenerationResult(
+            messageTexts = listOf("Working on it"),
+            calls = org.json.JSONArray(),
+            rawText = "Working on it",
+        )
+
+        assertTrue(EmbeddedTurnProtocol.needsRepair(result, requireTool = false, toolSpecs = toolSpecs))
     }
 
     @Test
@@ -295,6 +409,7 @@ class EmbeddedProviderRegressionTest {
                 lastPhase = "merged",
                 responseSource = "repaired",
                 finalToolCallCount = 1,
+                finalMessageCount = 0,
                 selectedTools = listOf("write_file"),
                 failedTools = listOf("mkdir"),
                 toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
@@ -315,6 +430,7 @@ class EmbeddedProviderRegressionTest {
         assertEquals("merged", diagnostics.getString("last_phase"))
         assertEquals("repaired", diagnostics.getString("response_source"))
         assertEquals(1, diagnostics.getInt("final_tool_call_count"))
+        assertEquals(0, diagnostics.getInt("final_message_count"))
         assertEquals("mkdir", diagnostics.getJSONArray("failed_tools").getString(0))
         val failures = diagnostics.getJSONArray("tool_failures")
         assertEquals("mkdir", failures.getJSONObject(0).getString("name"))
@@ -333,6 +449,7 @@ class EmbeddedProviderRegressionTest {
             state = state,
             responseSource = "pending",
             finalToolCallCount = 0,
+            finalMessageCount = 0,
             selectedTools = listOf("write_file"),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -344,6 +461,7 @@ class EmbeddedProviderRegressionTest {
             state = state,
             responseSource = "pending",
             finalToolCallCount = 0,
+            finalMessageCount = 0,
             selectedTools = listOf("mkdir"),
             failedTools = listOf("mkdir"),
             toolFailures = listOf(EmbeddedToolFailure("mkdir", "invalid_arguments")),
@@ -355,6 +473,7 @@ class EmbeddedProviderRegressionTest {
             state = state,
             responseSource = "repaired",
             finalToolCallCount = 1,
+            finalMessageCount = 2,
             selectedTools = listOf("write_file"),
             failedTools = emptyList(),
             toolFailures = emptyList(),
@@ -366,6 +485,7 @@ class EmbeddedProviderRegressionTest {
         assertEquals(listOf("write_file", "mkdir"), state.selectedTools.toList())
         assertEquals("repaired", state.responseSource)
         assertEquals(1, state.finalToolCallCount)
+        assertEquals(2, state.finalMessageCount)
         assertEquals(mapOf("mkdir" to "invalid_arguments"), state.toolFailures)
         assertTrue(state.repairUsed)
         assertEquals(1, state.repairAttemptCount)
@@ -425,6 +545,7 @@ class EmbeddedProviderRegressionTest {
                     lastPhase = "plan",
                     responseSource = "pending",
                     finalToolCallCount = 0,
+                    finalMessageCount = 0,
                     selectedTools = listOf("write_file"),
                     failedTools = emptyList(),
                     toolFailures = emptyList(),

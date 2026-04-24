@@ -9472,6 +9472,7 @@
             lines.push("phase=" + String(diag.last_phase || "unknown"));
             if (diag.response_source) lines.push("response_source=" + String(diag.response_source));
             lines.push("final_tool_call_count=" + Number(diag.final_tool_call_count || 0));
+            lines.push("final_message_count=" + Number(diag.final_message_count || 0));
             lines.push("tools=" + (tools.length ? tools.join(", ") : "none"));
             if (toolFailures.length) lines.push("tool_failures=" + toolFailures.join(", "));
             if (failedTools.length) lines.push("failed_tools=" + failedTools.join(", "));
