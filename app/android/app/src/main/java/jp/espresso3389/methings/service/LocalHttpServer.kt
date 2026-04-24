@@ -9555,12 +9555,18 @@ class LocalHttpServer(
             ?: return jsonError(Response.Status.BAD_REQUEST, "unknown_embedded_model", JSONObject().put("model", model))
         val candidates = embeddedBackendRegistry.statusesFor(model).orEmpty()
         val availableBackend = candidates.firstOrNull { it.runnable }?.backendId ?: "none"
+        val backendToUse = if (candidates.any { it.backendId == "aicore_preview" && it.runnable }) {
+            "aicore_preview"
+        } else {
+            "litert_lm"
+        }
         return jsonResponse(
             JSONObject()
                 .put("configured", vendor.equals("embedded", ignoreCase = true) && configuredModel.equals(model, ignoreCase = true))
                 .put("selected_model", model)
                 .put("status", status.toJson())
                 .put("available_backend", availableBackend)
+                .put("backend_to_use", backendToUse)
                 .put("backend_candidates", JSONArray(candidates.map { it.toJson() }))
         )
     }
@@ -10195,11 +10201,23 @@ class LocalHttpServer(
 
         val afterVendor = if (payload.has("vendor")) payload.optString("vendor", "").trim() else beforeVendor
         val afterBase = if (payload.has("base_url")) payload.optString("base_url", "").trim().trimEnd('/') else beforeBase
+        val afterModel = if (payload.has("model")) {
+            payload.optString("model", "").trim()
+        } else {
+            (brainPrefs.getString("model", "") ?: "").trim()
+        }
+        if (afterVendor.equals("embedded", ignoreCase = true) && EmbeddedModelCatalog.find(afterModel) == null) {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "unknown_embedded_model",
+                JSONObject().put("model", afterModel)
+            )
+        }
 
         val editor = brainPrefs.edit()
         if (payload.has("vendor")) editor.putString("vendor", afterVendor)
         if (payload.has("base_url")) editor.putString("base_url", afterBase)
-        if (payload.has("model")) editor.putString("model", payload.optString("model", "").trim())
+        if (payload.has("model")) editor.putString("model", afterModel)
 
         val vendorChanged = !beforeVendor.equals(afterVendor, ignoreCase = true)
         val baseChanged = !beforeBase.equals(afterBase, ignoreCase = true)

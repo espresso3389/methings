@@ -82,7 +82,7 @@ Recommended priority:
 2. App-managed LiteRT-LM bundle runtime as the fallback
 3. Same normalized `EmbeddedInferenceBackend` contract for both
 
-The Brain settings UI should keep this simple for users: show only which backend is currently runnable (`AICore Developer Preview`, `LiteRT-LM`, or `none`). Detailed backend diagnostics can remain in `/brain/embedded/status` for debugging.
+The Brain settings UI should keep this simple for users: show only which backend the app will try to use. It shows `AICore Developer Preview` when AICore reports available, otherwise `LiteRT-LM` for the built-in fallback path. This is a routing indicator, not a guarantee that the backend is already warmed or that a LiteRT-LM model file is already installed. Detailed backend diagnostics can remain in `/brain/embedded/status` for debugging.
 
 For `gemma4-e2b-it`, the WebView should not require users to paste the default model URL. If AICore is not runnable and no override URL is provided, `/brain/embedded/setup` uses a built-in Hugging Face `/resolve/...` URL:
 
@@ -117,7 +117,7 @@ The embedded Python worker can still be useful for:
 - add `Embedded` to Brain settings
 - allow API-keyless config for embedded
 - introduce `ProviderKind.EMBEDDED`
-- add model catalog entry for `gemma4-e2b-it`
+- add the single supported embedded model catalog entry: `gemma4-e2b-it`
 - do not advertise multimodal support yet
 - standardize local model placement under `files/user/models/embedded/<model>/`
 
@@ -168,6 +168,7 @@ This repo now has:
 - oversized/noisy model outputs are normalized before parse/repair
 - LiteRT backend instance caching with warm/load state reporting
 - transactional save-time warmup for the selected embedded model
+- no custom embedded model entry in the Brain UI; Embedded currently supports only `Gemma4-E2B-it`
 - memory-pressure unload handling wired from the Android service lifecycle
 - embedded backend diagnostics surfaced through status/UI, including:
   - final response source (`original`, `repaired`, `fallback`)
@@ -197,7 +198,7 @@ The app now supports two provisioning paths for embedded models:
 In the current WebView settings UI, embedded model changes are transactional:
 
 - choose provider `Embedded`
-- choose the target embedded model
+- use the fixed `Gemma4-E2B-it` embedded model
 - leave the URL empty when AICore preview is already ready, or fill a direct model download URL for the LiteRT-LM fallback
 - press `Save`
 

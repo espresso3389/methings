@@ -26,7 +26,7 @@ Returns:
 - `configured` (boolean): Whether this model is the active configured embedded brain.
 - `selected_model` (string): Resolved model id.
 - `status` (object): Embedded backend status, including:
-  - `backend` (string): For example `aicore_preview` or `litert_bundle`.
+  - `backend` (string): For example `aicore_preview` or `litert_lm`.
   - `installed` (boolean)
   - `runnable` (boolean)
   - `loaded` (boolean)
@@ -53,7 +53,8 @@ Returns:
     - `updated_at_ms` (number)
   - capability flags such as `supports_tool_calling`
 - `available_backend` (string): First runnable embedded backend, currently `aicore_preview`, `litert_lm`, or `none`.
-- `backend_candidates` (array): Status snapshots for each embedded backend considered by the registry. Intended for diagnostics; the WebView only shows the concise available backend.
+- `backend_to_use` (string): Backend the app will try for setup/use. This is `aicore_preview` when AICore reports available; otherwise it is `litert_lm` for the built-in fallback path. It is a routing indicator, not a guarantee that the backend is already warmed or that a model file is installed.
+- `backend_candidates` (array): Status snapshots for each embedded backend considered by the registry. Intended for diagnostics; the WebView only shows the concise backend-to-use indicator.
 
 ## POST /brain/embedded/setup
 
@@ -68,7 +69,7 @@ This is the high-level flow used by the WebView `Save` button for embedded model
 If download, validation, or warmup fails, the previous brain selection is kept.
 
 Body:
-- `model` (string, required): Embedded model id.
+- `model` (string, required): Embedded model id. Currently only `gemma4-e2b-it` is supported.
 - `url` (string, optional): Direct download URL.
   - Leave empty to use an already-available AICore Developer Preview model.
   - For `gemma4-e2b-it`, leave empty to use the built-in LiteRT-LM download URL when AICore is not runnable.

@@ -9452,12 +9452,10 @@
           ? lastEmbeddedBackendCandidates.find((entry) => String((entry && entry.backend) || "").trim() === key)
           : null;
       }
-      function embeddedAvailableBackendLabel() {
+      function embeddedBackendToUseLabel() {
         const aicore = embeddedBackendCandidate("aicore_preview");
         if (aicore && aicore.runnable) return "AICore (Developer Preview)";
-        const litert = embeddedBackendCandidate("litert_lm");
-        if (litert && litert.runnable) return "LiteRT-LM";
-        return "none";
+        return "LiteRT-LM";
       }
       function currentEmbeddedModelId() {
         const preset = getSelectedPreset ? getSelectedPreset() : null;
@@ -9492,11 +9490,11 @@
           lastEmbeddedStatus = st || null;
           lastEmbeddedBackendCandidates = Array.isArray(data.backend_candidates) ? data.backend_candidates : [];
           if (!data.configured && !st.primary_model_path) {
-            statusEl.textContent = "Available backend: " + embeddedAvailableBackendLabel();
+            statusEl.textContent = "Backend to use: " + embeddedBackendToUseLabel();
             try { updateBrainSaveEnabled(); } catch (_) {}
             return;
           }
-          statusEl.textContent = "Available backend: " + embeddedAvailableBackendLabel();
+          statusEl.textContent = "Backend to use: " + embeddedBackendToUseLabel();
           try { updateBrainSaveEnabled(); } catch (_) {}
         } catch (_) {
           lastEmbeddedStatus = null;
@@ -9818,15 +9816,23 @@
           opt.textContent = m.label;
           brainModelSelect.appendChild(opt);
         }
-        const customOpt = document.createElement("option");
-        customOpt.value = "__custom__";
-        customOpt.textContent = "Custom model...";
-        brainModelSelect.appendChild(customOpt);
+        const allowCustomModel = vendor !== "embedded";
+        let customOpt = null;
+        if (allowCustomModel) {
+          customOpt = document.createElement("option");
+          customOpt.value = "__custom__";
+          customOpt.textContent = "Custom model...";
+          brainModelSelect.appendChild(customOpt);
+        }
         brainModelSelect.disabled = false;
 
         const model = String(selectedModel || "").trim();
         if (!model) {
-          placeholder.selected = true;
+          if (vendor === "embedded" && preset.models.length) {
+            brainModelSelect.value = preset.models[0].id;
+          } else {
+            placeholder.selected = true;
+          }
           return;
         }
         let matched = false;
@@ -9837,7 +9843,15 @@
             break;
           }
         }
-        if (!matched) customOpt.selected = true;
+        if (!matched) {
+          if (allowCustomModel && customOpt) {
+            customOpt.selected = true;
+          } else if (preset.models.length) {
+            brainModelSelect.value = preset.models[0].id;
+          } else {
+            placeholder.selected = true;
+          }
+        }
       }
 
       function syncBrainCustomFields() {
@@ -10076,6 +10090,7 @@
           } else if (preset) {
             const modelKnown = preset.models.some((m) => m.id === model);
             const baseKnown = !baseUrl || baseUrl === preset.base_url;
+            const isEmbeddedPreset = String(vendor || "").trim() === "embedded";
             if (!baseKnown) {
               brainProviderSelect.value = "custom";
               renderBrainModelOptions("custom", "");
@@ -10086,6 +10101,10 @@
               renderBrainModelOptions(vendor, model);
               if (modelKnown) {
                 brainModelSelect.value = model;
+                $("brainBaseUrl").value = preset.base_url;
+                $("brainModelId").value = "";
+              } else if (isEmbeddedPreset && preset.models.length) {
+                brainModelSelect.value = preset.models[0].id;
                 $("brainBaseUrl").value = preset.base_url;
                 $("brainModelId").value = "";
               } else {

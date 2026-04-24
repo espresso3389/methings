@@ -672,7 +672,7 @@ private class LiteRtBundleEmbeddedBackend(
     private val context: Context,
     private val modelManager: EmbeddedModelManager,
 ) : PromptStructuredEmbeddedBackend() {
-    override val backendId: String = "litert_bundle"
+    override val backendId: String = "litert_lm"
     private data class LoadedInference(
         val modelPath: String,
         val engine: Engine,

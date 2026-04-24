@@ -467,7 +467,7 @@ class EmbeddedProviderRegressionTest {
         val spec = EmbeddedModelCatalog.find("gemma4-e2b-it")!!
         val json = EmbeddedBackendStatus(
             model = spec,
-            backendId = "litert_bundle",
+            backendId = "litert_lm",
             installed = true,
             runnable = true,
             loaded = true,
