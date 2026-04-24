@@ -190,6 +190,9 @@ Both paths save into:
 - or `model.tflite`
 - or `model.bin`
 
+For Hugging Face downloads, use direct file URLs under `/resolve/...`.
+Do not use `/blob/...` URLs from the web UI, because those return HTML pages rather than raw model bytes.
+
 ## Troubleshooting
 
 When checking embedded status or the WebView Embedded panel, these fields are the fastest way to understand what happened on the last turn:

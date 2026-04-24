@@ -9601,6 +9601,8 @@ class LocalHttpServer(
         if (scheme != "https" && scheme != "http") {
             return jsonError(Response.Status.BAD_REQUEST, "unsupported_url_scheme", JSONObject().put("scheme", scheme))
         }
+        val directUrlError = validateEmbeddedModelDownloadUrl(uri)
+        if (directUrlError != null) return directUrlError
 
         val targetDir = File(context.filesDir, "user/models/embedded/${model.lowercase(Locale.US)}")
         if (!targetDir.exists() && !targetDir.mkdirs()) {
@@ -9623,9 +9625,35 @@ class LocalHttpServer(
                 val detail = runCatching { (conn.errorStream ?: conn.inputStream)?.bufferedReader()?.use { it.readText().take(400) } ?: "" }.getOrDefault("")
                 return jsonError(Response.Status.INTERNAL_ERROR, "download_failed", JSONObject().put("status", code).put("detail", detail))
             }
+            val contentType = (conn.contentType ?: "").lowercase(Locale.US)
+            if (looksLikeHtmlContentType(contentType)) {
+                return jsonError(
+                    Response.Status.BAD_REQUEST,
+                    "invalid_model_download",
+                    JSONObject()
+                        .put("detail", "The URL returned HTML instead of a model file. Use a direct file URL such as Hugging Face /resolve/... rather than /blob/...")
+                        .put("content_type", contentType)
+                )
+            }
             conn.inputStream.use { input ->
                 FileOutputStream(tempFile).use { output ->
-                    input.copyTo(output, DEFAULT_BUFFER_SIZE)
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    val sniff = ByteArray(4096)
+                    var sniffSize = 0
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        if (sniffSize < sniff.size) {
+                            val copySize = minOf(read, sniff.size - sniffSize)
+                            System.arraycopy(buffer, 0, sniff, sniffSize, copySize)
+                            sniffSize += copySize
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                    if (looksLikeHtmlPayload(sniff, sniffSize)) {
+                        output.flush()
+                        throw IllegalArgumentException("downloaded_html_instead_of_model")
+                    }
                 }
             }
             if (destFile.exists()) destFile.delete()
@@ -9642,10 +9670,62 @@ class LocalHttpServer(
             })
         } catch (e: Exception) {
             runCatching { tempFile.delete() }
-            jsonError(Response.Status.INTERNAL_ERROR, "download_failed", JSONObject().put("detail", e.message ?: ""))
+            val code = if (e is IllegalArgumentException && e.message == "downloaded_html_instead_of_model") {
+                "invalid_model_download"
+            } else {
+                "download_failed"
+            }
+            val detail = if (code == "invalid_model_download") {
+                "The downloaded content looked like HTML, not a LiteRT model. Use a direct file URL such as Hugging Face /resolve/... rather than /blob/..."
+            } else {
+                e.message ?: ""
+            }
+            val status = if (code == "invalid_model_download") Response.Status.BAD_REQUEST else Response.Status.INTERNAL_ERROR
+            jsonError(status, code, JSONObject().put("detail", detail))
         } finally {
             conn?.disconnect()
         }
+    }
+
+    private fun validateEmbeddedModelDownloadUrl(uri: URI): Response? {
+        val host = (uri.host ?: "").lowercase(Locale.US)
+        val path = (uri.path ?: "").lowercase(Locale.US)
+        if (path.contains("/blob/")) {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "invalid_model_download_url",
+                JSONObject().put(
+                    "detail",
+                    "Use a direct file URL, not a web page URL. For Hugging Face, replace /blob/ with /resolve/."
+                )
+            )
+        }
+        if (host == "huggingface.co" && path.contains("/resolve/").not() && path.endsWith(".litertlm")) {
+            return jsonError(
+                Response.Status.BAD_REQUEST,
+                "invalid_model_download_url",
+                JSONObject().put(
+                    "detail",
+                    "Hugging Face model downloads should use /resolve/... URLs, not repository page URLs."
+                )
+            )
+        }
+        return null
+    }
+
+    private fun looksLikeHtmlContentType(contentType: String): Boolean {
+        return contentType.startsWith("text/html") || contentType.startsWith("application/xhtml+xml")
+    }
+
+    private fun looksLikeHtmlPayload(bytes: ByteArray, size: Int): Boolean {
+        if (size <= 0) return false
+        val prefix = String(bytes, 0, size, Charsets.UTF_8)
+            .trimStart('\uFEFF', ' ', '\n', '\r', '\t')
+            .lowercase(Locale.US)
+        return prefix.startsWith("<!doctype html") ||
+            prefix.startsWith("<html") ||
+            prefix.startsWith("<head") ||
+            prefix.contains("<title>hugging face")
     }
 
     private fun detectEmbeddedModelExtension(url: String): String {

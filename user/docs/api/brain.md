@@ -58,6 +58,7 @@ Download an embedded model bundle from a direct `http` or `https` URL into the a
 Body:
 - `model` (string, required unless already configured): Embedded model id.
 - `url` (string, required): Direct download URL.
+  - For Hugging Face, use `/resolve/...` URLs, not `/blob/...` page URLs.
 
 Returns:
 - `status` (string): `ok` on success.

@@ -168,6 +168,8 @@ class ApiAlignmentRegressionTest {
         for (heading in docHeadings) {
             assertTrue("Expected embedded brain doc heading: $heading", brainDocs.contains(heading))
         }
+        assertTrue("Expected embedded install URL validation for /blob/ URLs", serverSource.contains("""path.contains("/blob/")"""))
+        assertTrue("Expected embedded brain docs to mention /resolve/ URLs", brainDocs.contains("/resolve/..."))
     }
 
     private fun extractWsBlock(source: String, endpoint: String): String {
