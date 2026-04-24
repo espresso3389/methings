@@ -21,6 +21,8 @@ third_party/
 gradle-cli.jar
 gradle-wrapper-shared.jar
 gradle-wrapper-classpath.properties
+!app/android/gradle/wrapper/gradle-cli.jar
+!app/android/gradle/wrapper/gradle-wrapper-shared.jar
 
 # Generated native libs (built into app/android/app/src/main/jniLibs by gradle tasks).
 app/android/app/src/main/jniLibs/
