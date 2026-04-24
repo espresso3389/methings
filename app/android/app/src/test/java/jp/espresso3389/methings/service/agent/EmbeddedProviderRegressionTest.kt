@@ -72,17 +72,6 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
-    fun embeddedCompatibilityValidatorRejectsCurrentGemma4LitertLmBundle() {
-        val spec = EmbeddedModelCatalog.find("gemma4-e2b-it")!!
-        val file = kotlin.io.path.createTempFile(suffix = ".litertlm").toFile()
-        file.writeText("not html but still unsupported in this build")
-
-        val reason = EmbeddedModelCompatibilityValidator.incompatibleReason(spec, file)
-
-        assertTrue(reason!!.contains("cannot load the current Gemma4 LiteRT-LM bundle yet"))
-    }
-
-    @Test
     fun embeddedPlanParserKeepsOnlyKnownToolNames() {
         val toolSpecs = listOf(
             EmbeddedToolSpec(
@@ -479,28 +468,6 @@ class EmbeddedProviderRegressionTest {
             assertFalse(status.runnable)
             assertTrue(status.detail.contains("looks invalid"))
             assertTrue(status.lastError.contains("HTML"))
-        } finally {
-            modelFile.delete()
-            modelDir.delete()
-        }
-    }
-
-    @Test
-    fun embeddedStatusMarksKnownIncompatibleGemma4BundleAsNotRunnable() {
-        val app = RuntimeEnvironment.getApplication()
-        val modelDir = File(app.filesDir, "user/models/embedded/gemma4-e2b-it")
-        modelDir.mkdirs()
-        val modelFile = File(modelDir, "model.litertlm")
-        modelFile.writeText("placeholder model bytes")
-        try {
-            val registry = EmbeddedBackendRegistry(context = app)
-
-            val status = registry.statusFor("gemma4-e2b-it")!!
-
-            assertTrue(status.installed)
-            assertFalse(status.runnable)
-            assertTrue(status.detail.contains("looks invalid"))
-            assertTrue(status.lastError.contains("cannot load the current Gemma4 LiteRT-LM bundle yet"))
         } finally {
             modelFile.delete()
             modelDir.delete()

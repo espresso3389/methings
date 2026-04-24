@@ -3,6 +3,11 @@ package jp.espresso3389.methings.service.agent
 import android.content.Context
 import android.content.ComponentCallbacks2
 import android.util.Log
+import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.Engine
+import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.LogSeverity
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -197,7 +202,7 @@ private class LiteRtBundleEmbeddedBackend(
     private val tag = "EmbeddedBackend"
     private data class LoadedInference(
         val modelPath: String,
-        val inference: Any,
+        val engine: Engine,
         val loadedAtMs: Long,
         val lastUsedAtMs: AtomicLong = AtomicLong(loadedAtMs),
         @Volatile var warmed: Boolean = false,
@@ -223,12 +228,12 @@ private class LiteRtBundleEmbeddedBackend(
         } else if (installed) {
             if (runtimeAvailable) {
                 if (cached != null) {
-                    "Model bundle found. MediaPipe LLM Inference runtime is available and cached in memory."
+                    "Model bundle found. LiteRT-LM runtime is available and cached in memory."
                 } else {
-                    "Model bundle found. MediaPipe LLM Inference runtime is available."
+                    "Model bundle found. LiteRT-LM runtime is available."
                 }
             } else {
-                "Model bundle found, but MediaPipe LLM Inference runtime is not linked in this build."
+                "Model bundle found, but LiteRT-LM runtime is not linked in this build."
             }
         } else {
             "Model bundle not found. Place a .litertlm, .task, .tflite, or model.bin under the embedded model directory."
@@ -255,7 +260,7 @@ private class LiteRtBundleEmbeddedBackend(
         synchronized(instance) {
             instance.lastUsedAtMs.set(System.currentTimeMillis())
             return try {
-                invokeGenerateResponse(instance.inference, prompt).trim()
+                invokeGenerateResponse(instance.engine, prompt).trim()
             } catch (ex: Exception) {
                 instance.lastError = ex.message ?: ex.javaClass.simpleName
                 runCatching { unload(spec) }
@@ -526,7 +531,7 @@ private class LiteRtBundleEmbeddedBackend(
             if (!instance.warmed) {
                 runCatching {
                     instance.lastUsedAtMs.set(System.currentTimeMillis())
-                    invokeGenerateResponse(instance.inference, "Reply with OK.")
+                    invokeGenerateResponse(instance.engine, "Reply with OK.")
                     instance.warmed = true
                     instance.lastError = ""
                 }.onFailure { ex ->
@@ -542,10 +547,7 @@ private class LiteRtBundleEmbeddedBackend(
     override fun unload(spec: EmbeddedModelSpec): Boolean {
         val key = spec.id.trim().lowercase()
         val existing = loaded.remove(key) ?: return false
-        runCatching {
-            existing.inference.javaClass.methods.firstOrNull { it.name == "close" && it.parameterCount == 0 }
-                ?.invoke(existing.inference)
-        }
+        runCatching { existing.engine.close() }
         return true
     }
 
@@ -559,7 +561,7 @@ private class LiteRtBundleEmbeddedBackend(
 
     private fun isRuntimeAvailable(): Boolean {
         return runCatching {
-            Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInference")
+            Class.forName("com.google.ai.edge.litertlm.Engine")
             true
         }.getOrDefault(false)
     }
@@ -574,14 +576,11 @@ private class LiteRtBundleEmbeddedBackend(
             EmbeddedModelFileValidator.invalidReason(modelFile)?.let { reason ->
                 throw IllegalStateException("embedded_model_invalid:$reason")
             }
-            EmbeddedModelCompatibilityValidator.incompatibleReason(spec, modelFile)?.let { reason ->
-                throw IllegalStateException("embedded_model_invalid:$reason")
-            }
-            val inference = createInference(modelFile)
+            val engine = createEngine(modelFile)
             val now = System.currentTimeMillis()
             val created = LoadedInference(
                 modelPath = modelFile.absolutePath,
-                inference = inference,
+                engine = engine,
                 loadedAtMs = now,
             )
             loaded[key] = created
@@ -590,25 +589,22 @@ private class LiteRtBundleEmbeddedBackend(
         }
     }
 
-    private fun createInference(modelFile: File): Any {
-        val inferenceClass = Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInference")
-        val optionsClass = Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInference\$LlmInferenceOptions")
-        val builderClass = Class.forName("com.google.mediapipe.tasks.genai.llminference.LlmInference\$LlmInferenceOptions\$Builder")
-        val builder = optionsClass.getMethod("builder").invoke(null)
-        builderClass.getMethod("setModelPath", String::class.java).invoke(builder, modelFile.absolutePath)
-        builderClass.getMethod("setMaxTokens", Int::class.javaPrimitiveType).invoke(builder, 1024)
-        val options = builderClass.getMethod("build").invoke(builder)
-        return inferenceClass
-            .getMethod("createFromOptions", Context::class.java, optionsClass)
-            .invoke(null, context, options)
-            ?: throw IllegalStateException("embedded_inference_create_failed")
+    private fun createEngine(modelFile: File): Engine {
+        Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
+        return Engine(
+            EngineConfig(
+                modelPath = modelFile.absolutePath,
+                backend = Backend.CPU(),
+                maxNumTokens = 1024,
+                cacheDir = context.cacheDir.absolutePath,
+            )
+        ).also { it.initialize() }
     }
 
-    private fun invokeGenerateResponse(inference: Any, prompt: String): String {
-        return inference.javaClass
-            .getMethod("generateResponse", String::class.java)
-            .invoke(inference, prompt) as? String
-            ?: ""
+    private fun invokeGenerateResponse(engine: Engine, prompt: String): String {
+        engine.createConversation(ConversationConfig()).use { conversation ->
+            return conversation.sendMessage(prompt).toString()
+        }
     }
 
     private fun updateDiagnostics(
@@ -1297,11 +1293,5 @@ internal object EmbeddedModelFileValidator {
 }
 
 internal object EmbeddedModelCompatibilityValidator {
-    fun incompatibleReason(spec: EmbeddedModelSpec, file: File): String? {
-        val extension = file.extension.lowercase()
-        if (spec.id.equals("gemma4-e2b-it", ignoreCase = true) && extension == "litertlm") {
-            return "this build's MediaPipe runtime cannot load the current Gemma4 LiteRT-LM bundle yet; it aborts natively during warmup instead of returning a recoverable error"
-        }
-        return null
-    }
+    fun incompatibleReason(spec: EmbeddedModelSpec, file: File): String? = null
 }
