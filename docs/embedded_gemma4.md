@@ -65,28 +65,36 @@ Recommended local multimodal path:
 
 This is usually better than a single large VLM in a background service.
 
-### 4. Prefer an app-managed runtime over AICore as the only backend
+### 4. Use AICore first when the Developer Preview model is available
 
 Official Android docs say:
 
 - the Google AI Edge SDK / AICore gives OS-managed model distribution and hardware acceleration
 - ML Kit GenAI Prompt API supports multimodal prompts
-- AICore has important execution constraints, including background limitations
+- AICore Developer Preview lets opted-in devices download and test Gemma 4 preview models through the Android AICore app
+- the Prompt API still documents an input limit of about 4000 tokens and says tool calling, structured output, system prompts, and thinking mode are still planned during the preview period
 
-That makes AICore valuable, but not sufficient as the only backend for this app, because this app explicitly requires background service execution.
+That makes AICore the preferred fast path when it is available on the device, but not sufficient as the only backend yet. The app still needs the app-managed LiteRT-LM bundle path for devices without the preview model, for offline file-based setup, and for cases where AICore reports unavailable, downloadable, downloading, or busy.
 
 Recommended priority:
 
-1. App-managed embedded runtime for the main agent loop
-2. Optional AICore acceleration path when device/runtime allows it
+1. AICore Developer Preview Prompt API when `checkStatus()` reports `AVAILABLE`
+2. App-managed LiteRT-LM bundle runtime as the fallback
 3. Same normalized `EmbeddedInferenceBackend` contract for both
+
+The Brain settings UI should keep this simple for users: show only which backend is currently runnable (`AICore Developer Preview`, `LiteRT-LM`, or `none`). Detailed backend diagnostics can remain in `/brain/embedded/status` for debugging.
+
+For `gemma4-e2b-it`, the WebView should not require users to paste the default model URL. If AICore is not runnable and no override URL is provided, `/brain/embedded/setup` uses a built-in Hugging Face `/resolve/...` URL:
+
+- generic: `https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm`
+- Qualcomm QCS8275: `https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it_qualcomm_qcs8275.litertlm`
 
 ## Backend recommendation
 
 For a production-quality embedded provider in this app, target this order:
 
-1. `LiteRT` / Google AI Edge style local backend for Gemma4-E2B-it
-2. optional AICore fast path on supported devices
+1. AICore Developer Preview fast path on supported, opted-in devices
+2. `LiteRT` / Google AI Edge style local backend for Gemma4-E2B-it
 3. do not use the Python worker as the primary inference path unless no native runtime is viable
 
 Why not Python-first:
@@ -127,7 +135,7 @@ The embedded Python worker can still be useful for:
 
 ### Phase 4
 
-- optional AICore path on supported devices
+- AICore path on supported devices
 - capability negotiation at runtime:
   - `supports_tool_calling`
   - `supports_image_input`
@@ -149,6 +157,8 @@ This repo now has:
 
 - the config/runtime seams for an `Embedded` provider
 - a backend registry abstraction
+- an AICore Developer Preview backend that is preferred when ML Kit Prompt API reports the preview model is available
+- a LiteRT-LM bundle backend fallback for app-managed model files
 - model install status detection
 - a prompt-driven local tool-calling bridge that keeps embedded turns inside the existing agent/tool loop
 - a bounded two-phase local tool flow:
@@ -169,7 +179,7 @@ This repo now has:
   - or `model.task`
   - or `model.tflite`
 
-It still does not have a production-grade native Gemma tool-calling SDK path yet. The normalized embedded backend seam now exists in code, and the current LiteRT-backed implementation fulfills it with a structured JSON prompt/response contract behind that backend boundary. Production should still replace that prompt-driven implementation with a native structured output/tool-calling path when the runtime supports it.
+It still does not have a production-grade native Gemma tool-calling SDK path yet. The normalized embedded backend contract now exists in code, and both AICore and LiteRT-LM currently fulfill it with the app's structured JSON prompt/response protocol. Production should still replace that prompt-driven implementation with a native structured output/tool-calling path when the runtime supports it.
 
 What remains external to this repo:
 
@@ -178,8 +188,9 @@ What remains external to this repo:
 
 ## Current install flow
 
-The app now supports two provisioning paths for embedded model files:
+The app now supports two provisioning paths for embedded models:
 
+- AICore Developer Preview, when the device is enrolled and the preview model is already available
 - import a local file through the Android document picker
 - download a file from a direct `http` or `https` URL
 
@@ -187,10 +198,10 @@ In the current WebView settings UI, embedded model changes are transactional:
 
 - choose provider `Embedded`
 - choose the target embedded model
-- fill the direct model download URL
+- leave the URL empty when AICore preview is already ready, or fill a direct model download URL for the LiteRT-LM fallback
 - press `Save`
 
-`Save` now stages the download, validates it, warms the model, and only then commits the new embedded brain selection. If download, validation, or warmup fails, the previously selected brain model remains active.
+`Save` now warms the selected embedded backend and only then commits the new embedded brain selection. For URL-based setup, it stages the download, validates it, warms the model, and only then commits. If download, validation, or warmup fails, the previously selected brain model remains active.
 
 Both paths save into:
 
@@ -234,9 +245,14 @@ Common patterns:
 - embedded status says `Model bundle looks invalid`
   - the cached file on disk failed basic validation before runtime load
   - a common cause is downloading a Hugging Face `/blob/...` page instead of a `/resolve/...` file URL
+- embedded status uses backend `aicore_preview`
+  - the app is using ML Kit Prompt API / Android AICore instead of the local `.litertlm` file
+- embedded status says AICore preview is `downloadable`, `downloading`, or `unavailable`
+  - enroll the device in the AICore Developer Preview, open the Android AICore app, and download the preview model; otherwise use the LiteRT-LM file fallback
 
 ## Sources
 
-- Android Developers blog, “Gemma 4: The new standard for local agentic intelligence on Android” (April 2, 2026): https://developer.android.com/blog/posts/gemma-4-the-new-standard-for-local-agentic-intelligence-on-android
-- Android Developers, “Google AI Edge SDK”: https://developer.android.com/ai/gemini-nano/ai-edge-sdk
-- Android Developers, “ML Kit GenAI APIs”: https://developer.android.com/ai/gemini-nano/ml-kit-genai
+- Android Developers blog, “Announcing Gemma 4 in the AICore Developer Preview” (April 2, 2026): https://developer.android.com/blog/posts/announcing-gemma-4-in-the-ai-core-developer-preview
+- Google for Developers, “AICore Developer Preview program”: https://developers.google.com/ml-kit/genai/aicore-dev-preview
+- Google for Developers, “Get started with Prompt API”: https://developers.google.com/ml-kit/genai/prompt/android/get-started
+- Google for Developers, “Select a model”: https://developers.google.com/ml-kit/genai/prompt/android/select-model

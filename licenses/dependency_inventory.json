@@ -95,21 +95,21 @@
     {
       "ecosystem": "android-gradle",
       "name": "androidx.room:room-compiler",
-      "version": "2.6.1",
+      "version": "2.8.3",
       "source_path": "app/android/app/build.gradle.kts",
       "note": "kapt"
     },
     {
       "ecosystem": "android-gradle",
       "name": "androidx.room:room-ktx",
-      "version": "2.6.1",
+      "version": "2.8.3",
       "source_path": "app/android/app/build.gradle.kts",
       "note": "implementation"
     },
     {
       "ecosystem": "android-gradle",
       "name": "androidx.room:room-runtime",
-      "version": "2.6.1",
+      "version": "2.8.3",
       "source_path": "app/android/app/build.gradle.kts",
       "note": "implementation"
     },
@@ -136,6 +136,13 @@
     },
     {
       "ecosystem": "android-gradle",
+      "name": "com.google.ai.edge.litertlm:litertlm-android",
+      "version": "0.10.2",
+      "source_path": "app/android/app/build.gradle.kts",
+      "note": "implementation"
+    },
+    {
+      "ecosystem": "android-gradle",
       "name": "com.google.android.gms:play-services-nearby",
       "version": "19.3.0",
       "source_path": "app/android/app/build.gradle.kts",
@@ -157,8 +164,8 @@
     },
     {
       "ecosystem": "android-gradle",
-      "name": "com.google.mediapipe:tasks-genai",
-      "version": "0.10.27",
+      "name": "com.google.mlkit:genai-prompt",
+      "version": "1.0.0-beta2",
       "source_path": "app/android/app/build.gradle.kts",
       "note": "implementation"
     },

@@ -8,10 +8,19 @@ import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.LogSeverity
+import com.google.mlkit.genai.common.FeatureStatus
+import com.google.mlkit.genai.prompt.Generation
+import com.google.mlkit.genai.prompt.GenerationConfig
+import com.google.mlkit.genai.prompt.GenerateContentResponse
+import com.google.mlkit.genai.prompt.ModelConfig
+import com.google.mlkit.genai.prompt.ModelPreference
+import com.google.mlkit.genai.prompt.ModelReleaseStage
+import com.google.mlkit.genai.prompt.java.GenerativeModelFutures
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
 data class EmbeddedGenerationRequest(
@@ -147,6 +156,7 @@ class EmbeddedBackendRegistry(
             val modelManager = EmbeddedModelManager(context)
             val appContext = context.applicationContext
             listOf(
+                AiCorePreviewEmbeddedBackend(),
                 LiteRtBundleEmbeddedBackend(appContext, modelManager),
             )
         }
@@ -155,13 +165,18 @@ class EmbeddedBackendRegistry(
 
     fun statusFor(modelId: String): EmbeddedBackendStatus? {
         val spec = EmbeddedModelCatalog.find(modelId) ?: return null
-        return backends.first().status(spec)
+        return selectBackendStatus(spec).status
+    }
+
+    fun statusesFor(modelId: String): List<EmbeddedBackendStatus>? {
+        val spec = EmbeddedModelCatalog.find(modelId) ?: return null
+        return backendStatuses(spec).map { it.status }
     }
 
     fun generateText(modelId: String, prompt: String): String {
         val spec = EmbeddedModelCatalog.find(modelId)
             ?: throw IllegalArgumentException("unknown_embedded_model")
-        return backends.first().generateText(spec, prompt)
+        return selectBackendStatus(spec).backend.generateText(spec, prompt)
     }
 
     fun generateTurn(
@@ -170,19 +185,19 @@ class EmbeddedBackendRegistry(
     ): EmbeddedGenerationResult {
         val spec = EmbeddedModelCatalog.find(modelId)
             ?: throw IllegalArgumentException("unknown_embedded_model")
-        return backends.first().generateTurn(spec, request)
+        return selectBackendStatus(spec).backend.generateTurn(spec, request)
     }
 
     fun warm(modelId: String): EmbeddedBackendStatus {
         val spec = EmbeddedModelCatalog.find(modelId)
             ?: throw IllegalArgumentException("unknown_embedded_model")
-        return backends.first().warm(spec)
+        return selectBackendStatus(spec).backend.warm(spec)
     }
 
     fun unload(modelId: String): Boolean {
         val spec = EmbeddedModelCatalog.find(modelId)
             ?: throw IllegalArgumentException("unknown_embedded_model")
-        return backends.first().unload(spec)
+        return backends.any { it.unload(spec) }
     }
 
     fun onTrimMemory(level: Int) {
@@ -192,14 +207,472 @@ class EmbeddedBackendRegistry(
             backends.forEach { it.unloadAll() }
         }
     }
+
+    private data class BackendStatus(
+        val backend: EmbeddedBackend,
+        val status: EmbeddedBackendStatus,
+    )
+
+    private fun selectBackendStatus(spec: EmbeddedModelSpec): BackendStatus {
+        val statuses = backendStatuses(spec)
+        return statuses.firstOrNull { it.status.runnable }
+            ?: statuses.firstOrNull { it.status.installed }
+            ?: statuses.first()
+    }
+
+    private fun backendStatuses(spec: EmbeddedModelSpec): List<BackendStatus> {
+        return backends.map { backend ->
+            BackendStatus(
+                backend = backend,
+                status = runCatching { backend.status(spec) }.getOrElse { ex ->
+                    EmbeddedBackendStatus(
+                        model = spec,
+                        backendId = backend.backendId,
+                        installed = false,
+                        runnable = false,
+                        loaded = false,
+                        warm = false,
+                        detail = "Embedded backend status failed: ${ex.message ?: ex.javaClass.simpleName}",
+                        primaryModelPath = "",
+                        candidatePaths = emptyList(),
+                        lastError = ex.message ?: ex.javaClass.simpleName,
+                        lastLoadedAtMs = 0L,
+                        lastUsedAtMs = 0L,
+                    )
+                },
+            )
+        }
+    }
+}
+
+private abstract class PromptStructuredEmbeddedBackend : EmbeddedBackend {
+    protected val tag = "EmbeddedBackend"
+    protected val diagnostics = ConcurrentHashMap<String, EmbeddedTurnDiagnostics>()
+    private val turnCounter = AtomicLong(0L)
+
+    final override fun generateTurn(
+        spec: EmbeddedModelSpec,
+        request: EmbeddedGenerationRequest,
+    ): EmbeddedGenerationResult {
+        val turnDiagnostics = EmbeddedTurnDiagnosticsState(turnId = turnCounter.incrementAndGet())
+        val toolSpecs = EmbeddedTurnProtocol.extractToolSpecs(request.tools)
+        val planPrompt = EmbeddedTurnProtocol.renderPlanPrompt(
+            systemPrompt = request.systemPrompt,
+            input = request.input,
+            tools = request.tools,
+            requireTool = request.requireTool,
+        )
+        val rawPlan = generateText(spec, planPrompt).trim()
+        val plan = EmbeddedTurnProtocol.parsePlanResponse(rawPlan, toolSpecs)
+        updateDiagnostics(
+            spec = spec,
+            state = turnDiagnostics,
+            phase = "plan",
+            responseSource = "pending",
+            finalToolCallCount = 0,
+            finalMessageCount = plan.messageTexts.size,
+            selectedTools = EmbeddedTurnProtocol.callNames(plan.calls),
+            failedTools = emptyList(),
+            toolFailures = emptyList(),
+            repairUsed = false,
+            repairAttemptCount = 0,
+            fallbackUsed = false,
+            summary = "selected=${plan.calls.length()} text=${plan.messageTexts.size}",
+        )
+        Log.i(tag, buildString {
+            append("embedded_turn phase=plan")
+            append(" backend=")
+            append(backendId)
+            append(" model=")
+            append(spec.id)
+            append(" requireTool=")
+            append(request.requireTool)
+            append(" selectedTools=")
+            append(plan.calls.length())
+            append(" toolNames=")
+            append(EmbeddedTurnProtocol.callNamesSummary(plan.calls))
+            append(" textCount=")
+            append(plan.messageTexts.size)
+        })
+        val parsed = if (plan.calls.length() > 0) {
+            val argumentPasses = mutableListOf<Pair<String, EmbeddedGenerationResult>>()
+            for (i in 0 until plan.calls.length()) {
+                val selectedCall = plan.calls.optJSONObject(i) ?: continue
+                val toolName = selectedCall.optString("name", "").trim()
+                if (toolName.isEmpty()) continue
+                val rawArgs = runCatching {
+                    generateText(
+                        spec,
+                        EmbeddedTurnProtocol.renderSingleArgumentPrompt(
+                            rawPlanText = rawPlan,
+                            toolSpecs = toolSpecs,
+                            toolName = toolName,
+                        )
+                    ).trim()
+                }.getOrDefault("")
+                if (rawArgs.isBlank()) {
+                    val toolFailures = listOf(EmbeddedToolFailure(toolName, "no_output"))
+                    updateDiagnostics(
+                        spec = spec,
+                        state = turnDiagnostics,
+                        phase = "arguments",
+                        responseSource = "pending",
+                        finalToolCallCount = 0,
+                        finalMessageCount = 0,
+                        selectedTools = listOf(toolName),
+                        failedTools = listOf(toolName),
+                        toolFailures = toolFailures,
+                        repairUsed = false,
+                        repairAttemptCount = 0,
+                        fallbackUsed = false,
+                        summary = "tool=$toolName no_output",
+                    )
+                    Log.w(tag, "embedded_turn phase=arguments backend=$backendId model=${spec.id} tool=$toolName failure=no_output")
+                    continue
+                }
+                val parsedArgs = EmbeddedTurnProtocol.parseResponse(rawArgs, toolSpecs)
+                val toolFailures = if (parsedArgs.calls.length() == 0) {
+                    listOf(EmbeddedToolFailure(toolName, "invalid_arguments"))
+                } else {
+                    emptyList()
+                }
+                updateDiagnostics(
+                    spec = spec,
+                    state = turnDiagnostics,
+                    phase = "arguments",
+                    responseSource = "pending",
+                    finalToolCallCount = 0,
+                    finalMessageCount = parsedArgs.messageTexts.size,
+                    selectedTools = listOf(toolName),
+                    failedTools = toolFailures.map { it.name },
+                    toolFailures = toolFailures,
+                    repairUsed = false,
+                    repairAttemptCount = 0,
+                    fallbackUsed = false,
+                    summary = "tool=$toolName validCalls=${parsedArgs.calls.length()} text=${parsedArgs.messageTexts.size}",
+                )
+                if (toolFailures.isEmpty()) {
+                    Log.i(tag, "embedded_turn phase=arguments backend=$backendId model=${spec.id} tool=$toolName validCalls=${parsedArgs.calls.length()} textCount=${parsedArgs.messageTexts.size}")
+                } else {
+                    Log.w(tag, "embedded_turn phase=arguments backend=$backendId model=${spec.id} tool=$toolName failure=invalid_arguments")
+                }
+                argumentPasses += rawArgs to parsedArgs
+            }
+            if (argumentPasses.isNotEmpty()) {
+                EmbeddedTurnProtocol.mergePlanAndArguments(
+                    plan = plan,
+                    argumentResults = argumentPasses.map { it.second },
+                ).copy(rawText = buildString {
+                    append(rawPlan)
+                    for ((idx, pair) in argumentPasses.withIndex()) {
+                        append("\n\n-- arguments ")
+                        append(idx + 1)
+                        append(" --\n")
+                        append(pair.first)
+                    }
+                }.trim())
+            } else {
+                plan
+            }
+        } else {
+            plan
+        }
+        updateDiagnostics(
+            spec = spec,
+            state = turnDiagnostics,
+            phase = "merged",
+            responseSource = "original",
+            finalToolCallCount = parsed.calls.length(),
+            finalMessageCount = parsed.messageTexts.size,
+            selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
+            failedTools = emptyList(),
+            toolFailures = emptyList(),
+            repairUsed = false,
+            repairAttemptCount = 0,
+            fallbackUsed = false,
+            summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
+        )
+        Log.i(tag, "embedded_turn phase=merged backend=$backendId model=${spec.id} finalCalls=${parsed.calls.length()} toolNames=${EmbeddedTurnProtocol.callNamesSummary(parsed.calls)} textCount=${parsed.messageTexts.size}")
+        if (EmbeddedTurnProtocol.needsRepair(parsed, request.requireTool, toolSpecs)) {
+            updateDiagnostics(
+                spec = spec,
+                state = turnDiagnostics,
+                phase = "repair_needed",
+                responseSource = "original",
+                finalToolCallCount = parsed.calls.length(),
+                finalMessageCount = parsed.messageTexts.size,
+                selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
+                failedTools = emptyList(),
+                toolFailures = emptyList(),
+                repairUsed = true,
+                repairAttemptCount = 0,
+                fallbackUsed = false,
+                summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
+            )
+            Log.w(tag, "embedded_turn phase=repair_needed backend=$backendId model=${spec.id} requireTool=${request.requireTool} calls=${parsed.calls.length()} textCount=${parsed.messageTexts.size}")
+            val repairedRaw = runCatching {
+                generateText(spec, EmbeddedTurnProtocol.renderRepairPrompt(parsed.rawText, toolSpecs, request.requireTool)).trim()
+            }.getOrDefault("")
+            if (repairedRaw.isNotBlank()) {
+                val repaired = EmbeddedTurnProtocol.parseResponse(repairedRaw, toolSpecs)
+                updateDiagnostics(
+                    spec = spec,
+                    state = turnDiagnostics,
+                    phase = "repair_result",
+                    responseSource = "repaired",
+                    finalToolCallCount = repaired.calls.length(),
+                    finalMessageCount = repaired.messageTexts.size,
+                    selectedTools = EmbeddedTurnProtocol.callNames(repaired.calls),
+                    failedTools = emptyList(),
+                    toolFailures = emptyList(),
+                    repairUsed = true,
+                    repairAttemptCount = 1,
+                    fallbackUsed = false,
+                    summary = "calls=${repaired.calls.length()} text=${repaired.messageTexts.size}",
+                )
+                Log.i(tag, "embedded_turn phase=repair_result backend=$backendId model=${spec.id} calls=${repaired.calls.length()} toolNames=${EmbeddedTurnProtocol.callNamesSummary(repaired.calls)} textCount=${repaired.messageTexts.size}")
+                if (!EmbeddedTurnProtocol.needsRepair(repaired, request.requireTool, toolSpecs)) {
+                    return repaired.copy(rawText = repairedRaw)
+                }
+            }
+            if (request.requireTool) {
+                updateDiagnostics(
+                    spec = spec,
+                    state = turnDiagnostics,
+                    phase = "fallback",
+                    responseSource = "fallback",
+                    finalToolCallCount = 0,
+                    finalMessageCount = 1,
+                    selectedTools = toolSpecs.map { it.name },
+                    failedTools = toolSpecs.map { it.name },
+                    toolFailures = toolSpecs.map { EmbeddedToolFailure(it.name, "required_tool_fallback") },
+                    repairUsed = true,
+                    repairAttemptCount = 0,
+                    fallbackUsed = true,
+                    summary = "required-tool fallback",
+                )
+                Log.w(tag, "embedded_turn phase=fallback backend=$backendId model=${spec.id} selectedTools=${toolSpecs.joinToString(",") { it.name }}")
+                return EmbeddedTurnProtocol.buildRequiredToolFallback(
+                    originalText = parsed.rawText,
+                    repairedText = repairedRaw,
+                    toolSpecs = toolSpecs,
+                )
+            }
+        }
+        return parsed
+    }
+
+    protected fun diagnosticsFor(spec: EmbeddedModelSpec): EmbeddedTurnDiagnostics? {
+        return diagnostics[spec.id.trim().lowercase()]
+    }
+
+    private fun updateDiagnostics(
+        spec: EmbeddedModelSpec,
+        state: EmbeddedTurnDiagnosticsState,
+        phase: String,
+        responseSource: String,
+        finalToolCallCount: Int,
+        finalMessageCount: Int,
+        selectedTools: List<String>,
+        failedTools: List<String>,
+        toolFailures: List<EmbeddedToolFailure>,
+        repairUsed: Boolean,
+        repairAttemptCount: Int,
+        fallbackUsed: Boolean,
+        summary: String,
+    ) {
+        EmbeddedTurnProtocol.mergeDiagnosticsState(
+            state = state,
+            responseSource = responseSource,
+            finalToolCallCount = finalToolCallCount,
+            finalMessageCount = finalMessageCount,
+            selectedTools = selectedTools,
+            failedTools = failedTools,
+            toolFailures = toolFailures,
+            repairUsed = repairUsed,
+            repairAttemptCount = repairAttemptCount,
+            fallbackUsed = fallbackUsed,
+        )
+        diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
+            turnId = state.turnId,
+            lastPhase = phase,
+            responseSource = state.responseSource,
+            finalToolCallCount = state.finalToolCallCount,
+            finalMessageCount = state.finalMessageCount,
+            selectedTools = state.selectedTools.toList(),
+            failedTools = state.toolFailures.keys.toList(),
+            toolFailures = state.toolFailures.entries.map { EmbeddedToolFailure(name = it.key, reason = it.value) },
+            repairUsed = state.repairUsed,
+            repairAttemptCount = state.repairAttemptCount,
+            fallbackUsed = state.fallbackUsed,
+            lastSummary = summary,
+            updatedAtMs = System.currentTimeMillis(),
+        )
+    }
+}
+
+private class AiCorePreviewEmbeddedBackend : PromptStructuredEmbeddedBackend() {
+    override val backendId: String = "aicore_preview"
+
+    private data class ClientState(
+        val client: GenerativeModelFutures,
+        val createdAtMs: Long,
+        val lastUsedAtMs: AtomicLong = AtomicLong(createdAtMs),
+        @Volatile var warmed: Boolean = false,
+        @Volatile var lastError: String = "",
+    )
+
+    private val clients = ConcurrentHashMap<String, ClientState>()
+
+    override fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
+        val runtimeAvailable = isRuntimeAvailable()
+        val cacheKey = spec.id.trim().lowercase()
+        val cached = clients[cacheKey]
+        val checkedStatus = if (runtimeAvailable) {
+            runCatching { checkStatus(clientFor(spec).client) }
+                .onFailure { ex -> clientFor(spec).lastError = ex.message ?: ex.javaClass.simpleName }
+                .getOrNull()
+        } else {
+            null
+        }
+        val statusLabel = checkedStatus?.let { featureStatusLabel(it) } ?: "unavailable"
+        val runnable = checkedStatus == FeatureStatus.AVAILABLE
+        val detail = if (!runtimeAvailable) {
+            "ML Kit Prompt API runtime is not linked in this build."
+        } else if (runnable) {
+            "AICore Developer Preview model is available on this device."
+        } else {
+            "AICore Developer Preview model status: $statusLabel. Enroll and download it in the Android AICore app, or use the LiteRT bundle fallback."
+        }
+        return EmbeddedBackendStatus(
+            model = spec,
+            backendId = backendId,
+            installed = checkedStatus == FeatureStatus.AVAILABLE,
+            runnable = runnable,
+            loaded = cached != null,
+            warm = cached?.warmed == true && runnable,
+            detail = detail,
+            primaryModelPath = "aicore://preview/fast",
+            candidatePaths = listOf("aicore://preview/fast", "aicore://preview/full"),
+            lastError = cached?.lastError.orEmpty(),
+            lastLoadedAtMs = cached?.createdAtMs ?: 0L,
+            lastUsedAtMs = cached?.lastUsedAtMs?.get() ?: 0L,
+            lastTurnDiagnostics = diagnosticsFor(spec),
+        )
+    }
+
+    override fun generateText(spec: EmbeddedModelSpec, prompt: String): String {
+        val state = clientFor(spec)
+        val status = checkStatus(state.client)
+        if (status != FeatureStatus.AVAILABLE) {
+            val message = "aicore_preview_not_available:${featureStatusLabel(status)}"
+            state.lastError = message
+            throw IllegalStateException(message)
+        }
+        state.lastUsedAtMs.set(System.currentTimeMillis())
+        return try {
+            val response = state.client.generateContent(prompt).get(120, TimeUnit.SECONDS)
+            state.lastError = ""
+            responseText(response)
+        } catch (ex: Exception) {
+            state.lastError = ex.message ?: ex.javaClass.simpleName
+            throw ex
+        }
+    }
+
+    override fun warm(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
+        val state = clientFor(spec)
+        val status = checkStatus(state.client)
+        if (status != FeatureStatus.AVAILABLE) {
+            val message = "aicore_preview_not_available:${featureStatusLabel(status)}"
+            state.lastError = message
+            throw IllegalStateException(message)
+        }
+        if (!state.warmed) {
+            runCatching {
+                state.client.warmup().get(120, TimeUnit.SECONDS)
+                state.lastUsedAtMs.set(System.currentTimeMillis())
+                state.warmed = true
+                state.lastError = ""
+            }.onFailure { ex ->
+                state.lastError = ex.message ?: ex.javaClass.simpleName
+                throw ex
+            }
+        }
+        return status(spec)
+    }
+
+    override fun unload(spec: EmbeddedModelSpec): Boolean {
+        val existing = clients.remove(spec.id.trim().lowercase()) ?: return false
+        runCatching { existing.client.getGenerativeModel().close() }
+        return true
+    }
+
+    override fun unloadAll() {
+        val keys = clients.keys().toList()
+        for (key in keys) {
+            val spec = EmbeddedModelCatalog.find(key) ?: continue
+            unload(spec)
+        }
+    }
+
+    private fun clientFor(spec: EmbeddedModelSpec): ClientState {
+        val key = spec.id.trim().lowercase()
+        clients[key]?.let { return it }
+        synchronized(this) {
+            clients[key]?.let { return it }
+            val modelConfig = ModelConfig.Builder().apply {
+                releaseStage = ModelReleaseStage.PREVIEW
+                preference = ModelPreference.FAST
+            }.build()
+            val generationConfig = GenerationConfig.Builder().apply {
+                this.modelConfig = modelConfig
+            }.build()
+            val generativeModel = Generation.getClient(generationConfig)
+            val created = ClientState(
+                client = GenerativeModelFutures.from(generativeModel),
+                createdAtMs = System.currentTimeMillis(),
+            )
+            clients[key] = created
+            return created
+        }
+    }
+
+    private fun checkStatus(client: GenerativeModelFutures): Int {
+        return client.checkStatus().get(15, TimeUnit.SECONDS)
+    }
+
+    private fun responseText(response: GenerateContentResponse): String {
+        return response.candidates
+            .mapNotNull { it.text?.trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+            .trim()
+    }
+
+    private fun isRuntimeAvailable(): Boolean {
+        return runCatching {
+            Class.forName("com.google.mlkit.genai.prompt.Generation")
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun featureStatusLabel(status: Int): String {
+        return when (status) {
+            FeatureStatus.AVAILABLE -> "available"
+            FeatureStatus.DOWNLOADABLE -> "downloadable"
+            FeatureStatus.DOWNLOADING -> "downloading"
+            FeatureStatus.UNAVAILABLE -> "unavailable"
+            else -> "unknown($status)"
+        }
+    }
 }
 
 private class LiteRtBundleEmbeddedBackend(
     private val context: Context,
     private val modelManager: EmbeddedModelManager,
-) : EmbeddedBackend {
+) : PromptStructuredEmbeddedBackend() {
     override val backendId: String = "litert_bundle"
-    private val tag = "EmbeddedBackend"
     private data class LoadedInference(
         val modelPath: String,
         val engine: Engine,
@@ -210,8 +683,6 @@ private class LiteRtBundleEmbeddedBackend(
     )
 
     private val loaded = ConcurrentHashMap<String, LoadedInference>()
-    private val diagnostics = ConcurrentHashMap<String, EmbeddedTurnDiagnostics>()
-    private val turnCounter = AtomicLong(0L)
 
     override fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
         val resolved = modelManager.resolve(spec.id)
@@ -251,7 +722,7 @@ private class LiteRtBundleEmbeddedBackend(
             lastError = cached?.lastError ?: invalidReason,
             lastLoadedAtMs = cached?.loadedAtMs ?: 0L,
             lastUsedAtMs = cached?.lastUsedAtMs?.get() ?: 0L,
-            lastTurnDiagnostics = diagnostics[cacheKey],
+            lastTurnDiagnostics = diagnosticsFor(spec),
         )
     }
 
@@ -267,262 +738,6 @@ private class LiteRtBundleEmbeddedBackend(
                 throw ex
             }
         }
-    }
-
-    override fun generateTurn(
-        spec: EmbeddedModelSpec,
-        request: EmbeddedGenerationRequest,
-    ): EmbeddedGenerationResult {
-        val turnDiagnostics = EmbeddedTurnDiagnosticsState(turnId = turnCounter.incrementAndGet())
-        val toolSpecs = EmbeddedTurnProtocol.extractToolSpecs(request.tools)
-        val planPrompt = EmbeddedTurnProtocol.renderPlanPrompt(
-            systemPrompt = request.systemPrompt,
-            input = request.input,
-            tools = request.tools,
-            requireTool = request.requireTool,
-        )
-        val rawPlan = generateText(spec, planPrompt).trim()
-        val plan = EmbeddedTurnProtocol.parsePlanResponse(rawPlan, toolSpecs)
-        updateDiagnostics(
-            spec = spec,
-            state = turnDiagnostics,
-            phase = "plan",
-            responseSource = "pending",
-            finalToolCallCount = 0,
-            finalMessageCount = plan.messageTexts.size,
-            selectedTools = EmbeddedTurnProtocol.callNames(plan.calls),
-            failedTools = emptyList(),
-            toolFailures = emptyList(),
-            repairUsed = false,
-            repairAttemptCount = 0,
-            fallbackUsed = false,
-            summary = "selected=${plan.calls.length()} text=${plan.messageTexts.size}",
-        )
-        Log.i(tag, buildString {
-            append("embedded_turn phase=plan")
-            append(" model=")
-            append(spec.id)
-            append(" requireTool=")
-            append(request.requireTool)
-            append(" selectedTools=")
-            append(plan.calls.length())
-            append(" toolNames=")
-            append(EmbeddedTurnProtocol.callNamesSummary(plan.calls))
-            append(" textCount=")
-            append(plan.messageTexts.size)
-        })
-        var parsed = if (plan.calls.length() > 0) {
-            val argumentPasses = mutableListOf<Pair<String, EmbeddedGenerationResult>>()
-            for (i in 0 until plan.calls.length()) {
-                val selectedCall = plan.calls.optJSONObject(i) ?: continue
-                val toolName = selectedCall.optString("name", "").trim()
-                if (toolName.isEmpty()) continue
-                val rawArgs = runCatching {
-                    generateText(
-                        spec,
-                        EmbeddedTurnProtocol.renderSingleArgumentPrompt(
-                            rawPlanText = rawPlan,
-                            toolSpecs = toolSpecs,
-                            toolName = toolName,
-                        )
-                    ).trim()
-                }.getOrDefault("")
-                if (rawArgs.isBlank()) {
-                    val toolFailures = listOf(EmbeddedToolFailure(toolName, "no_output"))
-                    updateDiagnostics(
-                        spec = spec,
-                        state = turnDiagnostics,
-                        phase = "arguments",
-                        responseSource = "pending",
-                        finalToolCallCount = 0,
-                        finalMessageCount = 0,
-                        selectedTools = listOf(toolName),
-                        failedTools = listOf(toolName),
-                        toolFailures = toolFailures,
-                        repairUsed = false,
-                        repairAttemptCount = 0,
-                        fallbackUsed = false,
-                        summary = "tool=$toolName no_output",
-                    )
-                    Log.w(tag, "embedded_turn phase=arguments model=${spec.id} tool=$toolName failure=no_output")
-                    continue
-                }
-                val parsedArgs = EmbeddedTurnProtocol.parseResponse(rawArgs, toolSpecs)
-                val toolFailures = if (parsedArgs.calls.length() == 0) {
-                    listOf(EmbeddedToolFailure(toolName, "invalid_arguments"))
-                } else {
-                    emptyList()
-                }
-                updateDiagnostics(
-                    spec = spec,
-                    state = turnDiagnostics,
-                    phase = "arguments",
-                    responseSource = "pending",
-                    finalToolCallCount = 0,
-                    finalMessageCount = parsedArgs.messageTexts.size,
-                    selectedTools = listOf(toolName),
-                    failedTools = toolFailures.map { it.name },
-                    toolFailures = toolFailures,
-                    repairUsed = false,
-                    repairAttemptCount = 0,
-                    fallbackUsed = false,
-                    summary = "tool=$toolName validCalls=${parsedArgs.calls.length()} text=${parsedArgs.messageTexts.size}",
-                )
-                if (toolFailures.isEmpty()) {
-                    Log.i(tag, buildString {
-                        append("embedded_turn phase=arguments")
-                        append(" model=")
-                        append(spec.id)
-                        append(" tool=")
-                        append(toolName)
-                        append(" validCalls=")
-                        append(parsedArgs.calls.length())
-                        append(" textCount=")
-                        append(parsedArgs.messageTexts.size)
-                    })
-                } else {
-                    Log.w(tag, "embedded_turn phase=arguments model=${spec.id} tool=$toolName failure=invalid_arguments")
-                }
-                argumentPasses += rawArgs to parsedArgs
-            }
-            if (argumentPasses.isNotEmpty()) {
-                EmbeddedTurnProtocol.mergePlanAndArguments(
-                    plan = plan,
-                    argumentResults = argumentPasses.map { it.second },
-                ).copy(rawText = buildString {
-                    append(rawPlan)
-                    for ((idx, pair) in argumentPasses.withIndex()) {
-                        append("\n\n-- arguments ")
-                        append(idx + 1)
-                        append(" --\n")
-                        append(pair.first)
-                    }
-                }.trim())
-            } else {
-                plan
-            }
-        } else {
-            plan
-        }
-        updateDiagnostics(
-            spec = spec,
-            state = turnDiagnostics,
-            phase = "merged",
-            responseSource = "original",
-            finalToolCallCount = parsed.calls.length(),
-            finalMessageCount = parsed.messageTexts.size,
-            selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
-            failedTools = emptyList(),
-            toolFailures = emptyList(),
-            repairUsed = false,
-            repairAttemptCount = 0,
-            fallbackUsed = false,
-            summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
-        )
-        Log.i(tag, buildString {
-            append("embedded_turn phase=merged")
-            append(" model=")
-            append(spec.id)
-            append(" finalCalls=")
-            append(parsed.calls.length())
-            append(" toolNames=")
-            append(EmbeddedTurnProtocol.callNamesSummary(parsed.calls))
-            append(" textCount=")
-            append(parsed.messageTexts.size)
-        })
-        if (EmbeddedTurnProtocol.needsRepair(parsed, request.requireTool, toolSpecs)) {
-            updateDiagnostics(
-                spec = spec,
-                state = turnDiagnostics,
-                phase = "repair_needed",
-                responseSource = "original",
-                finalToolCallCount = parsed.calls.length(),
-                finalMessageCount = parsed.messageTexts.size,
-                selectedTools = EmbeddedTurnProtocol.callNames(parsed.calls),
-                failedTools = emptyList(),
-                toolFailures = emptyList(),
-                repairUsed = true,
-                repairAttemptCount = 0,
-                fallbackUsed = false,
-                summary = "calls=${parsed.calls.length()} text=${parsed.messageTexts.size}",
-            )
-            Log.w(tag, buildString {
-                append("embedded_turn phase=repair_needed")
-                append(" model=")
-                append(spec.id)
-                append(" requireTool=")
-                append(request.requireTool)
-                append(" calls=")
-                append(parsed.calls.length())
-                append(" textCount=")
-                append(parsed.messageTexts.size)
-            })
-            val repairedRaw = runCatching {
-                generateText(spec, EmbeddedTurnProtocol.renderRepairPrompt(parsed.rawText, toolSpecs, request.requireTool)).trim()
-            }.getOrDefault("")
-            if (repairedRaw.isNotBlank()) {
-                val repaired = EmbeddedTurnProtocol.parseResponse(repairedRaw, toolSpecs)
-                updateDiagnostics(
-                    spec = spec,
-                    state = turnDiagnostics,
-                    phase = "repair_result",
-                    responseSource = "repaired",
-                    finalToolCallCount = repaired.calls.length(),
-                    finalMessageCount = repaired.messageTexts.size,
-                    selectedTools = EmbeddedTurnProtocol.callNames(repaired.calls),
-                    failedTools = emptyList(),
-                    toolFailures = emptyList(),
-                    repairUsed = true,
-                    repairAttemptCount = 1,
-                    fallbackUsed = false,
-                    summary = "calls=${repaired.calls.length()} text=${repaired.messageTexts.size}",
-                )
-                Log.i(tag, buildString {
-                    append("embedded_turn phase=repair_result")
-                    append(" model=")
-                    append(spec.id)
-                    append(" calls=")
-                    append(repaired.calls.length())
-                    append(" toolNames=")
-                    append(EmbeddedTurnProtocol.callNamesSummary(repaired.calls))
-                    append(" textCount=")
-                    append(repaired.messageTexts.size)
-                })
-                if (!EmbeddedTurnProtocol.needsRepair(repaired, request.requireTool, toolSpecs)) {
-                    return repaired.copy(rawText = repairedRaw)
-                }
-            }
-            if (request.requireTool) {
-                updateDiagnostics(
-                    spec = spec,
-                    state = turnDiagnostics,
-                    phase = "fallback",
-                    responseSource = "fallback",
-                    finalToolCallCount = 0,
-                    finalMessageCount = 1,
-                    selectedTools = toolSpecs.map { it.name },
-                    failedTools = toolSpecs.map { it.name },
-                    toolFailures = toolSpecs.map { EmbeddedToolFailure(it.name, "required_tool_fallback") },
-                    repairUsed = true,
-                    repairAttemptCount = 0,
-                    fallbackUsed = true,
-                    summary = "required-tool fallback",
-                )
-                Log.w(tag, buildString {
-                    append("embedded_turn phase=fallback")
-                    append(" model=")
-                    append(spec.id)
-                    append(" selectedTools=")
-                    append(toolSpecs.joinToString(",") { it.name })
-                })
-                return EmbeddedTurnProtocol.buildRequiredToolFallback(
-                    originalText = parsed.rawText,
-                    repairedText = repairedRaw,
-                    toolSpecs = toolSpecs,
-                )
-            }
-        }
-        return parsed
     }
 
     override fun warm(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
@@ -595,7 +810,6 @@ private class LiteRtBundleEmbeddedBackend(
             EngineConfig(
                 modelPath = modelFile.absolutePath,
                 backend = Backend.CPU(),
-                maxNumTokens = 1024,
                 cacheDir = context.cacheDir.absolutePath,
             )
         ).also { it.initialize() }
@@ -607,53 +821,19 @@ private class LiteRtBundleEmbeddedBackend(
         }
     }
 
-    private fun updateDiagnostics(
-        spec: EmbeddedModelSpec,
-        state: EmbeddedTurnDiagnosticsState,
-        phase: String,
-        responseSource: String,
-        finalToolCallCount: Int,
-        finalMessageCount: Int,
-        selectedTools: List<String>,
-        failedTools: List<String>,
-        toolFailures: List<EmbeddedToolFailure>,
-        repairUsed: Boolean,
-        repairAttemptCount: Int,
-        fallbackUsed: Boolean,
-        summary: String,
-    ) {
-        EmbeddedTurnProtocol.mergeDiagnosticsState(
-            state = state,
-            responseSource = responseSource,
-            finalToolCallCount = finalToolCallCount,
-            finalMessageCount = finalMessageCount,
-            selectedTools = selectedTools,
-            failedTools = failedTools,
-            toolFailures = toolFailures,
-            repairUsed = repairUsed,
-            repairAttemptCount = repairAttemptCount,
-            fallbackUsed = fallbackUsed,
-        )
-        diagnostics[spec.id.trim().lowercase()] = EmbeddedTurnDiagnostics(
-            turnId = state.turnId,
-            lastPhase = phase,
-            responseSource = state.responseSource,
-            finalToolCallCount = state.finalToolCallCount,
-            finalMessageCount = state.finalMessageCount,
-            selectedTools = state.selectedTools.toList(),
-            failedTools = state.toolFailures.keys.toList(),
-            toolFailures = state.toolFailures.entries.map { EmbeddedToolFailure(name = it.key, reason = it.value) },
-            repairUsed = state.repairUsed,
-            repairAttemptCount = state.repairAttemptCount,
-            fallbackUsed = state.fallbackUsed,
-            lastSummary = summary,
-            updatedAtMs = System.currentTimeMillis(),
-        )
-    }
 }
 
 internal object EmbeddedTurnProtocol {
     private const val MAX_MODEL_OUTPUT_CHARS = 16_000
+    private const val MAX_PLAN_EARLIER_MESSAGES = 4
+    private const val MAX_PLAN_RECENT_MESSAGES = 6
+    private const val MAX_PLAN_EARLIER_CHARS = 720
+    private const val MAX_PLAN_RECENT_MESSAGE_CHARS = 480
+    private const val MAX_SYSTEM_PROMPT_CHARS = 2_400
+    private const val MAX_TOOL_DESCRIPTION_CHARS = 72
+    private const val MAX_TOOLS_IN_PLAN = 12
+    private const val MAX_PLAN_TEXT_ECHO_CHARS = 640
+    private const val MAX_REPAIR_TEXT_ECHO_CHARS = 1_200
 
     fun callNames(calls: JSONArray): List<String> {
         val names = mutableListOf<String>()
@@ -775,15 +955,10 @@ internal object EmbeddedTurnProtocol {
         }
         return buildString {
             append(base)
-            append("\n\nAvailable tools:\n")
+            append("\n\nTools:\n")
             append(toolGuide)
-            append("\n\nPlanning output contract:\n")
-            append("- Return exactly one JSON object.\n")
-            append("- Keys: assistant_message (string), tool_calls (array).\n")
-            append("- At this phase, each tool_calls item should contain only: name.\n")
-            append("- Do not wrap the JSON in markdown fences.\n")
-            append("- If no tool is needed, return an empty tool_calls array.\n")
-            append("- ")
+            append("\n\nReturn exactly one JSON object: {\"assistant_message\":\"...\",\"tool_calls\":[{\"name\":\"tool_name\"}]}.\n")
+            append("Rules: no markdown fences; at this phase each tool_calls item contains only name; use [] when no tool is needed.\n")
             append(toolRule)
         }
     }
@@ -812,14 +987,14 @@ internal object EmbeddedTurnProtocol {
             "- none"
         }
         return buildString {
-            append("Convert the selected tool names below into exactly one valid JSON object.\n")
-            append("Return only JSON. No markdown fences.\n")
-            append("Keys: assistant_message (string), tool_calls (array).\n")
-            append("Each tool_calls item must have: name (string), arguments (object).\n")
+            append("Convert the selected tool below into exactly one JSON object.\n")
+            append("Return only JSON: {\"assistant_message\":\"...\",\"tool_calls\":[{\"name\":\"")
+            append(toolName)
+            append("\",\"arguments\":{...}}]}.\n")
             append("Only include this selected tool:\n")
             append(selectedSpecLines)
-            append("\n\nPlanner output:\n")
-            append(rawPlanText)
+            append("\n\nPlanner output excerpt:\n")
+            append(normalizeGeneratedOutput(rawPlanText, maxChars = MAX_PLAN_TEXT_ECHO_CHARS))
         }
     }
 
@@ -831,7 +1006,9 @@ internal object EmbeddedTurnProtocol {
         val toolLines = if (toolSpecs.isEmpty()) {
             "- none"
         } else {
-            toolSpecs.joinToString("\n") { spec -> "- ${spec.name}: ${spec.description}" }
+            toolSpecs
+                .take(MAX_TOOLS_IN_PLAN)
+                .joinToString("\n") { spec -> compactToolLine(spec, includeOptionalArgs = false) }
         }
         val toolRule = if (toolSpecs.isEmpty()) {
             "Tool calls are not allowed in this repair task."
@@ -841,16 +1018,14 @@ internal object EmbeddedTurnProtocol {
             "Use tool_calls only if the response is actually invoking a listed tool."
         }
         return buildString {
-            append("Rewrite the following model output into exactly one valid JSON object.\n")
-            append("Return only JSON. No markdown fences.\n")
-            append("Allowed keys: assistant_message (string), tool_calls (array).\n")
-            append("Each tool_calls item must have: name (string), arguments (object).\n")
+            append("Rewrite the model output below into exactly one JSON object.\n")
+            append("Return only JSON with keys assistant_message and tool_calls. Each tool call needs name and arguments.\n")
             append("Allowed tools:\n")
             append(toolLines)
             append("\n")
             append(toolRule)
-            append("\n\nOriginal output:\n")
-            append(normalizeGeneratedOutput(rawText))
+            append("\n\nOriginal output excerpt:\n")
+            append(normalizeGeneratedOutput(rawText, maxChars = MAX_REPAIR_TEXT_ECHO_CHARS))
         }
     }
 
@@ -1051,46 +1226,14 @@ internal object EmbeddedTurnProtocol {
 
     private fun summarizeTools(tools: JSONArray): String {
         if (tools.length() == 0) return "- none"
-        val lines = mutableListOf<String>()
-        for (i in 0 until tools.length()) {
-            val wrapper = tools.optJSONObject(i) ?: continue
-            val fn = wrapper.optJSONObject("function") ?: wrapper
-            val name = fn.optString("name", "").trim()
-            if (name.isEmpty()) continue
-            val description = fn.optString("description", "").trim()
-            val params = fn.optJSONObject("parameters")
-            val properties = params?.optJSONObject("properties")
-            val required = params?.optJSONArray("required")
-            val argNames = mutableListOf<String>()
-            if (properties != null) {
-                val keys = properties.keys()
-                while (keys.hasNext()) argNames.add(keys.next())
-            }
-            argNames.sort()
-            val requiredSet = mutableSetOf<String>()
-            if (required != null) {
-                for (j in 0 until required.length()) {
-                    val key = required.optString(j, "").trim()
-                    if (key.isNotEmpty()) requiredSet.add(key)
-                }
-            }
-            val argsSummary = if (argNames.isEmpty()) {
-                "no arguments"
-            } else {
-                argNames.joinToString(", ") { key ->
-                    if (requiredSet.contains(key)) "$key*" else key
-                }
-            }
-            lines.add("- $name($argsSummary): $description")
-        }
+        val lines = extractToolSpecs(tools)
+            .take(MAX_TOOLS_IN_PLAN)
+            .map { compactToolLine(it, includeOptionalArgs = false) }
         return if (lines.isEmpty()) "- none" else lines.joinToString("\n")
     }
 
     private fun renderConversation(systemPrompt: String, input: JSONArray): String {
-        val sb = StringBuilder()
-        sb.append("System:\n")
-        sb.append(systemPrompt.trim())
-        sb.append("\n\nConversation:\n")
+        val messages = mutableListOf<Pair<String, String>>()
         for (i in 0 until input.length()) {
             val msg = input.optJSONObject(i) ?: continue
             val role = msg.optString("role", "user").ifBlank { "user" }
@@ -1111,16 +1254,84 @@ internal object EmbeddedTurnProtocol {
                 }
                 else -> msg.optString("text", "")
             }.trim()
-            if (text.isEmpty()) continue
+            if (text.isNotEmpty()) messages += role to text
+        }
+        val recentStart = (messages.size - MAX_PLAN_RECENT_MESSAGES).coerceAtLeast(0)
+        val earlierMessages = messages.subList(0, recentStart)
+        val recentMessages = messages.subList(recentStart, messages.size)
+        val sb = StringBuilder()
+        sb.append("System:\n")
+        sb.append(compactText(systemPrompt, MAX_SYSTEM_PROMPT_CHARS))
+        sb.append("\n\nConversation:\n")
+        if (earlierMessages.isNotEmpty()) {
+            sb.append("Earlier summary:\n")
+            earlierMessages
+                .takeLast(MAX_PLAN_EARLIER_MESSAGES)
+                .forEach { (role, text) ->
+                    sb.append("- ")
+                    sb.append(role)
+                    sb.append(": ")
+                    sb.append(compactText(text, MAX_PLAN_EARLIER_CHARS / MAX_PLAN_EARLIER_MESSAGES))
+                    sb.append("\n")
+                }
+            val omittedCount = (earlierMessages.size - MAX_PLAN_EARLIER_MESSAGES).coerceAtLeast(0)
+            if (omittedCount > 0) {
+                sb.append("- ")
+                sb.append(omittedCount)
+                sb.append(" earlier message(s) omitted.\n")
+            }
+            sb.append("\n")
+        }
+        recentMessages.forEach { (role, text) ->
             sb.append(role.replaceFirstChar {
                 if (it.isLowerCase()) it.titlecase() else it.toString()
             })
             sb.append(": ")
-            sb.append(text)
+            sb.append(compactText(text, MAX_PLAN_RECENT_MESSAGE_CHARS))
             sb.append("\n\n")
         }
         sb.append("Assistant:")
         return sb.toString().trim()
+    }
+
+    private fun compactToolLine(spec: EmbeddedToolSpec, includeOptionalArgs: Boolean): String {
+        val requiredArgs = spec.requiredArgumentNames.sorted()
+        val optionalArgs = if (includeOptionalArgs) {
+            spec.allowedArgumentNames
+                .filterNot { spec.requiredArgumentNames.contains(it) }
+                .sorted()
+        } else {
+            emptyList()
+        }
+        val argsSummary = buildString {
+            if (requiredArgs.isNotEmpty()) {
+                append("required=")
+                append(requiredArgs.joinToString(","))
+            }
+            if (optionalArgs.isNotEmpty()) {
+                if (isNotEmpty()) append(" ")
+                append("optional=")
+                append(optionalArgs.joinToString(","))
+            }
+        }.ifBlank { "no_args" }
+        val purpose = compactText(spec.description.ifBlank { spec.name }, MAX_TOOL_DESCRIPTION_CHARS)
+        return "- ${spec.name} [$argsSummary] $purpose"
+    }
+
+    private fun compactText(text: String, maxChars: Int): String {
+        val normalized = text
+            .replace(Regex("[ \\t\\x0B\\f\\r]+"), " ")
+            .replace(Regex("\\n{3,}"), "\n\n")
+            .trim()
+        if (normalized.length <= maxChars) return normalized
+        val ellipsis = " ...[snip]... "
+        val head = ((maxChars - ellipsis.length) * 3) / 4
+        val tail = (maxChars - ellipsis.length - head).coerceAtLeast(0)
+        return buildString {
+            append(normalized.take(head.coerceAtLeast(0)))
+            append(ellipsis)
+            if (tail > 0) append(normalized.takeLast(tail))
+        }.trim()
     }
 
     fun normalizeGeneratedOutput(rawText: String, maxChars: Int = MAX_MODEL_OUTPUT_CHARS): String {

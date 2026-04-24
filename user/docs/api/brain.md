@@ -20,11 +20,13 @@ Get install/runtime status for an embedded brain model.
 Query params:
 - `model` (string, optional): Model id. Defaults to the currently configured brain model.
 
+The app prefers the AICore Developer Preview backend when ML Kit Prompt API reports that the preview model is available on the device. If it is unavailable, the app falls back to the app-managed LiteRT-LM model file backend.
+
 Returns:
 - `configured` (boolean): Whether this model is the active configured embedded brain.
 - `selected_model` (string): Resolved model id.
 - `status` (object): Embedded backend status, including:
-  - `backend` (string)
+  - `backend` (string): For example `aicore_preview` or `litert_bundle`.
   - `installed` (boolean)
   - `runnable` (boolean)
   - `loaded` (boolean)
@@ -50,6 +52,8 @@ Returns:
     - `last_summary` (string)
     - `updated_at_ms` (number)
   - capability flags such as `supports_tool_calling`
+- `available_backend` (string): First runnable embedded backend, currently `aicore_preview`, `litert_lm`, or `none`.
+- `backend_candidates` (array): Status snapshots for each embedded backend considered by the registry. Intended for diagnostics; the WebView only shows the concise available backend.
 
 ## POST /brain/embedded/setup
 
@@ -65,7 +69,10 @@ If download, validation, or warmup fails, the previous brain selection is kept.
 
 Body:
 - `model` (string, required): Embedded model id.
-- `url` (string, required): Direct download URL.
+- `url` (string, optional): Direct download URL.
+  - Leave empty to use an already-available AICore Developer Preview model.
+  - For `gemma4-e2b-it`, leave empty to use the built-in LiteRT-LM download URL when AICore is not runnable.
+  - The server selects the Qualcomm QCS8275 artifact on matching devices and the generic Gemma 4 E2B artifact otherwise.
   - For Hugging Face, use `/resolve/...` URLs, not `/blob/...` page URLs.
 
 Returns:

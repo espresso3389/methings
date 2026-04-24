@@ -2288,6 +2288,27 @@
         line-height: 1.35;
         word-break: break-word;
       }
+      .embedded-setup-popup {
+        background: rgba(15, 18, 24, 0.95);
+        border: 1px solid rgba(148, 163, 184, 0.32);
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.42);
+        text-align: left;
+      }
+      .embedded-setup-popup.running { border-color: rgba(56, 189, 248, 0.5); }
+      .embedded-setup-popup.done { border-color: rgba(34, 197, 94, 0.46); }
+      .embedded-setup-popup.error { border-color: rgba(239, 68, 68, 0.46); }
+      .embedded-setup-popup .progress-wrap {
+        display: block;
+        margin-top: 10px;
+        margin-bottom: 10px;
+      }
+      .embedded-setup-popup .progress-bar {
+        background: rgba(255,255,255,0.08);
+      }
+      .embedded-setup-popup .progress-caption {
+        margin-top: 6px;
+      }
 
       /* Licenses page */
       .license-summary { margin-bottom: 8px; }
@@ -2443,10 +2464,10 @@
             <div class="muted" id="brainEmbeddedStatus" style="margin-top:4px;display:none;white-space:pre-wrap;"></div>
           </div>
           <div class="field" id="brainEmbeddedInstallField" style="display:none;">
-            <label>Model Download URL</label>
-            <input type="url" id="brainEmbeddedDownloadUrl" placeholder="https://.../model.litertlm" />
+            <label>Embedded Runtime</label>
+            <input type="url" id="brainEmbeddedDownloadUrl" placeholder="Optional override URL" style="display:none;" />
             <div class="muted" id="brainEmbeddedInstallHint" style="margin-top:4px;">
-              Save downloads, validates, and warms the selected embedded model before applying the config change.
+              Save uses AICore Developer Preview when available; otherwise it downloads the built-in Gemma 4 LiteRT-LM model.
             </div>
           </div>
           <div class="field" id="brainBaseUrlField" style="display:none;">
@@ -2874,10 +2895,11 @@
       </div>
     </div>
     <div class="modal" id="embeddedSetupModal" role="dialog" aria-modal="true" aria-labelledby="embeddedSetupTitle">
-      <div class="modal-card" style="max-width:360px; text-align:left;">
-        <div class="card-title" id="embeddedSetupTitle">Preparing Embedded Model</div>
-        <div class="muted" id="embeddedSetupStatus" style="white-space:pre-wrap; margin-bottom:10px;">Starting...</div>
-        <div class="progress-wrap" style="margin-bottom:10px;">
+      <div class="modal-card embedded-setup-popup running" id="embeddedSetupCard" style="max-width:360px;">
+        <div class="me-sync-chat-popup-title" id="embeddedSetupTitle">Embedded Model Download</div>
+        <div class="me-sync-chat-popup-status" id="embeddedSetupPrimaryStatus">Preparing embedded model...</div>
+        <div class="me-sync-chat-popup-meta" id="embeddedSetupStatus">Starting...</div>
+        <div class="progress-wrap">
           <div class="progress-bar">
             <div class="progress-fill" id="embeddedSetupProgressFill"></div>
           </div>
@@ -9366,10 +9388,15 @@
       const brainEmbeddedInstallField = $("brainEmbeddedInstallField");
       const brainEmbeddedDownloadUrl = $("brainEmbeddedDownloadUrl");
       const embeddedSetupModal = $("embeddedSetupModal");
+      const embeddedSetupCard = $("embeddedSetupCard");
+      const embeddedSetupPrimaryStatus = $("embeddedSetupPrimaryStatus");
       const embeddedSetupStatus = $("embeddedSetupStatus");
       const embeddedSetupProgressFill = $("embeddedSetupProgressFill");
       const embeddedSetupProgressCaption = $("embeddedSetupProgressCaption");
       const embeddedSetupCancelBtn = $("embeddedSetupCancelBtn");
+      const EMBEDDED_SETUP_SUCCESS_KEY = "methings.embeddedSetupSuccess";
+      let lastEmbeddedStatus = null;
+      let lastEmbeddedBackendCandidates = [];
       const BRAIN_PROVIDER_PRESETS = {
         embedded: {
           base_url: "embedded://local",
@@ -9419,6 +9446,19 @@
         const key = String(vendor || "").trim().toLowerCase();
         return !!key && key !== "embedded";
       }
+      function embeddedBackendCandidate(id) {
+        const key = String(id || "").trim();
+        return Array.isArray(lastEmbeddedBackendCandidates)
+          ? lastEmbeddedBackendCandidates.find((entry) => String((entry && entry.backend) || "").trim() === key)
+          : null;
+      }
+      function embeddedAvailableBackendLabel() {
+        const aicore = embeddedBackendCandidate("aicore_preview");
+        if (aicore && aicore.runnable) return "AICore (Developer Preview)";
+        const litert = embeddedBackendCandidate("litert_lm");
+        if (litert && litert.runnable) return "LiteRT-LM";
+        return "none";
+      }
       function currentEmbeddedModelId() {
         const preset = getSelectedPreset ? getSelectedPreset() : null;
         const provider = String((preset && preset.vendor) || "").trim().toLowerCase();
@@ -9430,9 +9470,12 @@
         if (!statusEl) return;
         const provider = String(brainProviderSelect.value || "").trim().toLowerCase();
         const model = currentEmbeddedModelId();
+        lastEmbeddedStatus = null;
+        lastEmbeddedBackendCandidates = [];
         if (provider !== "embedded") {
           statusEl.style.display = "none";
           statusEl.textContent = "";
+          try { updateBrainSaveEnabled(); } catch (_) {}
           return;
         }
         statusEl.style.display = "block";
@@ -9446,56 +9489,52 @@
             return;
           }
           const st = data.status || {};
+          lastEmbeddedStatus = st || null;
+          lastEmbeddedBackendCandidates = Array.isArray(data.backend_candidates) ? data.backend_candidates : [];
           if (!data.configured && !st.primary_model_path) {
-            statusEl.textContent = String(data.detail || "Embedded provider is not currently selected.");
+            statusEl.textContent = "Available backend: " + embeddedAvailableBackendLabel();
+            try { updateBrainSaveEnabled(); } catch (_) {}
             return;
           }
-          const diag = st.last_turn_diagnostics || {};
-          const lines = [];
-          const summaryParts = [
-            String(st.detail || "").trim(),
-            String(st.primary_model_path || "").trim(),
-          ].filter(Boolean);
-          if (summaryParts.length) lines.push(summaryParts.join(" "));
-          const runtimeFlags = [];
-          runtimeFlags.push("installed=" + (!!st.installed));
-          runtimeFlags.push("runnable=" + (!!st.runnable));
-          runtimeFlags.push("loaded=" + (!!st.loaded));
-          runtimeFlags.push("warm=" + (!!st.warm));
-          lines.push("Runtime: " + runtimeFlags.join(" "));
-          if (diag && Object.keys(diag).length) {
-            const tools = Array.isArray(diag.selected_tools) ? diag.selected_tools.filter(Boolean) : [];
-            const failedTools = Array.isArray(diag.failed_tools) ? diag.failed_tools.filter(Boolean) : [];
-            const toolFailures = Array.isArray(diag.tool_failures)
-              ? diag.tool_failures
-                  .map((entry) => {
-                    if (!entry || typeof entry !== "object") return "";
-                    const name = String(entry.name || "").trim();
-                    const reason = String(entry.reason || "").trim();
-                    if (!name) return "";
-                    return reason ? (name + "(" + reason + ")") : name;
-                  })
-                  .filter(Boolean)
-              : [];
-            lines.push("Last turn:");
-            if (diag.turn_id !== undefined && diag.turn_id !== null) lines.push("turn_id=" + String(diag.turn_id));
-            lines.push("phase=" + String(diag.last_phase || "unknown"));
-            if (diag.response_source) lines.push("response_source=" + String(diag.response_source));
-            lines.push("final_tool_call_count=" + Number(diag.final_tool_call_count || 0));
-            lines.push("final_message_count=" + Number(diag.final_message_count || 0));
-            lines.push("tools=" + (tools.length ? tools.join(", ") : "none"));
-            if (toolFailures.length) lines.push("tool_failures=" + toolFailures.join(", "));
-            if (failedTools.length) lines.push("failed_tools=" + failedTools.join(", "));
-            lines.push(
-              "repair_used=" + (!!diag.repair_used) +
-              " repair_attempt_count=" + Number(diag.repair_attempt_count || 0) +
-              " fallback_used=" + (!!diag.fallback_used)
-            );
-            if (diag.last_summary) lines.push(String(diag.last_summary));
-          }
-          statusEl.textContent = lines.join("\n");
+          statusEl.textContent = "Available backend: " + embeddedAvailableBackendLabel();
+          try { updateBrainSaveEnabled(); } catch (_) {}
         } catch (_) {
+          lastEmbeddedStatus = null;
+          lastEmbeddedBackendCandidates = [];
           statusEl.textContent = "Failed to get embedded model status.";
+          try { updateBrainSaveEnabled(); } catch (_) {}
+        }
+      }
+      function readEmbeddedSetupSuccess() {
+        try {
+          const raw = localStorage.getItem(EMBEDDED_SETUP_SUCCESS_KEY);
+          if (!raw) return null;
+          const parsed = JSON.parse(raw);
+          if (!parsed || typeof parsed !== "object") return null;
+          return {
+            model: String(parsed.model || "").trim().toLowerCase(),
+            url: String(parsed.url || "").trim(),
+          };
+        } catch (_) {
+          return null;
+        }
+      }
+      function writeEmbeddedSetupSuccess(model, url) {
+        try {
+          localStorage.setItem(EMBEDDED_SETUP_SUCCESS_KEY, JSON.stringify({
+            model: String(model || "").trim().toLowerCase(),
+            url: String(url || "").trim(),
+            at: Date.now(),
+          }));
+        } catch (_) {}
+      }
+      function clearEmbeddedSetupSuccessIfDifferent(model, url) {
+        const saved = readEmbeddedSetupSuccess();
+        if (!saved) return;
+        const curModel = String(model || "").trim().toLowerCase();
+        const curUrl = String(url || "").trim();
+        if (saved.model !== curModel || saved.url !== curUrl) {
+          try { localStorage.removeItem(EMBEDDED_SETUP_SUCCESS_KEY); } catch (_) {}
         }
       }
       async function embeddedModelAction(path, successText) {
@@ -9553,11 +9592,19 @@
         const message = String((setup && setup.message) || "").trim();
         const detail = String((setup && setup.detail) || "").trim();
         const model = String((setup && setup.model) || "").trim();
+        if (embeddedSetupCard) {
+          embeddedSetupCard.classList.remove("running", "done", "error");
+          if (state === "completed") embeddedSetupCard.classList.add("done");
+          else if (state === "failed" || state === "cancelled") embeddedSetupCard.classList.add("error");
+          else embeddedSetupCard.classList.add("running");
+        }
+        if (embeddedSetupPrimaryStatus) {
+          embeddedSetupPrimaryStatus.textContent = message || ("Phase: " + phase);
+        }
         if (embeddedSetupStatus) {
           const lines = [];
           if (model) lines.push("Model: " + model);
           lines.push("Phase: " + phase);
-          if (message) lines.push(message);
           if (detail) lines.push(detail);
           embeddedSetupStatus.textContent = lines.join("\n");
         }
@@ -9583,6 +9630,7 @@
           embeddedSetupPollTimer = 0;
           const detail = String(setup.detail || "").trim();
           if (state === "completed") {
+            writeEmbeddedSetupSuccess(String(setup.model || "").trim(), String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim());
             closeEmbeddedSetupModal();
             await loadBrainConfig();
             try { await refreshEmbeddedBrainStatus(); } catch (_) {}
@@ -9965,13 +10013,46 @@
         try {
           const cur = readBrainUiState();
           const isEmbedded = String(cur.vendor || "").trim().toLowerCase() === "embedded";
-          const embeddedUrlReady = !isEmbedded || String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim().length > 0;
+          const embeddedUrl = String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim();
+          const embeddedModel = String(cur.model || "").trim().toLowerCase();
+          const aicoreStatus = embeddedBackendCandidate("aicore_preview");
+          const aicoreReady = !!(aicoreStatus && aicoreStatus.runnable);
+          const hint = $("brainEmbeddedInstallHint");
+          if (hint && isEmbedded) {
+            if (aicoreReady) {
+              hint.textContent = "Save will warm and use AICore Developer Preview.";
+            } else {
+              hint.textContent = "Save will download the built-in Gemma 4 LiteRT-LM model and use it as fallback.";
+            }
+          }
+          const embeddedRuntimeReady =
+            !!(lastEmbeddedStatus &&
+              String(lastEmbeddedStatus.model || "").trim().toLowerCase() === embeddedModel &&
+              lastEmbeddedStatus.runnable &&
+              lastEmbeddedStatus.warm);
+          const embeddedUrlReady = !isEmbedded || embeddedUrl.length > 0 || embeddedRuntimeReady || embeddedModel.length > 0;
+          const embeddedSaved = readEmbeddedSetupSuccess();
+          const embeddedActiveAndWarm =
+            !!(lastEmbeddedStatus &&
+              String(lastEmbeddedStatus.model || "").trim().toLowerCase() === embeddedModel &&
+              lastEmbeddedStatus.installed &&
+              lastEmbeddedStatus.runnable &&
+              lastEmbeddedStatus.warm);
+          const embeddedAlreadyReady =
+            !!(isEmbedded &&
+              embeddedUrlReady &&
+              embeddedSaved &&
+              embeddedSaved.model === embeddedModel &&
+              embeddedSaved.url === embeddedUrl &&
+              embeddedActiveAndWarm);
           const configDirty =
             String(cur.vendor || "") !== String(brainInitial.vendor || "") ||
             String(cur.base_url || "") !== String(brainInitial.base_url || "") ||
             String(cur.model || "") !== String(brainInitial.model || "");
           const keyDirty = isSecretDirty($("brainApiKey"));
-          $("brainSave").disabled = !embeddedUrlReady || !(configDirty || keyDirty || isEmbedded);
+          const saveBtn = $("brainSave");
+          saveBtn.disabled = !embeddedUrlReady || embeddedAlreadyReady || !(configDirty || keyDirty || isEmbedded);
+          saveBtn.textContent = embeddedAlreadyReady ? "Saved" : "Save";
         } catch (_) {
           try { $("brainSave").disabled = false; } catch (_) {}
         }
@@ -10070,7 +10151,6 @@
 
         if (String(payload.vendor || "").trim().toLowerCase() === "embedded") {
           const url = String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim();
-          if (!url) { showToast("Enter a model URL"); return; }
           await startEmbeddedSetupSave(String(payload.model || "").trim(), url);
           return;
         }
@@ -10167,7 +10247,10 @@
         });
         $("brainBaseUrl").addEventListener("input", updateBrainSaveEnabled);
         $("brainModelId").addEventListener("input", updateBrainSaveEnabled);
-        if (brainEmbeddedDownloadUrl) brainEmbeddedDownloadUrl.addEventListener("input", updateBrainSaveEnabled);
+        if (brainEmbeddedDownloadUrl) brainEmbeddedDownloadUrl.addEventListener("input", () => {
+          clearEmbeddedSetupSuccessIfDifferent(currentEmbeddedModelId(), brainEmbeddedDownloadUrl.value);
+          updateBrainSaveEnabled();
+        });
       } catch (_) {}
 
       try {

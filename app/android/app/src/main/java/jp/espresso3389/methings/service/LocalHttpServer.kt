@@ -9553,11 +9553,15 @@ class LocalHttpServer(
         }
         val status = embeddedBackendRegistry.statusFor(model)
             ?: return jsonError(Response.Status.BAD_REQUEST, "unknown_embedded_model", JSONObject().put("model", model))
+        val candidates = embeddedBackendRegistry.statusesFor(model).orEmpty()
+        val availableBackend = candidates.firstOrNull { it.runnable }?.backendId ?: "none"
         return jsonResponse(
             JSONObject()
                 .put("configured", vendor.equals("embedded", ignoreCase = true) && configuredModel.equals(model, ignoreCase = true))
                 .put("selected_model", model)
                 .put("status", status.toJson())
+                .put("available_backend", availableBackend)
+                .put("backend_candidates", JSONArray(candidates.map { it.toJson() }))
         )
     }
 
@@ -9591,17 +9595,27 @@ class LocalHttpServer(
         val payload = runCatching { JSONObject(body) }.getOrNull()
             ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
         val model = payload.optString("model", "").trim()
-        val url = payload.optString("url", "").trim()
+        val requestedUrl = payload.optString("url", "").trim()
         if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "embedded_model_required")
-        if (url.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "url_required")
-        val uri = runCatching { URI(url) }.getOrNull()
-            ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_url")
-        val scheme = uri.scheme?.lowercase(Locale.US).orEmpty()
-        if (scheme != "https" && scheme != "http") {
-            return jsonError(Response.Status.BAD_REQUEST, "unsupported_url_scheme", JSONObject().put("scheme", scheme))
+        val url = if (requestedUrl.isBlank()) {
+            val status = embeddedBackendRegistry.statusFor(model)
+            if (status?.runnable == true) "" else defaultEmbeddedModelDownloadUrl(model)
+        } else {
+            requestedUrl
         }
-        val directUrlError = validateEmbeddedModelDownloadUrl(uri)
-        if (directUrlError != null) return directUrlError
+        if (url.isBlank()) {
+            val status = embeddedBackendRegistry.statusFor(model)
+            if (status?.runnable != true) return jsonError(Response.Status.BAD_REQUEST, "url_required")
+        } else {
+            val uri = runCatching { URI(url) }.getOrNull()
+                ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_url")
+            val scheme = uri.scheme?.lowercase(Locale.US).orEmpty()
+            if (scheme != "https" && scheme != "http") {
+                return jsonError(Response.Status.BAD_REQUEST, "unsupported_url_scheme", JSONObject().put("scheme", scheme))
+            }
+            val directUrlError = validateEmbeddedModelDownloadUrl(uri)
+            if (directUrlError != null) return directUrlError
+        }
         synchronized(embeddedSetupProgressLock) {
             if (embeddedSetupProgress.state == "running") {
                 return jsonError(
@@ -9681,6 +9695,10 @@ class LocalHttpServer(
     }
 
     private fun runEmbeddedSetupTransaction(job: EmbeddedSetupJob, model: String, url: String) {
+        if (url.isBlank()) {
+            runEmbeddedWarmOnlySetupTransaction(job, model)
+            return
+        }
         val extension = detectEmbeddedModelExtension(url)
         val targetDir = File(context.filesDir, "user/models/embedded/${model.lowercase(Locale.US)}")
         val finalFile = File(targetDir, "model.$extension")
@@ -9832,6 +9850,58 @@ class LocalHttpServer(
             )
         } finally {
             conn?.disconnect()
+            synchronized(embeddedSetupProgressLock) {
+                if (embeddedSetupActiveJob?.jobId == job.jobId) embeddedSetupActiveJob = null
+            }
+        }
+    }
+
+    private fun runEmbeddedWarmOnlySetupTransaction(job: EmbeddedSetupJob, model: String) {
+        try {
+            throwIfEmbeddedSetupCancelled(job)
+            updateEmbeddedSetupProgress(
+                state = "running",
+                phase = "warming",
+                message = "Warming embedded runtime...",
+                jobId = job.jobId,
+                model = model,
+                url = "",
+                bytesDownloaded = 0L,
+                totalBytes = 0L,
+                canCancel = true,
+                committed = false,
+                detail = "",
+            )
+            embeddedBackendRegistry.warm(model)
+            throwIfEmbeddedSetupCancelled(job)
+            handleBrainConfigSet(
+                JSONObject()
+                    .put("vendor", "embedded")
+                    .put("base_url", "embedded://local")
+                    .put("model", model)
+                    .toString()
+            )
+            updateEmbeddedSetupProgress(
+                state = "completed",
+                phase = "completed",
+                message = "Embedded model is ready.",
+                jobId = job.jobId,
+                canCancel = false,
+                committed = true,
+                detail = "",
+            )
+        } catch (ex: Exception) {
+            val isCancelled = ex is CancellationException
+            updateEmbeddedSetupProgress(
+                state = if (isCancelled) "cancelled" else "failed",
+                phase = if (isCancelled) "cancelled" else "failed",
+                message = if (isCancelled) "Embedded setup cancelled." else "Embedded setup failed.",
+                jobId = job.jobId,
+                canCancel = false,
+                committed = false,
+                detail = if (isCancelled) "Cancelled" else (ex.message ?: ex.javaClass.simpleName),
+            )
+        } finally {
             synchronized(embeddedSetupProgressLock) {
                 if (embeddedSetupActiveJob?.jobId == job.jobId) embeddedSetupActiveJob = null
             }
@@ -10044,6 +10114,28 @@ class LocalHttpServer(
             )
         }
         return null
+    }
+
+    private fun defaultEmbeddedModelDownloadUrl(model: String): String {
+        if (!model.equals("gemma4-e2b-it", ignoreCase = true)) return ""
+        return if (isQualcommQcs8275Device()) {
+            GEMMA4_E2B_IT_QCS8275_LITERTLM_URL
+        } else {
+            GEMMA4_E2B_IT_LITERTLM_URL
+        }
+    }
+
+    private fun isQualcommQcs8275Device(): Boolean {
+        val values = listOf(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MODEL else "",
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Build.SOC_MANUFACTURER else "",
+            Build.BOARD,
+            Build.DEVICE,
+            Build.HARDWARE,
+            Build.MODEL,
+            Build.PRODUCT,
+        ).joinToString(" ").lowercase(Locale.US)
+        return values.contains("qcs8275")
     }
 
     private fun looksLikeHtmlContentType(contentType: String): Boolean {
@@ -17520,6 +17612,10 @@ class LocalHttpServer(
         private const val ME_ME_AUTO_CONNECT_WAIT_BUDGET_MS = 4_000L
         private const val ME_ME_AUTO_CONNECT_SETTLE_WAIT_MS = 1_600L
         private const val ME_ME_AUTO_CONNECT_RETRY_DELAY_MS = 500L
+        private const val GEMMA4_E2B_IT_LITERTLM_URL =
+            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it.litertlm"
+        private const val GEMMA4_E2B_IT_QCS8275_LITERTLM_URL =
+            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/main/gemma-4-E2B-it_qualcomm_qcs8275.litertlm"
         // Keep local sockets open for long-running interactive sessions (SSH/WS/SSE).
         private const val SOCKET_READ_TIMEOUT = 0
         private const val BRAIN_SYSTEM_PROMPT = """You are the me.things Brain, an AI assistant running on an Android device.

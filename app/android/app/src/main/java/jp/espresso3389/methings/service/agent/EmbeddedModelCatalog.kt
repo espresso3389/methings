@@ -17,7 +17,7 @@ object EmbeddedModelCatalog {
             supportsToolCalling = true,
             supportsImageInput = false,
             supportsAudioInput = false,
-            preferredBackend = "litert_lm",
+            preferredBackend = "aicore_preview",
         ),
     )
 

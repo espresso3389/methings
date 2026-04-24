@@ -38,7 +38,7 @@ class EmbeddedProviderRegressionTest {
         assertTrue(spec!!.supportsToolCalling)
         assertFalse(spec.supportsImageInput)
         assertFalse(spec.supportsAudioInput)
-        assertEquals("litert_lm", spec.preferredBackend)
+        assertEquals("aicore_preview", spec.preferredBackend)
     }
 
     @Test
@@ -242,6 +242,69 @@ class EmbeddedProviderRegressionTest {
         assertTrue(prompt.contains("Only include this selected tool"))
         assertTrue(prompt.contains("- mkdir:"))
         assertFalse(prompt.contains("- write_file:"))
+    }
+
+    @Test
+    fun embeddedPlanPromptCompactsLongHistoryButKeepsRecentTurns() {
+        val input = org.json.JSONArray().apply {
+            repeat(8) { index ->
+                put(
+                    org.json.JSONObject()
+                        .put("role", if (index % 2 == 0) "user" else "assistant")
+                        .put("content", "message-$index " + "x".repeat(280))
+                )
+            }
+        }
+        val tools = org.json.JSONArray()
+
+        val prompt = EmbeddedTurnProtocol.renderPlanPrompt(
+            systemPrompt = "system " + "y".repeat(4000),
+            input = input,
+            tools = tools,
+            requireTool = false,
+        )
+
+        assertTrue(prompt.contains("Earlier summary:"))
+        assertTrue(prompt.contains("message-7"))
+        assertTrue(prompt.contains("message-6"))
+        assertTrue(prompt.contains("message-1"))
+        assertFalse(prompt.contains("message-0 " + "x".repeat(200)))
+        assertFalse(prompt.contains("y".repeat(3000)))
+    }
+
+    @Test
+    fun embeddedPlanPromptUsesCompactToolSummary() {
+        val tools = org.json.JSONArray().put(
+            org.json.JSONObject().put(
+                "function",
+                org.json.JSONObject()
+                    .put("name", "write_file")
+                    .put("description", "Write a file with a very long explanation. " + "detail ".repeat(50))
+                    .put(
+                        "parameters",
+                        org.json.JSONObject()
+                            .put(
+                                "properties",
+                                org.json.JSONObject()
+                                    .put("path", org.json.JSONObject().put("type", "string"))
+                                    .put("content", org.json.JSONObject().put("type", "string"))
+                                    .put("mode", org.json.JSONObject().put("type", "string"))
+                            )
+                            .put("required", org.json.JSONArray().put("path").put("content"))
+                    )
+            )
+        )
+
+        val prompt = EmbeddedTurnProtocol.renderPlanPrompt(
+            systemPrompt = "system",
+            input = org.json.JSONArray(),
+            tools = tools,
+            requireTool = false,
+        )
+
+        assertTrue(prompt.contains("- write_file [required=content,path]"))
+        assertFalse(prompt.contains("detail detail detail detail detail detail detail"))
+        assertFalse(prompt.contains("mode"))
     }
 
     @Test
@@ -543,6 +606,24 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
+    fun registryPrefersRunnableBackendOverEarlierUnavailableBackend() {
+        val unavailable = RecordingEmbeddedBackend(backendIdOverride = "unavailable", installed = false, runnable = false)
+        val runnable = RecordingEmbeddedBackend(backendIdOverride = "runnable", installed = true, runnable = true)
+        val registry = EmbeddedBackendRegistry(
+            context = RuntimeEnvironment.getApplication(),
+            backendOverride = listOf(unavailable, runnable),
+        )
+
+        val status = registry.statusFor("gemma4-e2b-it")!!
+        val warmStatus = registry.warm("gemma4-e2b-it")
+
+        assertEquals("runnable", status.backendId)
+        assertEquals("runnable", warmStatus.backendId)
+        assertEquals(emptyList<String>(), unavailable.events)
+        assertEquals(listOf("warm:gemma4-e2b-it"), runnable.events)
+    }
+
+    @Test
     fun registryTrimMemoryUnloadsAllBackends() {
         val fake = RecordingEmbeddedBackend()
         val registry = EmbeddedBackendRegistry(
@@ -555,18 +636,22 @@ class EmbeddedProviderRegressionTest {
         assertEquals(listOf("unload_all"), fake.events)
     }
 
-    private class RecordingEmbeddedBackend : EmbeddedBackend {
+    private class RecordingEmbeddedBackend(
+        private val backendIdOverride: String = "fake",
+        private val installed: Boolean = true,
+        private val runnable: Boolean = true,
+    ) : EmbeddedBackend {
         val events = mutableListOf<String>()
-        override val backendId: String = "fake"
+        override val backendId: String = backendIdOverride
 
         override fun status(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
             return EmbeddedBackendStatus(
                 model = spec,
                 backendId = backendId,
-                installed = true,
-                runnable = true,
-                loaded = true,
-                warm = true,
+                installed = installed,
+                runnable = runnable,
+                loaded = runnable,
+                warm = runnable,
                 detail = "fake",
                 primaryModelPath = "/tmp/fake",
                 candidatePaths = listOf("/tmp/fake"),
