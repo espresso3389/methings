@@ -1866,6 +1866,7 @@ class AgentRuntime(
                 .filter { path -> MediaEncoder.isImagePath(path) || MediaEncoder.isAudioPath(path) }
         }
         val userMedia = mutableListOf<ExtractedMedia>()
+        val encodedMediaPaths = mutableSetOf<String>()
         if (supportedMedia.isNotEmpty() && mediaPaths.isNotEmpty()) {
             Log.i(TAG, "buildInitialInput: found ${mediaPaths.size} user media path(s): $mediaPaths")
             for (p in mediaPaths) {
@@ -1875,6 +1876,7 @@ class AgentRuntime(
                     val encoded = MediaEncoder.encodeImage(file, maxDim, toolExecutor.imageJpegQuality)
                     if (encoded != null) {
                         userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "image"))
+                        encodedMediaPaths.add(p)
                         Log.i(TAG, "buildInitialInput: encoded user image '$p' (${encoded.base64.length} chars b64)")
                     } else {
                         Log.w(TAG, "buildInitialInput: failed to encode user image '$p' (file exists=${file.exists()})")
@@ -1883,6 +1885,7 @@ class AgentRuntime(
                     val encoded = MediaEncoder.encodeAudio(file)
                     if (encoded != null) {
                         userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "audio"))
+                        encodedMediaPaths.add(p)
                         Log.i(TAG, "buildInitialInput: encoded user audio '$p' (${encoded.base64.length} chars b64)")
                     } else {
                         Log.w(TAG, "buildInitialInput: failed to encode user audio '$p' (file exists=${file.exists()})")
@@ -1897,11 +1900,28 @@ class AgentRuntime(
         } else {
             emptyList()
         }
+        val unencodedCurrentMediaPaths = currentTurnMediaPaths
+            .filter { it !in encodedMediaPaths }
+            .distinct()
+        val currentMediaReferenceLines = unencodedCurrentMediaPaths.map { "rel_path: $it" }
+        val currentMediaNote = if (currentMediaReferenceLines.isNotEmpty()) {
+            "User attached media file(s) above. The current provider cannot receive them as native multimodal input; do not treat this as a journal request."
+        } else {
+            ""
+        }
         val finalCleanedText = buildString {
             append(cleanedText)
             if (historicalReferenceLines.isNotEmpty()) {
                 if (isNotBlank()) append("\n")
                 append(historicalReferenceLines.joinToString("\n"))
+            }
+            if (currentMediaReferenceLines.isNotEmpty()) {
+                if (isNotBlank()) append("\n")
+                append(currentMediaReferenceLines.joinToString("\n"))
+            }
+            if (currentMediaNote.isNotEmpty()) {
+                if (isNotBlank()) append("\n")
+                append(currentMediaNote)
             }
         }.trim()
         val finalUserText = "$journalBlob\n\n$finalCleanedText"

@@ -238,6 +238,33 @@ class AgentRuntimePermissionResumeTest {
     }
 
     @Test
+    fun embeddedBuildInitialInputPreservesUnsupportedCurrentMediaRelPath() {
+        val harness = createHarness(
+            llmPayloads = listOf(finalTextPayload("done")),
+        ) { _, _ ->
+            JSONObject().put("status", "ok")
+        }
+
+        val input = invokePrivateBuildInitialInput(
+            runtime = harness.runtime,
+            kind = ProviderKind.EMBEDDED,
+            dialogue = emptyList(),
+            journalBlob = "Journal (per-session, keep short for context efficiency):\n(empty)",
+            curText = "rel_path: uploads/chat/photo.jpg",
+            item = JSONObject().put("id", "chat_img"),
+            supportedMedia = emptySet(),
+        )
+
+        assertEquals(1, input.length())
+        val current = input.getJSONObject(0)
+        assertEquals("user", current.getString("role"))
+        val content = current.getString("content")
+        assertTrue(content.contains("rel_path: uploads/chat/photo.jpg"))
+        assertTrue(content.contains("current provider cannot receive them as native multimodal input"))
+        assertTrue(content.contains("do not treat this as a journal request"))
+    }
+
+    @Test
     fun openRouterQwenEmptyMediaFollowUpFallsBackToDirectImageRequest() {
         val harness = createHarness(
             llmPayloads = listOf(
