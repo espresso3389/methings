@@ -2463,11 +2463,19 @@
             </select>
             <div class="muted" id="brainEmbeddedStatus" style="margin-top:4px;display:none;white-space:pre-wrap;"></div>
           </div>
+          <div class="field" id="brainEmbeddedBackendField" style="display:none;">
+            <label>Embedded Backend</label>
+            <select id="brainEmbeddedBackend">
+              <option value="">Auto</option>
+              <option value="aicore_preview">AICore Developer Preview</option>
+              <option value="litert_lm">LiteRT-LM</option>
+            </select>
+          </div>
           <div class="field" id="brainEmbeddedInstallField" style="display:none;">
             <label>Embedded Runtime</label>
             <input type="url" id="brainEmbeddedDownloadUrl" placeholder="Optional override URL" style="display:none;" />
             <div class="muted" id="brainEmbeddedInstallHint" style="margin-top:4px;">
-              Save uses AICore Developer Preview when available; otherwise it downloads the built-in Gemma 4 LiteRT-LM model.
+              Auto uses AICore Developer Preview when available; otherwise it downloads the built-in Gemma 4 LiteRT-LM model.
             </div>
           </div>
           <div class="field" id="brainBaseUrlField" style="display:none;">
@@ -9385,6 +9393,8 @@
       const brainModelField = $("brainModelField");
       const brainBaseUrlField = $("brainBaseUrlField");
       const brainModelIdField = $("brainModelIdField");
+      const brainEmbeddedBackendField = $("brainEmbeddedBackendField");
+      const brainEmbeddedBackendSelect = $("brainEmbeddedBackend");
       const brainEmbeddedInstallField = $("brainEmbeddedInstallField");
       const brainEmbeddedDownloadUrl = $("brainEmbeddedDownloadUrl");
       const embeddedSetupModal = $("embeddedSetupModal");
@@ -9397,6 +9407,7 @@
       const EMBEDDED_SETUP_SUCCESS_KEY = "methings.embeddedSetupSuccess";
       let lastEmbeddedStatus = null;
       let lastEmbeddedBackendCandidates = [];
+      let lastEmbeddedBackendPreference = "";
       const BRAIN_PROVIDER_PRESETS = {
         embedded: {
           base_url: "embedded://local",
@@ -9452,10 +9463,15 @@
           ? lastEmbeddedBackendCandidates.find((entry) => String((entry && entry.backend) || "").trim() === key)
           : null;
       }
+      function selectedEmbeddedBackendPreference() {
+        return String((brainEmbeddedBackendSelect && brainEmbeddedBackendSelect.value) || "").trim();
+      }
       function embeddedBackendToUseLabel() {
+        const selected = selectedEmbeddedBackendPreference() || lastEmbeddedBackendPreference;
+        if (selected === "aicore_preview") return "AICore (Developer Preview)";
+        if (selected === "litert_lm") return "LiteRT-LM";
         const aicore = embeddedBackendCandidate("aicore_preview");
-        if (aicore && aicore.runnable) return "AICore (Developer Preview)";
-        return "LiteRT-LM";
+        return (aicore && aicore.runnable) ? "AICore (Developer Preview)" : "LiteRT-LM";
       }
       function currentEmbeddedModelId() {
         const preset = getSelectedPreset ? getSelectedPreset() : null;
@@ -9470,6 +9486,7 @@
         const model = currentEmbeddedModelId();
         lastEmbeddedStatus = null;
         lastEmbeddedBackendCandidates = [];
+        lastEmbeddedBackendPreference = "";
         if (provider !== "embedded") {
           statusEl.style.display = "none";
           statusEl.textContent = "";
@@ -9480,7 +9497,9 @@
         statusEl.textContent = "Checking local model status...";
         try {
           const qs = model ? ("?model=" + encodeURIComponent(model)) : "";
-          const res = await fetch(API + "/brain/embedded/status" + qs);
+          const backend = selectedEmbeddedBackendPreference();
+          const backendQs = backend ? ((qs ? "&" : "?") + "backend=" + encodeURIComponent(backend)) : "";
+          const res = await fetch(API + "/brain/embedded/status" + qs + backendQs);
           const data = await res.json();
           if (!res.ok) {
             statusEl.textContent = (data && (data.detail || data.error)) || "Failed to get embedded model status.";
@@ -9489,6 +9508,7 @@
           const st = data.status || {};
           lastEmbeddedStatus = st || null;
           lastEmbeddedBackendCandidates = Array.isArray(data.backend_candidates) ? data.backend_candidates : [];
+          lastEmbeddedBackendPreference = String(data.embedded_backend || "").trim();
           if (!data.configured && !st.primary_model_path) {
             statusEl.textContent = "Backend to use: " + embeddedBackendToUseLabel();
             try { updateBrainSaveEnabled(); } catch (_) {}
@@ -9499,6 +9519,7 @@
         } catch (_) {
           lastEmbeddedStatus = null;
           lastEmbeddedBackendCandidates = [];
+          lastEmbeddedBackendPreference = "";
           statusEl.textContent = "Failed to get embedded model status.";
           try { updateBrainSaveEnabled(); } catch (_) {}
         }
@@ -9653,7 +9674,7 @@
         }
       }
 
-      async function startEmbeddedSetupSave(model, url) {
+      async function startEmbeddedSetupSave(model, url, embeddedBackend) {
         if (!embeddedSetupModal) return false;
         embeddedSetupModal.classList.add("show");
         renderEmbeddedSetupProgress({ state: "running", phase: "preparing", message: "Starting embedded setup...", model: model });
@@ -9661,7 +9682,7 @@
           const res = await fetch(API + "/brain/embedded/setup", {
             method: "POST",
             headers: { "Content-Type": "application/json; charset=utf-8" },
-            body: JSON.stringify({ model: model, url: url }),
+            body: JSON.stringify({ model: model, url: url, embedded_backend: embeddedBackend || "" }),
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
@@ -9864,6 +9885,7 @@
 
         // Hide OpenRouter vendor field for all non-openrouter providers
         if (!isOpenRouter) $("brainOrVendorField").style.display = "none";
+        if (brainEmbeddedBackendField) brainEmbeddedBackendField.style.display = isEmbedded ? "block" : "none";
         if (brainEmbeddedInstallField) brainEmbeddedInstallField.style.display = isEmbedded ? "block" : "none";
 
         if (!provider) {
@@ -9991,6 +10013,12 @@
         try { syncBrainKeyUsername(); } catch (_) {}
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
+      if (brainEmbeddedBackendSelect) {
+        brainEmbeddedBackendSelect.addEventListener("change", () => {
+          try { refreshEmbeddedBrainStatus(); } catch (_) {}
+          try { updateBrainSaveEnabled(); } catch (_) {}
+        });
+      }
       if (embeddedSetupCancelBtn) {
         embeddedSetupCancelBtn.addEventListener("click", async () => {
           if (embeddedSetupLastState !== "running") {
@@ -10010,18 +10038,25 @@
         try { updateBrainSaveEnabled(); } catch (_) {}
       });
 
-      let brainInitial = { vendor: "", base_url: "", model: "" };
+      let brainInitial = { vendor: "", base_url: "", model: "", embedded_backend: "" };
       function readBrainUiState() {
         const preset = getSelectedPreset();
-        if (!preset) return { vendor: "", base_url: "", model: "" };
+        const embeddedBackend = selectedEmbeddedBackendPreference();
+        if (!preset) return { vendor: "", base_url: "", model: "", embedded_backend: embeddedBackend };
         if (preset.vendor === "custom") {
           return {
             vendor: "custom",
             base_url: $("brainBaseUrl").value.trim(),
             model: $("brainModelId").value.trim(),
+            embedded_backend: "",
           };
         }
-        return { vendor: preset.vendor || "", base_url: preset.base_url || "", model: preset.model || "" };
+        return {
+          vendor: preset.vendor || "",
+          base_url: preset.base_url || "",
+          model: preset.model || "",
+          embedded_backend: preset.vendor === "embedded" ? embeddedBackend : "",
+        };
       }
       function updateBrainSaveEnabled() {
         try {
@@ -10031,12 +10066,17 @@
           const embeddedModel = String(cur.model || "").trim().toLowerCase();
           const aicoreStatus = embeddedBackendCandidate("aicore_preview");
           const aicoreReady = !!(aicoreStatus && aicoreStatus.runnable);
+          const selectedBackend = selectedEmbeddedBackendPreference();
           const hint = $("brainEmbeddedInstallHint");
           if (hint && isEmbedded) {
-            if (aicoreReady) {
+            if (selectedBackend === "aicore_preview") {
               hint.textContent = "Save will warm and use AICore Developer Preview.";
+            } else if (selectedBackend === "litert_lm") {
+              hint.textContent = "Save will warm LiteRT-LM, downloading the built-in Gemma 4 LiteRT-LM model if needed.";
+            } else if (aicoreReady) {
+              hint.textContent = "Auto will warm and use AICore Developer Preview.";
             } else {
-              hint.textContent = "Save will download the built-in Gemma 4 LiteRT-LM model and use it as fallback.";
+              hint.textContent = "Auto will download the built-in Gemma 4 LiteRT-LM model and use it as fallback.";
             }
           }
           const embeddedRuntimeReady =
@@ -10062,11 +10102,13 @@
           const configDirty =
             String(cur.vendor || "") !== String(brainInitial.vendor || "") ||
             String(cur.base_url || "") !== String(brainInitial.base_url || "") ||
-            String(cur.model || "") !== String(brainInitial.model || "");
+            String(cur.model || "") !== String(brainInitial.model || "") ||
+            String(cur.embedded_backend || "") !== String(brainInitial.embedded_backend || "");
           const keyDirty = isSecretDirty($("brainApiKey"));
           const saveBtn = $("brainSave");
-          saveBtn.disabled = !embeddedUrlReady || embeddedAlreadyReady || !(configDirty || keyDirty || isEmbedded);
-          saveBtn.textContent = embeddedAlreadyReady ? "Saved" : "Save";
+          const suppressEmbeddedNoop = embeddedAlreadyReady && !configDirty && !keyDirty;
+          saveBtn.disabled = !embeddedUrlReady || suppressEmbeddedNoop || !(configDirty || keyDirty || isEmbedded);
+          saveBtn.textContent = suppressEmbeddedNoop ? "Saved" : "Save";
         } catch (_) {
           try { $("brainSave").disabled = false; } catch (_) {}
         }
@@ -10081,6 +10123,7 @@
           const vendor = String(data.vendor || "").trim();
           const model = String(data.model || "").trim();
           const baseUrl = String(data.base_url || "").trim();
+          const embeddedBackend = String(data.embedded_backend || "").trim();
           const preset = getProviderPreset(vendor);
 
           if (vendor === "openrouter") {
@@ -10124,8 +10167,14 @@
             $("brainBaseUrl").value = baseUrl;
             $("brainModelId").value = model;
           }
+          if (brainEmbeddedBackendSelect) brainEmbeddedBackendSelect.value = embeddedBackend;
           syncBrainCustomFields();
-          brainInitial = { vendor: data.vendor || "", base_url: data.base_url || "", model: data.model || "" };
+          brainInitial = {
+            vendor: data.vendor || "",
+            base_url: data.base_url || "",
+            model: data.model || "",
+            embedded_backend: embeddedBackend,
+          };
           if (brainProviderNeedsApiKey(vendor)) {
             try { lockSecretField($("brainApiKey")); } catch (_) {}
           }
@@ -10169,8 +10218,9 @@
         }
 
         if (String(payload.vendor || "").trim().toLowerCase() === "embedded") {
+          payload.embedded_backend = selectedEmbeddedBackendPreference();
           const url = String((brainEmbeddedDownloadUrl && brainEmbeddedDownloadUrl.value) || "").trim();
-          await startEmbeddedSetupSave(String(payload.model || "").trim(), url);
+          await startEmbeddedSetupSave(String(payload.model || "").trim(), url, payload.embedded_backend);
           return;
         }
 

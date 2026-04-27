@@ -169,9 +169,9 @@ class EmbeddedBackendRegistry(
         require(backends.isNotEmpty()) { "embedded_backends_required" }
     }
 
-    fun statusFor(modelId: String): EmbeddedBackendStatus? {
+    fun statusFor(modelId: String, preferredBackendId: String = ""): EmbeddedBackendStatus? {
         val spec = EmbeddedModelCatalog.find(modelId) ?: return null
-        return selectBackendStatus(spec).status
+        return selectBackendStatus(spec, preferredBackendId).status
     }
 
     fun statusesFor(modelId: String): List<EmbeddedBackendStatus>? {
@@ -179,25 +179,26 @@ class EmbeddedBackendRegistry(
         return backendStatuses(spec).map { it.status }
     }
 
-    fun generateText(modelId: String, prompt: String): String {
+    fun generateText(modelId: String, prompt: String, preferredBackendId: String = ""): String {
         val spec = EmbeddedModelCatalog.find(modelId)
             ?: throw IllegalArgumentException("unknown_embedded_model")
-        return selectBackendStatus(spec).backend.generateText(spec, prompt)
+        return selectBackendStatus(spec, preferredBackendId).backend.generateText(spec, prompt)
     }
 
     fun generateTurn(
         modelId: String,
         request: EmbeddedGenerationRequest,
+        preferredBackendId: String = "",
     ): EmbeddedGenerationResult {
         val spec = EmbeddedModelCatalog.find(modelId)
             ?: throw IllegalArgumentException("unknown_embedded_model")
-        return selectBackendStatus(spec).backend.generateTurn(spec, request)
+        return selectBackendStatus(spec, preferredBackendId).backend.generateTurn(spec, request)
     }
 
-    fun warm(modelId: String): EmbeddedBackendStatus {
+    fun warm(modelId: String, preferredBackendId: String = ""): EmbeddedBackendStatus {
         val spec = EmbeddedModelCatalog.find(modelId)
             ?: throw IllegalArgumentException("unknown_embedded_model")
-        return selectBackendStatus(spec).backend.warm(spec)
+        return selectBackendStatus(spec, preferredBackendId).backend.warm(spec)
     }
 
     fun unload(modelId: String): Boolean {
@@ -219,8 +220,12 @@ class EmbeddedBackendRegistry(
         val status: EmbeddedBackendStatus,
     )
 
-    private fun selectBackendStatus(spec: EmbeddedModelSpec): BackendStatus {
+    private fun selectBackendStatus(spec: EmbeddedModelSpec, preferredBackendId: String = ""): BackendStatus {
         val statuses = backendStatuses(spec)
+        val preferred = preferredBackendId.trim()
+        if (preferred.isNotEmpty()) {
+            statuses.firstOrNull { it.status.backendId == preferred }?.let { return it }
+        }
         return statuses.firstOrNull { it.status.runnable }
             ?: statuses.firstOrNull { it.status.installed }
             ?: statuses.first()

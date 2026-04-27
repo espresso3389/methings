@@ -28,6 +28,7 @@ data class AgentConfig(
     val maxToolOutputListItems: Int = 80,
     val idleSleepMs: Int = 800,
     val modelProfiles: Map<String, Map<String, Any>> = emptyMap(),
+    val embeddedBackend: String = "",
 ) {
     fun intWithProfile(key: String, default: Int, minValue: Int, maxValue: Int): Int {
         val profile = modelProfileOverrides()
@@ -207,6 +208,7 @@ class AgentConfigManager(private val context: Context) {
             providerUrl = baseUrl,
             model = model,
             apiKeyCredential = if (apiKey.isNotEmpty()) "direct" else "openai_api_key",
+            embeddedBackend = getEmbeddedBackend(),
         )
     }
 
@@ -242,6 +244,7 @@ class AgentConfigManager(private val context: Context) {
             model = model,
             apiKeyCredential = if (apiKey.isNotEmpty()) "direct" else "openai_api_key",
             toolPolicy = "auto",
+            embeddedBackend = getEmbeddedBackend(),
         )
     }
 
@@ -272,6 +275,10 @@ class AgentConfigManager(private val context: Context) {
         val vendor = getVendor()
         val needsApiKey = !vendor.equals("embedded", ignoreCase = true)
         return getBaseUrl().isNotEmpty() && getModel().isNotEmpty() && (!needsApiKey || getApiKey().isNotEmpty())
+    }
+
+    fun getEmbeddedBackend(): String {
+        return brainPrefs.getString("embedded_backend", "")?.trim().orEmpty()
     }
 
     fun brainKeySlotFor(vendor: String, baseUrl: String): String {

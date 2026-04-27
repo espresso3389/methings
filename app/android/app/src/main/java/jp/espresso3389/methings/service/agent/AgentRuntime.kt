@@ -528,6 +528,7 @@ class AgentRuntime(
         val providerUrl = configManager.resolveProviderUrl(vendor, baseUrl)
         val providerKind = llmClient.detectProviderKind(providerUrl, vendor)
         val embeddedSpec = if (providerKind == ProviderKind.EMBEDDED) EmbeddedModelCatalog.find(model) else null
+        val embeddedBackendPreference = config.embeddedBackend
         val requiresApiKey = providerKind != ProviderKind.EMBEDDED
 
         if (model.isEmpty() || providerUrl.isEmpty() || (requiresApiKey && apiKey.isEmpty())) {
@@ -539,7 +540,7 @@ class AgentRuntime(
 
         Log.i(TAG, "Provider: kind=$providerKind, vendor=$vendor, url=$providerUrl, model=$model")
         val embeddedBackendStatus = if (providerKind == ProviderKind.EMBEDDED) {
-            embeddedBackendRegistry.statusFor(model)
+            embeddedBackendRegistry.statusFor(model, embeddedBackendPreference)
         } else {
             null
         }
@@ -695,6 +696,7 @@ class AgentRuntime(
                             tools = tools,
                             requireTool = toolRequiredUnsatisfied,
                         ),
+                        preferredBackendId = embeddedBackendPreference,
                     )
                 } else {
                     val body = buildRequestBody(providerKind, model, tools, pendingInput, systemPrompt, toolRequiredUnsatisfied)
@@ -1173,6 +1175,7 @@ class AgentRuntime(
                         tools = JSONArray(),
                         requireTool = false,
                     ),
+                    preferredBackendId = embeddedBackendPreference,
                 )
                 Pair(embedded.messageTexts, embedded.calls)
             } else {

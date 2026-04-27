@@ -624,6 +624,24 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
+    fun registryHonorsExplicitBackendPreference() {
+        val aicore = RecordingEmbeddedBackend(backendIdOverride = "aicore_preview", installed = true, runnable = true)
+        val litert = RecordingEmbeddedBackend(backendIdOverride = "litert_lm", installed = true, runnable = true)
+        val registry = EmbeddedBackendRegistry(
+            context = RuntimeEnvironment.getApplication(),
+            backendOverride = listOf(aicore, litert),
+        )
+
+        val status = registry.statusFor("gemma4-e2b-it", preferredBackendId = "litert_lm")!!
+        val warmStatus = registry.warm("gemma4-e2b-it", preferredBackendId = "litert_lm")
+
+        assertEquals("litert_lm", status.backendId)
+        assertEquals("litert_lm", warmStatus.backendId)
+        assertEquals(emptyList<String>(), aicore.events)
+        assertEquals(listOf("warm:gemma4-e2b-it"), litert.events)
+    }
+
+    @Test
     fun registryTrimMemoryUnloadsAllBackends() {
         val fake = RecordingEmbeddedBackend()
         val registry = EmbeddedBackendRegistry(

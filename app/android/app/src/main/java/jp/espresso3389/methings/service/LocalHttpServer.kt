@@ -9527,6 +9527,7 @@ class LocalHttpServer(
         val vendor = brainPrefs.getString("vendor", "") ?: ""
         val baseUrl = brainPrefs.getString("base_url", "") ?: ""
         val model = brainPrefs.getString("model", "") ?: ""
+        val embeddedBackend = readEmbeddedBackendPreference()
         val hasKey = !brainPrefs.getString("api_key", "").isNullOrEmpty()
         val requiresApiKey = !vendor.equals("embedded", ignoreCase = true)
         return jsonResponse(
@@ -9534,6 +9535,7 @@ class LocalHttpServer(
                 .put("vendor", vendor)
                 .put("base_url", baseUrl)
                 .put("model", model)
+                .put("embedded_backend", embeddedBackend)
                 .put("has_api_key", hasKey)
                 .put("requires_api_key", requiresApiKey)
         )
@@ -9544,6 +9546,8 @@ class LocalHttpServer(
         val configuredModel = brainPrefs.getString("model", "")?.trim().orEmpty()
         val requestedModel = session.parms["model"]?.trim().orEmpty()
         val model = requestedModel.ifBlank { configuredModel }
+        val requestedBackend = session.parms["backend"]?.trim().orEmpty()
+        val embeddedBackend = normalizeEmbeddedBackendPreference(requestedBackend.ifBlank { readEmbeddedBackendPreference() })
         if (model.isBlank()) {
             return jsonResponse(
                 JSONObject()
@@ -9551,21 +9555,23 @@ class LocalHttpServer(
                     .put("detail", "No embedded model is selected.")
             )
         }
-        val status = embeddedBackendRegistry.statusFor(model)
+        val status = embeddedBackendRegistry.statusFor(model, embeddedBackend)
             ?: return jsonError(Response.Status.BAD_REQUEST, "unknown_embedded_model", JSONObject().put("model", model))
         val candidates = embeddedBackendRegistry.statusesFor(model).orEmpty()
         val availableBackend = candidates.firstOrNull { it.runnable }?.backendId ?: "none"
-        val backendToUse = if (candidates.any { it.backendId == "aicore_preview" && it.runnable }) {
+        val autoBackendToUse = if (candidates.any { it.backendId == "aicore_preview" && it.runnable }) {
             "aicore_preview"
         } else {
             "litert_lm"
         }
+        val backendToUse = embeddedBackend.ifBlank { autoBackendToUse }
         return jsonResponse(
             JSONObject()
                 .put("configured", vendor.equals("embedded", ignoreCase = true) && configuredModel.equals(model, ignoreCase = true))
                 .put("selected_model", model)
                 .put("status", status.toJson())
                 .put("available_backend", availableBackend)
+                .put("embedded_backend", embeddedBackend)
                 .put("backend_to_use", backendToUse)
                 .put("backend_candidates", JSONArray(candidates.map { it.toJson() }))
         )
@@ -9601,16 +9607,17 @@ class LocalHttpServer(
         val payload = runCatching { JSONObject(body) }.getOrNull()
             ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
         val model = payload.optString("model", "").trim()
-        val requestedUrl = payload.optString("url", "").trim()
+        val embeddedBackend = normalizeEmbeddedBackendPreference(payload.optString("embedded_backend", readEmbeddedBackendPreference()))
+        val requestedUrl = if (embeddedBackend == "aicore_preview") "" else payload.optString("url", "").trim()
         if (model.isBlank()) return jsonError(Response.Status.BAD_REQUEST, "embedded_model_required")
         val url = if (requestedUrl.isBlank()) {
-            val status = embeddedBackendRegistry.statusFor(model)
-            if (status?.runnable == true) "" else defaultEmbeddedModelDownloadUrl(model)
+            val status = embeddedBackendRegistry.statusFor(model, embeddedBackend)
+            if (status?.runnable == true || embeddedBackend == "aicore_preview") "" else defaultEmbeddedModelDownloadUrl(model)
         } else {
             requestedUrl
         }
         if (url.isBlank()) {
-            val status = embeddedBackendRegistry.statusFor(model)
+            val status = embeddedBackendRegistry.statusFor(model, embeddedBackend)
             if (status?.runnable != true) return jsonError(Response.Status.BAD_REQUEST, "url_required")
         } else {
             val uri = runCatching { URI(url) }.getOrNull()
@@ -9645,7 +9652,7 @@ class LocalHttpServer(
                 canCancel = true,
             )
             Thread {
-                runEmbeddedSetupTransaction(job, model, url)
+                runEmbeddedSetupTransaction(job, model, url, embeddedBackend)
             }.apply {
                 isDaemon = true
                 name = "EmbeddedSetup-$jobId"
@@ -9700,9 +9707,9 @@ class LocalHttpServer(
         }
     }
 
-    private fun runEmbeddedSetupTransaction(job: EmbeddedSetupJob, model: String, url: String) {
+    private fun runEmbeddedSetupTransaction(job: EmbeddedSetupJob, model: String, url: String, embeddedBackend: String) {
         if (url.isBlank()) {
-            runEmbeddedWarmOnlySetupTransaction(job, model)
+            runEmbeddedWarmOnlySetupTransaction(job, model, embeddedBackend)
             return
         }
         val extension = detectEmbeddedModelExtension(url)
@@ -9802,12 +9809,13 @@ class LocalHttpServer(
                 throw IllegalArgumentException("embedded_model_invalid:$reason")
             }
             throwIfEmbeddedSetupCancelled(job)
-            embeddedBackendRegistry.warm(model)
+            embeddedBackendRegistry.warm(model, embeddedBackend)
             handleBrainConfigSet(
                 JSONObject()
                     .put("vendor", "embedded")
                     .put("base_url", "embedded://local")
                     .put("model", model)
+                    .put("embedded_backend", embeddedBackend)
                     .toString()
             )
             if (backupFile.exists()) backupFile.delete()
@@ -9862,7 +9870,7 @@ class LocalHttpServer(
         }
     }
 
-    private fun runEmbeddedWarmOnlySetupTransaction(job: EmbeddedSetupJob, model: String) {
+    private fun runEmbeddedWarmOnlySetupTransaction(job: EmbeddedSetupJob, model: String, embeddedBackend: String) {
         try {
             throwIfEmbeddedSetupCancelled(job)
             updateEmbeddedSetupProgress(
@@ -9878,13 +9886,14 @@ class LocalHttpServer(
                 committed = false,
                 detail = "",
             )
-            embeddedBackendRegistry.warm(model)
+            embeddedBackendRegistry.warm(model, embeddedBackend)
             throwIfEmbeddedSetupCancelled(job)
             handleBrainConfigSet(
                 JSONObject()
                     .put("vendor", "embedded")
                     .put("base_url", "embedded://local")
                     .put("model", model)
+                    .put("embedded_backend", embeddedBackend)
                     .toString()
             )
             updateEmbeddedSetupProgress(
@@ -9921,9 +9930,10 @@ class LocalHttpServer(
     fun warmConfiguredEmbeddedModel() {
         val vendor = brainPrefs.getString("vendor", "")?.trim().orEmpty()
         val model = brainPrefs.getString("model", "")?.trim().orEmpty()
+        val embeddedBackend = readEmbeddedBackendPreference()
         if (!vendor.equals("embedded", ignoreCase = true) || model.isBlank()) return
         Thread {
-            runCatching { embeddedBackendRegistry.warm(model) }
+            runCatching { embeddedBackendRegistry.warm(model, embeddedBackend) }
                 .onFailure { ex ->
                     Log.w(TAG, "Embedded warmup failed for model=$model", ex)
                 }
@@ -9947,10 +9957,12 @@ class LocalHttpServer(
 
     private fun handleBrainEmbeddedWarm(body: String): Response {
         val model = resolveEmbeddedModelFromBody(body)
+        val payload = runCatching { JSONObject(body) }.getOrNull()
+        val embeddedBackend = normalizeEmbeddedBackendPreference(payload?.optString("embedded_backend", readEmbeddedBackendPreference()) ?: readEmbeddedBackendPreference())
         if (model.isBlank()) {
             return jsonError(Response.Status.BAD_REQUEST, "embedded_model_required")
         }
-        val status = runCatching { embeddedBackendRegistry.warm(model) }.getOrElse { ex ->
+        val status = runCatching { embeddedBackendRegistry.warm(model, embeddedBackend) }.getOrElse { ex ->
             return jsonError(
                 Response.Status.INTERNAL_ERROR,
                 "embedded_warm_failed",
@@ -9981,7 +9993,7 @@ class LocalHttpServer(
                     .put("detail", ex.message ?: ex.javaClass.simpleName)
             )
         }
-        val status = embeddedBackendRegistry.statusFor(model)
+        val status = embeddedBackendRegistry.statusFor(model, readEmbeddedBackendPreference())
             ?: return jsonError(Response.Status.BAD_REQUEST, "unknown_embedded_model", JSONObject().put("model", model))
         return jsonResponse(
             JSONObject()
@@ -10070,7 +10082,7 @@ class LocalHttpServer(
                 tempFile.copyTo(destFile, overwrite = true)
                 tempFile.delete()
             }
-            val status = embeddedBackendRegistry.statusFor(model)
+            val status = embeddedBackendRegistry.statusFor(model, readEmbeddedBackendPreference())
             jsonResponse(JSONObject().apply {
                 put("status", "ok")
                 put("model", model)
@@ -10193,6 +10205,18 @@ class LocalHttpServer(
         return "api_key_for_${v}_${hx}"
     }
 
+    private fun normalizeEmbeddedBackendPreference(value: String): String {
+        return when (value.trim().lowercase(Locale.US)) {
+            "aicore", "aicore_preview" -> "aicore_preview"
+            "litert", "litert_lm", "litert-lm" -> "litert_lm"
+            else -> ""
+        }
+    }
+
+    private fun readEmbeddedBackendPreference(): String {
+        return normalizeEmbeddedBackendPreference(brainPrefs.getString("embedded_backend", "") ?: "")
+    }
+
     private fun handleBrainConfigSet(body: String): Response {
         val payload = runCatching { JSONObject(body) }.getOrNull()
             ?: return jsonError(Response.Status.BAD_REQUEST, "invalid_json")
@@ -10218,6 +10242,9 @@ class LocalHttpServer(
         if (payload.has("vendor")) editor.putString("vendor", afterVendor)
         if (payload.has("base_url")) editor.putString("base_url", afterBase)
         if (payload.has("model")) editor.putString("model", afterModel)
+        if (payload.has("embedded_backend")) {
+            editor.putString("embedded_backend", normalizeEmbeddedBackendPreference(payload.optString("embedded_backend", "")))
+        }
 
         val vendorChanged = !beforeVendor.equals(afterVendor, ignoreCase = true)
         val baseChanged = !beforeBase.equals(afterBase, ignoreCase = true)
