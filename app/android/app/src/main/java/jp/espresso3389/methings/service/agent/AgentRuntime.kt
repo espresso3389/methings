@@ -604,7 +604,7 @@ class AgentRuntime(
             dialogue.last().optString("text") == curText
         ) dialogue.dropLast(1) else dialogue
 
-        val tools = when (providerKind) {
+        var tools = when (providerKind) {
             ProviderKind.OPENAI_RESPONSES -> ToolDefinitions.responsesTools(ToolDefinitions.deviceApiActionNames())
             ProviderKind.OPENAI_CHAT -> ToolDefinitions.chatTools(ToolDefinitions.deviceApiActionNames())
             ProviderKind.ANTHROPIC -> ToolDefinitions.anthropicTools(ToolDefinitions.deviceApiActionNames())
@@ -650,6 +650,9 @@ class AgentRuntime(
         val resumeState = if (resumeStateJson != null) TurnResumeState.fromJson(resumeStateJson) else null
         if (resumeState != null) {
             pendingInput = resumeState.pendingInput
+        }
+        if (providerKind == ProviderKind.EMBEDDED) {
+            tools = EmbeddedTurnProtocol.withoutNativeMediaAnalysisTools(tools, pendingInput)
         }
         // Reset Responses API per-turn state.
         lastResponsesOutputItems = resumeState?.lastResponsesOutputItems ?: JSONArray()

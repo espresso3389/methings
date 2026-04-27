@@ -72,6 +72,42 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
+    fun embeddedNativeImageInputRemovesAnalyzeImageTool() {
+        val tools = ToolDefinitions.chatTools(ToolDefinitions.deviceApiActionNames())
+        val input = org.json.JSONArray().put(
+            org.json.JSONObject()
+                .put("role", "user")
+                .put("content", org.json.JSONArray()
+                    .put(org.json.JSONObject().put("text", "Describe the attached photo."))
+                    .put(org.json.JSONObject()
+                        .put("_media_type", "image")
+                        .put("mime_type", "image/png")
+                        .put("data", "iVBORw0KGgo=")))
+        )
+
+        val filtered = EmbeddedTurnProtocol.withoutNativeMediaAnalysisTools(tools, input)
+        val names = EmbeddedTurnProtocol.extractToolSpecs(filtered).map { it.name }
+
+        assertFalse(names.contains("analyze_image"))
+        assertTrue(names.contains("write_file"))
+    }
+
+    @Test
+    fun embeddedTextOnlyInputKeepsAnalyzeImageTool() {
+        val tools = ToolDefinitions.chatTools(ToolDefinitions.deviceApiActionNames())
+        val input = org.json.JSONArray().put(
+            org.json.JSONObject()
+                .put("role", "user")
+                .put("content", "Analyze rel_path: uploads/chat/photo.png")
+        )
+
+        val filtered = EmbeddedTurnProtocol.withoutNativeMediaAnalysisTools(tools, input)
+        val names = EmbeddedTurnProtocol.extractToolSpecs(filtered).map { it.name }
+
+        assertTrue(names.contains("analyze_image"))
+    }
+
+    @Test
     fun embeddedJsonResponseParsesToolCalls() {
         val result = EmbeddedTurnProtocol.parseResponse(
             """{"assistant_message":"Working on it","tool_calls":[{"name":"write_file","arguments":{"path":"note.txt","content":"hello"}}]}""",

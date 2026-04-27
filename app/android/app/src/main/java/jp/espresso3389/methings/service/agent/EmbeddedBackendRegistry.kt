@@ -999,6 +999,27 @@ internal object EmbeddedTurnProtocol {
         return out
     }
 
+    fun withoutNativeMediaAnalysisTools(tools: JSONArray, input: JSONArray): JSONArray {
+        val nativeMediaTypes = extractRequestMedia(input).map { it.mediaType }.toSet()
+        if (nativeMediaTypes.isEmpty()) return tools
+        val blockedNames = buildSet {
+            if ("image" in nativeMediaTypes) add("analyze_image")
+            if ("audio" in nativeMediaTypes) add("analyze_audio")
+        }
+        if (blockedNames.isEmpty()) return tools
+
+        val filtered = JSONArray()
+        for (i in 0 until tools.length()) {
+            val wrapper = tools.optJSONObject(i) ?: continue
+            val fn = wrapper.optJSONObject("function") ?: wrapper
+            val name = fn.optString("name", "").trim()
+            if (name !in blockedNames) {
+                filtered.put(wrapper)
+            }
+        }
+        return filtered
+    }
+
     fun mergeDiagnosticsState(
         state: EmbeddedTurnDiagnosticsState,
         responseSource: String,
