@@ -37,7 +37,7 @@ class EmbeddedProviderRegressionTest {
         assertNotNull(spec)
         assertTrue(spec!!.supportsToolCalling)
         assertTrue(spec.supportsImageInput)
-        assertFalse(spec.supportsAudioInput)
+        assertTrue(spec.supportsAudioInput)
         assertEquals("aicore_preview", spec.preferredBackend)
     }
 

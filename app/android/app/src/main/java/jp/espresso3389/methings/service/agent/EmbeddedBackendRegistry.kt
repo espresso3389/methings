@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.ComponentCallbacks2
 import android.util.Log
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
@@ -785,6 +787,33 @@ private class LiteRtBundleEmbeddedBackend(
         }
     }
 
+    override fun generateTextWithMedia(
+        spec: EmbeddedModelSpec,
+        prompt: String,
+        media: List<ExtractedMedia>,
+    ): String {
+        if (media.isEmpty()) return generateText(spec, prompt)
+        val instance = ensureLoaded(spec)
+        synchronized(instance) {
+            instance.lastUsedAtMs.set(System.currentTimeMillis())
+            return try {
+                val contents = mutableListOf<Content>(Content.Text(prompt))
+                for (item in media) {
+                    val bytes = Base64.getDecoder().decode(item.base64)
+                    when (item.mediaType) {
+                        "image" -> contents += Content.ImageBytes(bytes)
+                        "audio" -> contents += Content.AudioBytes(bytes)
+                    }
+                }
+                invokeGenerateResponse(instance.engine, Contents.of(contents)).trim()
+            } catch (ex: Exception) {
+                instance.lastError = ex.message ?: ex.javaClass.simpleName
+                runCatching { unload(spec) }
+                throw ex
+            }
+        }
+    }
+
     override fun warm(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
         val instance = ensureLoaded(spec)
         synchronized(instance) {
@@ -866,6 +895,12 @@ private class LiteRtBundleEmbeddedBackend(
         }
     }
 
+    private fun invokeGenerateResponse(engine: Engine, contents: Contents): String {
+        engine.createConversation(ConversationConfig()).use { conversation ->
+            return conversation.sendMessage(contents).toString()
+        }
+    }
+
 }
 
 internal object EmbeddedTurnProtocol {
@@ -905,11 +940,13 @@ internal object EmbeddedTurnProtocol {
                 val type = part.optString("_media_type", "").trim()
                 val data = part.optString("data", "").trim()
                 val mime = part.optString("mime_type", "").trim()
-                if (type == "image" && data.isNotEmpty() && mime.startsWith("image/")) {
+                val validMediaType = (type == "image" && mime.startsWith("image/")) ||
+                    (type == "audio" && mime.startsWith("audio/"))
+                if (validMediaType && data.isNotEmpty()) {
                     out += ExtractedMedia(
                         base64 = data,
                         mimeType = mime,
-                        mediaType = "image",
+                        mediaType = type,
                     )
                 }
             }

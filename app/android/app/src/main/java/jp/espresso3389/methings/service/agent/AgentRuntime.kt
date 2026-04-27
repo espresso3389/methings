@@ -616,10 +616,15 @@ class AgentRuntime(
             ProviderKind.GOOGLE_GEMINI -> setOf("image", "audio")
             ProviderKind.ANTHROPIC, ProviderKind.OPENAI_RESPONSES -> setOf("image")
             ProviderKind.OPENAI_CHAT -> if (!providerUrl.contains("generativelanguage.googleapis.com")) setOf("image") else emptySet()
-            ProviderKind.EMBEDDED -> if (embeddedSpec?.supportsImageInput == true && embeddedBackendStatus?.backendId == "aicore_preview") {
-                setOf("image")
-            } else {
-                emptySet()
+            ProviderKind.EMBEDDED -> when (embeddedBackendStatus?.backendId) {
+                "aicore_preview" -> buildSet {
+                    if (embeddedSpec?.supportsImageInput == true) add("image")
+                }
+                "litert_lm" -> buildSet {
+                    if (embeddedSpec?.supportsImageInput == true) add("image")
+                    if (embeddedSpec?.supportsAudioInput == true) add("audio")
+                }
+                else -> emptySet()
             }
         }
 
@@ -1853,9 +1858,9 @@ class AgentRuntime(
                 val arr = JSONArray()
                 arr.put(JSONObject().put("text", text))
                 for (m in mediaParts) {
-                    if (m.mediaType == "image") {
+                    if (m.mediaType == "image" || m.mediaType == "audio") {
                         arr.put(JSONObject().apply {
-                            put("_media_type", "image")
+                            put("_media_type", m.mediaType)
                             put("mime_type", m.mimeType)
                             put("data", m.base64)
                         })
@@ -2140,13 +2145,13 @@ class AgentRuntime(
                     put("tool_call_id", callId)
                     put("content", result.toString())
                 })
-                if (mediaData != null && mediaData.mediaType == "image") {
+                if (mediaData != null && mediaData.mediaType in setOf("image", "audio")) {
                     input.put(JSONObject().apply {
                         put("role", "user")
                         put("content", JSONArray().apply {
-                            put(JSONObject().put("text", "The previous tool result includes an attached image. Analyze it directly."))
+                            put(JSONObject().put("text", "The previous tool result includes attached ${mediaData.mediaType} data. Analyze it directly."))
                             put(JSONObject().apply {
-                                put("_media_type", "image")
+                                put("_media_type", mediaData.mediaType)
                                 put("mime_type", mediaData.mimeType)
                                 put("data", mediaData.base64)
                             })

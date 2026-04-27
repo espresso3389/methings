@@ -295,6 +295,34 @@ class AgentRuntimePermissionResumeTest {
     }
 
     @Test
+    fun embeddedBuildInitialInputEncodesSupportedCurrentAudio() {
+        val harness = createHarness(
+            llmPayloads = listOf(finalTextPayload("done")),
+        ) { _, _ ->
+            JSONObject().put("status", "ok")
+        }
+        val audioDir = File(harness.userDir, "uploads/chat").apply { mkdirs() }
+        File(audioDir, "voice.mp3").writeBytes(byteArrayOf(0x49, 0x44, 0x33, 0x04, 0x00, 0x00))
+
+        val input = invokePrivateBuildInitialInput(
+            runtime = harness.runtime,
+            kind = ProviderKind.EMBEDDED,
+            dialogue = emptyList(),
+            journalBlob = "Journal (per-session, keep short for context efficiency):\n(empty)",
+            curText = "Transcribe this.\nrel_path: uploads/chat/voice.mp3",
+            item = JSONObject().put("id", "chat_audio"),
+            supportedMedia = setOf("audio"),
+        )
+
+        val content = input.getJSONObject(0).getJSONArray("content")
+        assertEquals("Transcribe this.", content.getJSONObject(0).getString("text").lineSequence().last().trim())
+        assertEquals("audio", content.getJSONObject(1).getString("_media_type"))
+        assertTrue(content.getJSONObject(1).getString("mime_type").startsWith("audio/"))
+        assertTrue(content.getJSONObject(1).getString("data").isNotBlank())
+        assertTrue(!input.toString().contains("rel_path: uploads/chat/voice.mp3"))
+    }
+
+    @Test
     fun openRouterQwenEmptyMediaFollowUpFallsBackToDirectImageRequest() {
         val harness = createHarness(
             llmPayloads = listOf(
