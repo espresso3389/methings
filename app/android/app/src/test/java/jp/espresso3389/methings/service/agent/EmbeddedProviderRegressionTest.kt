@@ -45,7 +45,7 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
-    fun liteRtImageNormalizerConvertsWebpToPng() {
+    fun liteRtImageNormalizerConvertsWebpToJpegFile() {
         val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
         bitmap.setPixel(0, 0, 0xffff0000.toInt())
         bitmap.setPixel(1, 0, 0xff00ff00.toInt())
@@ -57,14 +57,20 @@ class EmbeddedProviderRegressionTest {
         }
         bitmap.recycle()
 
-        val normalized = EmbeddedMediaNormalizer.imageBytesForLiteRt(webp, "image/webp")
+        val normalized = EmbeddedMediaNormalizer.imageFileForLiteRt(
+            RuntimeEnvironment.getApplication(),
+            webp,
+            "image/webp",
+        )
 
-        assertTrue(normalized.size >= 8)
-        assertEquals(0x89.toByte(), normalized[0])
-        assertEquals(0x50.toByte(), normalized[1])
-        assertEquals(0x4E.toByte(), normalized[2])
-        assertEquals(0x47.toByte(), normalized[3])
-        val decoded = BitmapFactory.decodeByteArray(normalized, 0, normalized.size)
+        assertTrue(normalized.isFile)
+        assertTrue(normalized.name.endsWith(".jpg"))
+        val bytes = normalized.readBytes()
+        assertTrue(bytes.size >= 3)
+        assertEquals(0xFF.toByte(), bytes[0])
+        assertEquals(0xD8.toByte(), bytes[1])
+        assertEquals(0xFF.toByte(), bytes[2])
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         assertNotNull(decoded)
         assertEquals(2, decoded!!.width)
         assertEquals(2, decoded.height)

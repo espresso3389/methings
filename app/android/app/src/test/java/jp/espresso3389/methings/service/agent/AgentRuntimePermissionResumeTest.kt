@@ -259,6 +259,31 @@ class AgentRuntimePermissionResumeTest {
         val current = input.getJSONObject(0)
         assertEquals("user", current.getString("role"))
         val content = current.getString("content")
+        assertTrue(!content.contains("rel_path: uploads/chat/photo.jpg"))
+        assertTrue(content.contains("attached media without a text instruction"))
+        assertTrue(content.contains("do not treat this as a journal request"))
+    }
+
+    @Test
+    fun embeddedBuildInitialInputPreservesUnsupportedCurrentMediaLimitationWhenInstructed() {
+        val harness = createHarness(
+            llmPayloads = listOf(finalTextPayload("done")),
+        ) { _, _ ->
+            JSONObject().put("status", "ok")
+        }
+
+        val input = invokePrivateBuildInitialInput(
+            runtime = harness.runtime,
+            kind = ProviderKind.EMBEDDED,
+            dialogue = emptyList(),
+            journalBlob = "Journal (per-session, keep short for context efficiency):\n(empty)",
+            curText = "Describe this image.\nrel_path: uploads/chat/photo.jpg",
+            item = JSONObject().put("id", "chat_img"),
+            supportedMedia = emptySet(),
+        )
+
+        val content = input.getJSONObject(0).getString("content")
+        assertTrue(content.contains("Describe this image."))
         assertTrue(content.contains("rel_path: uploads/chat/photo.jpg"))
         assertTrue(content.contains("current provider cannot receive them as native multimodal input"))
         assertTrue(content.contains("do not treat this as a journal request"))
@@ -292,6 +317,58 @@ class AgentRuntimePermissionResumeTest {
         assertTrue(content.getJSONObject(1).getString("mime_type").startsWith("image/"))
         assertTrue(content.getJSONObject(1).getString("data").isNotBlank())
         assertTrue(!input.toString().contains("rel_path: uploads/chat/photo.png"))
+    }
+
+    @Test
+    fun embeddedBuildInitialInputBareNativeImageAddsNonJournalInstruction() {
+        val harness = createHarness(
+            llmPayloads = listOf(finalTextPayload("done")),
+        ) { _, _ ->
+            JSONObject().put("status", "ok")
+        }
+        val imageDir = File(harness.userDir, "uploads/chat").apply { mkdirs() }
+        File(imageDir, "photo.png").writeBytes(Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7l8AAAAASUVORK5CYII="
+        ))
+
+        val input = invokePrivateBuildInitialInput(
+            runtime = harness.runtime,
+            kind = ProviderKind.EMBEDDED,
+            dialogue = emptyList(),
+            journalBlob = "Journal (per-session, keep short for context efficiency):\n(empty)",
+            curText = "rel_path: uploads/chat/photo.png",
+            item = JSONObject().put("id", "chat_img"),
+            supportedMedia = setOf("image"),
+        )
+
+        val content = input.getJSONObject(0).getJSONArray("content")
+        val text = content.getJSONObject(0).getString("text")
+        assertTrue(text.contains("attached media without a text instruction"))
+        assertTrue(text.contains("do not treat this as a journal request"))
+        assertEquals("image", content.getJSONObject(1).getString("_media_type"))
+        assertTrue(!input.toString().contains("rel_path: uploads/chat/photo.png"))
+    }
+
+    @Test
+    fun embeddedUnsupportedMediaToolsAreFiltered() {
+        val harness = createHarness(
+            llmPayloads = listOf(finalTextPayload("done")),
+        ) { _, _ ->
+            JSONObject().put("status", "ok")
+        }
+
+        val filtered = invokePrivateWithoutUnsupportedMediaAnalysisTools(
+            runtime = harness.runtime,
+            tools = ToolDefinitions.chatTools(ToolDefinitions.deviceApiActionNames()),
+            supportedMedia = emptySet(),
+        )
+        val names = (0 until filtered.length()).mapNotNull { index ->
+            filtered.optJSONObject(index)?.optJSONObject("function")?.optString("name")
+        }
+
+        assertTrue("analyze_image" !in names)
+        assertTrue("analyze_audio" !in names)
+        assertTrue("read_file" in names)
     }
 
     @Test
@@ -498,6 +575,20 @@ class AgentRuntimePermissionResumeTest {
         )
         method.isAccessible = true
         return method.invoke(runtime, kind, dialogue, journalBlob, curText, item, supportedMedia) as org.json.JSONArray
+    }
+
+    private fun invokePrivateWithoutUnsupportedMediaAnalysisTools(
+        runtime: AgentRuntime,
+        tools: org.json.JSONArray,
+        supportedMedia: Set<String>,
+    ): org.json.JSONArray {
+        val method = runtime.javaClass.getDeclaredMethod(
+            "withoutUnsupportedMediaAnalysisTools",
+            org.json.JSONArray::class.java,
+            Set::class.java,
+        )
+        method.isAccessible = true
+        return method.invoke(runtime, tools, supportedMedia) as org.json.JSONArray
     }
 
     private fun createHarness(

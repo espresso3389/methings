@@ -805,16 +805,17 @@ private class LiteRtBundleEmbeddedBackend(
         synchronized(instance) {
             instance.lastUsedAtMs.set(System.currentTimeMillis())
             return try {
-                val contents = mutableListOf<Content>(Content.Text(prompt))
+                val contents = mutableListOf<Content>()
                 for (item in media) {
                     val bytes = Base64.getDecoder().decode(item.base64)
                     when (item.mediaType) {
-                        "image" -> contents += Content.ImageBytes(
-                            EmbeddedMediaNormalizer.imageBytesForLiteRt(bytes, item.mimeType)
+                        "image" -> contents += Content.ImageFile(
+                            EmbeddedMediaNormalizer.imageFileForLiteRt(context, bytes, item.mimeType).absolutePath
                         )
                         "audio" -> contents += Content.AudioBytes(bytes)
                     }
                 }
+                contents += Content.Text(prompt)
                 invokeGenerateResponse(instance.engine, Contents.of(contents)).trim()
             } catch (ex: Exception) {
                 instance.lastError = ex.message ?: ex.javaClass.simpleName
@@ -894,6 +895,9 @@ private class LiteRtBundleEmbeddedBackend(
             EngineConfig(
                 modelPath = modelFile.absolutePath,
                 backend = Backend.CPU(),
+                visionBackend = Backend.CPU(),
+                audioBackend = Backend.CPU(),
+                maxNumImages = 4,
                 cacheDir = context.cacheDir.absolutePath,
             )
         ).also { it.initialize() }
@@ -914,19 +918,53 @@ private class LiteRtBundleEmbeddedBackend(
 }
 
 internal object EmbeddedMediaNormalizer {
-    fun imageBytesForLiteRt(bytes: ByteArray, mimeType: String): ByteArray {
-        if (isPng(bytes) || isJpeg(bytes)) return bytes
+    private const val MAX_IMAGE_DIMENSION = 1024
+    private const val JPEG_QUALITY = 85
 
+    fun imageFileForLiteRt(context: Context, bytes: ByteArray, mimeType: String): File {
+        val dir = File(context.cacheDir, "litert_media").apply { mkdirs() }
+        cleanupOldFiles(dir)
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-            ?: throw IllegalArgumentException("Failed to decode image before LiteRT-LM call. mime_type=$mimeType bytes=${bytes.size}")
-        return try {
-            val out = ByteArrayOutputStream()
-            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                throw IllegalArgumentException("Failed to encode image as PNG for LiteRT-LM. mime_type=$mimeType bytes=${bytes.size}")
+        if (bitmap == null) {
+            val ext = when {
+                isPng(bytes) -> ".png"
+                isJpeg(bytes) -> ".jpg"
+                else -> ".img"
             }
-            out.toByteArray()
+            return File.createTempFile("image_", ext, dir).also { it.writeBytes(bytes) }
+        }
+
+        return try {
+            val normalized = resizeIfNeeded(bitmap, MAX_IMAGE_DIMENSION)
+            try {
+                val out = ByteArrayOutputStream()
+                if (!normalized.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)) {
+                    throw IllegalArgumentException("Failed to encode image as JPEG for LiteRT-LM. mime_type=$mimeType bytes=${bytes.size}")
+                }
+                File.createTempFile("image_", ".jpg", dir).also { it.writeBytes(out.toByteArray()) }
+            } finally {
+                if (normalized !== bitmap) normalized.recycle()
+            }
         } finally {
             bitmap.recycle()
+        }
+    }
+
+    private fun resizeIfNeeded(bitmap: Bitmap, maxDim: Int): Bitmap {
+        val currentMax = maxOf(bitmap.width, bitmap.height)
+        if (currentMax <= maxDim) return bitmap
+        val scale = maxDim.toFloat() / currentMax.toFloat()
+        val width = (bitmap.width * scale).toInt().coerceAtLeast(1)
+        val height = (bitmap.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(bitmap, width, height, true)
+    }
+
+    private fun cleanupOldFiles(dir: File) {
+        val cutoff = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(6)
+        runCatching {
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile && file.lastModified() < cutoff) file.delete()
+            }
         }
     }
 

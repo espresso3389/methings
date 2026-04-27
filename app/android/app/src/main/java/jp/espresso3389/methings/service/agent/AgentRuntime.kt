@@ -603,6 +603,7 @@ class AgentRuntime(
             dialogue.last().optString("role") == "user" &&
             dialogue.last().optString("text") == curText
         ) dialogue.dropLast(1) else dialogue
+        val currentTurnHasMediaAttachment = extractUserMediaPaths(curText).second.isNotEmpty()
 
         var tools = when (providerKind) {
             ProviderKind.OPENAI_RESPONSES -> ToolDefinitions.responsesTools(ToolDefinitions.deviceApiActionNames())
@@ -623,7 +624,6 @@ class AgentRuntime(
                 }
                 "litert_lm" -> buildSet {
                     if (embeddedSpec?.supportsImageInput == true) add("image")
-                    if (embeddedSpec?.supportsAudioInput == true) add("audio")
                 }
                 else -> emptySet()
             }
@@ -653,6 +653,7 @@ class AgentRuntime(
         }
         if (providerKind == ProviderKind.EMBEDDED) {
             tools = EmbeddedTurnProtocol.withoutNativeMediaAnalysisTools(tools, pendingInput)
+            tools = withoutUnsupportedMediaAnalysisTools(tools, supportedMediaTypes)
         }
         // Reset Responses API per-turn state.
         lastResponsesOutputItems = resumeState?.lastResponsesOutputItems ?: JSONArray()
@@ -847,7 +848,8 @@ class AgentRuntime(
                             t.contains("continue") || t.contains("proceed") || t.contains("やって") ||
                             t.contains("お願い")
                         }
-                        val isIdleNoTools = toolCallsExecuted == 0 && (curText.length > 20 || isContinuationMsg)
+                        val isIdleNoTools = !currentTurnHasMediaAttachment &&
+                            toolCallsExecuted == 0 && (curText.length > 20 || isContinuationMsg)
                         val asksUserToAct = messageTexts.any { t ->
                             t.contains("続け") || t.contains("どうぞ") || t.contains("お試し") ||
                             t.contains("次のターン") || t.contains("次のメッセージ") ||
@@ -1936,9 +1938,20 @@ class AgentRuntime(
         val unencodedCurrentMediaPaths = currentTurnMediaPaths
             .filter { it !in encodedMediaPaths }
             .distinct()
-        val currentMediaReferenceLines = unencodedCurrentMediaPaths.map { "rel_path: $it" }
+        val currentMediaReferenceLines = if (cleanedText.isBlank()) {
+            emptyList()
+        } else {
+            unencodedCurrentMediaPaths.map { "rel_path: $it" }
+        }
         val currentMediaNote = if (currentMediaReferenceLines.isNotEmpty()) {
             "User attached media file(s) above. The current provider cannot receive them as native multimodal input; do not treat this as a journal request."
+        } else if (unencodedCurrentMediaPaths.isNotEmpty() && cleanedText.isBlank()) {
+            "The user attached media without a text instruction. Ask what they want done with it; do not treat this as a journal request."
+        } else {
+            ""
+        }
+        val nativeMediaNoInstructionNote = if (cleanedText.isBlank() && userMedia.isNotEmpty()) {
+            "The user attached media without a text instruction. Ask what they want done with it; do not treat this as a journal request."
         } else {
             ""
         }
@@ -1955,6 +1968,10 @@ class AgentRuntime(
             if (currentMediaNote.isNotEmpty()) {
                 if (isNotBlank()) append("\n")
                 append(currentMediaNote)
+            }
+            if (nativeMediaNoInstructionNote.isNotEmpty()) {
+                if (isNotBlank()) append("\n")
+                append(nativeMediaNoInstructionNote)
             }
         }.trim()
         val finalUserText = "$journalBlob\n\n$finalCleanedText"
@@ -2295,6 +2312,25 @@ class AgentRuntime(
 
         // Language instruction MUST come last, after policy docs, so it's not drowned out.
         return "$prompt$mediaInfo\n\nIMPORTANT: Always respond in the same language the user writes in."
+    }
+
+    private fun withoutUnsupportedMediaAnalysisTools(tools: JSONArray, supportedMediaTypes: Set<String>): JSONArray {
+        val blockedNames = buildSet {
+            if ("image" !in supportedMediaTypes) add("analyze_image")
+            if ("audio" !in supportedMediaTypes) add("analyze_audio")
+        }
+        if (blockedNames.isEmpty()) return tools
+
+        val filtered = JSONArray()
+        for (i in 0 until tools.length()) {
+            val wrapper = tools.optJSONObject(i) ?: continue
+            val fn = wrapper.optJSONObject("function") ?: wrapper
+            val name = fn.optString("name", "").trim()
+            if (name !in blockedNames) {
+                filtered.put(wrapper)
+            }
+        }
+        return filtered
     }
 
     private fun buildJournalBlob(journalCurrent: String, sessionId: String, persistentMemory: String): String {
