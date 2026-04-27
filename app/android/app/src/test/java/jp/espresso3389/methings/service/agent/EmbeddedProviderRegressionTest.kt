@@ -1,6 +1,8 @@
 package jp.espresso3389.methings.service.agent
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -11,6 +13,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.junit.runner.RunWith
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
@@ -39,6 +42,33 @@ class EmbeddedProviderRegressionTest {
         assertTrue(spec.supportsImageInput)
         assertTrue(spec.supportsAudioInput)
         assertEquals("aicore_preview", spec.preferredBackend)
+    }
+
+    @Test
+    fun liteRtImageNormalizerConvertsWebpToPng() {
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        bitmap.setPixel(0, 0, 0xffff0000.toInt())
+        bitmap.setPixel(1, 0, 0xff00ff00.toInt())
+        bitmap.setPixel(0, 1, 0xff0000ff.toInt())
+        bitmap.setPixel(1, 1, 0xffffffff.toInt())
+        val webp = ByteArrayOutputStream().use { out ->
+            assertTrue(bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, 80, out))
+            out.toByteArray()
+        }
+        bitmap.recycle()
+
+        val normalized = EmbeddedMediaNormalizer.imageBytesForLiteRt(webp, "image/webp")
+
+        assertTrue(normalized.size >= 8)
+        assertEquals(0x89.toByte(), normalized[0])
+        assertEquals(0x50.toByte(), normalized[1])
+        assertEquals(0x4E.toByte(), normalized[2])
+        assertEquals(0x47.toByte(), normalized[3])
+        val decoded = BitmapFactory.decodeByteArray(normalized, 0, normalized.size)
+        assertNotNull(decoded)
+        assertEquals(2, decoded!!.width)
+        assertEquals(2, decoded.height)
+        decoded.recycle()
     }
 
     @Test

@@ -2,6 +2,8 @@ package jp.espresso3389.methings.service.agent
 
 import android.content.Context
 import android.content.ComponentCallbacks2
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
@@ -23,6 +25,7 @@ import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.java.GenerativeModelFutures
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
@@ -806,7 +809,9 @@ private class LiteRtBundleEmbeddedBackend(
                 for (item in media) {
                     val bytes = Base64.getDecoder().decode(item.base64)
                     when (item.mediaType) {
-                        "image" -> contents += Content.ImageBytes(bytes)
+                        "image" -> contents += Content.ImageBytes(
+                            EmbeddedMediaNormalizer.imageBytesForLiteRt(bytes, item.mimeType)
+                        )
                         "audio" -> contents += Content.AudioBytes(bytes)
                     }
                 }
@@ -906,6 +911,41 @@ private class LiteRtBundleEmbeddedBackend(
         }
     }
 
+}
+
+internal object EmbeddedMediaNormalizer {
+    fun imageBytesForLiteRt(bytes: ByteArray, mimeType: String): ByteArray {
+        if (isPng(bytes) || isJpeg(bytes)) return bytes
+
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: throw IllegalArgumentException("Failed to decode image before LiteRT-LM call. mime_type=$mimeType bytes=${bytes.size}")
+        return try {
+            val out = ByteArrayOutputStream()
+            if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                throw IllegalArgumentException("Failed to encode image as PNG for LiteRT-LM. mime_type=$mimeType bytes=${bytes.size}")
+            }
+            out.toByteArray()
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun isPng(bytes: ByteArray): Boolean =
+        bytes.size >= 8 &&
+            bytes[0] == 0x89.toByte() &&
+            bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() &&
+            bytes[3] == 0x47.toByte() &&
+            bytes[4] == 0x0D.toByte() &&
+            bytes[5] == 0x0A.toByte() &&
+            bytes[6] == 0x1A.toByte() &&
+            bytes[7] == 0x0A.toByte()
+
+    private fun isJpeg(bytes: ByteArray): Boolean =
+        bytes.size >= 3 &&
+            bytes[0] == 0xFF.toByte() &&
+            bytes[1] == 0xD8.toByte() &&
+            bytes[2] == 0xFF.toByte()
 }
 
 internal object EmbeddedTurnProtocol {
