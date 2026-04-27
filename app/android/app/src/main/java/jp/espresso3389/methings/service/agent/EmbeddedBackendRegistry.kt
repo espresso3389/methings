@@ -11,14 +11,18 @@ import com.google.ai.edge.litertlm.LogSeverity
 import com.google.mlkit.genai.common.FeatureStatus
 import com.google.mlkit.genai.prompt.Generation
 import com.google.mlkit.genai.prompt.GenerationConfig
+import com.google.mlkit.genai.prompt.GenerateContentRequest
 import com.google.mlkit.genai.prompt.GenerateContentResponse
+import com.google.mlkit.genai.prompt.ImagePart
 import com.google.mlkit.genai.prompt.ModelConfig
 import com.google.mlkit.genai.prompt.ModelPreference
 import com.google.mlkit.genai.prompt.ModelReleaseStage
+import com.google.mlkit.genai.prompt.TextPart
 import com.google.mlkit.genai.prompt.java.GenerativeModelFutures
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -250,6 +254,14 @@ private abstract class PromptStructuredEmbeddedBackend : EmbeddedBackend {
     protected val diagnostics = ConcurrentHashMap<String, EmbeddedTurnDiagnostics>()
     private val turnCounter = AtomicLong(0L)
 
+    protected open fun generateTextWithMedia(
+        spec: EmbeddedModelSpec,
+        prompt: String,
+        media: List<ExtractedMedia>,
+    ): String {
+        return generateText(spec, prompt)
+    }
+
     final override fun generateTurn(
         spec: EmbeddedModelSpec,
         request: EmbeddedGenerationRequest,
@@ -262,7 +274,11 @@ private abstract class PromptStructuredEmbeddedBackend : EmbeddedBackend {
             tools = request.tools,
             requireTool = request.requireTool,
         )
-        val rawPlan = generateText(spec, planPrompt).trim()
+        val rawPlan = generateTextWithMedia(
+            spec = spec,
+            prompt = planPrompt,
+            media = EmbeddedTurnProtocol.extractRequestMedia(request.input),
+        ).trim()
         val plan = EmbeddedTurnProtocol.parsePlanResponse(rawPlan, toolSpecs)
         updateDiagnostics(
             spec = spec,
@@ -580,6 +596,35 @@ private class AiCorePreviewEmbeddedBackend : PromptStructuredEmbeddedBackend() {
         }
     }
 
+    override fun generateTextWithMedia(
+        spec: EmbeddedModelSpec,
+        prompt: String,
+        media: List<ExtractedMedia>,
+    ): String {
+        val image = media.firstOrNull { it.mediaType == "image" } ?: return generateText(spec, prompt)
+        val state = clientFor(spec)
+        val status = checkStatus(state.client)
+        if (status != FeatureStatus.AVAILABLE) {
+            val message = "aicore_preview_not_available:${featureStatusLabel(status)}"
+            state.lastError = message
+            throw IllegalStateException(message)
+        }
+        state.lastUsedAtMs.set(System.currentTimeMillis())
+        return try {
+            val bytes = Base64.getDecoder().decode(image.base64)
+            val request = GenerateContentRequest.Builder(
+                ImagePart(bytes),
+                TextPart(prompt),
+            ).build()
+            val response = state.client.generateContent(request).get(120, TimeUnit.SECONDS)
+            state.lastError = ""
+            responseText(response)
+        } catch (ex: Exception) {
+            state.lastError = ex.message ?: ex.javaClass.simpleName
+            throw ex
+        }
+    }
+
     override fun warm(spec: EmbeddedModelSpec): EmbeddedBackendStatus {
         val state = clientFor(spec)
         val status = checkStatus(state.client)
@@ -848,6 +893,28 @@ internal object EmbeddedTurnProtocol {
     fun callNamesSummary(calls: JSONArray): String {
         val names = callNames(calls)
         return if (names.isEmpty()) "none" else names.joinToString(",")
+    }
+
+    fun extractRequestMedia(input: JSONArray): List<ExtractedMedia> {
+        val out = mutableListOf<ExtractedMedia>()
+        for (i in 0 until input.length()) {
+            val msg = input.optJSONObject(i) ?: continue
+            val content = msg.optJSONArray("content") ?: continue
+            for (j in 0 until content.length()) {
+                val part = content.optJSONObject(j) ?: continue
+                val type = part.optString("_media_type", "").trim()
+                val data = part.optString("data", "").trim()
+                val mime = part.optString("mime_type", "").trim()
+                if (type == "image" && data.isNotEmpty() && mime.startsWith("image/")) {
+                    out += ExtractedMedia(
+                        base64 = data,
+                        mimeType = mime,
+                        mediaType = "image",
+                    )
+                }
+            }
+        }
+        return out
     }
 
     fun mergeDiagnosticsState(

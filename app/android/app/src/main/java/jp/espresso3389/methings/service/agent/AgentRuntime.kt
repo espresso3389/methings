@@ -538,8 +538,13 @@ class AgentRuntime(
         }
 
         Log.i(TAG, "Provider: kind=$providerKind, vendor=$vendor, url=$providerUrl, model=$model")
+        val embeddedBackendStatus = if (providerKind == ProviderKind.EMBEDDED) {
+            embeddedBackendRegistry.statusFor(model)
+        } else {
+            null
+        }
         if (providerKind == ProviderKind.EMBEDDED) {
-            val backendStatus = embeddedBackendRegistry.statusFor(model)
+            val backendStatus = embeddedBackendStatus
             if (embeddedSpec != null && backendStatus?.runnable == true) {
                 // Continue into the normal tool-planning loop below.
             } else {
@@ -611,7 +616,11 @@ class AgentRuntime(
             ProviderKind.GOOGLE_GEMINI -> setOf("image", "audio")
             ProviderKind.ANTHROPIC, ProviderKind.OPENAI_RESPONSES -> setOf("image")
             ProviderKind.OPENAI_CHAT -> if (!providerUrl.contains("generativelanguage.googleapis.com")) setOf("image") else emptySet()
-            ProviderKind.EMBEDDED -> emptySet()
+            ProviderKind.EMBEDDED -> if (embeddedSpec?.supportsImageInput == true && embeddedBackendStatus?.backendId == "aicore_preview") {
+                setOf("image")
+            } else {
+                emptySet()
+            }
         }
 
         // Expose supported media types to ToolExecutor so analyze_image/analyze_audio can guard early
@@ -1840,7 +1849,20 @@ class AgentRuntime(
                 }
                 arr
             }
-            ProviderKind.EMBEDDED -> text
+            ProviderKind.EMBEDDED -> {
+                val arr = JSONArray()
+                arr.put(JSONObject().put("text", text))
+                for (m in mediaParts) {
+                    if (m.mediaType == "image") {
+                        arr.put(JSONObject().apply {
+                            put("_media_type", "image")
+                            put("mime_type", m.mimeType)
+                            put("data", m.base64)
+                        })
+                    }
+                }
+                arr
+            }
         }
     }
 
@@ -1988,7 +2010,8 @@ class AgentRuntime(
                         input.put(JSONObject().put("role", role).put("content", text))
                     }
                 }
-                input.put(JSONObject().put("role", "user").put("content", finalUserText))
+                val content = buildMultimodalUserContent(kind, finalUserText, userMedia)
+                input.put(JSONObject().put("role", "user").put("content", content))
             }
         }
         return input
@@ -2117,6 +2140,19 @@ class AgentRuntime(
                     put("tool_call_id", callId)
                     put("content", result.toString())
                 })
+                if (mediaData != null && mediaData.mediaType == "image") {
+                    input.put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", JSONArray().apply {
+                            put(JSONObject().put("text", "The previous tool result includes an attached image. Analyze it directly."))
+                            put(JSONObject().apply {
+                                put("_media_type", "image")
+                                put("mime_type", mediaData.mimeType)
+                                put("data", mediaData.base64)
+                            })
+                        })
+                    })
+                }
             }
         }
     }

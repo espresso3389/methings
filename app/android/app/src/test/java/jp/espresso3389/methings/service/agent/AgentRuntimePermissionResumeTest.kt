@@ -265,6 +265,36 @@ class AgentRuntimePermissionResumeTest {
     }
 
     @Test
+    fun embeddedBuildInitialInputEncodesSupportedCurrentImage() {
+        val harness = createHarness(
+            llmPayloads = listOf(finalTextPayload("done")),
+        ) { _, _ ->
+            JSONObject().put("status", "ok")
+        }
+        val imageDir = File(harness.userDir, "uploads/chat").apply { mkdirs() }
+        File(imageDir, "photo.png").writeBytes(Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7l8AAAAASUVORK5CYII="
+        ))
+
+        val input = invokePrivateBuildInitialInput(
+            runtime = harness.runtime,
+            kind = ProviderKind.EMBEDDED,
+            dialogue = emptyList(),
+            journalBlob = "Journal (per-session, keep short for context efficiency):\n(empty)",
+            curText = "What is this?\nrel_path: uploads/chat/photo.png",
+            item = JSONObject().put("id", "chat_img"),
+            supportedMedia = setOf("image"),
+        )
+
+        val content = input.getJSONObject(0).getJSONArray("content")
+        assertEquals("What is this?", content.getJSONObject(0).getString("text").lineSequence().last().trim())
+        assertEquals("image", content.getJSONObject(1).getString("_media_type"))
+        assertTrue(content.getJSONObject(1).getString("mime_type").startsWith("image/"))
+        assertTrue(content.getJSONObject(1).getString("data").isNotBlank())
+        assertTrue(!input.toString().contains("rel_path: uploads/chat/photo.png"))
+    }
+
+    @Test
     fun openRouterQwenEmptyMediaFollowUpFallsBackToDirectImageRequest() {
         val harness = createHarness(
             llmPayloads = listOf(

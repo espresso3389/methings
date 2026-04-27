@@ -15,7 +15,7 @@ object EmbeddedModelCatalog {
             id = "gemma4-e2b-it",
             label = "Gemma4-E2B-it",
             supportsToolCalling = true,
-            supportsImageInput = false,
+            supportsImageInput = true,
             supportsAudioInput = false,
             preferredBackend = "aicore_preview",
         ),
