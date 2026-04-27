@@ -32,11 +32,11 @@ class EmbeddedProviderRegressionTest {
     }
 
     @Test
-    fun gemma4CatalogEntryIsTextOnlyToolCallingModel() {
+    fun gemma4CatalogEntrySupportsAicoreImageInputAndToolCalling() {
         val spec = EmbeddedModelCatalog.find("gemma4-e2b-it")
         assertNotNull(spec)
         assertTrue(spec!!.supportsToolCalling)
-        assertFalse(spec.supportsImageInput)
+        assertTrue(spec.supportsImageInput)
         assertFalse(spec.supportsAudioInput)
         assertEquals("aicore_preview", spec.preferredBackend)
     }
