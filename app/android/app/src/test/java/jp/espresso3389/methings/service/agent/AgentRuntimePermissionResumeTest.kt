@@ -312,7 +312,8 @@ class AgentRuntimePermissionResumeTest {
         )
 
         val content = input.getJSONObject(0).getJSONArray("content")
-        assertEquals("What is this?", content.getJSONObject(0).getString("text").lineSequence().last().trim())
+        assertTrue(content.getJSONObject(0).getString("text").contains("What is this?"))
+        assertTrue(content.getJSONObject(0).getString("text").contains("Attached native media metadata:"))
         assertEquals("image", content.getJSONObject(1).getString("_media_type"))
         assertTrue(content.getJSONObject(1).getString("mime_type").startsWith("image/"))
         assertTrue(content.getJSONObject(1).getString("data").isNotBlank())
@@ -392,7 +393,8 @@ class AgentRuntimePermissionResumeTest {
         )
 
         val content = input.getJSONObject(0).getJSONArray("content")
-        assertEquals("Transcribe this.", content.getJSONObject(0).getString("text").lineSequence().last().trim())
+        assertTrue(content.getJSONObject(0).getString("text").contains("Transcribe this."))
+        assertTrue(content.getJSONObject(0).getString("text").contains("Attached native media metadata:"))
         assertEquals("audio", content.getJSONObject(1).getString("_media_type"))
         assertTrue(content.getJSONObject(1).getString("mime_type").startsWith("audio/"))
         assertTrue(content.getJSONObject(1).getString("data").isNotBlank())

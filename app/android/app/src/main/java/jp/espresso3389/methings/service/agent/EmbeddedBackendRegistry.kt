@@ -1030,6 +1030,7 @@ internal object EmbeddedTurnProtocol {
                         base64 = data,
                         mimeType = mime,
                         mediaType = type,
+                        metadata = part.optJSONObject("metadata") ?: JSONObject(),
                     )
                 }
             }
@@ -1154,6 +1155,7 @@ internal object EmbeddedTurnProtocol {
     ): String {
         val base = renderConversation(systemPrompt, input)
         val toolGuide = summarizeTools(tools)
+        val nativeMediaTypes = extractRequestMedia(input).map { it.mediaType }.toSet()
         val toolRule = if (tools.length() == 0) {
             "Tool calls are disabled for this turn. Return only the final answer."
         } else if (requireTool) {
@@ -1161,12 +1163,21 @@ internal object EmbeddedTurnProtocol {
         } else {
             "Call tools when they are needed to complete the task. Otherwise answer directly."
         }
+        val nativeMediaRule = if (nativeMediaTypes.isNotEmpty()) {
+            "Native media is attached to this turn and is already available to you. Answer requests about attached images/audio directly from the native media. Do not say that an image/audio analysis tool is needed. If the user asks for coordinates or bounding boxes, provide best-effort pixel coordinates relative to the image you see and mention the coordinate basis if needed."
+        } else {
+            ""
+        }
         return buildString {
             append(base)
             append("\n\nTools:\n")
             append(toolGuide)
             append("\n\nReturn exactly one JSON object: {\"assistant_message\":\"...\",\"tool_calls\":[{\"name\":\"tool_name\"}]}.\n")
             append("Rules: no markdown fences; at this phase each tool_calls item contains only name; use [] when no tool is needed.\n")
+            if (nativeMediaRule.isNotEmpty()) {
+                append(nativeMediaRule)
+                append("\n")
+            }
             append(toolRule)
         }
     }

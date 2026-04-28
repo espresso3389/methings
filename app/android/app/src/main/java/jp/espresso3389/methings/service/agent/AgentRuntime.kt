@@ -13,6 +13,7 @@ data class ExtractedMedia(
     val base64: String,
     val mimeType: String,
     val mediaType: String,  // "image" or "audio"
+    val metadata: JSONObject = JSONObject(),
 )
 
 private data class ToolRoundRecord(
@@ -1471,7 +1472,7 @@ class AgentRuntime(
                 val mime = media.optString("mime_type", "")
                 if (type in supportedTypes && b64.isNotEmpty() && mime.isNotEmpty()) {
                     Log.i(TAG, "extractMedia: found _media marker type=$type, mime=$mime")
-                    return ExtractedMedia(b64, mime, type)
+                    return ExtractedMedia(b64, mime, type, media.optJSONObject("metadata") ?: JSONObject())
                 } else if (type.isNotEmpty() && type !in supportedTypes) {
                     Log.i(TAG, "extractMedia: _media type=$type not supported by current provider (supported=$supportedTypes)")
                 }
@@ -1501,7 +1502,7 @@ class AgentRuntime(
                         val encoded = MediaEncoder.encodeImage(file, maxDim, toolExecutor.imageJpegQuality)
                         if (encoded != null) {
                             Log.i(TAG, "extractMedia: encoded image from '$normalizedPath' (${encoded.base64.length} chars base64)")
-                            return ExtractedMedia(encoded.base64, encoded.mimeType, "image")
+                            return ExtractedMedia(encoded.base64, encoded.mimeType, "image", encoded.metadata)
                         }
                     }
                 }
@@ -1513,7 +1514,7 @@ class AgentRuntime(
                         val encoded = MediaEncoder.encodeAudio(file)
                         if (encoded != null) {
                             Log.i(TAG, "extractMedia: encoded audio from '$normalizedPath' (${encoded.base64.length} chars base64)")
-                            return ExtractedMedia(encoded.base64, encoded.mimeType, "audio")
+                            return ExtractedMedia(encoded.base64, encoded.mimeType, "audio", encoded.metadata)
                         }
                     }
                 }
@@ -1864,19 +1865,68 @@ class AgentRuntime(
             }
             ProviderKind.EMBEDDED -> {
                 val arr = JSONArray()
-                arr.put(JSONObject().put("text", text))
+                arr.put(JSONObject().put("text", textWithMediaMetadata(text, mediaParts)))
                 for (m in mediaParts) {
                     if (m.mediaType == "image" || m.mediaType == "audio") {
                         arr.put(JSONObject().apply {
                             put("_media_type", m.mediaType)
                             put("mime_type", m.mimeType)
                             put("data", m.base64)
+                            put("metadata", m.metadata)
                         })
                     }
                 }
                 arr
             }
         }
+    }
+
+    private fun textWithMediaMetadata(text: String, mediaParts: List<ExtractedMedia>): String {
+        if (mediaParts.isEmpty()) return text
+        val lines = mutableListOf<String>()
+        for ((index, media) in mediaParts.withIndex()) {
+            val metadata = media.metadata
+            val size = when (media.mediaType) {
+                "image" -> {
+                    val width = metadata.optInt("width", 0)
+                    val height = metadata.optInt("height", 0)
+                    val originalWidth = metadata.optInt("original_width", width)
+                    val originalHeight = metadata.optInt("original_height", height)
+                    if (width > 0 && height > 0) {
+                        "encoded=${width}x$height original=${originalWidth}x$originalHeight"
+                    } else {
+                        ""
+                    }
+                }
+                "audio" -> {
+                    val durationMs = metadata.optLong("duration_ms", 0L)
+                    if (durationMs > 0L) "duration_ms=$durationMs" else ""
+                }
+                else -> ""
+            }
+            lines += buildString {
+                append("media ")
+                append(index + 1)
+                append(": type=")
+                append(media.mediaType)
+                append(" mime=")
+                append(media.mimeType)
+                if (size.isNotBlank()) {
+                    append(" ")
+                    append(size)
+                }
+            }
+        }
+        return buildString {
+            append(text)
+            if (isNotBlank()) append("\n")
+            append("Attached native media metadata:\n")
+            lines.forEach { line ->
+                append("- ")
+                append(line)
+                append("\n")
+            }
+        }.trim()
     }
 
     private fun buildInitialInput(
@@ -1910,7 +1960,7 @@ class AgentRuntime(
                     val maxDim = if (toolExecutor.imageResizeEnabled) toolExecutor.imageMaxDimPx else Int.MAX_VALUE
                     val encoded = MediaEncoder.encodeImage(file, maxDim, toolExecutor.imageJpegQuality)
                     if (encoded != null) {
-                        userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "image"))
+                        userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "image", encoded.metadata))
                         encodedMediaPaths.add(p)
                         Log.i(TAG, "buildInitialInput: encoded user image '$p' (${encoded.base64.length} chars b64)")
                     } else {
@@ -1919,7 +1969,7 @@ class AgentRuntime(
                 } else if (MediaEncoder.isAudioPath(p) && "audio" in supportedMedia) {
                     val encoded = MediaEncoder.encodeAudio(file)
                     if (encoded != null) {
-                        userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "audio"))
+                        userMedia.add(ExtractedMedia(encoded.base64, encoded.mimeType, "audio", encoded.metadata))
                         encodedMediaPaths.add(p)
                         Log.i(TAG, "buildInitialInput: encoded user audio '$p' (${encoded.base64.length} chars b64)")
                     } else {
